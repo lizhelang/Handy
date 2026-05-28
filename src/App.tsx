@@ -55,6 +55,13 @@ function App() {
     initializeRTL(i18n.language);
   }, [i18n.language]);
 
+  useEffect(() => {
+    const sectionConfig = SECTIONS_CONFIG[currentSection];
+    if (sectionConfig && !sectionConfig.enabled(settings)) {
+      setCurrentSection("general");
+    }
+  }, [currentSection, settings]);
+
   // Initialize Enigo, shortcuts, and refresh audio devices when main app loads
   useEffect(() => {
     if (onboardingStep === "done" && !hasCompletedPostOnboardingInit.current) {

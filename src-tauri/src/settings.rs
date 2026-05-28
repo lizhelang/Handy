@@ -430,6 +430,14 @@ pub struct AppSettings {
     pub whisper_gpu_device: i32,
     #[serde(default)]
     pub extra_recording_buffer_ms: u64,
+    #[serde(default)]
+    pub clipboard_enabled: bool,
+    #[serde(default = "default_clipboard_max_records")]
+    pub clipboard_max_records: usize,
+    #[serde(default)]
+    pub clipboard_hotkey_enabled: bool,
+    #[serde(default = "default_clipboard_hotkey")]
+    pub clipboard_hotkey: String,
 }
 
 fn default_model() -> String {
@@ -654,6 +662,14 @@ fn default_typing_tool() -> TypingTool {
     TypingTool::Auto
 }
 
+fn default_clipboard_max_records() -> usize {
+    500
+}
+
+fn default_clipboard_hotkey() -> String {
+    "CmdOrCtrl+Shift+V".to_string()
+}
+
 fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
     let mut changed = false;
     for provider in default_post_process_providers() {
@@ -814,6 +830,10 @@ pub fn get_default_settings() -> AppSettings {
         ort_accelerator: OrtAcceleratorSetting::default(),
         whisper_gpu_device: default_whisper_gpu_device(),
         extra_recording_buffer_ms: 0,
+        clipboard_enabled: false,
+        clipboard_max_records: default_clipboard_max_records(),
+        clipboard_hotkey_enabled: false,
+        clipboard_hotkey: default_clipboard_hotkey(),
     }
 }
 

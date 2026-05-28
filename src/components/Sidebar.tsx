@@ -1,6 +1,14 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Cog, FlaskConical, History, Info, Sparkles, Cpu } from "lucide-react";
+import {
+  Cog,
+  FlaskConical,
+  History,
+  Info,
+  Sparkles,
+  Cpu,
+  ClipboardList,
+} from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import HandyHand from "./icons/HandyHand";
 import { useSettings } from "../hooks/useSettings";
@@ -8,6 +16,7 @@ import {
   GeneralSettings,
   AdvancedSettings,
   HistorySettings,
+  ClipboardSettings,
   DebugSettings,
   AboutSettings,
   PostProcessingSettings,
@@ -55,6 +64,31 @@ export const SECTIONS_CONFIG = {
     icon: History,
     component: HistorySettings,
     enabled: () => true,
+  },
+  clipboard: {
+    labelKey: "sidebar.clipboard",
+    icon: ClipboardList,
+    component: ClipboardSettings,
+    enabled: (settings) =>
+      Boolean(
+        (
+          settings as
+            | {
+                experimental_enabled?: boolean;
+                clipboard_enabled?: boolean;
+              }
+            | null
+            | undefined
+        )?.experimental_enabled &&
+          (
+            settings as
+              | {
+                  clipboard_enabled?: boolean;
+                }
+              | null
+              | undefined
+          )?.clipboard_enabled,
+      ),
   },
   postprocessing: {
     labelKey: "sidebar.postProcessing",

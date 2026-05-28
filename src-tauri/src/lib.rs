@@ -26,7 +26,9 @@ use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri_specta::{collect_commands, collect_events, Builder};
 
 use env_filter::Builder as EnvFilterBuilder;
+use log::info;
 use managers::audio::AudioRecordingManager;
+use managers::clipboard::ClipboardManager;
 use managers::history::HistoryManager;
 use managers::model::ModelManager;
 use managers::transcription::TranscriptionManager;
@@ -155,6 +157,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     );
     let history_manager =
         Arc::new(HistoryManager::new(app_handle).expect("Failed to initialize history manager"));
+    let clipboard_manager = Arc::new(
+        ClipboardManager::new(app_handle).expect("Failed to initialize clipboard manager"),
+    );
 
     // Apply accelerator preferences before any model loads
     managers::transcription::apply_accelerator_settings(app_handle);
@@ -164,6 +169,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
+    app_handle.manage(clipboard_manager.clone());
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
@@ -278,6 +284,13 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         tray::update_tray_menu(&app_handle_for_listener, &tray::TrayIconState::Idle, None);
     });
 
+    // Start clipboard monitoring if enabled
+    let settings = settings::get_settings(app_handle);
+    if settings.clipboard_enabled {
+        clipboard_manager.start_monitoring();
+        info!("Clipboard monitoring started");
+    }
+
     // Get the autostart manager and configure based on user setting
     let autostart_manager = app_handle.autolaunch();
     let settings = settings::get_settings(&app_handle);
@@ -374,6 +387,10 @@ pub fn run(cli_args: CliArgs) {
             shortcut::get_available_accelerators,
             shortcut::handy_keys::start_handy_keys_recording,
             shortcut::handy_keys::stop_handy_keys_recording,
+            shortcut::change_clipboard_enabled_setting,
+            shortcut::change_clipboard_max_records_setting,
+            shortcut::change_clipboard_hotkey_enabled_setting,
+            shortcut::change_clipboard_hotkey_setting,
             trigger_update_check,
             show_main_window_command,
             commands::cancel_operation,
@@ -426,8 +443,22 @@ pub fn run(cli_args: CliArgs) {
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
             helpers::clamshell::is_laptop,
+            commands::clipboard::get_clipboard_items,
+            commands::clipboard::search_clipboard,
+            commands::clipboard::toggle_clipboard_favorite,
+            commands::clipboard::toggle_clipboard_pin,
+            commands::clipboard::delete_clipboard_item,
+            commands::clipboard::clear_clipboard_history,
+            commands::clipboard::copy_clipboard_to_system,
+            commands::clipboard::get_clipboard_stats,
+            commands::clipboard::get_clipboard_settings,
+            commands::clipboard::update_clipboard_settings,
+            commands::clipboard::toggle_clipboard_monitoring,
         ])
-        .events(collect_events![managers::history::HistoryUpdatePayload,]);
+        .events(collect_events![
+            managers::history::HistoryUpdatePayload,
+            managers::clipboard::ClipboardUpdatePayload,
+        ]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
     specta_builder

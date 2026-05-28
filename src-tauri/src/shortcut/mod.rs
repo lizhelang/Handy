@@ -16,9 +16,11 @@ mod tauri_impl;
 use log::{error, info, warn};
 use serde::Serialize;
 use specta::Type;
-use tauri::{AppHandle, Emitter, Manager};
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
+use crate::managers::clipboard::ClipboardManager;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::settings::APPLE_INTELLIGENCE_DEFAULT_MODEL_ID;
 use crate::settings::{
@@ -1154,4 +1156,61 @@ pub async fn get_available_accelerators() -> crate::managers::transcription::Ava
     tauri::async_runtime::spawn_blocking(crate::managers::transcription::get_available_accelerators)
         .await
         .expect("get_available_accelerators panicked")
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_clipboard_enabled_setting(
+    app: AppHandle,
+    manager: State<'_, Arc<ClipboardManager>>,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.clipboard_enabled = enabled;
+    settings::write_settings(&app, settings);
+
+    if enabled {
+        manager.start_monitoring();
+        if let Err(err) = manager.sync_current_clipboard() {
+            warn!(
+                "Failed to sync clipboard after enabling experimental clipboard feature: {}",
+                err
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_clipboard_max_records_setting(
+    app: AppHandle,
+    max_records: usize,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.clipboard_max_records = max_records;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_clipboard_hotkey_enabled_setting(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.clipboard_hotkey_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_clipboard_hotkey_setting(app: AppHandle, hotkey: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.clipboard_hotkey = hotkey;
+    settings::write_settings(&app, settings);
+    Ok(())
 }

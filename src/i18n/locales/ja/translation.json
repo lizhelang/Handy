@@ -14,6 +14,7 @@
     "advanced": "詳細設定",
     "postProcessing": "後処理",
     "history": "履歴",
+    "clipboard": "Clipboard",
     "debug": "デバッグ",
     "about": "概要"
   },
@@ -356,6 +357,10 @@
         "add": "追加",
         "remove": "{{word}}を削除",
         "duplicate": "「{{word}}」は既に存在します"
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -432,6 +437,47 @@
       "retranscribeError": "再文字起こしに失敗しました。もう一度お試しください。",
       "transcribing": "文字起こし中...",
       "transcriptionFailed": "文字起こしに失敗しました。リトライアイコンを使用して再文字起こしできます。"
+    },
+    "clipboard": {
+      "title": "Clipboard Manager",
+      "searchPlaceholder": "Search clipboard history...",
+      "filterAll": "All",
+      "filterText": "Text",
+      "filterImage": "Images",
+      "filterRichtext": "Rich Text",
+      "filterFiles": "Files",
+      "viewList": "List",
+      "viewGrid": "Grid",
+      "sortNewest": "Newest first",
+      "sortOldest": "Oldest first",
+      "totalItems": "{{count}} items",
+      "totalSize": "{{size}} used",
+      "emptyTitle": "Clipboard is empty",
+      "emptyDescription": "Copy something to start tracking your clipboard history.",
+      "clearHistory": "Clear History",
+      "clearConfirm": "Are you sure? This will delete all clipboard items except pinned and favorited ones.",
+      "clearKeepPinned": "Keep pinned and favorited items",
+      "deleteItem": "Delete",
+      "toggleFavorite": "Favorite",
+      "unfavorite": "Remove from favorites",
+      "togglePin": "Pin",
+      "unpin": "Unpin",
+      "preview": "Preview",
+      "copyToClipboard": "Copy to Clipboard",
+      "copied": "Copied!",
+      "settings": {
+        "maxRecords": "Maximum Records",
+        "maxRecordsDescription": "Automatically remove oldest items when limit is reached.",
+        "hotkey": "Clipboard Hotkey",
+        "confirmMode": "Confirm Mode",
+        "confirmModeCopy": "Copy to clipboard",
+        "confirmModePaste": "Paste immediately"
+      },
+      "overlay": {
+        "title": "Clipboard",
+        "search": "Search...",
+        "hint": "Navigate · Enter Copy · Esc Close · F Favorite"
+      }
     },
     "debug": {
       "title": "デバッグ",

@@ -13,6 +13,7 @@
     "advanced": "متقدم",
     "postProcessing": "معالجة لاحقة",
     "history": "السجل",
+    "clipboard": "Clipboard",
     "debug": "تصحيح الأخطاء",
     "about": "حول",
     "models": "النماذج"
@@ -334,6 +335,10 @@
         "add": "إضافة",
         "remove": "إزالة {{word}}",
         "duplicate": "\"{{word}}\" موجود بالفعل"
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -410,6 +415,47 @@
       "retranscribeError": "فشلت إعادة النسخ. يرجى المحاولة مرة أخرى.",
       "transcribing": "جارٍ النسخ...",
       "transcriptionFailed": "فشل النسخ. يمكنك إعادة النسخ باستخدام أيقونة إعادة المحاولة."
+    },
+    "clipboard": {
+      "title": "Clipboard Manager",
+      "searchPlaceholder": "Search clipboard history...",
+      "filterAll": "All",
+      "filterText": "Text",
+      "filterImage": "Images",
+      "filterRichtext": "Rich Text",
+      "filterFiles": "Files",
+      "viewList": "List",
+      "viewGrid": "Grid",
+      "sortNewest": "Newest first",
+      "sortOldest": "Oldest first",
+      "totalItems": "{{count}} items",
+      "totalSize": "{{size}} used",
+      "emptyTitle": "Clipboard is empty",
+      "emptyDescription": "Copy something to start tracking your clipboard history.",
+      "clearHistory": "Clear History",
+      "clearConfirm": "Are you sure? This will delete all clipboard items except pinned and favorited ones.",
+      "clearKeepPinned": "Keep pinned and favorited items",
+      "deleteItem": "Delete",
+      "toggleFavorite": "Favorite",
+      "unfavorite": "Remove from favorites",
+      "togglePin": "Pin",
+      "unpin": "Unpin",
+      "preview": "Preview",
+      "copyToClipboard": "Copy to Clipboard",
+      "copied": "Copied!",
+      "settings": {
+        "maxRecords": "Maximum Records",
+        "maxRecordsDescription": "Automatically remove oldest items when limit is reached.",
+        "hotkey": "Clipboard Hotkey",
+        "confirmMode": "Confirm Mode",
+        "confirmModeCopy": "Copy to clipboard",
+        "confirmModePaste": "Paste immediately"
+      },
+      "overlay": {
+        "title": "Clipboard",
+        "search": "Search...",
+        "hint": "Navigate · Enter Copy · Esc Close · F Favorite"
+      }
     },
     "debug": {
       "title": "تصحيح الأخطاء",
