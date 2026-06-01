@@ -93,6 +93,18 @@ pub struct ClipboardManager {
 }
 
 impl ClipboardManager {
+    fn client_image_path(&self, path: &str) -> String {
+        self.images_dir.join(path).to_string_lossy().into_owned()
+    }
+
+    fn normalize_item_for_client(&self, mut item: ClipboardItem) -> ClipboardItem {
+        if let Some(path) = item.image_path.as_deref() {
+            item.image_path = Some(self.client_image_path(path));
+        }
+
+        item
+    }
+
     pub fn new(app_handle: &AppHandle) -> Result<Self> {
         let app_data_dir = crate::portable::app_data_dir(app_handle)?;
         let db_path = app_data_dir.join("clipboard.db");
@@ -440,8 +452,9 @@ impl ClipboardManager {
         info!("Added clipboard image entry with id {}", item.id);
 
         // Emit event
-        if let Err(e) =
-            (ClipboardUpdatePayload::Added { item: item.clone() }).emit(&self.app_handle)
+        let item = self.normalize_item_for_client(item);
+
+        if let Err(e) = (ClipboardUpdatePayload::Added { item: item.clone() }).emit(&self.app_handle)
         {
             error!("Failed to emit clipboard-added event: {}", e);
         }
@@ -485,7 +498,10 @@ impl ClipboardManager {
             items[..page_size].to_vec()
         } else {
             items
-        };
+        }
+        .into_iter()
+        .map(|item| self.normalize_item_for_client(item))
+        .collect();
 
         Ok(ClipboardPageResult { items, has_more })
     }
@@ -524,7 +540,10 @@ impl ClipboardManager {
             .collect::<std::result::Result<Vec<_>, _>>()?
         };
 
-        Ok(items)
+        Ok(items
+            .into_iter()
+            .map(|item| self.normalize_item_for_client(item))
+            .collect())
     }
 
     /// Toggle favorite status

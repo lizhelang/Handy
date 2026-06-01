@@ -14,7 +14,7 @@
     "advanced": "高级",
     "postProcessing": "后处理",
     "history": "历史记录",
-    "clipboard": "Clipboard",
+    "clipboard": "历史剪贴",
     "debug": "调试",
     "about": "关于"
   },
@@ -360,7 +360,7 @@
       },
       "clipboardFeature": {
         "label": "剪贴板管理器（实验性）",
-        "description": "启用实验性的剪贴板管理器。开启后，左侧边栏会显示 Clipboard，并开始记录剪贴板历史。"
+        "description": "启用实验性的剪贴板管理器。开启后，左侧边栏会显示历史剪贴，并开始记录剪贴板历史。"
       }
     },
     "postProcessing": {
@@ -439,44 +439,44 @@
       "transcriptionFailed": "转录失败。您可以使用重试图标重新转录。"
     },
     "clipboard": {
-      "title": "Clipboard Manager",
-      "searchPlaceholder": "Search clipboard history...",
-      "filterAll": "All",
-      "filterText": "Text",
-      "filterImage": "Images",
-      "filterRichtext": "Rich Text",
-      "filterFiles": "Files",
-      "viewList": "List",
-      "viewGrid": "Grid",
-      "sortNewest": "Newest first",
-      "sortOldest": "Oldest first",
-      "totalItems": "{{count}} items",
-      "totalSize": "{{size}} used",
-      "emptyTitle": "Clipboard is empty",
-      "emptyDescription": "Copy something to start tracking your clipboard history.",
-      "clearHistory": "Clear History",
-      "clearConfirm": "Are you sure? This will delete all clipboard items except pinned and favorited ones.",
-      "clearKeepPinned": "Keep pinned and favorited items",
-      "deleteItem": "Delete",
-      "toggleFavorite": "Favorite",
-      "unfavorite": "Remove from favorites",
-      "togglePin": "Pin",
-      "unpin": "Unpin",
-      "preview": "Preview",
-      "copyToClipboard": "Copy to Clipboard",
-      "copied": "Copied!",
+      "title": "历史剪贴",
+      "searchPlaceholder": "搜索剪贴板历史...",
+      "filterAll": "全部",
+      "filterText": "文本",
+      "filterImage": "图片",
+      "filterRichtext": "富文本",
+      "filterFiles": "文件",
+      "viewList": "列表",
+      "viewGrid": "网格",
+      "sortNewest": "最新优先",
+      "sortOldest": "最早优先",
+      "totalItems": "{{count}} 条",
+      "totalSize": "已用 {{size}}",
+      "emptyTitle": "剪贴板为空",
+      "emptyDescription": "复制内容以开始记录剪贴板历史。",
+      "clearHistory": "清除历史",
+      "clearConfirm": "确定吗？这将删除所有剪贴板项目，固定的和收藏的除外。",
+      "clearKeepPinned": "保留固定的和收藏的项目",
+      "deleteItem": "删除",
+      "toggleFavorite": "收藏",
+      "unfavorite": "取消收藏",
+      "togglePin": "固定",
+      "unpin": "取消固定",
+      "preview": "预览",
+      "copyToClipboard": "复制到剪贴板",
+      "copied": "已复制！",
       "settings": {
-        "maxRecords": "Maximum Records",
-        "maxRecordsDescription": "Automatically remove oldest items when limit is reached.",
-        "hotkey": "Clipboard Hotkey",
-        "confirmMode": "Confirm Mode",
-        "confirmModeCopy": "Copy to clipboard",
-        "confirmModePaste": "Paste immediately"
+        "maxRecords": "最大记录数",
+        "maxRecordsDescription": "达到上限时自动删除最旧的项目。",
+        "hotkey": "剪贴板快捷键",
+        "confirmMode": "确认模式",
+        "confirmModeCopy": "复制到剪贴板",
+        "confirmModePaste": "立即粘贴"
       },
       "overlay": {
-        "title": "Clipboard",
-        "search": "Search...",
-        "hint": "Navigate · Enter Copy · Esc Close · F Favorite"
+        "title": "剪贴板",
+        "search": "搜索...",
+        "hint": "导航 · 回车复制 · Esc 关闭 · F 收藏"
       }
     },
     "debug": {

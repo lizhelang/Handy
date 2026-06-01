@@ -37,23 +37,24 @@ export const ClipboardSettings: React.FC = () => {
   };
 
   return (
-    <div className="max-w-3xl w-full mx-auto space-y-4">
-      <div className="px-4 flex items-center justify-between">
-        <h2 className="text-xs font-medium text-mid-gray uppercase tracking-wide">
-          {t("settings.clipboard.title")}
-        </h2>
+    <div className="max-w-5xl w-full mx-auto space-y-3">
+      <div className="px-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
+          <h2 className="text-xs font-medium text-mid-gray uppercase tracking-wide">
+            {t("settings.clipboard.title")}
+          </h2>
+          <ClipboardStatsBar stats={stats} className="px-0 py-0" />
+        </div>
         <Button
           onClick={() => setShowClearConfirm(true)}
           variant="danger-ghost"
           size="sm"
-          className="flex items-center gap-1.5"
+          className="flex items-center gap-1.5 self-start sm:self-auto"
         >
           <Trash2 className="w-3.5 h-3.5" />
           <span>{t("settings.clipboard.clearHistory")}</span>
         </Button>
       </div>
-
-      <ClipboardStatsBar stats={stats} />
 
       <div className="bg-background border border-mid-gray/20 rounded-lg overflow-visible">
         <ClipboardToolbar />

@@ -12,42 +12,44 @@ function formatBytes(bytes: number): string {
 
 interface ClipboardStatsBarProps {
   stats: StatsType | null;
+  className?: string;
 }
 
 export const ClipboardStatsBar: React.FC<ClipboardStatsBarProps> = ({
   stats,
+  className = "",
 }) => {
   const { t } = useTranslation();
 
   if (!stats) return null;
 
+  const statItems = [
+    t("settings.clipboard.totalItems", { count: stats.total_items }),
+    t("settings.clipboard.totalSize", {
+      size: formatBytes(stats.total_size_bytes),
+    }),
+    stats.favorites_count > 0
+      ? `${stats.favorites_count} ${t("settings.clipboard.toggleFavorite")}`
+      : null,
+    stats.pinned_count > 0
+      ? `${stats.pinned_count} ${t("settings.clipboard.togglePin")}`
+      : null,
+  ].filter(Boolean) as string[];
+
   return (
-    <div className="flex items-center gap-4 px-4 py-2 text-xs text-text/50">
-      <span>
-        {t("settings.clipboard.totalItems", { count: stats.total_items })}
-      </span>
-      <span className="text-text/20">|</span>
-      <span>
-        {t("settings.clipboard.totalSize", {
-          size: formatBytes(stats.total_size_bytes),
-        })}
-      </span>
-      {stats.favorites_count > 0 && (
-        <>
-          <span className="text-text/20">|</span>
-          <span>
-            {stats.favorites_count} {t("settings.clipboard.toggleFavorite")}
-          </span>
-        </>
-      )}
-      {stats.pinned_count > 0 && (
-        <>
-          <span className="text-text/20">|</span>
-          <span>
-            {stats.pinned_count} {t("settings.clipboard.togglePin")}
-          </span>
-        </>
-      )}
+    <div
+      className={`flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 text-xs text-text/50 ${className}`}
+    >
+      {statItems.map((item, index) => (
+        <span key={`${item}-${index}`} className="flex items-center gap-1.5">
+          {index > 0 && (
+            <span aria-hidden="true" className="text-text/20">
+              |
+            </span>
+          )}
+          <span className="whitespace-nowrap">{item}</span>
+        </span>
+      ))}
     </div>
   );
 };

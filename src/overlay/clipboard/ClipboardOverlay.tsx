@@ -3,17 +3,11 @@ import { useTranslation } from "react-i18next";
 import { Search, Star, Pin, Copy, Check, X } from "lucide-react";
 import { useClipboardStore } from "@/stores/clipboardStore";
 import type { ClipboardItem } from "@/lib/types/clipboard";
+import {
+  formatClipboardRelativeTime,
+  getClipboardItemLabel,
+} from "@/components/clipboard/utils";
 import "./ClipboardOverlay.css";
-
-function formatRelativeTime(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diff = Math.floor((now - then) / 1000);
-  if (diff < 60) return `${diff}s`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  return `${Math.floor(diff / 86400)}d`;
-}
 
 const ClipboardOverlay: React.FC = () => {
   const { t } = useTranslation();
@@ -218,6 +212,8 @@ const OverlayItem: React.FC<OverlayItemProps> = ({
   onSelect,
   index,
 }) => {
+  const { t, i18n } = useTranslation();
+
   return (
     <div
       className={`clipboard-overlay-item ${isSelected ? "selected" : ""}`}
@@ -226,9 +222,11 @@ const OverlayItem: React.FC<OverlayItemProps> = ({
     >
       <div className="clipboard-overlay-item-index">{index + 1}</div>
       <div className="clipboard-overlay-item-content">
-        <p className="clipboard-overlay-item-text">{item.content_preview}</p>
+        <p className="clipboard-overlay-item-text">
+          {getClipboardItemLabel(t, item)}
+        </p>
         <div className="clipboard-overlay-item-meta">
-          <span>{formatRelativeTime(item.created_at)}</span>
+          <span>{formatClipboardRelativeTime(item.created_at, i18n.language)}</span>
           {item.is_favorite && (
             <Star className="w-3 h-3 text-logo-primary" fill="currentColor" />
           )}

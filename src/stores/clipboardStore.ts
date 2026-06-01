@@ -62,7 +62,7 @@ export const useClipboardStore = create<ClipboardStore>()(
 
     searchQuery: "",
     contentTypeFilter: "all",
-    viewMode: "list",
+    viewMode: "grid",
     sortOrder: "newest",
     selectedId: null,
     previewItem: null,

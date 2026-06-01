@@ -439,7 +439,11 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
             : t("settings.history.transcriptionFailed")}
       </p>
 
-      <AudioPlayer onLoadRequest={handleLoadAudio} className="w-full" />
+      <AudioPlayer
+        onLoadRequest={handleLoadAudio}
+        preloadMetadata
+        className="w-full"
+      />
     </div>
   );
 };

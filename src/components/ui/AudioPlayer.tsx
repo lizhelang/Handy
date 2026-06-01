@@ -6,6 +6,8 @@ interface AudioPlayerProps {
   src?: string;
   /** Called when play is clicked and no src is loaded yet. Should return the audio URL. */
   onLoadRequest?: () => Promise<string | null>;
+  /** Load enough audio metadata on mount to show duration before playback starts. */
+  preloadMetadata?: boolean;
   className?: string;
   autoPlay?: boolean;
 }
@@ -13,6 +15,7 @@ interface AudioPlayerProps {
 export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   src: initialSrc,
   onLoadRequest,
+  preloadMetadata = false,
   className = "",
   autoPlay = false,
 }) => {
@@ -27,6 +30,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const src = loadedSrc;
   const animationRef = useRef<number>();
   const dragTimeRef = useRef<number>(0);
+  const loadPromiseRef = useRef<Promise<string | null> | null>(null);
+  const pendingPlayRef = useRef(false);
 
   // Use refs to avoid stale closures in animation loop
   const isPlayingRef = useRef(false);
@@ -52,6 +57,24 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       animationRef.current = requestAnimationFrame(tick);
     }
   }, []); // Empty dependency array is key!
+
+  const loadAudioSource = useCallback(async () => {
+    if (loadedSrc) return loadedSrc;
+    if (!onLoadRequest) return null;
+
+    if (!loadPromiseRef.current) {
+      loadPromiseRef.current = onLoadRequest().finally(() => {
+        loadPromiseRef.current = null;
+      });
+    }
+
+    const newSrc = await loadPromiseRef.current;
+    if (newSrc) {
+      setLoadedSrc(newSrc);
+    }
+
+    return newSrc;
+  }, [loadedSrc, onLoadRequest]);
 
   // Manage animation loop lifecycle
   useEffect(() => {
@@ -81,9 +104,17 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     const audio = audioRef.current;
     if (!audio) return;
 
+    const syncDuration = () => {
+      setDuration(isFinite(audio.duration) ? audio.duration : 0);
+    };
+
     const handleLoadedMetadata = () => {
-      setDuration(audio.duration || 0);
-      setCurrentTime(0);
+      syncDuration();
+      setCurrentTime(audio.currentTime || 0);
+    };
+
+    const handleDurationChange = () => {
+      syncDuration();
     };
 
     const handleEnded = () => {
@@ -95,12 +126,14 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     const handlePause = () => setIsPlaying(false);
 
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("durationchange", handleDurationChange);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
 
     return () => {
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("durationchange", handleDurationChange);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("play", handlePlay);
       audio.removeEventListener("pause", handlePause);
@@ -113,8 +146,9 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     const audio = audioRef.current;
     if (!audio) return;
 
-    // Play when loadedSrc changes from null to a value (lazy load case)
-    if (loadedSrc && !prevLoadedSrc.current && onLoadRequest) {
+    // Play when a user click requested lazy loading.
+    if (loadedSrc && pendingPlayRef.current) {
+      pendingPlayRef.current = false;
       audio.play().catch((error) => {
         console.error("Auto-play failed:", error);
       });
@@ -127,7 +161,15 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     }
 
     prevLoadedSrc.current = loadedSrc;
-  }, [loadedSrc, autoPlay, initialSrc, onLoadRequest]);
+  }, [loadedSrc, autoPlay, initialSrc]);
+
+  useEffect(() => {
+    if (!preloadMetadata || loadedSrc || !onLoadRequest) return;
+
+    loadAudioSource().catch((error) => {
+      console.error("Failed to preload audio metadata:", error);
+    });
+  }, [preloadMetadata, loadedSrc, onLoadRequest, loadAudioSource]);
 
   // Global drag handlers
   const handleMouseUp = useCallback(() => {
@@ -172,12 +214,12 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       } else {
         // If no src loaded yet, request it
         if (!src && onLoadRequest) {
+          pendingPlayRef.current = true;
           setIsLoading(true);
-          const newSrc = await onLoadRequest();
+          const newSrc = await loadAudioSource();
           setIsLoading(false);
-          if (newSrc) {
-            setLoadedSrc(newSrc);
-            // Playback will be triggered by the useEffect watching loadedSrc
+          if (!newSrc) {
+            pendingPlayRef.current = false;
           }
         } else if (src) {
           await audio.play();

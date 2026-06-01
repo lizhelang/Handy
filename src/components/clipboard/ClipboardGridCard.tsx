@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   Star,
   Pin,
@@ -12,16 +13,11 @@ import {
   File,
 } from "lucide-react";
 import type { ClipboardItem } from "@/lib/types/clipboard";
-
-function formatRelativeTime(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diff = Math.floor((now - then) / 1000);
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
+import {
+  formatClipboardRelativeTime,
+  getClipboardItemLabel,
+  getClipboardTypeLabel,
+} from "./utils";
 
 const contentIcons: Record<
   string,
@@ -50,9 +46,20 @@ export const ClipboardGridCard: React.FC<ClipboardGridCardProps> = ({
   onCopy,
   onPreview,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [showCopied, setShowCopied] = useState(false);
+  const [imageError, setImageError] = useState(false);
   const Icon = contentIcons[item.content_type] || FileText;
+  const itemLabel = getClipboardItemLabel(t, item);
+  const imageAlt = getClipboardTypeLabel(t, item.content_type);
+
+  const getImageUrl = useCallback((path: string) => {
+    try {
+      return convertFileSrc(path);
+    } catch {
+      return null;
+    }
+  }, []);
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -68,10 +75,19 @@ export const ClipboardGridCard: React.FC<ClipboardGridCardProps> = ({
     >
       <div className="flex-1 p-3 min-h-[80px] flex items-center justify-center bg-mid-gray/5">
         {item.content_type === "image" ? (
-          <Image className="w-8 h-8 text-text/20" />
+          item.image_path && !imageError ? (
+            <img
+              src={getImageUrl(item.image_path) || ""}
+              alt={imageAlt}
+              className="w-full h-full object-cover rounded"
+              onError={() => setImageError(true)}
+            />
+          ) : (
+            <Image className="w-8 h-8 text-text/20" />
+          )
         ) : (
           <p className="text-xs text-text/70 line-clamp-4 text-center leading-relaxed">
-            {item.content_preview}
+            {itemLabel}
           </p>
         )}
       </div>
@@ -80,7 +96,7 @@ export const ClipboardGridCard: React.FC<ClipboardGridCardProps> = ({
         <div className="flex items-center gap-1.5 min-w-0">
           <Icon className="w-3 h-3 text-text/30 shrink-0" />
           <span className="text-xs text-text/40 truncate">
-            {formatRelativeTime(item.created_at)}
+            {formatClipboardRelativeTime(item.created_at, i18n.language)}
           </span>
         </div>
         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">

@@ -1,19 +1,8 @@
 import React, { useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Search,
-  LayoutList,
-  LayoutGrid,
-  ArrowUpDown,
-  Filter,
-  X,
-} from "lucide-react";
+import { Search, LayoutList, LayoutGrid, ArrowUpDown, X } from "lucide-react";
 import { useClipboardStore } from "@/stores/clipboardStore";
-import type {
-  ClipboardViewMode,
-  ClipboardSortOrder,
-  ClipboardContentTypeFilter,
-} from "@/lib/types/clipboard";
+import type { ClipboardContentTypeFilter } from "@/lib/types/clipboard";
 
 const contentTypeOptions: {
   value: ClipboardContentTypeFilter;
@@ -49,51 +38,49 @@ export const ClipboardToolbar: React.FC = () => {
   }, [search]);
 
   return (
-    <div className="flex flex-col gap-2 px-4 py-3">
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text/30" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={handleSearch}
-            placeholder={t("settings.clipboard.searchPlaceholder")}
-            className="w-full pl-8 pr-8 py-1.5 text-sm bg-mid-gray/10 border border-mid-gray/20 rounded-lg focus:outline-none focus:border-logo-primary/50 placeholder:text-text/30"
-          />
-          {searchQuery && (
-            <button
-              onClick={clearSearch}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-text/30 hover:text-text/60 cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      </div>
-      <div className="flex items-center gap-1.5">
-        <FilterDropdown
-          value={contentTypeFilter}
-          options={contentTypeOptions}
-          onChange={setContentTypeFilter}
-          icon={<Filter className="w-3.5 h-3.5" />}
-          t={t}
+    <div className="flex flex-col gap-2 px-4 py-2 md:flex-row md:items-center">
+      <div className="relative flex-1">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text/30" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={handleSearch}
+          placeholder={t("settings.clipboard.searchPlaceholder")}
+          className="w-full pl-8 pr-8 py-1.5 text-sm bg-mid-gray/10 border border-mid-gray/20 rounded-lg focus:outline-none focus:border-logo-primary/50 placeholder:text-text/30"
         />
-        <button
-          onClick={() =>
-            setSortOrder(sortOrder === "newest" ? "oldest" : "newest")
-          }
-          className="flex items-center gap-1 px-2 py-1 text-xs text-text/60 hover:text-text/90 hover:bg-mid-gray/10 rounded-md transition-colors cursor-pointer"
-          title={t("settings.clipboard.sortNewest")}
-        >
-          <ArrowUpDown className="w-3.5 h-3.5" />
-          <span>
-            {sortOrder === "newest"
-              ? t("settings.clipboard.sortNewest")
-              : t("settings.clipboard.sortOldest")}
-          </span>
-        </button>
-        <div className="flex-1" />
-        <div className="flex items-center border border-mid-gray/20 rounded-md overflow-hidden">
+        {searchQuery && (
+          <button
+            onClick={clearSearch}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-text/30 hover:text-text/60 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 md:shrink-0">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <FilterDropdown
+            value={contentTypeFilter}
+            options={contentTypeOptions}
+            onChange={setContentTypeFilter}
+            t={t}
+          />
+          <button
+            onClick={() =>
+              setSortOrder(sortOrder === "newest" ? "oldest" : "newest")
+            }
+            className="flex items-center gap-1 px-2 py-1 text-xs text-text/60 hover:text-text/90 hover:bg-mid-gray/10 rounded-md transition-colors cursor-pointer"
+            title={t("settings.clipboard.sortNewest")}
+          >
+            <ArrowUpDown className="w-3.5 h-3.5" />
+            <span>
+              {sortOrder === "newest"
+                ? t("settings.clipboard.sortNewest")
+                : t("settings.clipboard.sortOldest")}
+            </span>
+          </button>
+        </div>
+        <div className="ml-auto flex items-center border border-mid-gray/20 rounded-md overflow-hidden">
           <button
             onClick={() => setViewMode("list")}
             className={`p-1.5 transition-colors cursor-pointer ${
@@ -126,7 +113,6 @@ interface FilterDropdownProps {
   value: ClipboardContentTypeFilter;
   options: { value: ClipboardContentTypeFilter; labelKey: string }[];
   onChange: (value: ClipboardContentTypeFilter) => void;
-  icon: React.ReactNode;
   t: (key: string) => string;
 }
 
@@ -134,7 +120,6 @@ const FilterDropdown: React.FC<FilterDropdownProps> = ({
   value,
   options,
   onChange,
-  icon,
   t,
 }) => {
   const currentLabel = options.find((o) => o.value === value);
@@ -143,6 +128,7 @@ const FilterDropdown: React.FC<FilterDropdownProps> = ({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value as ClipboardContentTypeFilter)}
+      aria-label={currentLabel ? t(currentLabel.labelKey) : undefined}
       className="flex items-center gap-1 px-2 py-1 text-xs text-text/60 bg-transparent border border-mid-gray/20 rounded-md cursor-pointer hover:border-logo-primary/50 focus:outline-none focus:border-logo-primary/50 appearance-none pr-5"
       style={{
         backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,

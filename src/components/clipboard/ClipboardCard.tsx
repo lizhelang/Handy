@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   Star,
   Pin,
@@ -13,16 +14,11 @@ import {
   File,
 } from "lucide-react";
 import type { ClipboardItem } from "@/lib/types/clipboard";
-
-function formatRelativeTime(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diff = Math.floor((now - then) / 1000);
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
+import {
+  formatClipboardRelativeTime,
+  getClipboardItemLabel,
+  getClipboardTypeLabel,
+} from "./utils";
 
 const contentIcons: Record<
   string,
@@ -55,9 +51,20 @@ export const ClipboardCard: React.FC<ClipboardCardProps> = ({
   onCopy,
   onSelect,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [showCopied, setShowCopied] = useState(false);
+  const [imageError, setImageError] = useState(false);
   const Icon = contentIcons[item.content_type] || FileText;
+  const itemLabel = getClipboardItemLabel(t, item);
+  const imageAlt = getClipboardTypeLabel(t, item.content_type);
+
+  const getImageUrl = useCallback((path: string) => {
+    try {
+      return convertFileSrc(path);
+    } catch {
+      return null;
+    }
+  }, []);
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -76,13 +83,22 @@ export const ClipboardCard: React.FC<ClipboardCardProps> = ({
       onClick={onSelect}
       onDoubleClick={onPreview}
     >
-      <Icon className="w-4 h-4 text-text/30 shrink-0" />
+      {item.content_type === "image" && item.image_path && !imageError ? (
+        <img
+          src={getImageUrl(item.image_path) || ""}
+          alt={imageAlt}
+          className="w-8 h-8 rounded object-cover shrink-0"
+          onError={() => setImageError(true)}
+        />
+      ) : (
+        <Icon className="w-4 h-4 text-text/30 shrink-0" />
+      )}
 
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-text/90 truncate">{item.content_preview}</p>
+        <p className="text-sm text-text/90 truncate">{itemLabel}</p>
         <div className="flex items-center gap-2 mt-0.5">
           <span className="text-xs text-text/40">
-            {formatRelativeTime(item.created_at)}
+            {formatClipboardRelativeTime(item.created_at, i18n.language)}
           </span>
           {item.source_app && (
             <span className="text-xs text-text/30">· {item.source_app}</span>

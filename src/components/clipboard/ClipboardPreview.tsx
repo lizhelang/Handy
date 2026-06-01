@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   X,
   Star,
@@ -9,8 +10,11 @@ import {
   Image,
   FileCode,
   File,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
 import type { ClipboardItem } from "@/lib/types/clipboard";
+import { getClipboardItemLabel, getClipboardTypeLabel } from "./utils";
 
 function formatDateTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -52,6 +56,23 @@ export const ClipboardPreview: React.FC<ClipboardPreviewProps> = ({
 }) => {
   const { t } = useTranslation();
   const Icon = contentIcons[item.content_type] || FileText;
+  const [imageLoading, setImageLoading] = useState(true);
+  const [imageError, setImageError] = useState(false);
+  const itemLabel = getClipboardItemLabel(t, item);
+  const typeLabel = getClipboardTypeLabel(t, item.content_type);
+
+  const getImageUrl = useCallback((path: string) => {
+    try {
+      return convertFileSrc(path);
+    } catch {
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    setImageLoading(item.content_type === "image");
+    setImageError(false);
+  }, [item.content_type, item.image_path, item.id]);
 
   return (
     <div
@@ -66,7 +87,7 @@ export const ClipboardPreview: React.FC<ClipboardPreviewProps> = ({
           <div className="flex items-center gap-2">
             <Icon className="w-4 h-4 text-text/40" />
             <span className="text-sm font-medium text-text/80">
-              {item.content_type.toUpperCase()}
+              {typeLabel}
             </span>
             <span className="text-xs text-text/40">
               {formatBytes(item.size_bytes)}
@@ -107,12 +128,39 @@ export const ClipboardPreview: React.FC<ClipboardPreviewProps> = ({
 
         <div className="flex-1 overflow-auto p-4">
           {item.content_type === "image" ? (
-            <div className="flex items-center justify-center py-8">
-              <Image className="w-16 h-16 text-text/20" />
-              <p className="text-sm text-text/40 ml-3">
-                {item.content_preview}
-              </p>
-            </div>
+            item.image_path && !imageError ? (
+              <div className="flex flex-col items-center justify-center gap-3">
+                {imageLoading && (
+                  <div className="flex items-center gap-2 text-text/40">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span className="text-sm">{t("common.loading")}</span>
+                  </div>
+                )}
+                <img
+                  src={getImageUrl(item.image_path) || ""}
+                  alt={typeLabel}
+                  className={`max-w-full max-h-[60vh] object-contain rounded-lg ${
+                    imageLoading ? "hidden" : ""
+                  }`}
+                  onLoad={() => setImageLoading(false)}
+                  onError={() => {
+                    setImageLoading(false);
+                    setImageError(true);
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-3 py-8">
+                {imageError ? (
+                  <AlertCircle className="w-16 h-16 text-red-400/50" />
+                ) : (
+                  <Image className="w-16 h-16 text-text/20" />
+                )}
+                <p className="text-sm text-text/40">
+                  {itemLabel}
+                </p>
+              </div>
+            )
           ) : (
             <pre className="text-sm text-text/90 whitespace-pre-wrap break-words font-mono leading-relaxed">
               {item.full_text || item.content_preview}
