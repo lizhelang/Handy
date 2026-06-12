@@ -1,139 +1,553 @@
 .clipboard-overlay {
+  --ropy-background: #ffffff;
+  --ropy-foreground: #1a1a1a;
+  --ropy-secondary: #f5f5f5;
+  --ropy-border: #e0e0e0;
+  --ropy-accent: #add8e6;
+  --ropy-muted-foreground: #6b6b6b;
+  --ropy-primary: #5b7bd5;
+  --ropy-primary-foreground: #ffffff;
+
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
-  background: var(--color-background, #1a1a1a);
-  border: 1px solid var(--color-mid-gray, #333);
-  border-radius: 12px;
   overflow: hidden;
+  background: var(--ropy-background);
+  border-radius: 12px;
+  color: var(--ropy-foreground);
   font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+  letter-spacing: 0;
+  padding: 0 16px 16px;
+  box-sizing: border-box;
 }
 
-.clipboard-overlay-header {
-  display: flex;
+.clipboard-overlay *,
+.clipboard-overlay *::before,
+.clipboard-overlay *::after {
+  box-sizing: border-box;
+}
+
+.clipboard-overlay button {
+  display: inline-flex;
   align-items: center;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.15);
-  position: relative;
-}
-
-.clipboard-overlay-search-icon {
-  width: 16px;
-  height: 16px;
-  color: rgba(128, 128, 128, 0.4);
-  margin-right: 8px;
-  flex-shrink: 0;
-}
-
-.clipboard-overlay-search {
-  flex: 1;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  border: 0;
+  border-radius: 8px;
   background: transparent;
-  border: none;
-  outline: none;
-  color: var(--color-text, #e0e0e0);
-  font-size: 14px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: 0;
   padding: 0;
 }
 
+.clipboard-overlay svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2;
+}
+
+.clipboard-overlay-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+  margin-bottom: 16px;
+  padding-top: 16px;
+  cursor: move;
+  user-select: none;
+}
+
+.clipboard-overlay-brand {
+  color: var(--ropy-foreground);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.clipboard-overlay-window-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: default;
+}
+
+.clipboard-overlay-icon-button {
+  width: 32px;
+  height: 32px;
+  opacity: 0.5;
+}
+
+.clipboard-overlay-icon-button.active,
+.clipboard-overlay-icon-button:hover {
+  background: var(--ropy-accent);
+  opacity: 1;
+}
+
+.clipboard-overlay-icon-button.active {
+  background: var(--ropy-primary);
+  color: var(--ropy-primary-foreground);
+}
+
+.clipboard-overlay-controls {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.clipboard-overlay-search-pill,
+.clipboard-overlay-filter-pill,
+.clipboard-overlay-favorite-filter {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  background: var(--ropy-secondary);
+  border: 1px solid var(--ropy-border);
+  border-radius: 16px;
+  padding: 2px;
+}
+
+.clipboard-overlay-search-pill {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 2px;
+}
+
+.clipboard-overlay-search-icon {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  margin-right: 2px;
+}
+
+.clipboard-overlay-search {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 28px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ropy-foreground);
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px;
+}
+
 .clipboard-overlay-search::placeholder {
-  color: rgba(128, 128, 128, 0.4);
+  color: transparent;
 }
 
 .clipboard-overlay-clear {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: rgba(128, 128, 128, 0.4);
-  padding: 4px;
-  display: flex;
-  align-items: center;
+  width: 24px;
+  height: 24px;
+  opacity: 0.6;
 }
 
 .clipboard-overlay-clear:hover {
-  color: rgba(128, 128, 128, 0.7);
+  background: var(--ropy-accent);
+  opacity: 1;
+}
+
+.clipboard-overlay-search-divider {
+  width: 1px;
+  height: 12px;
+  background: var(--ropy-border);
+  opacity: 0.45;
+}
+
+.clipboard-overlay-text-toggle,
+.clipboard-overlay-tool-button,
+.clipboard-overlay-favorite-filter {
+  width: 30px;
+  height: 30px;
+  border-radius: 14px;
+}
+
+.clipboard-overlay-text-toggle {
+  color: var(--ropy-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.6;
+}
+
+.clipboard-overlay-text-toggle.active,
+.clipboard-overlay-text-toggle:hover,
+.clipboard-overlay-tool-button.active,
+.clipboard-overlay-tool-button:hover,
+.clipboard-overlay-favorite-filter.active,
+.clipboard-overlay-favorite-filter:hover {
+  background: var(--ropy-primary);
+  color: var(--ropy-primary-foreground);
+  opacity: 1;
+}
+
+.clipboard-overlay-filter-pill {
+  flex: 0 0 auto;
+  gap: 1px;
+}
+
+.clipboard-overlay-favorite-filter {
+  flex: 0 0 auto;
 }
 
 .clipboard-overlay-list {
-  flex: 1;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
   overflow-y: auto;
-  padding: 4px 0;
+  scrollbar-width: none;
+}
+
+.clipboard-overlay-list::-webkit-scrollbar {
+  width: 0;
 }
 
 .clipboard-overlay-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px 16px;
-  color: rgba(128, 128, 128, 0.4);
+  min-height: 96px;
+  color: var(--ropy-muted-foreground);
+  background: var(--ropy-secondary);
+  border: 1px solid var(--ropy-border);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.clipboard-overlay-panel {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.clipboard-overlay-panel-titlebar {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-bottom: 16px;
+  color: var(--ropy-foreground);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.clipboard-overlay-panel-back {
+  width: 30px;
+  height: 30px;
+  background: var(--ropy-secondary);
+  border: 1px solid var(--ropy-border);
+  border-radius: 14px;
+}
+
+.clipboard-overlay-panel-back:hover {
+  background: var(--ropy-accent);
+}
+
+.clipboard-overlay-panel-stack {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.clipboard-overlay-panel-stack::-webkit-scrollbar {
+  width: 0;
+}
+
+.clipboard-overlay-setting-row,
+.clipboard-overlay-help-line,
+.clipboard-overlay-about-copy,
+.clipboard-overlay-stats-grid,
+.clipboard-overlay-danger-actions {
+  background: var(--ropy-secondary);
+  border: 1px solid var(--ropy-border);
+  border-radius: 6px;
+}
+
+.clipboard-overlay-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 12px;
+  color: var(--ropy-foreground);
   font-size: 13px;
+  font-weight: 600;
+}
+
+.clipboard-overlay-setting-row input {
+  width: 96px;
+  height: 30px;
+  border: 1px solid var(--ropy-border);
+  border-radius: 6px;
+  background: var(--ropy-background);
+  color: var(--ropy-foreground);
+  font: inherit;
+  padding: 0 8px;
+  text-align: right;
+}
+
+.clipboard-overlay-segment {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--ropy-background);
+  border: 1px solid var(--ropy-border);
+  border-radius: 14px;
+}
+
+.clipboard-overlay-segment button {
+  height: 26px;
+  min-width: 52px;
+  border-radius: 12px;
+  color: var(--ropy-muted-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 10px;
+}
+
+.clipboard-overlay-segment button.active,
+.clipboard-overlay-segment button:hover {
+  background: var(--ropy-primary);
+  color: var(--ropy-primary-foreground);
+}
+
+.clipboard-overlay-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 8px;
+  padding: 12px;
+  text-align: center;
+}
+
+.clipboard-overlay-stats-grid span {
+  overflow: hidden;
+  color: var(--ropy-foreground);
+  font-size: 15px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clipboard-overlay-stats-grid small {
+  overflow: hidden;
+  color: var(--ropy-muted-foreground);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clipboard-overlay-danger-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+}
+
+.clipboard-overlay-danger-actions button {
+  flex: 1 1 0;
+  height: 32px;
+  background: var(--ropy-background);
+  border: 1px solid var(--ropy-border);
+  color: var(--ropy-foreground);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.clipboard-overlay-danger-actions button:hover {
+  background: var(--ropy-accent);
+}
+
+.clipboard-overlay-help-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 10px;
+  color: var(--ropy-muted-foreground);
+  font-size: 13px;
+}
+
+.clipboard-overlay-help-line kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  border: 1px solid var(--ropy-border);
+  border-radius: 5px;
+  background: var(--ropy-background);
+  color: var(--ropy-foreground);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 6px;
+}
+
+.clipboard-overlay-about-copy {
+  margin: 0;
+  padding: 12px;
+  color: var(--ropy-muted-foreground);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .clipboard-overlay-item {
   display: flex;
-  align-items: center;
-  padding: 8px 12px;
+  position: relative;
+  padding-bottom: 8px;
+}
+
+.clipboard-overlay-item::before {
+  position: absolute;
+  inset: 0 0 8px 0;
+  content: "";
+  background: var(--ropy-secondary);
+  border: 1px solid var(--ropy-border);
+  border-radius: 6px;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.clipboard-overlay-item:hover::before {
+  background: var(--ropy-accent);
+  border-color: var(--ropy-accent);
+}
+
+.clipboard-overlay-item.selected::before,
+.clipboard-overlay-item.copied::before {
+  border-color: var(--ropy-foreground);
+}
+
+.clipboard-overlay-item-inner,
+.clipboard-overlay-item-content,
+.clipboard-overlay-item-actions {
+  position: relative;
+  z-index: 1;
+}
+
+.clipboard-overlay-item {
   cursor: pointer;
-  transition: background-color 0.1s;
-  gap: 10px;
 }
 
-.clipboard-overlay-item:hover {
-  background: rgba(128, 128, 128, 0.08);
+.clipboard-overlay-image-preview {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 54px;
+  width: 54px;
+  height: 54px;
+  margin: 12px 0 20px 12px;
+  overflow: hidden;
+  background: var(--ropy-background);
+  border: 1px solid var(--ropy-border);
+  border-radius: 6px;
 }
 
-.clipboard-overlay-item.selected {
-  background: rgba(var(--color-logo-primary-rgb, 100, 149, 237), 0.12);
-}
-
-.clipboard-overlay-item-index {
-  width: 20px;
-  text-align: center;
-  font-size: 11px;
-  color: rgba(128, 128, 128, 0.3);
-  flex-shrink: 0;
+.clipboard-overlay-image-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .clipboard-overlay-item-content {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
+  padding: 12px;
 }
 
 .clipboard-overlay-item-text {
-  font-size: 13px;
-  color: var(--color-text, #e0e0e0);
-  opacity: 0.9;
-  white-space: nowrap;
+  display: -webkit-box;
   overflow: hidden;
-  text-overflow: ellipsis;
   margin: 0;
+  color: var(--ropy-foreground);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .clipboard-overlay-item-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-  font-size: 11px;
-  color: rgba(128, 128, 128, 0.4);
+  gap: 4px;
+  margin-top: 4px;
+  color: var(--ropy-muted-foreground);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.clipboard-overlay-item-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--ropy-background);
+  color: var(--ropy-muted-foreground);
+  padding: 0 4px;
 }
 
 .clipboard-overlay-item-actions {
-  flex-shrink: 0;
-  opacity: 0;
-  transition: opacity 0.1s;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 12px 12px 12px 0;
 }
 
-.clipboard-overlay-item:hover .clipboard-overlay-item-actions,
-.clipboard-overlay-item.selected .clipboard-overlay-item-actions {
-  opacity: 1;
+.clipboard-overlay-item-action-row {
+  display: flex;
+  gap: 2px;
 }
 
-.clipboard-overlay-hint {
-  padding: 6px 12px;
-  font-size: 11px;
-  color: rgba(128, 128, 128, 0.3);
-  border-top: 1px solid rgba(128, 128, 128, 0.1);
-  text-align: center;
+.clipboard-overlay .clipboard-overlay-star-button,
+.clipboard-overlay .clipboard-overlay-pin-button,
+.clipboard-overlay .clipboard-overlay-delete-button {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.clipboard-overlay .clipboard-overlay-star-button.favorited,
+.clipboard-overlay .clipboard-overlay-pin-button.pinned {
+  background: var(--ropy-primary);
+  color: var(--ropy-primary-foreground);
+}
+
+.clipboard-overlay .clipboard-overlay-star-button:hover,
+.clipboard-overlay .clipboard-overlay-pin-button:hover,
+.clipboard-overlay .clipboard-overlay-delete-button:hover {
+  background: var(--ropy-accent);
+  color: var(--ropy-foreground);
+}
+
+.clipboard-overlay .clipboard-overlay-pin-button svg,
+.clipboard-overlay .clipboard-overlay-delete-button svg {
+  width: 12px;
+  height: 12px;
+}
+
+.clipboard-overlay .clipboard-overlay-pin-button svg {
+  stroke-width: 0;
+}
+
+.clipboard-overlay-bottom-fade {
+  display: none;
 }

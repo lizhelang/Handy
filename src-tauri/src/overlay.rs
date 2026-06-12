@@ -1,13 +1,10 @@
 use crate::input;
 use crate::settings;
 use crate::settings::OverlayPosition;
+use tauri::WebviewWindowBuilder;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 
-#[cfg(not(target_os = "macos"))]
 use log::debug;
-
-#[cfg(not(target_os = "macos"))]
-use tauri::WebviewWindowBuilder;
 
 #[cfg(target_os = "macos")]
 use tauri::WebviewUrl;
@@ -33,6 +30,8 @@ tauri_panel! {
 
 const OVERLAY_WIDTH: f64 = 172.0;
 const OVERLAY_HEIGHT: f64 = 36.0;
+const CLIPBOARD_OVERLAY_WIDTH: f64 = 400.0;
+const CLIPBOARD_OVERLAY_HEIGHT: f64 = 550.0;
 
 #[cfg(target_os = "macos")]
 const OVERLAY_TOP_OFFSET: f64 = 46.0;
@@ -219,6 +218,54 @@ fn calculate_overlay_position(app_handle: &AppHandle) -> Option<(f64, f64)> {
     };
 
     Some((x, y))
+}
+
+pub fn create_clipboard_overlay(app_handle: &AppHandle) {
+    if app_handle.get_webview_window("clipboard_overlay").is_some() {
+        return;
+    }
+
+    let mut builder = WebviewWindowBuilder::new(
+        app_handle,
+        "clipboard_overlay",
+        tauri::WebviewUrl::App("src/overlay/clipboard/index.html".into()),
+    )
+    .title("Clipboard")
+    .resizable(false)
+    .inner_size(CLIPBOARD_OVERLAY_WIDTH, CLIPBOARD_OVERLAY_HEIGHT)
+    .shadow(true)
+    .maximizable(false)
+    .minimizable(false)
+    .closable(true)
+    .accept_first_mouse(true)
+    .decorations(false)
+    .always_on_top(false)
+    .skip_taskbar(false)
+    .transparent(true)
+    .center()
+    .visible(false);
+
+    if let Some(data_dir) = crate::portable::data_dir() {
+        builder = builder.data_directory(data_dir.join("webview"));
+    }
+
+    match builder.build() {
+        Ok(_) => {
+            debug!("Clipboard overlay window created successfully (hidden)");
+        }
+        Err(e) => {
+            debug!("Failed to create clipboard overlay window: {}", e);
+        }
+    }
+}
+
+pub fn show_clipboard_overlay(app_handle: &AppHandle) {
+    create_clipboard_overlay(app_handle);
+
+    if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {
+        let _ = overlay_window.show();
+        let _ = overlay_window.set_focus();
+    }
 }
 
 /// Creates the recording overlay window and keeps it hidden by default
