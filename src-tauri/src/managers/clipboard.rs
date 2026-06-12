@@ -1,9 +1,11 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local, Utc};
+#[cfg(not(target_os = "macos"))]
 use clipboard_rs::common::RustImage;
-use clipboard_rs::{
-    Clipboard, ClipboardContext, ClipboardHandler, ClipboardWatcher, ClipboardWatcherContext,
-};
+#[cfg(not(target_os = "macos"))]
+use clipboard_rs::{Clipboard, ClipboardContext};
+#[cfg(not(target_os = "macos"))]
+use clipboard_rs::{ClipboardHandler, ClipboardWatcher, ClipboardWatcherContext};
 use log::{debug, error, info};
 use rusqlite::{params, Connection, OptionalExtension};
 use rusqlite_migration::{Migrations, M};
@@ -16,6 +18,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
+use std::time::Duration;
 use tauri::image::Image;
 use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -219,39 +222,71 @@ impl ClipboardManager {
                 error!("Failed to capture initial clipboard state: {}", e);
             }
 
-            let ctx = match ClipboardContext::new() {
-                Ok(ctx) => ctx,
-                Err(e) => {
-                    error!("Failed to create clipboard context: {}", e);
-                    manager.monitoring_started.store(false, Ordering::SeqCst);
-                    return;
-                }
-            };
+            #[cfg(target_os = "macos")]
+            manager.run_polling_monitor();
 
-            let mut watcher = match ClipboardWatcherContext::new() {
-                Ok(watcher) => watcher,
-                Err(e) => {
-                    error!("Failed to create clipboard watcher: {}", e);
-                    manager.monitoring_started.store(false, Ordering::SeqCst);
-                    return;
-                }
-            };
+            #[cfg(not(target_os = "macos"))]
+            manager.run_watcher_monitor();
 
-            let handler = ClipboardChangeHandler {
-                manager: manager.clone(),
-                clipboard: ctx,
-            };
-
-            watcher.add_handler(handler);
-            watcher.start_watch(); // Blocking call
+            error!("Clipboard monitoring thread exited unexpectedly");
             manager.monitoring_started.store(false, Ordering::SeqCst);
         });
     }
 
+    #[cfg(target_os = "macos")]
+    fn run_polling_monitor(&self) {
+        info!("Using polling clipboard monitor on macOS");
+
+        loop {
+            if self.monitoring_enabled() {
+                if let Err(e) = self.sync_current_clipboard() {
+                    error!("Failed to poll clipboard state: {}", e);
+                }
+            }
+
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn run_watcher_monitor(&self) {
+        let ctx = match ClipboardContext::new() {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                error!("Failed to create clipboard context: {}", e);
+                return;
+            }
+        };
+
+        let mut watcher = match ClipboardWatcherContext::new() {
+            Ok(watcher) => watcher,
+            Err(e) => {
+                error!("Failed to create clipboard watcher: {}", e);
+                return;
+            }
+        };
+
+        let handler = ClipboardChangeHandler {
+            manager: self.clone(),
+            clipboard: ctx,
+        };
+
+        watcher.add_handler(handler);
+        watcher.start_watch(); // Blocking call
+    }
+
     pub fn sync_current_clipboard(&self) -> Result<()> {
-        let mut clipboard =
-            ClipboardContext::new().map_err(|e| anyhow!("Failed to access clipboard: {}", e))?;
-        self.process_clipboard_change(&mut clipboard)
+        #[cfg(target_os = "macos")]
+        {
+            return self.process_tauri_clipboard_change();
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut clipboard = ClipboardContext::new()
+                .map_err(|e| anyhow!("Failed to access clipboard: {}", e))?;
+            self.process_clipboard_change(&mut clipboard)
+        }
     }
 
     fn monitoring_enabled(&self) -> bool {
@@ -278,6 +313,7 @@ impl ClipboardManager {
         self.add_text(text).map(|_| ())
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn process_image_change(&self, image_data: &clipboard_rs::RustImageData) -> Result<()> {
         let png_buffer = image_data
             .to_png()
@@ -291,6 +327,41 @@ impl ClipboardManager {
         self.add_image(image_data).map(|_| ())
     }
 
+    #[cfg(target_os = "macos")]
+    fn process_tauri_image_change(&self, image: &Image<'_>) -> Result<()> {
+        let png_bytes = Self::encode_tauri_image_png(image)?;
+        let hash = Self::compute_hash(&png_bytes);
+
+        if !self.should_process_hash(&hash) {
+            return Ok(());
+        }
+
+        self.add_image_png(hash, image.width(), image.height(), &png_bytes)
+            .map(|_| ())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn process_tauri_clipboard_change(&self) -> Result<()> {
+        if !self.monitoring_enabled() {
+            return Ok(());
+        }
+
+        let clipboard = self.app_handle.clipboard();
+
+        if let Ok(text) = clipboard.read_text() {
+            if !text.is_empty() {
+                return self.process_text_change(&text);
+            }
+        }
+
+        if let Ok(image) = clipboard.read_image() {
+            return self.process_tauri_image_change(&image);
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
     fn process_clipboard_change(&self, clipboard: &mut ClipboardContext) -> Result<()> {
         if !self.monitoring_enabled() {
             return Ok(());
@@ -309,6 +380,25 @@ impl ClipboardManager {
         }
 
         Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn encode_tauri_image_png(image: &Image<'_>) -> Result<Vec<u8>> {
+        let mut png_bytes = Vec::new();
+
+        {
+            let mut encoder = png::Encoder::new(&mut png_bytes, image.width(), image.height());
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder
+                .write_header()
+                .map_err(|e| anyhow!("Failed to create PNG header: {}", e))?;
+            writer
+                .write_image_data(image.rgba())
+                .map_err(|e| anyhow!("Failed to encode PNG image: {}", e))?;
+        }
+
+        Ok(png_bytes)
     }
 
     /// Add a text entry to clipboard history
@@ -379,6 +469,7 @@ impl ClipboardManager {
         Ok(Some(item))
     }
 
+    #[cfg(not(target_os = "macos"))]
     /// Add an image entry to clipboard history
     pub fn add_image(
         &self,
@@ -454,7 +545,79 @@ impl ClipboardManager {
         // Emit event
         let item = self.normalize_item_for_client(item);
 
-        if let Err(e) = (ClipboardUpdatePayload::Added { item: item.clone() }).emit(&self.app_handle)
+        if let Err(e) =
+            (ClipboardUpdatePayload::Added { item: item.clone() }).emit(&self.app_handle)
+        {
+            error!("Failed to emit clipboard-added event: {}", e);
+        }
+
+        self.cleanup_old_entries()?;
+
+        Ok(Some(item))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn add_image_png(
+        &self,
+        hash: String,
+        width: u32,
+        height: u32,
+        png_bytes: &[u8],
+    ) -> Result<Option<ClipboardItem>> {
+        {
+            let conn = self.get_connection()?;
+            let exists: bool = conn.query_row(
+                "SELECT COUNT(*) > 0 FROM clipboard_history WHERE content_hash = ?1",
+                params![hash],
+                |row| row.get(0),
+            )?;
+
+            if exists {
+                debug!("Clipboard image already exists (hash: {})", hash);
+                return Ok(None);
+            }
+        }
+
+        let filename = format!("{}.png", hash);
+        let image_path = self.images_dir.join(&filename);
+        fs::write(&image_path, png_bytes)?;
+
+        let size_bytes = png_bytes.len() as i64;
+        let now = Utc::now().timestamp();
+        let preview = format!("Image {}x{}", width, height);
+
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT INTO clipboard_history (
+                content_type, content_preview, content_hash, image_path,
+                created_at, size_bytes
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params!["image", preview, hash, filename, now, size_bytes],
+        )?;
+
+        let item = ClipboardItem {
+            id: conn.last_insert_rowid(),
+            content_type: "image".to_string(),
+            content_preview: preview,
+            content_hash: hash,
+            full_text: None,
+            image_path: Some(filename),
+            source_app: None,
+            is_favorite: false,
+            is_pinned: false,
+            created_at: DateTime::from_timestamp(now, 0)
+                .unwrap_or_default()
+                .with_timezone(&Local)
+                .to_rfc3339(),
+            size_bytes,
+        };
+
+        info!("Added clipboard image entry with id {}", item.id);
+
+        let item = self.normalize_item_for_client(item);
+
+        if let Err(e) =
+            (ClipboardUpdatePayload::Added { item: item.clone() }).emit(&self.app_handle)
         {
             error!("Failed to emit clipboard-added event: {}", e);
         }
@@ -781,11 +944,13 @@ impl ClipboardManager {
 }
 
 /// Handler for clipboard change events
+#[cfg(not(target_os = "macos"))]
 struct ClipboardChangeHandler {
     manager: ClipboardManager,
     clipboard: ClipboardContext,
 }
 
+#[cfg(not(target_os = "macos"))]
 impl ClipboardHandler for ClipboardChangeHandler {
     fn on_clipboard_change(&mut self) {
         if let Err(e) = self.manager.process_clipboard_change(&mut self.clipboard) {
