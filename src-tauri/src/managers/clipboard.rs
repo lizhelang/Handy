@@ -16,7 +16,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc,
 };
 use std::time::Duration;
 use tauri::image::Image;
@@ -91,7 +91,6 @@ pub struct ClipboardManager {
     app_handle: AppHandle,
     db_path: PathBuf,
     images_dir: PathBuf,
-    last_hash: Arc<Mutex<String>>,
     monitoring_started: Arc<AtomicBool>,
 }
 
@@ -123,7 +122,6 @@ impl ClipboardManager {
             app_handle: app_handle.clone(),
             db_path,
             images_dir,
-            last_hash: Arc::new(Mutex::new(String::new())),
             monitoring_started: Arc::new(AtomicBool::new(false)),
         };
 
@@ -315,22 +313,7 @@ impl ClipboardManager {
         settings.experimental_enabled && settings.clipboard_enabled
     }
 
-    fn should_process_hash(&self, hash: &str) -> bool {
-        let mut last_hash = self.last_hash.lock().unwrap();
-        if last_hash.as_str() == hash {
-            return false;
-        }
-
-        *last_hash = hash.to_string();
-        true
-    }
-
     fn process_text_change(&self, text: &str) -> Result<()> {
-        let hash = Self::compute_hash(text.as_bytes());
-        if !self.should_process_hash(&hash) {
-            return Ok(());
-        }
-
         self.add_text(text).map(|_| ())
     }
 
@@ -341,10 +324,6 @@ impl ClipboardManager {
             .map_err(|e| anyhow!("Failed to convert image to PNG: {}", e))?;
         let hash = Self::compute_hash(png_buffer.get_bytes());
 
-        if !self.should_process_hash(&hash) {
-            return Ok(());
-        }
-
         self.add_image(image_data).map(|_| ())
     }
 
@@ -352,10 +331,6 @@ impl ClipboardManager {
     fn process_tauri_image_change(&self, image: &Image<'_>) -> Result<()> {
         let png_bytes = Self::encode_tauri_image_png(image)?;
         let hash = Self::compute_hash(&png_bytes);
-
-        if !self.should_process_hash(&hash) {
-            return Ok(());
-        }
 
         self.add_image_png(hash, image.width(), image.height(), &png_bytes)
             .map(|_| ())
@@ -422,6 +397,44 @@ impl ClipboardManager {
         Ok(png_bytes)
     }
 
+    fn refresh_existing_item(&self, hash: &str) -> Result<Option<ClipboardItem>> {
+        let now = Utc::now().timestamp();
+        let conn = self.get_connection()?;
+        let changed = conn.execute(
+            "UPDATE clipboard_history SET created_at = ?1 WHERE content_hash = ?2",
+            params![now, hash],
+        )?;
+
+        if changed == 0 {
+            return Ok(None);
+        }
+
+        let item = conn
+            .query_row(
+                "SELECT id, content_type, content_preview, content_hash, full_text, image_path,
+                    source_app, is_favorite, is_pinned, created_at, size_bytes
+                 FROM clipboard_history WHERE content_hash = ?1",
+                params![hash],
+                Self::map_clipboard_item,
+            )
+            .optional()?;
+
+        if let Some(item) = item {
+            info!("Refreshed existing clipboard entry with id {}", item.id);
+            let item = self.normalize_item_for_client(item);
+
+            if let Err(e) =
+                (ClipboardUpdatePayload::Added { item: item.clone() }).emit(&self.app_handle)
+            {
+                error!("Failed to emit clipboard-refreshed event: {}", e);
+            }
+
+            return Ok(Some(item));
+        }
+
+        Ok(None)
+    }
+
     /// Add a text entry to clipboard history
     pub fn add_text(&self, text: &str) -> Result<Option<ClipboardItem>> {
         let hash = Self::compute_hash(text.as_bytes());
@@ -437,7 +450,7 @@ impl ClipboardManager {
 
             if exists {
                 debug!("Clipboard content already exists (hash: {})", hash);
-                return Ok(None);
+                return self.refresh_existing_item(&hash);
             }
         }
 
@@ -515,7 +528,7 @@ impl ClipboardManager {
 
             if exists {
                 debug!("Clipboard image already exists (hash: {})", hash);
-                return Ok(None);
+                return self.refresh_existing_item(&hash);
             }
         }
 
@@ -595,7 +608,7 @@ impl ClipboardManager {
 
             if exists {
                 debug!("Clipboard image already exists (hash: {})", hash);
-                return Ok(None);
+                return self.refresh_existing_item(&hash);
             }
         }
 
