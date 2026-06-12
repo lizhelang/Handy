@@ -235,17 +235,38 @@ impl ClipboardManager {
 
     #[cfg(target_os = "macos")]
     fn run_polling_monitor(&self) {
-        info!("Using polling clipboard monitor on macOS");
+        info!("Using change-count clipboard monitor on macOS");
+        let mut last_change_count = Self::macos_clipboard_change_count();
 
         loop {
-            if self.monitoring_enabled() {
+            if !self.monitoring_enabled() {
+                std::thread::sleep(Duration::from_millis(500));
+                continue;
+            }
+
+            let change_count = Self::macos_clipboard_change_count();
+            let should_sync = match (last_change_count, change_count) {
+                (Some(last), Some(current)) => current != last,
+                (None, Some(_)) => true,
+                (Some(_), None) => false,
+                (None, None) => false,
+            };
+
+            if should_sync {
                 if let Err(e) = self.sync_current_clipboard() {
                     error!("Failed to poll clipboard state: {}", e);
                 }
+                last_change_count = change_count;
             }
 
             std::thread::sleep(Duration::from_millis(500));
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn macos_clipboard_change_count() -> Option<isize> {
+        let pasteboard = objc2_app_kit::NSPasteboard::generalPasteboard();
+        Some(pasteboard.changeCount())
     }
 
     #[cfg(not(target_os = "macos"))]
