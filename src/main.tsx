@@ -1,10 +1,10 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { platform } from "@tauri-apps/plugin-os";
 import App from "./App";
+import { getSafePlatform } from "./lib/tauriPlatform";
 
 // Set platform before render so CSS can scope per-platform (e.g. scrollbar styles)
-document.documentElement.dataset.platform = platform();
+document.documentElement.dataset.platform = getSafePlatform();
 
 // Initialize i18n
 import "./i18n";

@@ -2,7 +2,6 @@ import { useEffect, useState, useRef } from "react";
 import { toast, Toaster } from "sonner";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
-import { platform } from "@tauri-apps/plugin-os";
 import {
   checkAccessibilityPermission,
   checkMicrophonePermission,
@@ -17,6 +16,7 @@ import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
+import { getSafePlatform } from "@/lib/tauriPlatform";
 
 type OnboardingStep = "accessibility" | "model" | "done";
 
@@ -108,7 +108,7 @@ function App() {
       const { error_type, detail } = event.payload;
 
       if (error_type === "microphone_permission_denied") {
-        const currentPlatform = platform();
+        const currentPlatform = getSafePlatform();
         const platformKey = `errors.micPermissionDenied.${currentPlatform}`;
         const description = t(platformKey, {
           defaultValue: t("errors.micPermissionDenied.generic"),
@@ -177,7 +177,7 @@ function App() {
       // Check if they have any models available
       const result = await commands.hasAnyModelsAvailable();
       const hasModels = result.status === "ok" && result.data;
-      const currentPlatform = platform();
+      const currentPlatform = getSafePlatform();
 
       if (hasModels) {
         // Returning user - check if they need to grant permissions first

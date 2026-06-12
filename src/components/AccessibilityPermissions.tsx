@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { type } from "@tauri-apps/plugin-os";
 import {
   checkAccessibilityPermission,
   requestAccessibilityPermission,
 } from "tauri-plugin-macos-permissions-api";
+import { getSafeOsType } from "@/lib/tauriPlatform";
 
 // Define permission state type
 type PermissionState = "request" | "verify" | "granted";
@@ -22,7 +22,7 @@ const AccessibilityPermissions: React.FC = () => {
     useState<PermissionState>("request");
 
   // Accessibility permissions are only required on macOS
-  const isMacOS = type() === "macos";
+  const isMacOS = getSafeOsType() === "macos";
 
   // Check permissions without requesting
   const checkPermissions = async (): Promise<boolean> => {

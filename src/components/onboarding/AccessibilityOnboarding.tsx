@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { platform } from "@tauri-apps/plugin-os";
 import {
   checkAccessibilityPermission,
   requestAccessibilityPermission,
@@ -10,6 +9,7 @@ import {
 import { toast } from "sonner";
 import { commands } from "@/bindings";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { getSafePlatform } from "@/lib/tauriPlatform";
 import HandyTextLogo from "../icons/HandyTextLogo";
 import { Keyboard, Mic, Check, Loader2 } from "lucide-react";
 
@@ -76,7 +76,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
 
   // Check platform and permission status on mount
   useEffect(() => {
-    const currentPlatform = platform();
+    const currentPlatform = getSafePlatform();
     const nextPlatform: PermissionPlatform =
       currentPlatform === "macos"
         ? "macos"
