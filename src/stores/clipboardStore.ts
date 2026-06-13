@@ -15,6 +15,26 @@ import type {
 } from "@/lib/types/clipboard";
 
 const PAGE_SIZE = 20;
+let clipboardInitializePromise: Promise<void> | null = null;
+
+const sortClipboardItemOrder = (
+  items: Record<number, ClipboardItem>,
+  itemOrder: number[],
+  sortOrder: ClipboardSortOrder,
+) =>
+  itemOrder.sort((leftId, rightId) => {
+    const left = items[leftId];
+    const right = items[rightId];
+
+    if (!left || !right) return 0;
+    if (left.is_pinned !== right.is_pinned) return left.is_pinned ? -1 : 1;
+
+    const leftTime = new Date(left.created_at).getTime();
+    const rightTime = new Date(right.created_at).getTime();
+    const timeDiff = leftTime - rightTime;
+
+    return sortOrder === "oldest" ? timeDiff : -timeDiff;
+  });
 
 interface ClipboardStore {
   items: Record<number, ClipboardItem>;
@@ -78,41 +98,131 @@ export const useClipboardStore = create<ClipboardStore>()(
 
     initialize: async () => {
       if (get().initialized) return;
-      const [stats, settings] = await Promise.all([
-        invoke<ClipboardStats>("get_clipboard_stats"),
-        invoke<ClipboardSettings>("get_clipboard_settings"),
-      ]);
-      set({ stats, settings, initialized: true });
+      if (clipboardInitializePromise) return clipboardInitializePromise;
 
-      // Listen for real-time clipboard updates
-      listen<ClipboardUpdatePayload>("clipboard-update-payload", (event) => {
-        const payload = event.payload;
-        set(
-          produce((state) => {
-            if (payload.action === "added") {
-              const { item } = payload;
-              state.items[item.id] = item;
-              state.itemOrder = state.itemOrder.filter(
-                (existingId: number) => existingId !== item.id,
-              );
-              state.itemOrder.unshift(item.id);
-            } else if (payload.action === "deleted") {
-              delete state.items[payload.id];
-              state.itemOrder = state.itemOrder.filter(
-                (existingId: number) => existingId !== payload.id,
-              );
-              if (state.selectedId === payload.id) {
-                state.selectedId = null;
-              }
-              if (state.previewItem?.id === payload.id) {
-                state.previewItem = null;
-              }
+      clipboardInitializePromise = (async () => {
+        const [stats, settings] = await Promise.all([
+          invoke<ClipboardStats>("get_clipboard_stats"),
+          invoke<ClipboardSettings>("get_clipboard_settings"),
+        ]);
+
+        const reloadCurrentView = () => {
+          const { searchQuery } = get();
+          if (searchQuery.trim()) {
+            void get().search(searchQuery);
+          } else {
+            void get().loadItems(true);
+          }
+        };
+
+        await listen<ClipboardUpdatePayload>(
+          "clipboard-update-payload",
+          (event) => {
+            const payload = event.payload;
+
+            if (
+              (payload.action === "added" || payload.action === "updated") &&
+              get().searchQuery.trim()
+            ) {
+              reloadCurrentView();
+              void get().refreshStats();
+              return;
             }
-          }),
-        );
-      });
 
-      await get().loadItems(true);
+            set(
+              produce((state) => {
+                if (
+                  payload.action === "added" ||
+                  payload.action === "updated"
+                ) {
+                  const { item } = payload;
+                  state.items[item.id] = item;
+                  state.itemOrder = state.itemOrder.filter(
+                    (existingId: number) => existingId !== item.id,
+                  );
+                  state.itemOrder.push(item.id);
+                  sortClipboardItemOrder(
+                    state.items,
+                    state.itemOrder,
+                    state.sortOrder,
+                  );
+                  if (state.previewItem?.id === item.id) {
+                    state.previewItem = item;
+                  }
+                } else if (payload.action === "deleted") {
+                  delete state.items[payload.id];
+                  state.itemOrder = state.itemOrder.filter(
+                    (existingId: number) => existingId !== payload.id,
+                  );
+                  if (state.selectedId === payload.id) {
+                    state.selectedId = null;
+                  }
+                  if (state.previewItem?.id === payload.id) {
+                    state.previewItem = null;
+                  }
+                } else if (payload.action === "deleted_many") {
+                  const ids = new Set(payload.ids);
+                  for (const id of ids) {
+                    delete state.items[id];
+                  }
+                  state.itemOrder = state.itemOrder.filter(
+                    (existingId: number) => !ids.has(existingId),
+                  );
+                  if (state.selectedId !== null && ids.has(state.selectedId)) {
+                    state.selectedId = null;
+                  }
+                  if (state.previewItem && ids.has(state.previewItem.id)) {
+                    state.previewItem = null;
+                  }
+                } else if (payload.action === "cleared") {
+                  if (payload.keep_pinned) {
+                    state.itemOrder = state.itemOrder.filter((id: number) => {
+                      const item = state.items[id];
+                      const shouldKeep = item?.is_pinned || item?.is_favorite;
+                      if (!shouldKeep) {
+                        delete state.items[id];
+                      }
+                      return shouldKeep;
+                    });
+                  } else {
+                    state.items = {};
+                    state.itemOrder = [];
+                  }
+
+                  if (
+                    state.selectedId !== null &&
+                    !state.itemOrder.includes(state.selectedId)
+                  ) {
+                    state.selectedId = null;
+                  }
+                  if (
+                    state.previewItem &&
+                    !state.itemOrder.includes(state.previewItem.id)
+                  ) {
+                    state.previewItem = null;
+                  }
+                }
+              }),
+            );
+
+            if (payload.action === "cleared") {
+              reloadCurrentView();
+            }
+            void get().refreshStats();
+          },
+        );
+
+        set({ stats, settings, initialized: true });
+        await get().loadItems(true);
+      })();
+
+      try {
+        await clipboardInitializePromise;
+      } finally {
+        if (!get().initialized) {
+          clipboardInitializePromise = null;
+        }
+      }
     },
 
     loadItems: async (reset = false) => {

@@ -38,4 +38,7 @@ export interface ClipboardPageResult {
 
 export type ClipboardUpdatePayload =
   | { action: "added"; item: ClipboardItem }
-  | { action: "deleted"; id: number };
+  | { action: "updated"; item: ClipboardItem }
+  | { action: "deleted"; id: number }
+  | { action: "deleted_many"; ids: number[] }
+  | { action: "cleared"; keep_pinned: boolean };

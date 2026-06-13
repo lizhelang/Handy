@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use specta::Type;
 use std::fs;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -23,6 +24,8 @@ use tauri::image::Image;
 use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_specta::Event;
+
+const TEXT_PREVIEW_MAX_CHARS: usize = 200;
 
 /// Database migrations for clipboard history.
 static MIGRATIONS: &[M] = &[M::up(
@@ -82,8 +85,14 @@ pub struct ClipboardPageResult {
 pub enum ClipboardUpdatePayload {
     #[serde(rename = "added")]
     Added { item: ClipboardItem },
+    #[serde(rename = "updated")]
+    Updated { item: ClipboardItem },
     #[serde(rename = "deleted")]
     Deleted { id: i64 },
+    #[serde(rename = "deleted_many")]
+    DeletedMany { ids: Vec<i64> },
+    #[serde(rename = "cleared")]
+    Cleared { keep_pinned: bool },
 }
 
 #[derive(Clone)]
@@ -204,6 +213,17 @@ impl ClipboardManager {
         format!("{:x}", hasher.finalize())
     }
 
+    fn text_preview(text: &str) -> String {
+        let mut chars = text.chars();
+        let preview: String = chars.by_ref().take(TEXT_PREVIEW_MAX_CHARS).collect();
+
+        if chars.next().is_some() {
+            format!("{}...", preview)
+        } else {
+            preview
+        }
+    }
+
     /// Start monitoring clipboard changes
     pub fn start_monitoring(&self) {
         if self.monitoring_started.swap(true, Ordering::SeqCst) {
@@ -216,19 +236,29 @@ impl ClipboardManager {
         std::thread::spawn(move || {
             info!("Starting clipboard monitoring thread");
 
-            if let Err(e) = manager.sync_current_clipboard() {
-                error!("Failed to capture initial clipboard state: {}", e);
+            loop {
+                let result = catch_unwind(AssertUnwindSafe(|| manager.run_monitoring_backend()));
+
+                match result {
+                    Ok(()) => {
+                        error!("Clipboard monitoring backend exited unexpectedly; restarting")
+                    }
+                    Err(_) => error!("Clipboard monitoring backend panicked; restarting"),
+                }
+
+                std::thread::sleep(Duration::from_secs(1));
             }
-
-            #[cfg(target_os = "macos")]
-            manager.run_polling_monitor();
-
-            #[cfg(not(target_os = "macos"))]
-            manager.run_watcher_monitor();
-
-            error!("Clipboard monitoring thread exited unexpectedly");
-            manager.monitoring_started.store(false, Ordering::SeqCst);
         });
+    }
+
+    fn run_monitoring_backend(&self) {
+        self.sync_current_clipboard_for_monitor("capture initial clipboard state");
+
+        #[cfg(target_os = "macos")]
+        self.run_polling_monitor();
+
+        #[cfg(not(target_os = "macos"))]
+        self.run_watcher_monitor_loop();
     }
 
     #[cfg(target_os = "macos")]
@@ -251,9 +281,7 @@ impl ClipboardManager {
             };
 
             if should_sync {
-                if let Err(e) = self.sync_current_clipboard() {
-                    error!("Failed to poll clipboard state: {}", e);
-                }
+                self.sync_current_clipboard_for_monitor("poll clipboard state");
                 last_change_count = change_count;
             }
 
@@ -263,8 +291,33 @@ impl ClipboardManager {
 
     #[cfg(target_os = "macos")]
     fn macos_clipboard_change_count() -> Option<isize> {
-        let pasteboard = objc2_app_kit::NSPasteboard::generalPasteboard();
-        Some(pasteboard.changeCount())
+        match catch_unwind(AssertUnwindSafe(|| {
+            let pasteboard = objc2_app_kit::NSPasteboard::generalPasteboard();
+            pasteboard.changeCount()
+        })) {
+            Ok(change_count) => Some(change_count),
+            Err(_) => {
+                error!("Failed to read macOS pasteboard change count");
+                None
+            }
+        }
+    }
+
+    fn sync_current_clipboard_for_monitor(&self, context: &str) {
+        match catch_unwind(AssertUnwindSafe(|| self.sync_current_clipboard())) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => error!("Failed to {}: {}", context, e),
+            Err(_) => error!("Clipboard monitor panicked while trying to {}", context),
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn run_watcher_monitor_loop(&self) {
+        loop {
+            self.run_watcher_monitor();
+            error!("Clipboard watcher stopped; restarting in 1 second");
+            std::thread::sleep(Duration::from_secs(1));
+        }
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -292,6 +345,16 @@ impl ClipboardManager {
 
         watcher.add_handler(handler);
         watcher.start_watch(); // Blocking call
+    }
+
+    fn emit_deleted_many(&self, ids: Vec<i64>) {
+        if ids.is_empty() {
+            return;
+        }
+
+        if let Err(e) = (ClipboardUpdatePayload::DeletedMany { ids }).emit(&self.app_handle) {
+            error!("Failed to emit clipboard-deleted-many event: {}", e);
+        }
     }
 
     pub fn sync_current_clipboard(&self) -> Result<()> {
@@ -354,6 +417,7 @@ impl ClipboardManager {
             return self.process_tauri_image_change(&image);
         }
 
+        debug!("Clipboard change did not contain supported text or image content");
         Ok(())
     }
 
@@ -435,6 +499,21 @@ impl ClipboardManager {
         Ok(None)
     }
 
+    fn get_item_by_id(&self, id: i64) -> Result<Option<ClipboardItem>> {
+        let conn = self.get_connection()?;
+        let item = conn
+            .query_row(
+                "SELECT id, content_type, content_preview, content_hash, full_text, image_path,
+                    source_app, is_favorite, is_pinned, created_at, size_bytes
+                 FROM clipboard_history WHERE id = ?1",
+                params![id],
+                Self::map_clipboard_item,
+            )
+            .optional()?;
+
+        Ok(item.map(|item| self.normalize_item_for_client(item)))
+    }
+
     /// Add a text entry to clipboard history
     pub fn add_text(&self, text: &str) -> Result<Option<ClipboardItem>> {
         let hash = Self::compute_hash(text.as_bytes());
@@ -454,11 +533,7 @@ impl ClipboardManager {
             }
         }
 
-        let preview = if text.len() > 200 {
-            format!("{}...", &text[..200])
-        } else {
-            text.to_string()
-        };
+        let preview = Self::text_preview(text);
 
         let size_bytes = text.len() as i64;
         let now = Utc::now().timestamp();
@@ -498,7 +573,8 @@ impl ClipboardManager {
             error!("Failed to emit clipboard-added event: {}", e);
         }
 
-        self.cleanup_old_entries()?;
+        let deleted_ids = self.cleanup_old_entries()?;
+        self.emit_deleted_many(deleted_ids);
 
         Ok(Some(item))
     }
@@ -585,7 +661,8 @@ impl ClipboardManager {
             error!("Failed to emit clipboard-added event: {}", e);
         }
 
-        self.cleanup_old_entries()?;
+        let deleted_ids = self.cleanup_old_entries()?;
+        self.emit_deleted_many(deleted_ids);
 
         Ok(Some(item))
     }
@@ -656,7 +733,8 @@ impl ClipboardManager {
             error!("Failed to emit clipboard-added event: {}", e);
         }
 
-        self.cleanup_old_entries()?;
+        let deleted_ids = self.cleanup_old_entries()?;
+        self.emit_deleted_many(deleted_ids);
 
         Ok(Some(item))
     }
@@ -751,6 +829,13 @@ impl ClipboardManager {
             params![id],
         )?;
         debug!("Toggled favorite status for clipboard item {}", id);
+
+        if let Some(item) = self.get_item_by_id(id)? {
+            if let Err(e) = (ClipboardUpdatePayload::Updated { item }).emit(&self.app_handle) {
+                error!("Failed to emit clipboard-updated event: {}", e);
+            }
+        }
+
         Ok(())
     }
 
@@ -762,6 +847,13 @@ impl ClipboardManager {
             params![id],
         )?;
         debug!("Toggled pin status for clipboard item {}", id);
+
+        if let Some(item) = self.get_item_by_id(id)? {
+            if let Err(e) = (ClipboardUpdatePayload::Updated { item }).emit(&self.app_handle) {
+                error!("Failed to emit clipboard-updated event: {}", e);
+            }
+        }
+
         Ok(())
     }
 
@@ -852,6 +944,10 @@ impl ClipboardManager {
         }
 
         info!("Cleared clipboard history (keep_pinned: {})", keep_pinned);
+        if let Err(e) = (ClipboardUpdatePayload::Cleared { keep_pinned }).emit(&self.app_handle) {
+            error!("Failed to emit clipboard-cleared event: {}", e);
+        }
+
         Ok(())
     }
 
@@ -928,7 +1024,7 @@ impl ClipboardManager {
     }
 
     /// Cleanup old entries when exceeding max_records
-    fn cleanup_old_entries(&self) -> Result<()> {
+    fn cleanup_old_entries(&self) -> Result<Vec<i64>> {
         let max_records = crate::settings::get_settings(&self.app_handle).clipboard_max_records;
         let conn = self.get_connection()?;
 
@@ -939,7 +1035,7 @@ impl ClipboardManager {
             })?;
 
         if current_count <= max_records as i64 {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         // Get entries to delete (oldest, non-pinned, non-favorite)
@@ -957,6 +1053,8 @@ impl ClipboardManager {
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
+        let mut deleted_ids = Vec::new();
+
         for (id, image_path) in entries_to_delete {
             // Delete image file if exists
             if let Some(path) = image_path {
@@ -970,10 +1068,11 @@ impl ClipboardManager {
 
             // Delete entry
             conn.execute("DELETE FROM clipboard_history WHERE id = ?1", params![id])?;
+            deleted_ids.push(id);
         }
 
         debug!("Cleaned up {} old clipboard entries", excess);
-        Ok(())
+        Ok(deleted_ids)
     }
 }
 
@@ -987,8 +1086,42 @@ struct ClipboardChangeHandler {
 #[cfg(not(target_os = "macos"))]
 impl ClipboardHandler for ClipboardChangeHandler {
     fn on_clipboard_change(&mut self) {
-        if let Err(e) = self.manager.process_clipboard_change(&mut self.clipboard) {
-            error!("Failed to process clipboard change: {}", e);
+        match catch_unwind(AssertUnwindSafe(|| {
+            self.manager.process_clipboard_change(&mut self.clipboard)
+        })) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => error!("Failed to process clipboard change: {}", e),
+            Err(_) => error!("Clipboard watcher panicked while processing clipboard change"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ClipboardManager, TEXT_PREVIEW_MAX_CHARS};
+
+    #[test]
+    fn text_preview_keeps_short_text_unchanged() {
+        assert_eq!(ClipboardManager::text_preview("hello"), "hello");
+    }
+
+    #[test]
+    fn text_preview_truncates_ascii_text() {
+        let text = "a".repeat(TEXT_PREVIEW_MAX_CHARS + 1);
+        let preview = ClipboardManager::text_preview(&text);
+
+        assert_eq!(
+            preview,
+            format!("{}...", "a".repeat(TEXT_PREVIEW_MAX_CHARS))
+        );
+    }
+
+    #[test]
+    fn text_preview_truncates_multibyte_text_without_panicking() {
+        let text = "中文".repeat(TEXT_PREVIEW_MAX_CHARS);
+        let preview = ClipboardManager::text_preview(&text);
+
+        assert_eq!(preview.chars().count(), TEXT_PREVIEW_MAX_CHARS + 3);
+        assert!(preview.ends_with("..."));
     }
 }

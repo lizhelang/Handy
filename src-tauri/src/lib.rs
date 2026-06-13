@@ -209,7 +209,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         )
         .tooltip(tray::tray_tooltip())
         .show_menu_on_left_click(false)
-        .icon_as_template(true)
+        .icon_as_template(false)
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
                 position,
@@ -317,7 +317,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Create the recording overlay window (hidden by default)
     utils::create_recording_overlay(app_handle);
-    utils::create_clipboard_overlay(app_handle);
 }
 
 #[tauri::command]
@@ -618,6 +617,22 @@ pub fn run(cli_args: CliArgs) {
             Ok(())
         })
         .on_window_event(|window, event| match event {
+            tauri::WindowEvent::Focused(false) if window.label() == "clipboard_overlay" => {
+                match window.is_always_on_top() {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        if let Err(e) = window.hide() {
+                            log::error!("Failed to hide clipboard overlay after focus loss: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to read clipboard overlay pinned state: {}", e);
+                        if let Err(e) = window.hide() {
+                            log::error!("Failed to hide clipboard overlay after focus loss: {}", e);
+                        }
+                    }
+                }
+            }
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _res = window.hide();

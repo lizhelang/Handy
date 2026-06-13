@@ -22,13 +22,13 @@ pub enum TrayIconState {
 pub enum AppTheme {
     Dark,
     Light,
-    Colored, // Pink/colored theme for Linux
+    Colored, // Pink/colored theme for platforms that preserve tray colors
 }
 
-/// Gets the current app theme, with Linux defaulting to Colored theme
+/// Gets the current app theme, with macOS/Linux defaulting to Colored theme
 pub fn get_current_theme(app: &AppHandle) -> AppTheme {
-    if cfg!(target_os = "linux") {
-        // On Linux, always use the colored theme
+    if cfg!(any(target_os = "macos", target_os = "linux")) {
+        // macOS/Linux keep the brand icon visible in the tray/menu bar.
         AppTheme::Colored
     } else {
         // On other platforms, map system theme to our app theme
@@ -55,8 +55,8 @@ pub fn get_icon_path(theme: AppTheme, state: TrayIconState) -> &'static str {
         (AppTheme::Light, TrayIconState::Idle) => "resources/tray_idle_dark.png",
         (AppTheme::Light, TrayIconState::Recording) => "resources/tray_recording_dark.png",
         (AppTheme::Light, TrayIconState::Transcribing) => "resources/tray_transcribing_dark.png",
-        // Colored theme uses pink icons (for Linux)
-        (AppTheme::Colored, TrayIconState::Idle) => "resources/handy.png",
+        // Colored theme uses branded icons
+        (AppTheme::Colored, TrayIconState::Idle) => "resources/tray_handy.png",
         (AppTheme::Colored, TrayIconState::Recording) => "resources/recording.png",
         (AppTheme::Colored, TrayIconState::Transcribing) => "resources/transcribing.png",
     }
@@ -219,7 +219,7 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
 
     let tray = app.state::<TrayIcon>();
     let _ = tray.set_menu(Some(menu));
-    let _ = tray.set_icon_as_template(true);
+    let _ = tray.set_icon_as_template(false);
     let _ = tray.set_tooltip(Some(version_label));
 }
 

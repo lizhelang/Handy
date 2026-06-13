@@ -819,10 +819,26 @@ pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Res
 
 #[tauri::command]
 #[specta::specta]
-pub fn change_experimental_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+pub fn change_experimental_enabled_setting(
+    app: AppHandle,
+    manager: State<'_, Arc<ClipboardManager>>,
+    enabled: bool,
+) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.experimental_enabled = enabled;
+    let clipboard_enabled = settings.clipboard_enabled;
     settings::write_settings(&app, settings);
+
+    if enabled && clipboard_enabled {
+        manager.start_monitoring();
+        if let Err(err) = manager.sync_current_clipboard() {
+            warn!(
+                "Failed to sync clipboard after enabling experimental features: {}",
+                err
+            );
+        }
+    }
+
     Ok(())
 }
 
