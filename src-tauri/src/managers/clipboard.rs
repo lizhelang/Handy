@@ -382,18 +382,7 @@ impl ClipboardManager {
 
     #[cfg(not(target_os = "macos"))]
     fn process_image_change(&self, image_data: &clipboard_rs::RustImageData) -> Result<()> {
-        let png_buffer = image_data
-            .to_png()
-            .map_err(|e| anyhow!("Failed to convert image to PNG: {}", e))?;
-        let hash = Self::compute_hash(png_buffer.get_bytes());
-
-        self.add_image_png(
-            hash,
-            image_data.get_width(),
-            image_data.get_height(),
-            png_buffer.get_bytes(),
-        )
-        .map(|_| ())
+        self.add_image(image_data).map(|_| ())
     }
 
     #[cfg(target_os = "macos")]
