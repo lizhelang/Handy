@@ -1,6 +1,13 @@
 name: "Release"
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      sign_binaries:
+        description: "Sign and notarize release assets with configured secrets"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   create-release:
@@ -73,7 +80,7 @@ jobs:
       platform: ${{ matrix.platform }}
       target: ${{ matrix.target }}
       build-args: ${{ matrix.args }}
-      sign-binaries: true
+      sign-binaries: ${{ inputs.sign_binaries }}
       asset-prefix: "handy"
       upload-artifacts: false
       release-id: ${{ needs.create-release.outputs.release-id }}
