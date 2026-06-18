@@ -62,6 +62,7 @@ interface ClipboardStore {
   search: (query: string) => Promise<void>;
   toggleFavorite: (id: number) => Promise<void>;
   togglePin: (id: number) => Promise<void>;
+  updateTitle: (id: number, title: string) => Promise<void>;
   deleteItem: (id: number) => Promise<void>;
   clearHistory: (keepPinned: boolean) => Promise<void>;
   copyItem: (id: number) => Promise<void>;
@@ -333,6 +334,38 @@ export const useClipboardStore = create<ClipboardStore>()(
         set(
           produce((state) => {
             state.items[id].is_pinned = !state.items[id].is_pinned;
+          }),
+        );
+      }
+    },
+
+    updateTitle: async (id: number, title: string) => {
+      const item = get().items[id];
+      if (!item) return;
+      const previousTitle = item.title;
+      const nextTitle = title.trim() || undefined;
+
+      set(
+        produce((state) => {
+          state.items[id].title = nextTitle;
+          if (state.previewItem?.id === id) {
+            state.previewItem.title = nextTitle;
+          }
+        }),
+      );
+
+      try {
+        await invoke("update_clipboard_title", {
+          id,
+          title: nextTitle ?? null,
+        });
+      } catch {
+        set(
+          produce((state) => {
+            state.items[id].title = previousTitle;
+            if (state.previewItem?.id === id) {
+              state.previewItem.title = previousTitle;
+            }
           }),
         );
       }

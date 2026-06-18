@@ -1,6 +1,12 @@
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AlignJustify,
@@ -9,6 +15,7 @@ import {
   FileText,
   Image,
   Info,
+  Pencil,
   Search,
   Settings,
   Star,
@@ -26,6 +33,7 @@ import "./ClipboardOverlay.css";
 const APP_NAME = "HANDY";
 type OverlayContentFilter = "all" | "text" | "image" | "file";
 type OverlayPanel = "list" | "help" | "about" | "settings";
+const COPY_FEEDBACK_TIMEOUT_MS = 1500;
 
 const cn = (...classes: Array<string | false | null | undefined>) =>
   classes.filter(Boolean).join(" ");
@@ -91,7 +99,12 @@ const itemMatchesSearch = (
   const trimmedQuery = query.trim();
   if (!trimmedQuery) return true;
 
-  const haystack = [item.content_preview, item.full_text, item.source_app]
+  const haystack = [
+    item.title,
+    item.content_preview,
+    item.full_text,
+    item.source_app,
+  ]
     .filter(Boolean)
     .join("\n");
 
@@ -140,14 +153,18 @@ const ClipboardOverlay: React.FC = () => {
   const search = useClipboardStore((s) => s.search);
   const toggleFavorite = useClipboardStore((s) => s.toggleFavorite);
   const togglePin = useClipboardStore((s) => s.togglePin);
-  const copyItem = useClipboardStore((s) => s.copyItem);
+  const updateTitle = useClipboardStore((s) => s.updateTitle);
   const deleteItem = useClipboardStore((s) => s.deleteItem);
   const clearHistory = useClipboardStore((s) => s.clearHistory);
   const settings = useClipboardStore((s) => s.settings);
   const stats = useClipboardStore((s) => s.stats);
   const updateSettings = useClipboardStore((s) => s.updateSettings);
+  const loadMore = useClipboardStore((s) => s.loadMore);
+  const hasMore = useClipboardStore((s) => s.hasMore);
+  const isLoading = useClipboardStore((s) => s.isLoading);
+  const isSearching = useClipboardStore((s) => s.isSearching);
 
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [contentFilter, setContentFilter] =
     useState<OverlayContentFilter>("all");
@@ -158,6 +175,8 @@ const ClipboardOverlay: React.FC = () => {
   const [activePanel, setActivePanel] = useState<OverlayPanel>("list");
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const copyInFlightRef = useRef<Set<number>>(new Set());
+  const copyFeedbackTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!initialized) initialize();
@@ -167,30 +186,51 @@ const ClipboardOverlay: React.FC = () => {
     searchRef.current?.focus();
   }, []);
 
-  const orderedItems = itemOrder
-    .map((id) => items[id])
-    .filter(Boolean)
-    .sort((left, right) => {
-      if (left.is_pinned === right.is_pinned) return 0;
-      return left.is_pinned ? -1 : 1;
-    });
-  const filteredItems = orderedItems.filter(
-    (item) =>
-      itemMatchesFilter(item, contentFilter) &&
-      (!favoritesOnly || item.is_favorite) &&
-      itemMatchesSearch(item, searchQuery, caseSensitive, wholeWord),
-  );
+  const filteredItems = useMemo(() => {
+    const orderedItems = itemOrder
+      .map((id) => items[id])
+      .filter(Boolean)
+      .sort((left, right) => {
+        if (left.is_pinned === right.is_pinned) return 0;
+        return left.is_pinned ? -1 : 1;
+      });
 
-  useEffect(() => {
-    setSelectedIndex(0);
+    return orderedItems.filter(
+      (item) =>
+        itemMatchesFilter(item, contentFilter) &&
+        (!favoritesOnly || item.is_favorite) &&
+        itemMatchesSearch(item, searchQuery, caseSensitive, wholeWord),
+    );
   }, [
-    searchQuery,
-    itemOrder.length,
+    caseSensitive,
     contentFilter,
     favoritesOnly,
-    caseSensitive,
+    itemOrder,
+    items,
+    searchQuery,
     wholeWord,
   ]);
+
+  const filteredItemIdKey = filteredItems.map((item) => item.id).join(",");
+  const selectedIndex =
+    selectedItemId === null
+      ? -1
+      : filteredItems.findIndex((item) => item.id === selectedItemId);
+  const selectedItem =
+    selectedIndex >= 0 ? filteredItems[selectedIndex] : filteredItems[0];
+
+  useEffect(() => {
+    setSelectedItemId((currentId) => {
+      if (filteredItems.length === 0) return null;
+      if (
+        currentId !== null &&
+        filteredItems.some((item) => item.id === currentId)
+      ) {
+        return currentId;
+      }
+      return filteredItems[0].id;
+    });
+  }, [filteredItemIdKey, filteredItems]);
 
   const handleStartDrag = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -219,13 +259,79 @@ const ClipboardOverlay: React.FC = () => {
     }
   }, []);
 
-  const handleCopy = useCallback(
-    async (id: number) => {
-      await copyItem(id);
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 1500);
+  const handleListScroll = useCallback(() => {
+    const list = listRef.current;
+    if (!list || !hasMore || isLoading || isSearching) return;
+
+    const remainingScroll =
+      list.scrollHeight - list.scrollTop - list.clientHeight;
+
+    if (remainingScroll < 160) {
+      void loadMore();
+    }
+  }, [hasMore, isLoading, isSearching, loadMore]);
+
+  const showCopyFeedback = useCallback((id: number) => {
+    if (copyFeedbackTimeoutRef.current !== null) {
+      window.clearTimeout(copyFeedbackTimeoutRef.current);
+    }
+
+    setCopiedId(id);
+    copyFeedbackTimeoutRef.current = window.setTimeout(() => {
+      setCopiedId(null);
+      copyFeedbackTimeoutRef.current = null;
+    }, COPY_FEEDBACK_TIMEOUT_MS);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (copyFeedbackTimeoutRef.current !== null) {
+        window.clearTimeout(copyFeedbackTimeoutRef.current);
+      }
     },
-    [copyItem],
+    [],
+  );
+
+  const copyOverlayItem = useCallback(async (item: ClipboardItem) => {
+    await invoke("copy_clipboard_content_to_system", {
+      contentType: item.content_type,
+      imagePath: item.image_path ?? null,
+      text: item.full_text ?? item.content_preview,
+    });
+  }, []);
+
+  const handleCopy = useCallback(
+    async (item: ClipboardItem) => {
+      if (copyInFlightRef.current.has(item.id)) return;
+
+      copyInFlightRef.current.add(item.id);
+      showCopyFeedback(item.id);
+      try {
+        await copyOverlayItem(item);
+      } catch {
+        setCopiedId((currentId) => (currentId === item.id ? null : currentId));
+      } finally {
+        copyInFlightRef.current.delete(item.id);
+      }
+    },
+    [copyOverlayItem, showCopyFeedback],
+  );
+
+  const hideAfterConfirm = useCallback(() => {
+    if (windowPinned) return;
+
+    void getCurrentWindow()
+      .hide()
+      .catch(() => undefined);
+  }, [windowPinned]);
+
+  const handleConfirmItem = useCallback(
+    (item: ClipboardItem) => {
+      setSelectedItemId(item.id);
+      void handleCopy(item);
+      hideAfterConfirm();
+    },
+    [handleCopy, hideAfterConfirm],
   );
 
   const handleKeyDown = useCallback(
@@ -234,17 +340,39 @@ const ClipboardOverlay: React.FC = () => {
         case "ArrowDown":
         case "j":
           e.preventDefault();
-          setSelectedIndex((i) => Math.min(i + 1, filteredItems.length - 1));
+          setSelectedItemId((currentId) => {
+            if (filteredItems.length === 0) return null;
+            const currentIndex =
+              currentId === null
+                ? -1
+                : filteredItems.findIndex((item) => item.id === currentId);
+            const nextIndex = Math.min(
+              (currentIndex >= 0 ? currentIndex : 0) + 1,
+              filteredItems.length - 1,
+            );
+            return filteredItems[nextIndex].id;
+          });
           break;
         case "ArrowUp":
         case "k":
           e.preventDefault();
-          setSelectedIndex((i) => Math.max(i - 1, 0));
+          setSelectedItemId((currentId) => {
+            if (filteredItems.length === 0) return null;
+            const currentIndex =
+              currentId === null
+                ? 0
+                : filteredItems.findIndex((item) => item.id === currentId);
+            const nextIndex = Math.max(
+              currentIndex >= 0 ? currentIndex - 1 : 0,
+              0,
+            );
+            return filteredItems[nextIndex].id;
+          });
           break;
         case "Enter":
           e.preventDefault();
-          if (filteredItems[selectedIndex]) {
-            handleCopy(filteredItems[selectedIndex].id);
+          if (selectedItem) {
+            handleConfirmItem(selectedItem);
           }
           break;
         case "f":
@@ -254,8 +382,8 @@ const ClipboardOverlay: React.FC = () => {
             document.activeElement !== searchRef.current
           ) {
             e.preventDefault();
-            if (filteredItems[selectedIndex]) {
-              toggleFavorite(filteredItems[selectedIndex].id);
+            if (selectedItem) {
+              toggleFavorite(selectedItem.id);
             }
           }
           break;
@@ -266,8 +394,8 @@ const ClipboardOverlay: React.FC = () => {
             document.activeElement !== searchRef.current
           ) {
             e.preventDefault();
-            if (filteredItems[selectedIndex]) {
-              deleteItem(filteredItems[selectedIndex].id);
+            if (selectedItem) {
+              deleteItem(selectedItem.id);
             }
           }
           break;
@@ -283,8 +411,8 @@ const ClipboardOverlay: React.FC = () => {
     },
     [
       filteredItems,
-      selectedIndex,
-      handleCopy,
+      selectedItem,
+      handleConfirmItem,
       toggleFavorite,
       togglePin,
       deleteItem,
@@ -296,9 +424,13 @@ const ClipboardOverlay: React.FC = () => {
   );
 
   useEffect(() => {
-    const selected = listRef.current?.children[selectedIndex] as HTMLElement;
+    if (selectedItemId === null) return;
+
+    const selected = listRef.current?.querySelector<HTMLElement>(
+      `[data-clipboard-item-id="${selectedItemId}"]`,
+    );
     selected?.scrollIntoView({ block: "nearest" });
-  }, [selectedIndex]);
+  }, [selectedItemId, filteredItemIdKey]);
 
   return (
     <div className="clipboard-overlay" onKeyDown={handleKeyDown}>
@@ -462,7 +594,11 @@ const ClipboardOverlay: React.FC = () => {
             </button>
           </div>
 
-          <div className="clipboard-overlay-list" ref={listRef}>
+          <div
+            className="clipboard-overlay-list"
+            ref={listRef}
+            onScroll={handleListScroll}
+          >
             {filteredItems.length === 0 ? (
               <div className="clipboard-overlay-empty">
                 {t("settings.clipboard.emptyTitle")}
@@ -472,13 +608,13 @@ const ClipboardOverlay: React.FC = () => {
                 <OverlayItem
                   key={item.id}
                   item={item}
-                  isSelected={index === selectedIndex}
+                  isSelected={item.id === selectedItemId}
                   isCopied={copiedId === item.id}
-                  onCopy={() => handleCopy(item.id)}
                   onToggleFavorite={() => toggleFavorite(item.id)}
                   onTogglePin={() => togglePin(item.id)}
+                  onUpdateTitle={(title) => updateTitle(item.id, title)}
                   onDelete={() => deleteItem(item.id)}
-                  onSelect={() => setSelectedIndex(index)}
+                  onConfirm={() => handleConfirmItem(item)}
                   index={index}
                 />
               ))
@@ -510,11 +646,11 @@ interface OverlayItemProps {
   item: ClipboardItem;
   isSelected: boolean;
   isCopied: boolean;
-  onCopy: () => void;
   onToggleFavorite: () => void;
   onTogglePin: () => void;
+  onUpdateTitle: (title: string) => Promise<void>;
   onDelete: () => void;
-  onSelect: () => void;
+  onConfirm: () => void;
   index: number;
 }
 
@@ -670,29 +806,64 @@ const OverlayItem: React.FC<OverlayItemProps> = ({
   item,
   isSelected,
   isCopied,
-  onCopy,
   onToggleFavorite,
   onTogglePin,
+  onUpdateTitle,
   onDelete,
-  onSelect,
+  onConfirm,
   index,
 }) => {
   const { t } = useTranslation();
   const [imageError, setImageError] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(item.title ?? "");
   const itemText = item.full_text || getClipboardItemLabel(t, item);
   const imageUrl =
     item.content_type === "image" && !imageError
       ? getImageUrl(item.image_path)
       : null;
   const isLongItem = itemText.length > 56;
+  const shouldShowTitleLine =
+    isEditingTitle || Boolean(item.title) || item.is_favorite || item.is_pinned;
+
+  useEffect(() => {
+    if (!isEditingTitle) {
+      setTitleDraft(item.title ?? "");
+    }
+  }, [isEditingTitle, item.title]);
+
+  const saveTitle = useCallback(() => {
+    const nextTitle = titleDraft.trim();
+    setIsEditingTitle(false);
+
+    if (nextTitle === (item.title ?? "")) {
+      return;
+    }
+
+    void onUpdateTitle(nextTitle);
+  }, [item.title, onUpdateTitle, titleDraft]);
+
+  const handleTitleButtonClick = useCallback(() => {
+    if (isEditingTitle) {
+      saveTitle();
+      return;
+    }
+
+    setTitleDraft(item.title ?? "");
+    setIsEditingTitle(true);
+  }, [isEditingTitle, item.title, saveTitle]);
 
   return (
     <div
       className={`clipboard-overlay-item ${isSelected ? "selected" : ""} ${
         isCopied ? "copied" : ""
       } ${isLongItem ? "long" : ""}`}
-      onClick={onSelect}
-      onDoubleClick={onCopy}
+      data-testid="clipboard-overlay-item"
+      data-clipboard-item-id={item.id}
+      onClick={(event) => {
+        if (event.button !== 0) return;
+        onConfirm();
+      }}
     >
       {imageUrl ? (
         <div className="clipboard-overlay-image-preview">
@@ -704,6 +875,46 @@ const OverlayItem: React.FC<OverlayItemProps> = ({
         </div>
       ) : null}
       <div className="clipboard-overlay-item-content">
+        {shouldShowTitleLine ? (
+          isEditingTitle ? (
+            <input
+              className="clipboard-overlay-title-input"
+              value={titleDraft}
+              autoFocus
+              maxLength={80}
+              placeholder={t("settings.clipboard.overlay.titlePlaceholder")}
+              onChange={(event) => setTitleDraft(event.target.value)}
+              onBlur={saveTitle}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  saveTitle();
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  setTitleDraft(item.title ?? "");
+                  setIsEditingTitle(false);
+                }
+              }}
+            />
+          ) : item.title ? (
+            <div className="clipboard-overlay-item-title">{item.title}</div>
+          ) : (
+            <button
+              className="clipboard-overlay-item-title empty"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                setIsEditingTitle(true);
+              }}
+            >
+              <Pencil />
+              <span>{t("settings.clipboard.overlay.titlePlaceholder")}</span>
+            </button>
+          )
+        ) : null}
         <p className="clipboard-overlay-item-text">{itemText}</p>
         <div className="clipboard-overlay-item-meta">
           <span className="clipboard-overlay-item-index">{index + 1}</span>
@@ -716,6 +927,7 @@ const OverlayItem: React.FC<OverlayItemProps> = ({
             className={`clipboard-overlay-star-button ${
               item.is_favorite ? "favorited" : ""
             }`}
+            onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
               onToggleFavorite();
@@ -727,6 +939,7 @@ const OverlayItem: React.FC<OverlayItemProps> = ({
             className={`clipboard-overlay-pin-button ${
               item.is_pinned ? "pinned" : ""
             }`}
+            onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
               onTogglePin();
@@ -734,9 +947,26 @@ const OverlayItem: React.FC<OverlayItemProps> = ({
           >
             <RecordPinIcon />
           </button>
+          <button
+            className={`clipboard-overlay-title-button ${
+              isEditingTitle ? "editing" : ""
+            }`}
+            title={t("settings.clipboard.overlay.editTitle")}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              handleTitleButtonClick();
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <Pencil />
+          </button>
         </div>
         <button
           className="clipboard-overlay-delete-button"
+          onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
             onDelete();

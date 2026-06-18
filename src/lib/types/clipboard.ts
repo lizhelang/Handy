@@ -2,6 +2,7 @@ export type ClipboardContentType = "text" | "image" | "richtext" | "file";
 
 export interface ClipboardItem {
   id: number;
+  title?: string | null;
   content_type: ClipboardContentType;
   content_preview: string;
   content_hash: string;

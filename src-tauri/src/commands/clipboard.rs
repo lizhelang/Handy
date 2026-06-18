@@ -48,6 +48,16 @@ pub async fn toggle_clipboard_pin(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn update_clipboard_title(
+    manager: State<'_, Arc<ClipboardManager>>,
+    id: i64,
+    title: Option<String>,
+) -> Result<(), String> {
+    manager.update_title(id, title).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn delete_clipboard_item(
     manager: State<'_, Arc<ClipboardManager>>,
     id: i64,
@@ -73,6 +83,19 @@ pub async fn copy_clipboard_to_system(
     id: i64,
 ) -> Result<(), String> {
     manager.copy_to_clipboard(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn copy_clipboard_content_to_system(
+    manager: State<'_, Arc<ClipboardManager>>,
+    content_type: String,
+    text: Option<String>,
+    image_path: Option<String>,
+) -> Result<(), String> {
+    manager
+        .copy_content_to_clipboard(&content_type, text, image_path)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

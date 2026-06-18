@@ -485,6 +485,72 @@
   -webkit-line-clamp: 3;
 }
 
+.clipboard-overlay-item-title {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 22px;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  margin-bottom: 4px;
+  background: rgb(218 88 147 / 12%);
+  border: 1px solid rgb(218 88 147 / 28%);
+  border-radius: 5px;
+  color: #9b2f63;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clipboard-overlay button.clipboard-overlay-item-title {
+  width: fit-content;
+  border: 1px dashed rgb(218 88 147 / 28%);
+  background: transparent;
+  color: var(--ropy-muted-foreground);
+  font-weight: 600;
+}
+
+.clipboard-overlay button.clipboard-overlay-item-title:hover {
+  background: rgb(218 88 147 / 8%);
+  color: #9b2f63;
+}
+
+.clipboard-overlay-item-title svg {
+  width: 11px;
+  height: 11px;
+}
+
+.clipboard-overlay-item-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clipboard-overlay-title-input {
+  display: block;
+  width: 100%;
+  height: 28px;
+  margin-bottom: 6px;
+  border: 1px solid var(--handy-selection-border);
+  border-radius: 6px;
+  outline: 0;
+  background: var(--ropy-background);
+  color: var(--ropy-foreground);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0 8px;
+  box-shadow: 0 0 0 2px var(--handy-selection-shadow);
+}
+
+.clipboard-overlay-title-input::placeholder {
+  color: var(--ropy-muted-foreground);
+  font-weight: 600;
+}
+
 .clipboard-overlay-item-meta {
   display: flex;
   align-items: center;
@@ -523,6 +589,7 @@
 
 .clipboard-overlay .clipboard-overlay-star-button,
 .clipboard-overlay .clipboard-overlay-pin-button,
+.clipboard-overlay .clipboard-overlay-title-button,
 .clipboard-overlay .clipboard-overlay-delete-button {
   width: 24px;
   height: 24px;
@@ -532,19 +599,22 @@
 }
 
 .clipboard-overlay .clipboard-overlay-star-button.favorited,
-.clipboard-overlay .clipboard-overlay-pin-button.pinned {
+.clipboard-overlay .clipboard-overlay-pin-button.pinned,
+.clipboard-overlay .clipboard-overlay-title-button.editing {
   background: var(--ropy-primary);
   color: var(--ropy-primary-foreground);
 }
 
 .clipboard-overlay .clipboard-overlay-star-button:hover,
 .clipboard-overlay .clipboard-overlay-pin-button:hover,
+.clipboard-overlay .clipboard-overlay-title-button:hover,
 .clipboard-overlay .clipboard-overlay-delete-button:hover {
   background: var(--ropy-accent);
   color: var(--ropy-foreground);
 }
 
 .clipboard-overlay .clipboard-overlay-pin-button svg,
+.clipboard-overlay .clipboard-overlay-title-button svg,
 .clipboard-overlay .clipboard-overlay-delete-button svg {
   width: 12px;
   height: 12px;

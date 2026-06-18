@@ -28,8 +28,9 @@ use tauri_specta::Event;
 const TEXT_PREVIEW_MAX_CHARS: usize = 200;
 
 /// Database migrations for clipboard history.
-static MIGRATIONS: &[M] = &[M::up(
-    "CREATE TABLE IF NOT EXISTS clipboard_history (
+static MIGRATIONS: &[M] = &[
+    M::up(
+        "CREATE TABLE IF NOT EXISTS clipboard_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             content_type TEXT NOT NULL,
             content_preview TEXT NOT NULL,
@@ -42,11 +43,14 @@ static MIGRATIONS: &[M] = &[M::up(
             created_at INTEGER NOT NULL,
             size_bytes INTEGER NOT NULL
         );",
-)];
+    ),
+    M::up("ALTER TABLE clipboard_history ADD COLUMN title TEXT;"),
+];
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct ClipboardItem {
     pub id: i64,
+    pub title: Option<String>,
     pub content_type: String,
     pub content_preview: String,
     pub content_hash: String,
@@ -193,6 +197,7 @@ impl ClipboardManager {
 
         Ok(ClipboardItem {
             id: row.get("id")?,
+            title: row.get("title")?,
             content_type: row.get("content_type")?,
             content_preview: row.get("content_preview")?,
             content_hash: row.get("content_hash")?,
@@ -470,7 +475,7 @@ impl ClipboardManager {
 
         let item = conn
             .query_row(
-                "SELECT id, content_type, content_preview, content_hash, full_text, image_path,
+                "SELECT id, title, content_type, content_preview, content_hash, full_text, image_path,
                     source_app, is_favorite, is_pinned, created_at, size_bytes
                  FROM clipboard_history WHERE content_hash = ?1",
                 params![hash],
@@ -498,7 +503,7 @@ impl ClipboardManager {
         let conn = self.get_connection()?;
         let item = conn
             .query_row(
-                "SELECT id, content_type, content_preview, content_hash, full_text, image_path,
+                "SELECT id, title, content_type, content_preview, content_hash, full_text, image_path,
                     source_app, is_favorite, is_pinned, created_at, size_bytes
                  FROM clipboard_history WHERE id = ?1",
                 params![id],
@@ -507,6 +512,54 @@ impl ClipboardManager {
             .optional()?;
 
         Ok(item.map(|item| self.normalize_item_for_client(item)))
+    }
+
+    fn resolve_clipboard_image_path(&self, image_path: &str) -> Result<PathBuf> {
+        let path = PathBuf::from(image_path);
+        let full_path = if path.is_absolute() {
+            path
+        } else {
+            self.images_dir.join(path)
+        };
+        let full_path = fs::canonicalize(full_path)?;
+        let images_dir = fs::canonicalize(&self.images_dir)?;
+
+        if !full_path.starts_with(&images_dir) {
+            return Err(anyhow!("Clipboard image path is outside Handy data"));
+        }
+
+        Ok(full_path)
+    }
+
+    /// Copy an already-loaded clipboard payload without re-querying history.
+    pub fn copy_content_to_clipboard(
+        &self,
+        content_type: &str,
+        text: Option<String>,
+        image_path: Option<String>,
+    ) -> Result<()> {
+        match content_type {
+            "text" | "richtext" | "file" => {
+                let text = text.ok_or_else(|| anyhow!("Text content not found"))?;
+                self.app_handle
+                    .clipboard()
+                    .write_text(text)
+                    .map_err(|e| anyhow!("Failed to write text to system clipboard: {}", e))?;
+                Ok(())
+            }
+            "image" => {
+                let path = image_path.ok_or_else(|| anyhow!("Image path not found"))?;
+                let full_path = self.resolve_clipboard_image_path(&path)?;
+                let image = Image::from_path(&full_path)
+                    .map_err(|e| anyhow!("Failed to load clipboard image: {}", e))?;
+                self.app_handle
+                    .clipboard()
+                    .write_image(&image)
+                    .map_err(|e| anyhow!("Failed to write image to system clipboard: {}", e))?;
+                Ok(())
+            }
+            _ => Err(anyhow!("Unsupported content type")),
+        }
     }
 
     /// Add a text entry to clipboard history
@@ -544,6 +597,7 @@ impl ClipboardManager {
 
         let item = ClipboardItem {
             id: conn.last_insert_rowid(),
+            title: None,
             content_type: "text".to_string(),
             content_preview: preview,
             content_hash: hash,
@@ -630,6 +684,7 @@ impl ClipboardManager {
 
         let item = ClipboardItem {
             id: conn.last_insert_rowid(),
+            title: None,
             content_type: "image".to_string(),
             content_preview: preview,
             content_hash: hash,
@@ -703,6 +758,7 @@ impl ClipboardManager {
 
         let item = ClipboardItem {
             id: conn.last_insert_rowid(),
+            title: None,
             content_type: "image".to_string(),
             content_preview: preview,
             content_hash: hash,
@@ -751,7 +807,7 @@ impl ClipboardManager {
         let fetch_count = limit + 1;
 
         let mut stmt = conn.prepare(&format!(
-            "SELECT id, content_type, content_preview, content_hash, full_text, image_path, 
+            "SELECT id, title, content_type, content_preview, content_hash, full_text, image_path,
                     source_app, is_favorite, is_pinned, created_at, size_bytes
              FROM clipboard_history
              ORDER BY is_pinned DESC, created_at {}
@@ -783,18 +839,18 @@ impl ClipboardManager {
 
         let mut stmt = if content_type == "all" {
             conn.prepare(
-                "SELECT id, content_type, content_preview, content_hash, full_text, image_path, 
+                "SELECT id, title, content_type, content_preview, content_hash, full_text, image_path,
                         source_app, is_favorite, is_pinned, created_at, size_bytes
                  FROM clipboard_history
-                 WHERE content_preview LIKE ?1 OR full_text LIKE ?1
+                 WHERE title LIKE ?1 OR content_preview LIKE ?1 OR full_text LIKE ?1
                  ORDER BY is_pinned DESC, created_at DESC",
             )?
         } else {
             conn.prepare(
-                "SELECT id, content_type, content_preview, content_hash, full_text, image_path, 
+                "SELECT id, title, content_type, content_preview, content_hash, full_text, image_path,
                         source_app, is_favorite, is_pinned, created_at, size_bytes
                  FROM clipboard_history
-                 WHERE (content_preview LIKE ?1 OR full_text LIKE ?1) AND content_type = ?2
+                 WHERE (title LIKE ?1 OR content_preview LIKE ?1 OR full_text LIKE ?1) AND content_type = ?2
                  ORDER BY is_pinned DESC, created_at DESC",
             )?
         };
@@ -842,6 +898,27 @@ impl ClipboardManager {
             params![id],
         )?;
         debug!("Toggled pin status for clipboard item {}", id);
+
+        if let Some(item) = self.get_item_by_id(id)? {
+            if let Err(e) = (ClipboardUpdatePayload::Updated { item }).emit(&self.app_handle) {
+                error!("Failed to emit clipboard-updated event: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Update the user-facing title for a clipboard item.
+    pub fn update_title(&self, id: i64, title: Option<String>) -> Result<()> {
+        let title = title
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let conn = self.get_connection()?;
+        conn.execute(
+            "UPDATE clipboard_history SET title = ?1 WHERE id = ?2",
+            params![title, id],
+        )?;
+        debug!("Updated title for clipboard item {}", id);
 
         if let Some(item) = self.get_item_by_id(id)? {
             if let Err(e) = (ClipboardUpdatePayload::Updated { item }).emit(&self.app_handle) {
@@ -950,7 +1027,7 @@ impl ClipboardManager {
     pub fn copy_to_clipboard(&self, id: i64) -> Result<()> {
         let conn = self.get_connection()?;
         let item = conn.query_row(
-            "SELECT id, content_type, content_preview, content_hash, full_text, image_path, 
+            "SELECT id, title, content_type, content_preview, content_hash, full_text, image_path,
                     source_app, is_favorite, is_pinned, created_at, size_bytes
              FROM clipboard_history WHERE id = ?1",
             params![id],
