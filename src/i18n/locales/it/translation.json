@@ -475,11 +475,12 @@
       "copied": "Copiato!",
       "settings": {
         "maxRecords": "Numero massimo di registrazioni",
-        "maxRecordsDescription": "Rimuovi automaticamente gli elementi più vecchi quando viene raggiunto il limite.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "Tasto rapido degli appunti",
         "confirmMode": "Modalità di conferma",
         "confirmModeCopy": "Copia negli appunti",
-        "confirmModePaste": "Incolla immediatamente"
+        "confirmModePaste": "Incolla immediatamente",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "Appunti",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

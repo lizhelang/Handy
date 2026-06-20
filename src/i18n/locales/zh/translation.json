@@ -475,11 +475,12 @@
       "copied": "已复制！",
       "settings": {
         "maxRecords": "最大记录数",
-        "maxRecordsDescription": "达到上限时自动删除最旧的项目。",
+        "maxRecordsDescription": "设为无限制后，不会再自动删除旧的剪贴板历史。",
         "hotkey": "剪贴板快捷键",
         "confirmMode": "确认模式",
         "confirmModeCopy": "复制到剪贴板",
-        "confirmModePaste": "立即粘贴"
+        "confirmModePaste": "立即粘贴",
+        "unlimitedRecords": "无限制"
       },
       "overlay": {
         "title": "剪贴板",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "添加标题",
         "pinToTop": "置顶窗口",
         "caseSensitive": "区分大小写",
-        "wholeWord": "全词匹配"
+        "wholeWord": "全词匹配",
+        "unlimited": "无限制"
       }
     },
     "debug": {

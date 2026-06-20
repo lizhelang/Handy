@@ -475,11 +475,12 @@
       "copied": "コピーしました！",
       "settings": {
         "maxRecords": "最大記録数",
-        "maxRecordsDescription": "制限に達すると古いアイテムを自動的に削除します。",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "クリップボードホットキー",
         "confirmMode": "確認モード",
         "confirmModeCopy": "クリップボードにコピー",
-        "confirmModePaste": "すぐに貼り付け"
+        "confirmModePaste": "すぐに貼り付け",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "クリップボード",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

@@ -475,11 +475,12 @@
       "copied": "Kopierat!",
       "settings": {
         "maxRecords": "Maximalt antal poster",
-        "maxRecordsDescription": "Ta automatiskt bort äldsta objekt när gränsen nås.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "Urklippsgenväg",
         "confirmMode": "Bekräftelseläge",
         "confirmModeCopy": "Kopiera till urklipp",
-        "confirmModePaste": "Klistra in omedelbart"
+        "confirmModePaste": "Klistra in omedelbart",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "Urklipp",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

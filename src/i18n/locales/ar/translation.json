@@ -453,11 +453,12 @@
       "copied": "تم النسخ!",
       "settings": {
         "maxRecords": "الحد الأقصى للسجلات",
-        "maxRecordsDescription": "إزالة تلقائياً للعناصر الأقدم عند الوصول إلى الحد.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "اختصار الحافظة",
         "confirmMode": "وضع التأكيد",
         "confirmModeCopy": "نسخ إلى الحافظة",
-        "confirmModePaste": "لصق فوري"
+        "confirmModePaste": "لصق فوري",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "الحافظة",
@@ -488,7 +489,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

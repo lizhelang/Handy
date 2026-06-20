@@ -35,6 +35,9 @@ const APP_NAME = "HANDY";
 type OverlayContentFilter = "all" | "text" | "image" | "file";
 type OverlayPanel = "list" | "help" | "about" | "settings";
 const COPY_FEEDBACK_TIMEOUT_MS = 1500;
+const UNLIMITED_CLIPBOARD_RECORDS = 0;
+const MIN_LIMITED_CLIPBOARD_RECORDS = 1;
+const DEFAULT_LIMITED_CLIPBOARD_RECORDS = 500;
 
 const cn = (...classes: Array<string | false | null | undefined>) =>
   classes.filter(Boolean).join(" ");
@@ -706,12 +709,30 @@ const OverlayPanelView: React.FC<OverlayPanelViewProps> = ({
 }) => {
   const { t } = useTranslation();
   const [maxRecordsDraft, setMaxRecordsDraft] = useState(
-    settings?.max_records ?? 500,
+    settings?.max_records ?? UNLIMITED_CLIPBOARD_RECORDS,
   );
+  const isUnlimited = maxRecordsDraft === UNLIMITED_CLIPBOARD_RECORDS;
 
   useEffect(() => {
-    setMaxRecordsDraft(settings?.max_records ?? 500);
+    setMaxRecordsDraft(settings?.max_records ?? UNLIMITED_CLIPBOARD_RECORDS);
   }, [settings?.max_records]);
+
+  const saveMaxRecords = useCallback(() => {
+    const nextMaxRecords = isUnlimited
+      ? UNLIMITED_CLIPBOARD_RECORDS
+      : Math.max(
+          MIN_LIMITED_CLIPBOARD_RECORDS,
+          Math.floor(Number.isFinite(maxRecordsDraft) ? maxRecordsDraft : 0),
+        );
+
+    setMaxRecordsDraft(nextMaxRecords);
+    void onUpdateMaxRecords(nextMaxRecords);
+  }, [isUnlimited, maxRecordsDraft, onUpdateMaxRecords]);
+
+  const limitLabel =
+    settings?.max_records === UNLIMITED_CLIPBOARD_RECORDS
+      ? t("settings.clipboard.overlay.unlimited")
+      : (settings?.max_records ?? UNLIMITED_CLIPBOARD_RECORDS);
 
   return (
     <div className="clipboard-overlay-panel">
@@ -730,23 +751,50 @@ const OverlayPanelView: React.FC<OverlayPanelViewProps> = ({
 
       {panel === "settings" && (
         <div className="clipboard-overlay-panel-stack">
-          <label className="clipboard-overlay-setting-row">
-            <span>{t("settings.clipboard.settings.maxRecords")}</span>
-            <input
-              type="number"
-              min={20}
-              max={5000}
-              value={maxRecordsDraft}
-              onChange={(event) =>
-                setMaxRecordsDraft(Number(event.target.value))
-              }
-              onBlur={() =>
-                onUpdateMaxRecords(
-                  Math.max(20, Math.min(5000, maxRecordsDraft)),
-                )
-              }
-            />
-          </label>
+          <div className="clipboard-overlay-setting-row">
+            <div className="clipboard-overlay-setting-copy">
+              <span>{t("settings.clipboard.settings.maxRecords")}</span>
+              <small>
+                {t("settings.clipboard.settings.maxRecordsDescription")}
+              </small>
+            </div>
+            <div className="clipboard-overlay-limit-controls">
+              <label className="clipboard-overlay-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={isUnlimited}
+                  onChange={(event) => {
+                    const nextValue = event.target.checked
+                      ? UNLIMITED_CLIPBOARD_RECORDS
+                      : Math.max(
+                          MIN_LIMITED_CLIPBOARD_RECORDS,
+                          settings?.max_records ||
+                            DEFAULT_LIMITED_CLIPBOARD_RECORDS,
+                        );
+                    setMaxRecordsDraft(nextValue);
+                    void onUpdateMaxRecords(nextValue);
+                  }}
+                />
+                <span>{t("settings.clipboard.settings.unlimitedRecords")}</span>
+              </label>
+              <input
+                type="number"
+                min={MIN_LIMITED_CLIPBOARD_RECORDS}
+                value={isUnlimited ? "" : maxRecordsDraft}
+                disabled={isUnlimited}
+                placeholder={t("settings.clipboard.overlay.unlimited")}
+                onChange={(event) =>
+                  setMaxRecordsDraft(Number(event.target.value))
+                }
+                onBlur={saveMaxRecords}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.currentTarget.blur();
+                  }
+                }}
+              />
+            </div>
+          </div>
 
           <div className="clipboard-overlay-stats-grid">
             <span>{stats?.total_items ?? 0}</span>
@@ -801,7 +849,7 @@ const OverlayPanelView: React.FC<OverlayPanelViewProps> = ({
           </p>
           <div className="clipboard-overlay-stats-grid two-column">
             <span>{stats?.total_items ?? 0}</span>
-            <span>{settings?.max_records ?? 0}</span>
+            <span>{limitLabel}</span>
             <small>{t("settings.clipboard.overlay.statItems")}</small>
             <small>{t("settings.clipboard.overlay.statLimit")}</small>
           </div>

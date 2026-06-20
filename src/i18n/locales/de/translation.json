@@ -475,11 +475,12 @@
       "copied": "Kopiert!",
       "settings": {
         "maxRecords": "Maximale Einträge",
-        "maxRecordsDescription": "Älteste Elemente automatisch entfernen, wenn das Limit erreicht ist.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "Zwischenablage-Hotkey",
         "confirmMode": "Bestätigungsmodus",
         "confirmModeCopy": "In Zwischenablage kopieren",
-        "confirmModePaste": "Sofort einfügen"
+        "confirmModePaste": "Sofort einfügen",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "Zwischenablage",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

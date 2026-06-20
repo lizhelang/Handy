@@ -475,11 +475,12 @@
       "copied": "Скопировано!",
       "settings": {
         "maxRecords": "Максимум записей",
-        "maxRecordsDescription": "Автоматически удалять старые элементы при достижении лимита.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "Горячая клавиша буфера обмена",
         "confirmMode": "Режим подтверждения",
         "confirmModeCopy": "Копировать в буфер обмена",
-        "confirmModePaste": "Вставить сразу"
+        "confirmModePaste": "Вставить сразу",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "Буфер обмена",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

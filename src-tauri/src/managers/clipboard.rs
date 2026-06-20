@@ -1195,6 +1195,10 @@ impl ClipboardManager {
         let max_records = crate::settings::get_settings(&self.app_handle).clipboard_max_records;
         let conn = self.get_connection()?;
 
+        if max_records == 0 {
+            return Ok(Vec::new());
+        }
+
         // Count current entries
         let current_count: i64 =
             conn.query_row("SELECT COUNT(*) FROM clipboard_history", [], |row| {

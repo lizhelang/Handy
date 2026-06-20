@@ -475,11 +475,12 @@
       "copied": "הועתק!",
       "settings": {
         "maxRecords": "מספר רשומות מקסימלי",
-        "maxRecordsDescription": "הסר אוטומטית פריטים ישנים כאשר מגיעים למגבלה.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "קיצור דרך ללוח",
         "confirmMode": "מצב אישור",
         "confirmModeCopy": "העתק ללוח",
-        "confirmModePaste": "הדבק מיד"
+        "confirmModePaste": "הדבק מיד",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "לוח",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

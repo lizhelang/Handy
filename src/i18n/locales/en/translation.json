@@ -475,11 +475,12 @@
       "copied": "Copied!",
       "settings": {
         "maxRecords": "Maximum Records",
-        "maxRecordsDescription": "Automatically remove oldest items when limit is reached.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "Clipboard Hotkey",
         "confirmMode": "Confirm Mode",
         "confirmModeCopy": "Copy to clipboard",
-        "confirmModePaste": "Paste immediately"
+        "confirmModePaste": "Paste immediately",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "Clipboard",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

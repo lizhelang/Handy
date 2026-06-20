@@ -475,11 +475,12 @@
       "copied": "已複製！",
       "settings": {
         "maxRecords": "最大記錄數",
-        "maxRecordsDescription": "達到上限時自動刪除最舊的項目。",
+        "maxRecordsDescription": "設為無限制後，不會再自動刪除舊的剪貼簿歷史。",
         "hotkey": "剪貼簿快捷鍵",
         "confirmMode": "確認模式",
         "confirmModeCopy": "複製到剪貼簿",
-        "confirmModePaste": "立即貼上"
+        "confirmModePaste": "立即貼上",
+        "unlimitedRecords": "無限制"
       },
       "overlay": {
         "title": "剪貼簿",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "新增標題",
         "pinToTop": "置頂視窗",
         "caseSensitive": "區分大小寫",
-        "wholeWord": "全字詞比對"
+        "wholeWord": "全字詞比對",
+        "unlimited": "無限制"
       }
     },
     "debug": {

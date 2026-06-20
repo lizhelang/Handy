@@ -475,11 +475,12 @@
       "copied": "Скопійовано!",
       "settings": {
         "maxRecords": "Максимум записів",
-        "maxRecordsDescription": "Автоматично видаляти найстаріші елементи при досягненні ліміту.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "Гаряча клавіша буфера обміну",
         "confirmMode": "Режим підтвердження",
         "confirmModeCopy": "Копіювати до буфера обміну",
-        "confirmModePaste": "Вставити одразу"
+        "confirmModePaste": "Вставити одразу",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "Буфер обміну",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

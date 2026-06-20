@@ -475,11 +475,12 @@
       "copied": "복사됨!",
       "settings": {
         "maxRecords": "최대 기록 수",
-        "maxRecordsDescription": "제한에 도달하면 오래된 항목을 자동으로 제거합니다.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "클립보드 단축키",
         "confirmMode": "확인 모드",
         "confirmModeCopy": "클립보드에 복사",
-        "confirmModePaste": "즉시 붙여넣기"
+        "confirmModePaste": "즉시 붙여넣기",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "클립보드",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

@@ -663,7 +663,7 @@ fn default_typing_tool() -> TypingTool {
 }
 
 fn default_clipboard_max_records() -> usize {
-    500
+    0
 }
 
 fn default_clipboard_hotkey() -> String {

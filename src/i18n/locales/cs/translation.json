@@ -475,11 +475,12 @@
       "copied": "Zkopírováno!",
       "settings": {
         "maxRecords": "Maximum záznamů",
-        "maxRecordsDescription": "Automaticky odstraňovat nejstarší položky po dosažení limitu.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "Klávesová zkratka schránky",
         "confirmMode": "Režim potvrzení",
         "confirmModeCopy": "Kopírovat do schránky",
-        "confirmModePaste": "Vložit okamžitě"
+        "confirmModePaste": "Vložit okamžitě",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "Schránka",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

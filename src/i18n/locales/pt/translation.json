@@ -475,11 +475,12 @@
       "copied": "Copiado!",
       "settings": {
         "maxRecords": "Máximo de registros",
-        "maxRecordsDescription": "Remover automaticamente os itens mais antigos quando o limite for atingido.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "Tecla de atalho da área de transferência",
         "confirmMode": "Modo de confirmação",
         "confirmModeCopy": "Copiar para a área de transferência",
-        "confirmModePaste": "Colar imediatamente"
+        "confirmModePaste": "Colar imediatamente",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "Área de transferência",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

@@ -475,11 +475,12 @@
       "copied": "Копирано!",
       "settings": {
         "maxRecords": "Максимален брой записи",
-        "maxRecordsDescription": "Автоматично премахване на най-старите елементи при достигане на лимита.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "Бърз клавиш за клипборда",
         "confirmMode": "Режим на потвърждение",
         "confirmModeCopy": "Копиране в клипборда",
-        "confirmModePaste": "Незабавно поставяне"
+        "confirmModePaste": "Незабавно поставяне",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "Клипборд",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

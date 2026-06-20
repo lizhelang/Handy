@@ -475,11 +475,12 @@
       "copied": "Copié !",
       "settings": {
         "maxRecords": "Nombre maximum d'enregistrements",
-        "maxRecordsDescription": "Supprimer automatiquement les éléments les plus anciens lorsque la limite est atteinte.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "Raccourci clavier du presse-papiers",
         "confirmMode": "Mode de confirmation",
         "confirmModeCopy": "Copier dans le presse-papiers",
-        "confirmModePaste": "Coller immédiatement"
+        "confirmModePaste": "Coller immédiatement",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "Presse-papiers",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

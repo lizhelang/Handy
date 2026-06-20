@@ -475,11 +475,12 @@
       "copied": "Kopyalandı!",
       "settings": {
         "maxRecords": "Maksimum Kayıt Sayısı",
-        "maxRecordsDescription": "Sınır aşıldığında en eski öğeleri otomatik olarak kaldır.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "Pano Kısayolu",
         "confirmMode": "Onay Modu",
         "confirmModeCopy": "Panoya kopyala",
-        "confirmModePaste": "Hemen yapıştır"
+        "confirmModePaste": "Hemen yapıştır",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "Pano",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {

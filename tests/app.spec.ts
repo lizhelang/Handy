@@ -64,6 +64,11 @@ const clipboardOverlayItems = [
 const installClipboardOverlayMocks = async (page: Page) => {
   await page.addInitScript((items) => {
     const callbacks = new Map<number, (data: unknown) => unknown>();
+    const clipboardSettings = {
+      confirm_mode: "copy",
+      hotkey: "CommandOrControl+Shift+V",
+      max_records: 0,
+    };
 
     window.__HANDY_TEST_INVOKES__ = [];
     window.__HANDY_TEST_EVENT_HANDLERS__ = {};
@@ -119,11 +124,12 @@ const installClipboardOverlayMocks = async (page: Page) => {
               total_size_bytes: 48,
             };
           case "get_clipboard_settings":
-            return {
-              confirm_mode: "copy",
-              hotkey: "CommandOrControl+Shift+V",
-              max_records: 500,
-            };
+            return clipboardSettings;
+          case "update_clipboard_settings":
+            if (typeof args.max_records === "number") {
+              clipboardSettings.max_records = args.max_records;
+            }
+            return clipboardSettings;
           case "get_clipboard_items": {
             const contentType = args.contentType as string | undefined;
             const favoriteOnly = Boolean(args.favoriteOnly);
@@ -309,6 +315,46 @@ test.describe("Handy App", () => {
         favoriteOnly: false,
         page: 0,
         pageSize: 20,
+      });
+  });
+
+  test("clipboard overlay settings can keep history unlimited", async ({
+    page,
+  }) => {
+    await installClipboardOverlayMocks(page);
+    await page.goto("/src/overlay/clipboard/index.html");
+
+    await page.getByTitle("Settings").click();
+
+    const unlimitedToggle = page
+      .locator(".clipboard-overlay-checkbox-row")
+      .getByRole("checkbox");
+    const limitInput = page.locator(
+      ".clipboard-overlay-setting-row input[type='number']",
+    );
+
+    await expect(unlimitedToggle).toBeChecked();
+    await expect(limitInput).toBeDisabled();
+    await expect(limitInput).toHaveAttribute("placeholder", "Unlimited");
+    await expect(page.locator(".clipboard-overlay-setting-row")).toContainText(
+      "Unlimited",
+    );
+
+    await unlimitedToggle.uncheck();
+
+    await expect(limitInput).toBeEnabled();
+    await expect(limitInput).toHaveValue("500");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            window.__HANDY_TEST_INVOKES__
+              .filter((record) => record.cmd === "update_clipboard_settings")
+              .at(-1)?.args,
+        ),
+      )
+      .toMatchObject({
+        max_records: 500,
       });
   });
 

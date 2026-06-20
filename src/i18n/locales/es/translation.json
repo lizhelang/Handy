@@ -475,11 +475,12 @@
       "copied": "¡Copiado!",
       "settings": {
         "maxRecords": "Número máximo de registros",
-        "maxRecordsDescription": "Eliminar automáticamente los elementos más antiguos cuando se alcanza el límite.",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
         "hotkey": "Tecla de acceso rápido del portapapeles",
         "confirmMode": "Modo de confirmación",
         "confirmModeCopy": "Copiar al portapapeles",
-        "confirmModePaste": "Pegar inmediatamente"
+        "confirmModePaste": "Pegar inmediatamente",
+        "unlimitedRecords": "Unlimited"
       },
       "overlay": {
         "title": "Portapapeles",
@@ -510,7 +511,8 @@
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
-        "wholeWord": "Whole word"
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     },
     "debug": {
