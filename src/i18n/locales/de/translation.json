@@ -149,7 +149,13 @@
       "languageOnly": "Nur {{language}}"
     },
     "cancel": "Abbrechen",
-    "cancelDownload": "Download abbrechen"
+    "cancelDownload": "Download abbrechen",
+    "statusTitle": "Model status: {{status}}",
+    "errors": {
+      "checkStatus": "Failed to check model status",
+      "loadModel": "Failed to load model",
+      "switchModel": "Failed to switch model"
+    }
   },
   "settings": {
     "modelSettings": {
@@ -383,7 +389,8 @@
         "baseUrl": {
           "title": "Basis-URL",
           "description": "API-Basis-URL für den ausgewählten Anbieter. Nur der benutzerdefinierte Anbieter kann bearbeitet werden.",
-          "placeholder": "https://api.openai.com/v1"
+          "placeholder": "https://api.openai.com/v1",
+          "managedByProvider": "Base URL is managed by the selected provider."
         },
         "apiKey": {
           "title": "API-Schlüssel",
@@ -398,7 +405,8 @@
           "placeholderApple": "Apple Intelligence",
           "placeholderWithOptions": "Modell suchen oder auswählen",
           "placeholderNoOptions": "Modellnamen eingeben",
-          "refreshModels": "Modelle aktualisieren"
+          "refreshModels": "Modelle aktualisieren",
+          "useCustomModel": "Use \"{{model}}\""
         }
       },
       "prompts": {
@@ -499,7 +507,10 @@
         "helpEscape": "Clear search or leave panel",
         "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
         "editTitle": "Edit title",
-        "titlePlaceholder": "Add a title"
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word"
       }
     },
     "debug": {
@@ -510,7 +521,14 @@
       },
       "logLevel": {
         "title": "Log-Level",
-        "description": "Ausführlichkeit der Protokollierung festlegen"
+        "description": "Ausführlichkeit der Protokollierung festlegen",
+        "options": {
+          "error": "Error",
+          "warn": "Warning",
+          "info": "Info",
+          "debug": "Debug",
+          "trace": "Trace"
+        }
       },
       "updateChecks": {
         "label": "Nach Updates suchen",
@@ -518,7 +536,8 @@
       },
       "soundTheme": {
         "label": "Sound-Thema",
-        "description": "Sound-Thema für Aufnahme-Start und -Stop-Feedback auswählen"
+        "description": "Sound-Thema für Aufnahme-Start und -Stop-Feedback auswählen",
+        "preview": "Preview sound theme"
       },
       "wordCorrectionThreshold": {
         "title": "Wortkorrektur-Schwelle",
@@ -562,12 +581,18 @@
       "keyboardImplementation": {
         "title": "Tastatur-Implementierung",
         "description": "Wähle das Backend für Tastaturkürzel.",
-        "bindingsReset": "Tastaturkürzel waren inkompatibel und wurden auf die Standardwerte zurückgesetzt"
+        "bindingsReset": "Tastaturkürzel waren inkompatibel und wurden auf die Standardwerte zurückgesetzt",
+        "options": {
+          "tauriGlobalShortcut": "Tauri Global Shortcut",
+          "handyKeys": "Handy Keys"
+        }
       },
       "paths": {
         "appData": "App-Daten:",
         "models": "Modelle:",
-        "settings": "Einstellungen:"
+        "settings": "Einstellungen:",
+        "title": "Debug Paths",
+        "description": "Display internal file paths and directories for debugging purposes"
       },
       "pasteDelay": {
         "title": "Einfügeverzögerung",
@@ -645,7 +670,13 @@
     "off": "Aus",
     "yes": "Ja",
     "no": "Nein",
-    "noOptionsFound": "Keine Optionen gefunden"
+    "noOptionsFound": "Keine Optionen gefunden",
+    "copy": "Copy",
+    "moreInformation": "More information",
+    "notAvailable": "Not available",
+    "selectOption": "Select an option...",
+    "play": "Play",
+    "pause": "Pause"
   },
   "accessibility": {
     "permissionsRequired": "Bedienungshilfen-Berechtigungen erforderlich",

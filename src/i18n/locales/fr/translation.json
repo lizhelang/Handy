@@ -149,7 +149,13 @@
       "languageOnly": "{{language}} uniquement"
     },
     "cancel": "Annuler",
-    "cancelDownload": "Annuler le téléchargement"
+    "cancelDownload": "Annuler le téléchargement",
+    "statusTitle": "Model status: {{status}}",
+    "errors": {
+      "checkStatus": "Failed to check model status",
+      "loadModel": "Failed to load model",
+      "switchModel": "Failed to switch model"
+    }
   },
   "settings": {
     "modelSettings": {
@@ -383,7 +389,8 @@
         "baseUrl": {
           "title": "URL de base",
           "description": "URL de base de l'API pour le fournisseur sélectionné. Seul le fournisseur personnalisé peut être modifié.",
-          "placeholder": "https://api.openai.com/v1"
+          "placeholder": "https://api.openai.com/v1",
+          "managedByProvider": "Base URL is managed by the selected provider."
         },
         "apiKey": {
           "title": "Clé API",
@@ -398,7 +405,8 @@
           "placeholderApple": "Apple Intelligence",
           "placeholderWithOptions": "Rechercher ou sélectionner un modèle",
           "placeholderNoOptions": "Tapez un nom de modèle",
-          "refreshModels": "Actualiser les modèles"
+          "refreshModels": "Actualiser les modèles",
+          "useCustomModel": "Use \"{{model}}\""
         }
       },
       "prompts": {
@@ -499,7 +507,10 @@
         "helpEscape": "Clear search or leave panel",
         "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
         "editTitle": "Edit title",
-        "titlePlaceholder": "Add a title"
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word"
       }
     },
     "debug": {
@@ -510,7 +521,14 @@
       },
       "logLevel": {
         "title": "Niveau de journalisation",
-        "description": "Définir le niveau de détail de la journalisation"
+        "description": "Définir le niveau de détail de la journalisation",
+        "options": {
+          "error": "Error",
+          "warn": "Warning",
+          "info": "Info",
+          "debug": "Debug",
+          "trace": "Trace"
+        }
       },
       "updateChecks": {
         "label": "Vérifier les mises à jour",
@@ -518,7 +536,8 @@
       },
       "soundTheme": {
         "label": "Thème sonore",
-        "description": "Choisir un thème sonore pour les retours de début et de fin d'enregistrement"
+        "description": "Choisir un thème sonore pour les retours de début et de fin d'enregistrement",
+        "preview": "Preview sound theme"
       },
       "wordCorrectionThreshold": {
         "title": "Seuil de correction des mots",
@@ -562,12 +581,18 @@
       "keyboardImplementation": {
         "title": "Gestion du clavier",
         "description": "Choisissez le système des raccourcis clavier.",
-        "bindingsReset": "Raccourcis clavier étaient incompatibles et ont été réinitialisés aux valeurs par défaut"
+        "bindingsReset": "Raccourcis clavier étaient incompatibles et ont été réinitialisés aux valeurs par défaut",
+        "options": {
+          "tauriGlobalShortcut": "Tauri Global Shortcut",
+          "handyKeys": "Handy Keys"
+        }
       },
       "paths": {
         "appData": "Données de l'application :",
         "models": "Modèles :",
-        "settings": "Paramètres :"
+        "settings": "Paramètres :",
+        "title": "Debug Paths",
+        "description": "Display internal file paths and directories for debugging purposes"
       },
       "pasteDelay": {
         "title": "Délai de collage",
@@ -645,7 +670,13 @@
     "off": "Désactivé",
     "yes": "Oui",
     "no": "Non",
-    "noOptionsFound": "Aucune option trouvée"
+    "noOptionsFound": "Aucune option trouvée",
+    "copy": "Copy",
+    "moreInformation": "More information",
+    "notAvailable": "Not available",
+    "selectOption": "Select an option...",
+    "play": "Play",
+    "pause": "Pause"
   },
   "accessibility": {
     "permissionsRequired": "Autorisations d'accessibilité requises",

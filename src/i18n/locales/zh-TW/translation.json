@@ -149,6 +149,12 @@
       "languageOnly": "僅 {{language}}",
       "translation": "可翻譯為英語",
       "translate": "翻譯為英語"
+    },
+    "statusTitle": "模型狀態：{{status}}",
+    "errors": {
+      "checkStatus": "檢查模型狀態失敗",
+      "loadModel": "模型載入失敗",
+      "switchModel": "切換模型失敗"
     }
   },
   "settings": {
@@ -383,7 +389,8 @@
         "baseUrl": {
           "title": "基礎網址",
           "description": "所選供應商的 API 基礎網址，僅自訂供應商可編輯",
-          "placeholder": "https://api.openai.com/v1"
+          "placeholder": "https://api.openai.com/v1",
+          "managedByProvider": "基礎 URL 由所選提供者管理。"
         },
         "apiKey": {
           "title": "API 金鑰",
@@ -398,7 +405,8 @@
           "placeholderApple": "Apple Intelligence",
           "placeholderWithOptions": "搜尋或選擇模型",
           "placeholderNoOptions": "輸入模型名稱",
-          "refreshModels": "重新整理模型"
+          "refreshModels": "重新整理模型",
+          "useCustomModel": "使用「{{model}}」"
         }
       },
       "prompts": {
@@ -479,27 +487,30 @@
         "hint": "導航 · Enter 複製 · Esc 關閉 · F 收藏",
         "caseSensitiveShort": "Aa",
         "wholeWordShort": "W",
-        "panelSettings": "Settings",
-        "panelHelp": "Help",
-        "panelAbout": "About",
-        "statTotal": "Total",
-        "statFavorites": "Favorites",
-        "statPinned": "Pinned",
-        "statItems": "Items",
-        "statLimit": "Limit",
-        "statHotkey": "Hotkey",
-        "clearUnpinned": "Clear unpinned",
-        "clearAll": "Clear all",
+        "panelSettings": "設定",
+        "panelHelp": "說明",
+        "panelAbout": "關於",
+        "statTotal": "總數",
+        "statFavorites": "收藏",
+        "statPinned": "固定",
+        "statItems": "項目",
+        "statLimit": "上限",
+        "statHotkey": "快捷鍵",
+        "clearUnpinned": "清除未固定項目",
+        "clearAll": "全部清除",
         "keyEnter": "Enter",
         "keyEscape": "Esc",
-        "helpMove": "Move selection",
-        "helpCopy": "Copy selected item",
-        "helpFavorite": "Favorite selected item",
-        "helpDelete": "Delete selected item",
-        "helpEscape": "Clear search or leave panel",
-        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "helpMove": "移動選取",
+        "helpCopy": "複製所選項目",
+        "helpFavorite": "收藏所選項目",
+        "helpDelete": "刪除所選項目",
+        "helpEscape": "清空搜尋或離開面板",
+        "aboutCopy": "Handy 剪貼簿管理器，採用類似 Ropy 的互動風格，並連接到 Handy 本機剪貼簿歷史。",
         "editTitle": "編輯標題",
-        "titlePlaceholder": "新增標題"
+        "titlePlaceholder": "新增標題",
+        "pinToTop": "置頂視窗",
+        "caseSensitive": "區分大小寫",
+        "wholeWord": "全字詞比對"
       }
     },
     "debug": {
@@ -510,7 +521,14 @@
       },
       "logLevel": {
         "title": "日誌等級",
-        "description": "設定日誌的詳細程度"
+        "description": "設定日誌的詳細程度",
+        "options": {
+          "error": "錯誤",
+          "warn": "警告",
+          "info": "資訊",
+          "debug": "偵錯",
+          "trace": "追蹤"
+        }
       },
       "updateChecks": {
         "label": "檢查更新",
@@ -518,7 +536,8 @@
       },
       "soundTheme": {
         "label": "聲音主題",
-        "description": "選擇錄製開始和停止回饋的聲音主題"
+        "description": "選擇錄製開始和停止回饋的聲音主題",
+        "preview": "預覽聲音主題"
       },
       "wordCorrectionThreshold": {
         "title": "詞彙修正閾值",
@@ -562,12 +581,18 @@
       "keyboardImplementation": {
         "title": "鍵盤實作",
         "description": "選擇鍵盤快捷鍵的後端",
-        "bindingsReset": "鍵盤快捷鍵不相容，已重設為預設值"
+        "bindingsReset": "鍵盤快捷鍵不相容，已重設為預設值",
+        "options": {
+          "tauriGlobalShortcut": "Tauri 全域快捷鍵",
+          "handyKeys": "Handy Keys"
+        }
       },
       "paths": {
         "appData": "應用程式資料:",
         "models": "模型:",
-        "settings": "設定:"
+        "settings": "設定:",
+        "title": "偵錯路徑",
+        "description": "顯示用於偵錯的內部檔案路徑與目錄"
       },
       "pasteDelay": {
         "title": "貼上延遲",
@@ -621,9 +646,9 @@
     "installing": "安裝中...",
     "preparing": "準備中...",
     "checkForUpdates": "檢查更新",
-    "portableUpdateTitle": "Manual update required",
-    "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
-    "portableUpdateButton": "Open GitHub Releases"
+    "portableUpdateTitle": "需要手動更新",
+    "portableUpdateMessage": "可攜版安裝無法自動更新。更新步驟：從 GitHub Releases 下載最新的 NSIS 安裝程式，安裝到同一資料夾，然後把舊版本的 Data/ 資料夾（設定、模型、錄音）複製到新版本。",
+    "portableUpdateButton": "開啟 GitHub Releases"
   },
   "common": {
     "loading": "載入中...",
@@ -645,7 +670,13 @@
     "off": "關",
     "yes": "是",
     "no": "否",
-    "noOptionsFound": "未找到選項"
+    "noOptionsFound": "未找到選項",
+    "copy": "複製",
+    "moreInformation": "更多資訊",
+    "notAvailable": "不可用",
+    "selectOption": "選擇一個選項...",
+    "play": "播放",
+    "pause": "暫停"
   },
   "accessibility": {
     "permissionsRequired": "需要輔助使用權限",

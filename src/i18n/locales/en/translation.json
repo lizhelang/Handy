@@ -149,6 +149,12 @@
       "languageOnly": "{{language}} Only",
       "translation": "Can translate to English",
       "translate": "Translate to English"
+    },
+    "statusTitle": "Model status: {{status}}",
+    "errors": {
+      "checkStatus": "Failed to check model status",
+      "loadModel": "Failed to load model",
+      "switchModel": "Failed to switch model"
     }
   },
   "settings": {
@@ -383,7 +389,8 @@
         "baseUrl": {
           "title": "Base URL",
           "description": "API base URL for the selected provider. Only the custom provider can be edited.",
-          "placeholder": "https://api.openai.com/v1"
+          "placeholder": "https://api.openai.com/v1",
+          "managedByProvider": "Base URL is managed by the selected provider."
         },
         "apiKey": {
           "title": "API Key",
@@ -398,7 +405,8 @@
           "placeholderApple": "Apple Intelligence",
           "placeholderWithOptions": "Search or select a model",
           "placeholderNoOptions": "Type a model name",
-          "refreshModels": "Refresh models"
+          "refreshModels": "Refresh models",
+          "useCustomModel": "Use \"{{model}}\""
         }
       },
       "prompts": {
@@ -499,7 +507,10 @@
         "helpEscape": "Clear search or leave panel",
         "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
         "editTitle": "Edit title",
-        "titlePlaceholder": "Add a title"
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word"
       }
     },
     "debug": {
@@ -510,7 +521,14 @@
       },
       "logLevel": {
         "title": "Log Level",
-        "description": "Set the verbosity of logging"
+        "description": "Set the verbosity of logging",
+        "options": {
+          "error": "Error",
+          "warn": "Warning",
+          "info": "Info",
+          "debug": "Debug",
+          "trace": "Trace"
+        }
       },
       "updateChecks": {
         "label": "Check for Updates",
@@ -518,7 +536,8 @@
       },
       "soundTheme": {
         "label": "Sound Theme",
-        "description": "Choose a sound theme for recording start and stop feedback"
+        "description": "Choose a sound theme for recording start and stop feedback",
+        "preview": "Preview sound theme"
       },
       "wordCorrectionThreshold": {
         "title": "Word Correction Threshold",
@@ -562,12 +581,18 @@
       "keyboardImplementation": {
         "title": "Keyboard Implementation",
         "description": "Choose the keyboard shortcut backend.",
-        "bindingsReset": "Keyboard shortcuts were incompatible and reset to defaults"
+        "bindingsReset": "Keyboard shortcuts were incompatible and reset to defaults",
+        "options": {
+          "tauriGlobalShortcut": "Tauri Global Shortcut",
+          "handyKeys": "Handy Keys"
+        }
       },
       "paths": {
         "appData": "App Data:",
         "models": "Models:",
-        "settings": "Settings:"
+        "settings": "Settings:",
+        "title": "Debug Paths",
+        "description": "Display internal file paths and directories for debugging purposes"
       },
       "pasteDelay": {
         "title": "Paste Delay",
@@ -645,7 +670,13 @@
     "off": "Off",
     "yes": "Yes",
     "no": "No",
-    "noOptionsFound": "No options found"
+    "noOptionsFound": "No options found",
+    "copy": "Copy",
+    "moreInformation": "More information",
+    "notAvailable": "Not available",
+    "selectOption": "Select an option...",
+    "play": "Play",
+    "pause": "Pause"
   },
   "accessibility": {
     "permissionsRequired": "Accessibility Permissions Required",

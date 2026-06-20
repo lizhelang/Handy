@@ -149,7 +149,13 @@
       "languageOnly": "Chỉ {{language}}"
     },
     "cancel": "Hủy",
-    "cancelDownload": "Hủy tải xuống"
+    "cancelDownload": "Hủy tải xuống",
+    "statusTitle": "Model status: {{status}}",
+    "errors": {
+      "checkStatus": "Failed to check model status",
+      "loadModel": "Failed to load model",
+      "switchModel": "Failed to switch model"
+    }
   },
   "settings": {
     "modelSettings": {
@@ -383,7 +389,8 @@
         "baseUrl": {
           "title": "URL cơ sở",
           "description": "URL cơ sở API cho nhà cung cấp đã chọn. Chỉ có thể chỉnh sửa nhà cung cấp tùy chỉnh.",
-          "placeholder": "https://api.openai.com/v1"
+          "placeholder": "https://api.openai.com/v1",
+          "managedByProvider": "Base URL is managed by the selected provider."
         },
         "apiKey": {
           "title": "Khóa API",
@@ -398,7 +405,8 @@
           "placeholderApple": "Apple Intelligence",
           "placeholderWithOptions": "Tìm kiếm hoặc chọn một mô hình",
           "placeholderNoOptions": "Nhập tên mô hình",
-          "refreshModels": "Làm mới mô hình"
+          "refreshModels": "Làm mới mô hình",
+          "useCustomModel": "Use \"{{model}}\""
         }
       },
       "prompts": {
@@ -499,7 +507,10 @@
         "helpEscape": "Clear search or leave panel",
         "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
         "editTitle": "Edit title",
-        "titlePlaceholder": "Add a title"
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word"
       }
     },
     "debug": {
@@ -510,7 +521,14 @@
       },
       "logLevel": {
         "title": "Mức nhật ký",
-        "description": "Đặt mức độ chi tiết của nhật ký"
+        "description": "Đặt mức độ chi tiết của nhật ký",
+        "options": {
+          "error": "Error",
+          "warn": "Warning",
+          "info": "Info",
+          "debug": "Debug",
+          "trace": "Trace"
+        }
       },
       "updateChecks": {
         "label": "Kiểm tra cập nhật",
@@ -518,7 +536,8 @@
       },
       "soundTheme": {
         "label": "Chủ đề âm thanh",
-        "description": "Chọn chủ đề âm thanh cho phản hồi bắt đầu và kết thúc ghi âm"
+        "description": "Chọn chủ đề âm thanh cho phản hồi bắt đầu và kết thúc ghi âm",
+        "preview": "Preview sound theme"
       },
       "wordCorrectionThreshold": {
         "title": "Ngưỡng sửa từ",
@@ -562,12 +581,18 @@
       "keyboardImplementation": {
         "title": "Triển khai bàn phím",
         "description": "Chọn hệ thống xử lý phím tắt.",
-        "bindingsReset": "Các phím tắt không tương thích và đã được đặt lại về mặc định"
+        "bindingsReset": "Các phím tắt không tương thích và đã được đặt lại về mặc định",
+        "options": {
+          "tauriGlobalShortcut": "Tauri Global Shortcut",
+          "handyKeys": "Handy Keys"
+        }
       },
       "paths": {
         "appData": "Dữ liệu ứng dụng:",
         "models": "Mô hình:",
-        "settings": "Cài đặt:"
+        "settings": "Cài đặt:",
+        "title": "Debug Paths",
+        "description": "Display internal file paths and directories for debugging purposes"
       },
       "pasteDelay": {
         "title": "Độ trễ dán",
@@ -645,7 +670,13 @@
     "off": "Tắt",
     "yes": "Có",
     "no": "Không",
-    "noOptionsFound": "Không tìm thấy tùy chọn"
+    "noOptionsFound": "Không tìm thấy tùy chọn",
+    "copy": "Copy",
+    "moreInformation": "More information",
+    "notAvailable": "Not available",
+    "selectOption": "Select an option...",
+    "play": "Play",
+    "pause": "Pause"
   },
   "accessibility": {
     "permissionsRequired": "Cần quyền truy cập",

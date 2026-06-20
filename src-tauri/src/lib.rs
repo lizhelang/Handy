@@ -456,6 +456,7 @@ pub fn run(cli_args: CliArgs) {
             commands::history::update_recording_retention_period,
             helpers::clamshell::is_laptop,
             commands::clipboard::get_clipboard_items,
+            commands::clipboard::get_favorite_clipboard_items,
             commands::clipboard::search_clipboard,
             commands::clipboard::toggle_clipboard_favorite,
             commands::clipboard::toggle_clipboard_pin,

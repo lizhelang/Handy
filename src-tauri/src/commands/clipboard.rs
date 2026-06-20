@@ -10,9 +10,25 @@ pub async fn get_clipboard_items(
     page: usize,
     page_size: usize,
     sort: String,
+    content_type: String,
+    favorite_only: bool,
 ) -> Result<ClipboardPageResult, String> {
     manager
-        .get_items(page, page_size, &sort)
+        .get_items(page, page_size, &sort, &content_type, favorite_only)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_favorite_clipboard_items(
+    manager: State<'_, Arc<ClipboardManager>>,
+    page: usize,
+    page_size: usize,
+    content_type: String,
+    sort: String,
+) -> Result<ClipboardPageResult, String> {
+    manager
+        .get_favorite_items(page, page_size, &content_type, &sort)
         .map_err(|e| e.to_string())
 }
 
@@ -125,7 +141,7 @@ pub async fn update_clipboard_settings(
     app: AppHandle,
     max_records: Option<usize>,
     hotkey: Option<String>,
-    confirm_mode: Option<String>,
+    _confirm_mode: Option<String>,
 ) -> Result<crate::managers::clipboard::ClipboardSettings, String> {
     let mut settings = crate::settings::get_settings(&app);
 
@@ -141,7 +157,7 @@ pub async fn update_clipboard_settings(
     Ok(crate::managers::clipboard::ClipboardSettings {
         max_records: settings.clipboard_max_records,
         hotkey: settings.clipboard_hotkey,
-        confirm_mode: confirm_mode.unwrap_or_else(|| "copy".to_string()),
+        confirm_mode: "copy".to_string(),
     })
 }
 

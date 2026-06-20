@@ -124,9 +124,30 @@ const installClipboardOverlayMocks = async (page: Page) => {
               hotkey: "CommandOrControl+Shift+V",
               max_records: 500,
             };
-          case "get_clipboard_items":
-            return { has_more: false, items };
-          case "copy_clipboard_content_to_system":
+          case "get_clipboard_items": {
+            const contentType = args.contentType as string | undefined;
+            const favoriteOnly = Boolean(args.favoriteOnly);
+            const page = Number(args.page ?? 0);
+            const pageSize = Number(args.pageSize ?? items.length);
+            const filteredItems = (
+              items as typeof clipboardOverlayItems
+            ).filter((item) => {
+              const matchesFavorite = !favoriteOnly || item.is_favorite;
+              const matchesType =
+                !contentType ||
+                contentType === "all" ||
+                (contentType === "text" &&
+                  ["text", "richtext"].includes(item.content_type)) ||
+                item.content_type === contentType;
+              return matchesFavorite && matchesType;
+            });
+            const start = page * pageSize;
+            return {
+              has_more: start + pageSize < filteredItems.length,
+              items: filteredItems.slice(start, start + pageSize),
+            };
+          }
+          case "copy_clipboard_to_system":
             return new Promise((resolve) => {
               window.__HANDY_TEST_RESOLVE_COPY__ = () => resolve(null);
             });
@@ -181,16 +202,14 @@ test.describe("Handy App", () => {
 
     const copyInvokes = await page.evaluate(() =>
       window.__HANDY_TEST_INVOKES__.filter(
-        (record) => record.cmd === "copy_clipboard_content_to_system",
+        (record) => record.cmd === "copy_clipboard_to_system",
       ),
     );
     expect(copyInvokes).toEqual([
       {
-        cmd: "copy_clipboard_content_to_system",
+        cmd: "copy_clipboard_to_system",
         args: {
-          contentType: "text",
-          imagePath: null,
-          text: "第二条剪贴板内容",
+          id: 102,
         },
       },
     ]);
@@ -233,7 +252,7 @@ test.describe("Handy App", () => {
     await items.nth(1).locator(".clipboard-overlay-star-button").click();
     const copyInvokesAfterAction = await page.evaluate(() =>
       window.__HANDY_TEST_INVOKES__.filter(
-        (record) => record.cmd === "copy_clipboard_content_to_system",
+        (record) => record.cmd === "copy_clipboard_to_system",
       ),
     );
     expect(copyInvokesAfterAction).toHaveLength(1);
@@ -245,6 +264,52 @@ test.describe("Handy App", () => {
     expect(hideInvokesAfterAction).toHaveLength(1);
 
     await page.evaluate(() => window.__HANDY_TEST_RESOLVE_COPY__?.());
+  });
+
+  test("clipboard overlay loads filtered pages instead of all records", async ({
+    page,
+  }) => {
+    await installClipboardOverlayMocks(page);
+    await page.goto("/src/overlay/clipboard/index.html");
+
+    await expect(page.getByTestId("clipboard-overlay-item")).toHaveCount(2);
+
+    await page.locator(".clipboard-overlay-favorite-filter").click();
+    await expect(page.getByTestId("clipboard-overlay-item")).toHaveCount(1);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            window.__HANDY_TEST_INVOKES__
+              .filter((record) => record.cmd === "get_clipboard_items")
+              .at(-1)?.args,
+        ),
+      )
+      .toMatchObject({
+        contentType: "all",
+        favoriteOnly: true,
+        page: 0,
+        pageSize: 20,
+      });
+
+    await page.locator(".clipboard-overlay-favorite-filter").click();
+    await page.getByTitle("Images").click();
+    await expect(page.getByTestId("clipboard-overlay-item")).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            window.__HANDY_TEST_INVOKES__
+              .filter((record) => record.cmd === "get_clipboard_items")
+              .at(-1)?.args,
+        ),
+      )
+      .toMatchObject({
+        contentType: "image",
+        favoriteOnly: false,
+        page: 0,
+        pageSize: 20,
+      });
   });
 
   test("clipboard overlay edits item titles without copying", async ({
@@ -267,8 +332,8 @@ test.describe("Handy App", () => {
 
     await secondItem.locator(".clipboard-overlay-star-button").click();
     await expect(
-      secondItem.locator(".clipboard-overlay-item-title.empty"),
-    ).toHaveText("Add a title");
+      secondItem.locator(".clipboard-overlay-item-title"),
+    ).toHaveText("第二条剪贴板");
 
     await secondItem.locator(".clipboard-overlay-title-button").click();
     const emptyTitleInput = secondItem.locator(
@@ -280,8 +345,8 @@ test.describe("Handy App", () => {
       secondItem.locator(".clipboard-overlay-title-input"),
     ).toHaveCount(0);
     await expect(
-      secondItem.locator(".clipboard-overlay-item-title.empty"),
-    ).toHaveText("Add a title");
+      secondItem.locator(".clipboard-overlay-item-title"),
+    ).toHaveText("第二条剪贴板");
 
     await firstItem.locator(".clipboard-overlay-title-button").click();
     const titleInput = firstItem.locator(".clipboard-overlay-title-input");
@@ -319,9 +384,9 @@ test.describe("Handy App", () => {
     ).toHaveClass(/editing/);
     await titleInput.fill("");
     await titleInput.press("Enter");
-    await expect(
-      firstItem.locator(".clipboard-overlay-item-title.empty"),
-    ).toHaveText("Add a title");
+    await expect(firstItem.locator(".clipboard-overlay-item-title")).toHaveText(
+      "第一条剪贴板",
+    );
 
     const clearTitleInvokes = await page.evaluate(() =>
       window.__HANDY_TEST_INVOKES__.filter(
@@ -347,7 +412,7 @@ test.describe("Handy App", () => {
 
     const copyInvokes = await page.evaluate(() =>
       window.__HANDY_TEST_INVOKES__.filter(
-        (record) => record.cmd === "copy_clipboard_content_to_system",
+        (record) => record.cmd === "copy_clipboard_to_system",
       ),
     );
     expect(copyInvokes).toHaveLength(0);

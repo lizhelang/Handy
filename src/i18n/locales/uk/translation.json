@@ -149,7 +149,13 @@
       "languageOnly": "Лише {{language}}"
     },
     "cancel": "Скасувати",
-    "cancelDownload": "Скасувати завантаження"
+    "cancelDownload": "Скасувати завантаження",
+    "statusTitle": "Model status: {{status}}",
+    "errors": {
+      "checkStatus": "Failed to check model status",
+      "loadModel": "Failed to load model",
+      "switchModel": "Failed to switch model"
+    }
   },
   "settings": {
     "modelSettings": {
@@ -383,7 +389,8 @@
         "baseUrl": {
           "title": "Базова URL-адреса",
           "description": "Базова URL-адреса API для обраного провайдера. Лише власний провайдер можна редагувати.",
-          "placeholder": "https://api.openai.com/v1"
+          "placeholder": "https://api.openai.com/v1",
+          "managedByProvider": "Base URL is managed by the selected provider."
         },
         "apiKey": {
           "title": "API-ключ",
@@ -398,7 +405,8 @@
           "placeholderApple": "Apple Intelligence",
           "placeholderWithOptions": "Шукайте або оберіть модель",
           "placeholderNoOptions": "Введіть назву моделі",
-          "refreshModels": "Оновити моделі"
+          "refreshModels": "Оновити моделі",
+          "useCustomModel": "Use \"{{model}}\""
         }
       },
       "prompts": {
@@ -499,7 +507,10 @@
         "helpEscape": "Clear search or leave panel",
         "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
         "editTitle": "Edit title",
-        "titlePlaceholder": "Add a title"
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word"
       }
     },
     "debug": {
@@ -510,7 +521,14 @@
       },
       "logLevel": {
         "title": "Рівень логування",
-        "description": "Встановіть детальність логування"
+        "description": "Встановіть детальність логування",
+        "options": {
+          "error": "Error",
+          "warn": "Warning",
+          "info": "Info",
+          "debug": "Debug",
+          "trace": "Trace"
+        }
       },
       "updateChecks": {
         "label": "Перевірка оновлень",
@@ -518,7 +536,8 @@
       },
       "soundTheme": {
         "label": "Звукова тема",
-        "description": "Оберіть звукову тему для сповіщень про початок і зупинку запису"
+        "description": "Оберіть звукову тему для сповіщень про початок і зупинку запису",
+        "preview": "Preview sound theme"
       },
       "wordCorrectionThreshold": {
         "title": "Поріг корекції слів",
@@ -562,12 +581,18 @@
       "keyboardImplementation": {
         "title": "Реалізація клавіатури",
         "description": "Оберіть бекенд для клавіатурних скорочень.",
-        "bindingsReset": "Клавіатурні скорочення були несумісні та скинуті до значень за замовчуванням"
+        "bindingsReset": "Клавіатурні скорочення були несумісні та скинуті до значень за замовчуванням",
+        "options": {
+          "tauriGlobalShortcut": "Tauri Global Shortcut",
+          "handyKeys": "Handy Keys"
+        }
       },
       "paths": {
         "appData": "Дані програми:",
         "models": "Моделі:",
-        "settings": "Налаштування:"
+        "settings": "Налаштування:",
+        "title": "Debug Paths",
+        "description": "Display internal file paths and directories for debugging purposes"
       },
       "pasteDelay": {
         "title": "Затримка вставки",
@@ -645,7 +670,13 @@
     "off": "Вимк.",
     "yes": "Так",
     "no": "Ні",
-    "noOptionsFound": "Опцій не знайдено"
+    "noOptionsFound": "Опцій не знайдено",
+    "copy": "Copy",
+    "moreInformation": "More information",
+    "notAvailable": "Not available",
+    "selectOption": "Select an option...",
+    "play": "Play",
+    "pause": "Pause"
   },
   "accessibility": {
     "permissionsRequired": "Потрібні права доступу",

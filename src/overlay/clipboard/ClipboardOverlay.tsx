@@ -26,6 +26,7 @@ import type {
   ClipboardItem,
   ClipboardSettings,
   ClipboardStats,
+  ClipboardContentTypeFilter,
 } from "@/lib/types/clipboard";
 import { getClipboardItemLabel } from "@/components/clipboard/utils";
 import "./ClipboardOverlay.css";
@@ -89,6 +90,9 @@ const itemMatchesFilter = (
   }
   return item.content_type === contentFilter;
 };
+
+const getDefaultItemTitle = (value: string) =>
+  Array.from(value.replace(/\s+/g, " ").trim()).slice(0, 6).join("");
 
 const itemMatchesSearch = (
   item: ClipboardItem,
@@ -159,6 +163,8 @@ const ClipboardOverlay: React.FC = () => {
   const settings = useClipboardStore((s) => s.settings);
   const stats = useClipboardStore((s) => s.stats);
   const updateSettings = useClipboardStore((s) => s.updateSettings);
+  const loadItems = useClipboardStore((s) => s.loadItems);
+  const loadFavorites = useClipboardStore((s) => s.loadFavorites);
   const loadMore = useClipboardStore((s) => s.loadMore);
   const hasMore = useClipboardStore((s) => s.hasMore);
   const isLoading = useClipboardStore((s) => s.isLoading);
@@ -181,6 +187,32 @@ const ClipboardOverlay: React.FC = () => {
   useEffect(() => {
     if (!initialized) initialize();
   }, [initialized, initialize]);
+
+  useEffect(() => {
+    if (!initialized) return;
+
+    const overlayContentType = contentFilter as ClipboardContentTypeFilter;
+    if (searchQuery.trim()) {
+      void search(searchQuery, overlayContentType);
+      return;
+    }
+    if (favoritesOnly) {
+      void loadFavorites(overlayContentType);
+    } else {
+      void loadItems(true, {
+        contentType: overlayContentType,
+        favoriteOnly: false,
+      });
+    }
+  }, [
+    contentFilter,
+    favoritesOnly,
+    initialized,
+    loadFavorites,
+    loadItems,
+    search,
+    searchQuery,
+  ]);
 
   useEffect(() => {
     searchRef.current?.focus();
@@ -293,11 +325,7 @@ const ClipboardOverlay: React.FC = () => {
   );
 
   const copyOverlayItem = useCallback(async (item: ClipboardItem) => {
-    await invoke("copy_clipboard_content_to_system", {
-      contentType: item.content_type,
-      imagePath: item.image_path ?? null,
-      text: item.full_text ?? item.content_preview,
-    });
+    await invoke("copy_clipboard_to_system", { id: item.id });
   }, []);
 
   const handleCopy = useCallback(
@@ -404,7 +432,7 @@ const ClipboardOverlay: React.FC = () => {
           if (activePanel !== "list") {
             handleSetPanel("list");
           } else if (searchQuery) {
-            search("");
+            search("", contentFilter as ClipboardContentTypeFilter);
           }
           break;
       }
@@ -420,6 +448,7 @@ const ClipboardOverlay: React.FC = () => {
       searchQuery,
       activePanel,
       handleSetPanel,
+      contentFilter,
     ],
   );
 
@@ -450,7 +479,7 @@ const ClipboardOverlay: React.FC = () => {
               windowPinned && "active",
             )}
             onClick={handleToggleWindowPinned}
-            title="Pin to top"
+            title={t("settings.clipboard.overlay.pinToTop")}
           >
             <PinToTopIcon />
           </button>
@@ -462,7 +491,7 @@ const ClipboardOverlay: React.FC = () => {
             onClick={() =>
               handleSetPanel(activePanel === "help" ? "list" : "help")
             }
-            title="Help"
+            title={t("settings.clipboard.overlay.panelHelp")}
           >
             <CircleHelp />
           </button>
@@ -474,7 +503,7 @@ const ClipboardOverlay: React.FC = () => {
             onClick={() =>
               handleSetPanel(activePanel === "about" ? "list" : "about")
             }
-            title="About"
+            title={t("settings.clipboard.overlay.panelAbout")}
           >
             <Info />
           </button>
@@ -486,7 +515,7 @@ const ClipboardOverlay: React.FC = () => {
             onClick={() =>
               handleSetPanel(activePanel === "settings" ? "list" : "settings")
             }
-            title="Settings"
+            title={t("settings.clipboard.overlay.panelSettings")}
           >
             <Settings />
           </button>
@@ -504,12 +533,19 @@ const ClipboardOverlay: React.FC = () => {
                 className="clipboard-overlay-search"
                 placeholder={t("settings.clipboard.overlay.search")}
                 value={searchQuery}
-                onChange={(e) => search(e.target.value)}
+                onChange={(e) =>
+                  search(
+                    e.target.value,
+                    contentFilter as ClipboardContentTypeFilter,
+                  )
+                }
               />
               {searchQuery && (
                 <button
                   className="clipboard-overlay-clear"
-                  onClick={() => search("")}
+                  onClick={() =>
+                    search("", contentFilter as ClipboardContentTypeFilter)
+                  }
                 >
                   <X />
                 </button>
@@ -521,7 +557,7 @@ const ClipboardOverlay: React.FC = () => {
                   caseSensitive && "active",
                 )}
                 onClick={() => setCaseSensitive((value) => !value)}
-                title="Case sensitive"
+                title={t("settings.clipboard.overlay.caseSensitive")}
               >
                 {t("settings.clipboard.overlay.caseSensitiveShort")}
               </button>
@@ -531,7 +567,7 @@ const ClipboardOverlay: React.FC = () => {
                   wholeWord && "active",
                 )}
                 onClick={() => setWholeWord((value) => !value)}
-                title="Whole word"
+                title={t("settings.clipboard.overlay.wholeWord")}
               >
                 {t("settings.clipboard.overlay.wholeWordShort")}
               </button>
@@ -633,9 +669,6 @@ const ClipboardOverlay: React.FC = () => {
           onUpdateMaxRecords={(maxRecords) =>
             updateSettings({ max_records: maxRecords })
           }
-          onUpdateConfirmMode={(confirmMode) =>
-            updateSettings({ confirm_mode: confirmMode })
-          }
         />
       )}
     </div>
@@ -661,9 +694,6 @@ interface OverlayPanelViewProps {
   onBack: () => void;
   onClearHistory: (keepPinned: boolean) => Promise<void>;
   onUpdateMaxRecords: (maxRecords: number) => Promise<void>;
-  onUpdateConfirmMode: (
-    confirmMode: ClipboardSettings["confirm_mode"],
-  ) => Promise<void>;
 }
 
 const OverlayPanelView: React.FC<OverlayPanelViewProps> = ({
@@ -673,7 +703,6 @@ const OverlayPanelView: React.FC<OverlayPanelViewProps> = ({
   onBack,
   onClearHistory,
   onUpdateMaxRecords,
-  onUpdateConfirmMode,
 }) => {
   const { t } = useTranslation();
   const [maxRecordsDraft, setMaxRecordsDraft] = useState(
@@ -718,24 +747,6 @@ const OverlayPanelView: React.FC<OverlayPanelViewProps> = ({
               }
             />
           </label>
-
-          <div className="clipboard-overlay-setting-row">
-            <span>{t("settings.clipboard.settings.confirmMode")}</span>
-            <div className="clipboard-overlay-segment">
-              <button
-                className={cn(settings?.confirm_mode !== "paste" && "active")}
-                onClick={() => onUpdateConfirmMode("copy")}
-              >
-                {t("settings.clipboard.settings.confirmModeCopy")}
-              </button>
-              <button
-                className={cn(settings?.confirm_mode === "paste" && "active")}
-                onClick={() => onUpdateConfirmMode("paste")}
-              >
-                {t("settings.clipboard.settings.confirmModePaste")}
-              </button>
-            </div>
-          </div>
 
           <div className="clipboard-overlay-stats-grid">
             <span>{stats?.total_items ?? 0}</span>
@@ -788,13 +799,11 @@ const OverlayPanelView: React.FC<OverlayPanelViewProps> = ({
           <p className="clipboard-overlay-about-copy">
             {t("settings.clipboard.overlay.aboutCopy")}
           </p>
-          <div className="clipboard-overlay-stats-grid">
+          <div className="clipboard-overlay-stats-grid two-column">
             <span>{stats?.total_items ?? 0}</span>
             <span>{settings?.max_records ?? 0}</span>
-            <span>{settings?.hotkey ?? "-"}</span>
             <small>{t("settings.clipboard.overlay.statItems")}</small>
             <small>{t("settings.clipboard.overlay.statLimit")}</small>
-            <small>{t("settings.clipboard.overlay.statHotkey")}</small>
           </div>
         </div>
       )}
@@ -818,13 +827,16 @@ const OverlayItem: React.FC<OverlayItemProps> = ({
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(item.title ?? "");
   const itemText = item.full_text || getClipboardItemLabel(t, item);
+  const customTitle = item.title?.trim();
+  const displayTitle = item.is_favorite
+    ? customTitle || getDefaultItemTitle(itemText)
+    : "";
   const imageUrl =
     item.content_type === "image" && !imageError
       ? getImageUrl(item.image_path)
       : null;
   const isLongItem = itemText.length > 56;
-  const shouldShowTitleLine =
-    isEditingTitle || Boolean(item.title) || item.is_favorite || item.is_pinned;
+  const shouldShowTitleLine = isEditingTitle || item.is_favorite;
 
   useEffect(() => {
     if (!isEditingTitle) {
@@ -899,8 +911,8 @@ const OverlayItem: React.FC<OverlayItemProps> = ({
                 }
               }}
             />
-          ) : item.title ? (
-            <div className="clipboard-overlay-item-title">{item.title}</div>
+          ) : displayTitle ? (
+            <div className="clipboard-overlay-item-title">{displayTitle}</div>
           ) : (
             <button
               className="clipboard-overlay-item-title empty"

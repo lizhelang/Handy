@@ -1,8 +1,10 @@
 use crate::input;
 use crate::settings;
 use crate::settings::OverlayPosition;
-use tauri::WebviewWindowBuilder;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
+
+#[cfg(not(target_os = "macos"))]
+use tauri::WebviewWindowBuilder;
 
 use log::debug;
 
@@ -10,7 +12,7 @@ use log::debug;
 use tauri::WebviewUrl;
 
 #[cfg(target_os = "macos")]
-use tauri_nspanel::{tauri_panel, CollectionBehavior, PanelBuilder, PanelLevel};
+use tauri_nspanel::{tauri_panel, CollectionBehavior, PanelBuilder, PanelLevel, StyleMask};
 
 #[cfg(target_os = "linux")]
 use gtk_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
@@ -23,6 +25,13 @@ tauri_panel! {
     panel!(RecordingOverlayPanel {
         config: {
             can_become_key_window: false,
+            is_floating_panel: true
+        }
+    })
+
+    panel!(ClipboardOverlayPanel {
+        config: {
+            can_become_key_window: true,
             is_floating_panel: true
         }
     })
@@ -220,6 +229,21 @@ fn calculate_overlay_position(app_handle: &AppHandle) -> Option<(f64, f64)> {
     Some((x, y))
 }
 
+fn calculate_clipboard_overlay_position(app_handle: &AppHandle) -> Option<(f64, f64)> {
+    let monitor = get_monitor_with_cursor(app_handle)?;
+    let scale = monitor.scale_factor();
+    let monitor_x = monitor.position().x as f64 / scale;
+    let monitor_y = monitor.position().y as f64 / scale;
+    let monitor_width = monitor.size().width as f64 / scale;
+    let monitor_height = monitor.size().height as f64 / scale;
+
+    let x = monitor_x + (monitor_width - CLIPBOARD_OVERLAY_WIDTH) / 2.0;
+    let y = monitor_y + (monitor_height - CLIPBOARD_OVERLAY_HEIGHT) / 2.0;
+
+    Some((x.max(monitor_x), y.max(monitor_y)))
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn create_clipboard_overlay(app_handle: &AppHandle) {
     if app_handle.get_webview_window("clipboard_overlay").is_some() {
         return;
@@ -242,8 +266,13 @@ pub fn create_clipboard_overlay(app_handle: &AppHandle) {
     .always_on_top(false)
     .skip_taskbar(false)
     .transparent(true)
-    .center()
     .visible(false);
+
+    if let Some((x, y)) = calculate_clipboard_overlay_position(app_handle) {
+        builder = builder.position(x, y);
+    } else {
+        builder = builder.center();
+    }
 
     if let Some(data_dir) = crate::portable::data_dir() {
         builder = builder.data_directory(data_dir.join("webview"));
@@ -259,10 +288,77 @@ pub fn create_clipboard_overlay(app_handle: &AppHandle) {
     }
 }
 
+#[cfg(target_os = "macos")]
+pub fn create_clipboard_overlay(app_handle: &AppHandle) {
+    if app_handle.get_webview_window("clipboard_overlay").is_some() {
+        return;
+    }
+
+    let Some((x, y)) = calculate_clipboard_overlay_position(app_handle) else {
+        debug!("Failed to determine clipboard overlay position, not creating overlay window");
+        return;
+    };
+
+    let data_dir = crate::portable::data_dir();
+    let builder = PanelBuilder::<_, ClipboardOverlayPanel>::new(app_handle, "clipboard_overlay")
+        .url(WebviewUrl::App("src/overlay/clipboard/index.html".into()))
+        .title("Clipboard")
+        .position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
+        .level(PanelLevel::Status)
+        .size(tauri::Size::Logical(tauri::LogicalSize {
+            width: CLIPBOARD_OVERLAY_WIDTH,
+            height: CLIPBOARD_OVERLAY_HEIGHT,
+        }))
+        .has_shadow(true)
+        .transparent(true)
+        .no_activate(true)
+        .corner_radius(0.0)
+        .style_mask(StyleMask::empty().borderless().nonactivating_panel())
+        .with_window(move |w| {
+            let mut w = w
+                .resizable(false)
+                .maximizable(false)
+                .minimizable(false)
+                .closable(true)
+                .accept_first_mouse(true)
+                .decorations(false)
+                .transparent(true)
+                .focused(false)
+                .visible(false);
+
+            if let Some(data_dir) = data_dir {
+                w = w.data_directory(data_dir.join("webview"));
+            }
+
+            w
+        })
+        .collection_behavior(
+            CollectionBehavior::new()
+                .can_join_all_spaces()
+                .stationary()
+                .full_screen_auxiliary()
+                .ignores_cycle(),
+        );
+
+    match builder.build() {
+        Ok(panel) => {
+            let _ = panel.hide();
+            debug!("Clipboard overlay panel created successfully (hidden)");
+        }
+        Err(e) => {
+            debug!("Failed to create clipboard overlay panel: {}", e);
+        }
+    }
+}
+
 pub fn show_clipboard_overlay(app_handle: &AppHandle) {
     create_clipboard_overlay(app_handle);
 
     if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {
+        if let Some((x, y)) = calculate_clipboard_overlay_position(app_handle) {
+            let _ = overlay_window
+                .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
+        }
         let _ = overlay_window.show();
         let _ = overlay_window.set_focus();
     }

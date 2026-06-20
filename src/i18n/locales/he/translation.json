@@ -149,6 +149,12 @@
       "languageOnly": "{{language}} בלבד",
       "translation": "יכול לתרגם לאנגלית",
       "translate": "תרגם לאנגלית"
+    },
+    "statusTitle": "Model status: {{status}}",
+    "errors": {
+      "checkStatus": "Failed to check model status",
+      "loadModel": "Failed to load model",
+      "switchModel": "Failed to switch model"
     }
   },
   "settings": {
@@ -383,7 +389,8 @@
         "baseUrl": {
           "title": "Base URL",
           "description": "כתובת ה-API הבסיסית עבור הספק הנבחר. רק ספק מותאם אישית ניתן לעריכה.",
-          "placeholder": "https://api.openai.com/v1"
+          "placeholder": "https://api.openai.com/v1",
+          "managedByProvider": "Base URL is managed by the selected provider."
         },
         "apiKey": {
           "title": "מפתח API",
@@ -398,7 +405,8 @@
           "placeholderApple": "Apple Intelligence",
           "placeholderWithOptions": "חפש או בחר מודל",
           "placeholderNoOptions": "הקלד שם מודל",
-          "refreshModels": "רענן מודלים"
+          "refreshModels": "רענן מודלים",
+          "useCustomModel": "Use \"{{model}}\""
         }
       },
       "prompts": {
@@ -499,7 +507,10 @@
         "helpEscape": "Clear search or leave panel",
         "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
         "editTitle": "Edit title",
-        "titlePlaceholder": "Add a title"
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word"
       }
     },
     "debug": {
@@ -510,7 +521,14 @@
       },
       "logLevel": {
         "title": "רמת לוג",
-        "description": "הגדר את רמת הפירוט של הלוגים"
+        "description": "הגדר את רמת הפירוט של הלוגים",
+        "options": {
+          "error": "Error",
+          "warn": "Warning",
+          "info": "Info",
+          "debug": "Debug",
+          "trace": "Trace"
+        }
       },
       "updateChecks": {
         "label": "בדוק עדכונים",
@@ -518,7 +536,8 @@
       },
       "soundTheme": {
         "label": "ערכת צלילים",
-        "description": "בחר ערכת צלילים להתחלה ולסיום ההקלטה"
+        "description": "בחר ערכת צלילים להתחלה ולסיום ההקלטה",
+        "preview": "Preview sound theme"
       },
       "wordCorrectionThreshold": {
         "title": "סף תיקון מילים",
@@ -562,12 +581,18 @@
       "keyboardImplementation": {
         "title": "מימוש מקלדת",
         "description": "בחר את מנגנון קיצורי המקלדת.",
-        "bindingsReset": "קיצורי המקלדת לא היו תואמים ואופסו לברירות המחדל"
+        "bindingsReset": "קיצורי המקלדת לא היו תואמים ואופסו לברירות המחדל",
+        "options": {
+          "tauriGlobalShortcut": "Tauri Global Shortcut",
+          "handyKeys": "Handy Keys"
+        }
       },
       "paths": {
         "appData": "נתוני אפליקציה:",
         "models": "מודלים:",
-        "settings": "הגדרות:"
+        "settings": "הגדרות:",
+        "title": "Debug Paths",
+        "description": "Display internal file paths and directories for debugging purposes"
       },
       "pasteDelay": {
         "title": "השהיית הדבקה",
@@ -645,7 +670,13 @@
     "off": "כבוי",
     "yes": "כן",
     "no": "לא",
-    "noOptionsFound": "לא נמצאו אפשרויות"
+    "noOptionsFound": "לא נמצאו אפשרויות",
+    "copy": "Copy",
+    "moreInformation": "More information",
+    "notAvailable": "Not available",
+    "selectOption": "Select an option...",
+    "play": "Play",
+    "pause": "Pause"
   },
   "accessibility": {
     "permissionsRequired": "נדרשות הרשאות נגישות",

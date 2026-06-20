@@ -59,7 +59,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
           }
         } catch {
           setModelStatus("error");
-          setModelError("Failed to check model status");
+          setModelError(t("modelSelector.errors.checkStatus"));
         }
       } else {
         setModelStatus("none");
@@ -86,7 +86,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
             break;
           case "loading_failed":
             setModelStatus("error");
-            setModelError(error || "Failed to load model");
+            setModelError(error || t("modelSelector.errors.loadModel"));
             setPendingModelId(null);
             break;
           case "unloaded":
@@ -148,8 +148,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
     if (!success) {
       setPendingModelId(null);
       setModelStatus("error");
-      setModelError("Failed to switch model");
-      onError?.("Failed to switch model");
+      setModelError(t("modelSelector.errors.switchModel"));
+      onError?.(t("modelSelector.errors.switchModel"));
     }
   };
 

@@ -1,7 +1,13 @@
 import { platform, type } from "@tauri-apps/plugin-os";
 import { type OSType } from "./utils/keyboard";
 
-export type AppPlatform = "macos" | "windows" | "linux" | "ios" | "android" | "unknown";
+export type AppPlatform =
+  | "macos"
+  | "windows"
+  | "linux"
+  | "ios"
+  | "android"
+  | "unknown";
 
 export const getSafePlatform = (): AppPlatform => {
   try {

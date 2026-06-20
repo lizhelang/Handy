@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import SelectComponent from "react-select";
 import CreatableSelect from "react-select/creatable";
 import type {
@@ -134,6 +135,7 @@ export const Select: React.FC<SelectProps> = React.memo(
     formatCreateLabel,
     onCreateOption,
   }) => {
+    const { t } = useTranslation();
     const selectValue = React.useMemo(() => {
       if (!value) return null;
       const existing = options.find((option) => option.value === value);
@@ -159,6 +161,8 @@ export const Select: React.FC<SelectProps> = React.memo(
       isLoading,
       onBlur,
       isClearable,
+      noOptionsMessage: () => t("common.noOptionsFound"),
+      loadingMessage: () => t("common.loading"),
       styles: selectStyles,
     };
 

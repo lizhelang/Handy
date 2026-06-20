@@ -6,9 +6,9 @@ import { useSettings } from "../../../hooks/useSettings";
 import { commands } from "@/bindings";
 import { toast } from "sonner";
 
-const KEYBOARD_IMPLEMENTATION_OPTIONS: DropdownOption[] = [
-  { value: "tauri", label: "Tauri Global Shortcut" },
-  { value: "handy_keys", label: "Handy Keys" },
+const KEYBOARD_IMPLEMENTATION_VALUES = [
+  { value: "tauri", labelKey: "tauriGlobalShortcut" },
+  { value: "handy_keys", labelKey: "handyKeys" },
 ];
 
 interface KeyboardImplementationSelectorProps {
@@ -23,6 +23,11 @@ export const KeyboardImplementationSelector: React.FC<
   const { getSetting, isUpdating, refreshSettings } = useSettings();
   const currentImplementation =
     getSetting("keyboard_implementation") ?? "tauri";
+  const keyboardImplementationOptions: DropdownOption[] =
+    KEYBOARD_IMPLEMENTATION_VALUES.map(({ value, labelKey }) => ({
+      value,
+      label: t(`settings.debug.keyboardImplementation.options.${labelKey}`),
+    }));
 
   const handleSelect = async (value: string) => {
     if (value === currentImplementation) return;
@@ -60,7 +65,7 @@ export const KeyboardImplementationSelector: React.FC<
       layout="horizontal"
     >
       <Dropdown
-        options={KEYBOARD_IMPLEMENTATION_OPTIONS}
+        options={keyboardImplementationOptions}
         selectedValue={currentImplementation}
         onSelect={handleSelect}
         disabled={isUpdating("keyboard_implementation")}

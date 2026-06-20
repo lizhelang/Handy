@@ -26,6 +26,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_specta::Event;
 
 const TEXT_PREVIEW_MAX_CHARS: usize = 200;
+const SEARCH_RESULT_LIMIT: i64 = 100;
 
 /// Database migrations for clipboard history.
 static MIGRATIONS: &[M] = &[
@@ -45,6 +46,16 @@ static MIGRATIONS: &[M] = &[
         );",
     ),
     M::up("ALTER TABLE clipboard_history ADD COLUMN title TEXT;"),
+    M::up(
+        "CREATE INDEX IF NOT EXISTS idx_clipboard_history_order
+            ON clipboard_history(is_pinned DESC, created_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_clipboard_history_content_order
+            ON clipboard_history(content_type, is_pinned DESC, created_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_clipboard_history_favorite_order
+            ON clipboard_history(is_favorite, is_pinned DESC, created_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_clipboard_history_cleanup
+            ON clipboard_history(is_pinned, is_favorite, created_at ASC);",
+    ),
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -147,7 +158,8 @@ impl ClipboardManager {
     fn init_database(&self) -> Result<()> {
         info!("Initializing clipboard database at {:?}", self.db_path);
 
-        let mut conn = Connection::open(&self.db_path)?;
+        let mut conn = self.get_connection()?;
+        conn.execute_batch("PRAGMA journal_mode = WAL;")?;
 
         // Create migrations object and run to latest version
         let migrations = Migrations::new(MIGRATIONS.to_vec());
@@ -186,7 +198,13 @@ impl ClipboardManager {
     }
 
     fn get_connection(&self) -> Result<Connection> {
-        Ok(Connection::open(&self.db_path)?)
+        let conn = Connection::open(&self.db_path)?;
+        conn.busy_timeout(Duration::from_secs(5))?;
+        conn.execute_batch(
+            "PRAGMA synchronous = NORMAL;
+             PRAGMA temp_store = MEMORY;",
+        )?;
+        Ok(conn)
     }
 
     fn map_clipboard_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardItem> {
@@ -589,7 +607,7 @@ impl ClipboardManager {
         let conn = self.get_connection()?;
         conn.execute(
             "INSERT INTO clipboard_history (
-                content_type, content_preview, content_hash, full_text, 
+                content_type, content_preview, content_hash, full_text,
                 created_at, size_bytes
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params!["text", preview, hash, text, now, size_bytes],
@@ -790,33 +808,19 @@ impl ClipboardManager {
         Ok(Some(item))
     }
 
-    /// Get clipboard items with pagination
-    pub fn get_items(
+    fn query_items_page<P>(
         &self,
-        page: usize,
+        conn: &Connection,
+        sql: &str,
+        params: P,
         page_size: usize,
-        sort: &str,
-    ) -> Result<ClipboardPageResult> {
-        let conn = self.get_connection()?;
-        let offset = (page * page_size) as i64;
-        let limit = page_size as i64;
-
-        let order = if sort == "oldest" { "ASC" } else { "DESC" };
-
-        // Fetch one extra to determine if there are more items
-        let fetch_count = limit + 1;
-
-        let mut stmt = conn.prepare(&format!(
-            "SELECT id, title, content_type, content_preview, content_hash, full_text, image_path,
-                    source_app, is_favorite, is_pinned, created_at, size_bytes
-             FROM clipboard_history
-             ORDER BY is_pinned DESC, created_at {}
-             LIMIT ?1 OFFSET ?2",
-            order
-        ))?;
-
+    ) -> Result<ClipboardPageResult>
+    where
+        P: rusqlite::Params,
+    {
+        let mut stmt = conn.prepare(sql)?;
         let items: Vec<ClipboardItem> = stmt
-            .query_map(params![fetch_count, offset], Self::map_clipboard_item)?
+            .query_map(params, Self::map_clipboard_item)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         let has_more = items.len() > page_size;
@@ -832,10 +836,86 @@ impl ClipboardManager {
         Ok(ClipboardPageResult { items, has_more })
     }
 
+    /// Get clipboard items with pagination.
+    pub fn get_items(
+        &self,
+        page: usize,
+        page_size: usize,
+        sort: &str,
+        content_type: &str,
+        favorite_only: bool,
+    ) -> Result<ClipboardPageResult> {
+        let conn = self.get_connection()?;
+        let offset = (page * page_size) as i64;
+        let fetch_count = page_size as i64 + 1;
+        let order = if sort == "oldest" { "ASC" } else { "DESC" };
+        let query = |where_clause: &str| {
+            format!(
+                "SELECT id, title, content_type, content_preview, content_hash, full_text, image_path,
+                        source_app, is_favorite, is_pinned, created_at, size_bytes
+                 FROM clipboard_history
+                 {}
+                 ORDER BY is_pinned DESC, created_at {}
+                 LIMIT ?{} OFFSET ?{}",
+                where_clause,
+                order,
+                if content_type == "all" || content_type == "text" { 1 } else { 2 },
+                if content_type == "all" || content_type == "text" { 2 } else { 3 },
+            )
+        };
+
+        match (favorite_only, content_type) {
+            (false, "all") => {
+                self.query_items_page(&conn, &query(""), params![fetch_count, offset], page_size)
+            }
+            (true, "all") => self.query_items_page(
+                &conn,
+                &query("WHERE is_favorite = 1"),
+                params![fetch_count, offset],
+                page_size,
+            ),
+            (false, "text") => self.query_items_page(
+                &conn,
+                &query("WHERE content_type IN ('text', 'richtext')"),
+                params![fetch_count, offset],
+                page_size,
+            ),
+            (true, "text") => self.query_items_page(
+                &conn,
+                &query("WHERE is_favorite = 1 AND content_type IN ('text', 'richtext')"),
+                params![fetch_count, offset],
+                page_size,
+            ),
+            (false, _) => self.query_items_page(
+                &conn,
+                &query("WHERE content_type = ?1"),
+                params![content_type, fetch_count, offset],
+                page_size,
+            ),
+            (true, _) => self.query_items_page(
+                &conn,
+                &query("WHERE is_favorite = 1 AND content_type = ?1"),
+                params![content_type, fetch_count, offset],
+                page_size,
+            ),
+        }
+    }
+
+    /// Get favorite clipboard items for the overlay favorite view.
+    pub fn get_favorite_items(
+        &self,
+        page: usize,
+        page_size: usize,
+        content_type: &str,
+        sort: &str,
+    ) -> Result<ClipboardPageResult> {
+        self.get_items(page, page_size, sort, content_type, true)
+    }
+
     /// Search clipboard items
     pub fn search(&self, query: &str, content_type: &str) -> Result<Vec<ClipboardItem>> {
         let conn = self.get_connection()?;
-        let search_query = format!("%{}%", query);
+        let search_query = format!("%{}%", query.trim());
 
         let mut stmt = if content_type == "all" {
             conn.prepare(
@@ -843,7 +923,18 @@ impl ClipboardManager {
                         source_app, is_favorite, is_pinned, created_at, size_bytes
                  FROM clipboard_history
                  WHERE title LIKE ?1 OR content_preview LIKE ?1 OR full_text LIKE ?1
-                 ORDER BY is_pinned DESC, created_at DESC",
+                 ORDER BY is_pinned DESC, created_at DESC
+                 LIMIT ?2",
+            )?
+        } else if content_type == "text" {
+            conn.prepare(
+                "SELECT id, title, content_type, content_preview, content_hash, full_text, image_path,
+                        source_app, is_favorite, is_pinned, created_at, size_bytes
+                 FROM clipboard_history
+                 WHERE (title LIKE ?1 OR content_preview LIKE ?1 OR full_text LIKE ?1)
+                    AND content_type IN ('text', 'richtext')
+                 ORDER BY is_pinned DESC, created_at DESC
+                 LIMIT ?2",
             )?
         } else {
             conn.prepare(
@@ -851,16 +942,20 @@ impl ClipboardManager {
                         source_app, is_favorite, is_pinned, created_at, size_bytes
                  FROM clipboard_history
                  WHERE (title LIKE ?1 OR content_preview LIKE ?1 OR full_text LIKE ?1) AND content_type = ?2
-                 ORDER BY is_pinned DESC, created_at DESC",
+                 ORDER BY is_pinned DESC, created_at DESC
+                 LIMIT ?3",
             )?
         };
 
-        let items = if content_type == "all" {
-            stmt.query_map(params![search_query], Self::map_clipboard_item)?
-                .collect::<std::result::Result<Vec<_>, _>>()?
+        let items = if content_type == "all" || content_type == "text" {
+            stmt.query_map(
+                params![search_query, SEARCH_RESULT_LIMIT],
+                Self::map_clipboard_item,
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?
         } else {
             stmt.query_map(
-                params![search_query, content_type],
+                params![search_query, content_type, SEARCH_RESULT_LIMIT],
                 Self::map_clipboard_item,
             )?
             .collect::<std::result::Result<Vec<_>, _>>()?
@@ -1035,7 +1130,7 @@ impl ClipboardManager {
         )?;
 
         match item.content_type.as_str() {
-            "text" => {
+            "text" | "richtext" | "file" => {
                 let text = item.full_text.unwrap_or(item.content_preview);
                 self.app_handle
                     .clipboard()
@@ -1113,9 +1208,9 @@ impl ClipboardManager {
         // Get entries to delete (oldest, non-pinned, non-favorite)
         let excess = current_count - max_records as i64;
         let mut stmt = conn.prepare(
-            "SELECT id, image_path FROM clipboard_history 
-             WHERE is_pinned = 0 AND is_favorite = 0 
-             ORDER BY created_at ASC 
+            "SELECT id, image_path FROM clipboard_history
+             WHERE is_pinned = 0 AND is_favorite = 0
+             ORDER BY created_at ASC
              LIMIT ?1",
         )?;
 

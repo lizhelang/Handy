@@ -149,6 +149,12 @@
       "languageOnly": "Само {{language}}",
       "translation": "Може да превежда на английски",
       "translate": "Превод на английски"
+    },
+    "statusTitle": "Model status: {{status}}",
+    "errors": {
+      "checkStatus": "Failed to check model status",
+      "loadModel": "Failed to load model",
+      "switchModel": "Failed to switch model"
     }
   },
   "settings": {
@@ -383,7 +389,8 @@
         "baseUrl": {
           "title": "Базов URL",
           "description": "Базов API URL за избрания доставчик. Редактируем е само при персонализиран доставчик.",
-          "placeholder": "https://api.openai.com/v1"
+          "placeholder": "https://api.openai.com/v1",
+          "managedByProvider": "Base URL is managed by the selected provider."
         },
         "apiKey": {
           "title": "API ключ",
@@ -398,7 +405,8 @@
           "placeholderApple": "Apple Intelligence",
           "placeholderWithOptions": "Търсене или избор на модел",
           "placeholderNoOptions": "Въведете име на модел",
-          "refreshModels": "Опресняване на моделите"
+          "refreshModels": "Опресняване на моделите",
+          "useCustomModel": "Use \"{{model}}\""
         }
       },
       "prompts": {
@@ -499,7 +507,10 @@
         "helpEscape": "Clear search or leave panel",
         "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
         "editTitle": "Edit title",
-        "titlePlaceholder": "Add a title"
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word"
       }
     },
     "debug": {
@@ -510,7 +521,14 @@
       },
       "logLevel": {
         "title": "Ниво на логване",
-        "description": "Задаване на подробността на логовете"
+        "description": "Задаване на подробността на логовете",
+        "options": {
+          "error": "Error",
+          "warn": "Warning",
+          "info": "Info",
+          "debug": "Debug",
+          "trace": "Trace"
+        }
       },
       "updateChecks": {
         "label": "Проверка за актуализации",
@@ -518,7 +536,8 @@
       },
       "soundTheme": {
         "label": "Звукова тема",
-        "description": "Избор на звукова тема за сигнал при старт и край на записа"
+        "description": "Избор на звукова тема за сигнал при старт и край на записа",
+        "preview": "Preview sound theme"
       },
       "wordCorrectionThreshold": {
         "title": "Праг за корекция на думи",
@@ -562,12 +581,18 @@
       "keyboardImplementation": {
         "title": "Реализация на клавиатурата",
         "description": "Избор на бекенд за глобалните бързи клавиши.",
-        "bindingsReset": "Бързите клавиши бяха несъвместими и са нулирани към подразбираните"
+        "bindingsReset": "Бързите клавиши бяха несъвместими и са нулирани към подразбираните",
+        "options": {
+          "tauriGlobalShortcut": "Tauri Global Shortcut",
+          "handyKeys": "Handy Keys"
+        }
       },
       "paths": {
         "appData": "Данни на приложението:",
         "models": "Модели:",
-        "settings": "Настройки:"
+        "settings": "Настройки:",
+        "title": "Debug Paths",
+        "description": "Display internal file paths and directories for debugging purposes"
       },
       "pasteDelay": {
         "title": "Забавяне при поставяне",
@@ -645,7 +670,13 @@
     "off": "Изкл.",
     "yes": "Да",
     "no": "Не",
-    "noOptionsFound": "Няма намерени опции"
+    "noOptionsFound": "Няма намерени опции",
+    "copy": "Copy",
+    "moreInformation": "More information",
+    "notAvailable": "Not available",
+    "selectOption": "Select an option...",
+    "play": "Play",
+    "pause": "Pause"
   },
   "accessibility": {
     "permissionsRequired": "Необходими са разрешения за достъпност",

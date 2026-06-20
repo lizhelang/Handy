@@ -149,6 +149,12 @@
       "languageOnly": "Endast {{language}}",
       "translation": "Kan översätta till engelska",
       "translate": "Översätt till engelska"
+    },
+    "statusTitle": "Model status: {{status}}",
+    "errors": {
+      "checkStatus": "Failed to check model status",
+      "loadModel": "Failed to load model",
+      "switchModel": "Failed to switch model"
     }
   },
   "settings": {
@@ -383,7 +389,8 @@
         "baseUrl": {
           "title": "Bas-URL",
           "description": "API-bas-URL för den valda leverantören. Endast den anpassade leverantören kan redigeras.",
-          "placeholder": "https://api.openai.com/v1"
+          "placeholder": "https://api.openai.com/v1",
+          "managedByProvider": "Base URL is managed by the selected provider."
         },
         "apiKey": {
           "title": "API-nyckel",
@@ -398,7 +405,8 @@
           "placeholderApple": "Apple Intelligence",
           "placeholderWithOptions": "Sök eller välj en modell",
           "placeholderNoOptions": "Ange ett modellnamn",
-          "refreshModels": "Uppdatera modeller"
+          "refreshModels": "Uppdatera modeller",
+          "useCustomModel": "Use \"{{model}}\""
         }
       },
       "prompts": {
@@ -499,7 +507,10 @@
         "helpEscape": "Clear search or leave panel",
         "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
         "editTitle": "Edit title",
-        "titlePlaceholder": "Add a title"
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word"
       }
     },
     "debug": {
@@ -510,7 +521,14 @@
       },
       "logLevel": {
         "title": "Loggnivå",
-        "description": "Ställ in loggningens detaljrikedom"
+        "description": "Ställ in loggningens detaljrikedom",
+        "options": {
+          "error": "Error",
+          "warn": "Warning",
+          "info": "Info",
+          "debug": "Debug",
+          "trace": "Trace"
+        }
       },
       "updateChecks": {
         "label": "Sök efter uppdateringar",
@@ -518,7 +536,8 @@
       },
       "soundTheme": {
         "label": "Ljudtema",
-        "description": "Välj ett ljudtema för återkoppling vid start och stopp av inspelning"
+        "description": "Välj ett ljudtema för återkoppling vid start och stopp av inspelning",
+        "preview": "Preview sound theme"
       },
       "wordCorrectionThreshold": {
         "title": "Tröskelvärde för ordkorrigering",
@@ -562,12 +581,18 @@
       "keyboardImplementation": {
         "title": "Tangentbordsimplementering",
         "description": "Välj tangentbordsgenvägens implementation.",
-        "bindingsReset": "Kortkommandona var inkompatibla och återställdes till standardvärden"
+        "bindingsReset": "Kortkommandona var inkompatibla och återställdes till standardvärden",
+        "options": {
+          "tauriGlobalShortcut": "Tauri Global Shortcut",
+          "handyKeys": "Handy Keys"
+        }
       },
       "paths": {
         "appData": "Appdata:",
         "models": "Modeller:",
-        "settings": "Inställningar:"
+        "settings": "Inställningar:",
+        "title": "Debug Paths",
+        "description": "Display internal file paths and directories for debugging purposes"
       },
       "pasteDelay": {
         "title": "Fördröjning vid klistra in",
@@ -645,7 +670,13 @@
     "off": "Av",
     "yes": "Ja",
     "no": "Nej",
-    "noOptionsFound": "Inga alternativ hittades"
+    "noOptionsFound": "Inga alternativ hittades",
+    "copy": "Copy",
+    "moreInformation": "More information",
+    "notAvailable": "Not available",
+    "selectOption": "Select an option...",
+    "play": "Play",
+    "pause": "Pause"
   },
   "accessibility": {
     "permissionsRequired": "Behörigheter för hjälpmedel krävs",

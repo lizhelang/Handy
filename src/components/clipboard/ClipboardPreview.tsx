@@ -156,9 +156,7 @@ export const ClipboardPreview: React.FC<ClipboardPreviewProps> = ({
                 ) : (
                   <Image className="w-16 h-16 text-text/20" />
                 )}
-                <p className="text-sm text-text/40">
-                  {itemLabel}
-                </p>
+                <p className="text-sm text-text/40">{itemLabel}</p>
               </div>
             )
           ) : (

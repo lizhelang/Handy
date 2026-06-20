@@ -336,6 +336,10 @@
   text-align: center;
 }
 
+.clipboard-overlay-stats-grid.two-column {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .clipboard-overlay-stats-grid span {
   overflow: hidden;
   color: var(--ropy-foreground);
@@ -496,10 +500,10 @@
   background: rgb(218 88 147 / 12%);
   border: 1px solid rgb(218 88 147 / 28%);
   border-radius: 5px;
-  color: #9b2f63;
-  font-size: 12px;
+  color: var(--ropy-foreground);
+  font-size: 13px;
   font-weight: 700;
-  line-height: 1;
+  line-height: 1.2;
   padding: 0 7px;
   text-overflow: ellipsis;
   white-space: nowrap;

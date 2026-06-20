@@ -1,9 +1,11 @@
 import React, { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { useClipboardStore } from "@/stores/clipboardStore";
 import { ClipboardGridCard } from "./ClipboardGridCard";
 import { ClipboardEmpty } from "./ClipboardEmpty";
 
 export const ClipboardGrid: React.FC = () => {
+  const { t } = useTranslation();
   const items = useClipboardStore((s) => s.items);
   const itemOrder = useClipboardStore((s) => s.itemOrder);
   const hasMore = useClipboardStore((s) => s.hasMore);
@@ -57,7 +59,9 @@ export const ClipboardGrid: React.FC = () => {
         ))}
       </div>
       {isLoading && (
-        <div className="py-3 text-center text-sm text-text/40">Loading...</div>
+        <div className="py-3 text-center text-sm text-text/40">
+          {t("common.loading")}
+        </div>
       )}
       <div ref={sentinelRef} className="h-1" />
     </div>

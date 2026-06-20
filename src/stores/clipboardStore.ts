@@ -15,7 +15,43 @@ import type {
 } from "@/lib/types/clipboard";
 
 const PAGE_SIZE = 20;
+const SEARCH_DEBOUNCE_MS = 180;
+
 let clipboardInitializePromise: Promise<void> | null = null;
+let clipboardSearchRequestId = 0;
+let clipboardSearchDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
+let clipboardSearchDebounceResolver: (() => void) | null = null;
+
+type ClipboardListOptions = {
+  contentType?: ClipboardContentTypeFilter;
+  favoriteOnly?: boolean;
+};
+
+const clearPendingSearchDebounce = () => {
+  if (clipboardSearchDebounceTimeout !== null) {
+    clearTimeout(clipboardSearchDebounceTimeout);
+    clipboardSearchDebounceTimeout = null;
+  }
+  clipboardSearchDebounceResolver?.();
+  clipboardSearchDebounceResolver = null;
+};
+
+const itemMatchesContentType = (
+  item: ClipboardItem,
+  contentType: ClipboardContentTypeFilter,
+) =>
+  contentType === "all" ||
+  (contentType === "text" &&
+    (item.content_type === "text" || item.content_type === "richtext")) ||
+  item.content_type === contentType;
+
+const itemMatchesActiveList = (
+  item: ClipboardItem,
+  contentType: ClipboardContentTypeFilter,
+  favoriteOnly: boolean,
+) =>
+  (!favoriteOnly || item.is_favorite) &&
+  itemMatchesContentType(item, contentType);
 
 const sortClipboardItemOrder = (
   items: Record<number, ClipboardItem>,
@@ -42,6 +78,8 @@ interface ClipboardStore {
 
   searchQuery: string;
   contentTypeFilter: ClipboardContentTypeFilter;
+  activeContentTypeFilter: ClipboardContentTypeFilter;
+  activeFavoriteOnly: boolean;
   viewMode: ClipboardViewMode;
   sortOrder: ClipboardSortOrder;
   selectedId: number | null;
@@ -57,9 +95,16 @@ interface ClipboardStore {
   initialized: boolean;
 
   initialize: () => Promise<void>;
-  loadItems: (reset?: boolean) => Promise<void>;
+  loadItems: (reset?: boolean, options?: ClipboardListOptions) => Promise<void>;
+  loadFavorites: (
+    contentType: ClipboardContentTypeFilter,
+    reset?: boolean,
+  ) => Promise<void>;
   loadMore: () => Promise<void>;
-  search: (query: string) => Promise<void>;
+  search: (
+    query: string,
+    contentType?: ClipboardContentTypeFilter,
+  ) => Promise<void>;
   toggleFavorite: (id: number) => Promise<void>;
   togglePin: (id: number) => Promise<void>;
   updateTitle: (id: number, title: string) => Promise<void>;
@@ -83,6 +128,8 @@ export const useClipboardStore = create<ClipboardStore>()(
 
     searchQuery: "",
     contentTypeFilter: "all",
+    activeContentTypeFilter: "all",
+    activeFavoriteOnly: false,
     viewMode: "grid",
     sortOrder: "newest",
     selectedId: null,
@@ -108,11 +155,15 @@ export const useClipboardStore = create<ClipboardStore>()(
         ]);
 
         const reloadCurrentView = () => {
-          const { searchQuery } = get();
+          const { searchQuery, activeContentTypeFilter, activeFavoriteOnly } =
+            get();
           if (searchQuery.trim()) {
-            void get().search(searchQuery);
+            void get().search(searchQuery, activeContentTypeFilter);
           } else {
-            void get().loadItems(true);
+            void get().loadItems(true, {
+              contentType: activeContentTypeFilter,
+              favoriteOnly: activeFavoriteOnly,
+            });
           }
         };
 
@@ -137,16 +188,32 @@ export const useClipboardStore = create<ClipboardStore>()(
                   payload.action === "updated"
                 ) {
                   const { item } = payload;
-                  state.items[item.id] = item;
-                  state.itemOrder = state.itemOrder.filter(
-                    (existingId: number) => existingId !== item.id,
-                  );
-                  state.itemOrder.push(item.id);
-                  sortClipboardItemOrder(
-                    state.items,
-                    state.itemOrder,
-                    state.sortOrder,
-                  );
+                  if (
+                    itemMatchesActiveList(
+                      item,
+                      state.activeContentTypeFilter,
+                      state.activeFavoriteOnly,
+                    )
+                  ) {
+                    state.items[item.id] = item;
+                    state.itemOrder = state.itemOrder.filter(
+                      (existingId: number) => existingId !== item.id,
+                    );
+                    state.itemOrder.push(item.id);
+                    sortClipboardItemOrder(
+                      state.items,
+                      state.itemOrder,
+                      state.sortOrder,
+                    );
+                  } else {
+                    delete state.items[item.id];
+                    state.itemOrder = state.itemOrder.filter(
+                      (existingId: number) => existingId !== item.id,
+                    );
+                    if (state.selectedId === item.id) {
+                      state.selectedId = null;
+                    }
+                  }
                   if (state.previewItem?.id === item.id) {
                     state.previewItem = item;
                   }
@@ -226,14 +293,35 @@ export const useClipboardStore = create<ClipboardStore>()(
       }
     },
 
-    loadItems: async (reset = false) => {
-      const { isLoading, page, sortOrder } = get();
+    loadItems: async (reset = false, options = {}) => {
+      const {
+        isLoading,
+        page,
+        sortOrder,
+        contentTypeFilter,
+        activeContentTypeFilter,
+        activeFavoriteOnly,
+      } = get();
       if (isLoading) return;
+      const selectedContentType =
+        options.contentType ??
+        (reset ? contentTypeFilter : activeContentTypeFilter);
+      const favoriteOnly =
+        options.favoriteOnly ?? (!reset && activeFavoriteOnly);
       if (reset) {
-        set({ page: 0, hasMore: true });
+        set({
+          page: 0,
+          hasMore: true,
+          activeContentTypeFilter: selectedContentType,
+          activeFavoriteOnly: favoriteOnly,
+        });
       }
       const currentPage = reset ? 0 : page;
-      set({ isLoading: true });
+      set({
+        isLoading: true,
+        activeContentTypeFilter: selectedContentType,
+        activeFavoriteOnly: favoriteOnly,
+      });
 
       try {
         const result = await invoke<ClipboardPageResult>(
@@ -242,6 +330,8 @@ export const useClipboardStore = create<ClipboardStore>()(
             page: currentPage,
             pageSize: PAGE_SIZE,
             sort: sortOrder,
+            contentType: selectedContentType,
+            favoriteOnly,
           },
         );
         set(
@@ -265,38 +355,84 @@ export const useClipboardStore = create<ClipboardStore>()(
       }
     },
 
-    loadMore: async () => {
-      const { hasMore, isLoading, isSearching } = get();
-      if (!hasMore || isLoading || isSearching) return;
-      await get().loadItems(false);
+    loadFavorites: async (contentType, reset = true) => {
+      await get().loadItems(reset, { contentType, favoriteOnly: true });
     },
 
-    search: async (query: string) => {
-      set({ searchQuery: query, isSearching: true });
+    loadMore: async () => {
+      const {
+        hasMore,
+        isLoading,
+        isSearching,
+        activeContentTypeFilter,
+        activeFavoriteOnly,
+      } = get();
+      if (!hasMore || isLoading || isSearching) return;
+      await get().loadItems(false, {
+        contentType: activeContentTypeFilter,
+        favoriteOnly: activeFavoriteOnly,
+      });
+    },
+
+    search: async (query: string, contentType) => {
+      clearPendingSearchDebounce();
+      const selectedContentType = contentType ?? get().contentTypeFilter;
+      const requestId = ++clipboardSearchRequestId;
+      set({
+        searchQuery: query,
+        activeContentTypeFilter: selectedContentType,
+        activeFavoriteOnly: false,
+      });
       if (!query.trim()) {
         set({ isSearching: false });
-        await get().loadItems(true);
+        await get().loadItems(true, {
+          contentType: selectedContentType,
+          favoriteOnly: false,
+        });
         return;
       }
-      try {
-        const results = await invoke<ClipboardItem[]>("search_clipboard", {
-          query,
-          contentType: get().contentTypeFilter,
-        });
-        set(
-          produce((state) => {
-            state.items = {};
-            state.itemOrder = [];
-            for (const item of results) {
-              state.items[item.id] = item;
-              state.itemOrder.push(item.id);
+
+      set({ isSearching: true });
+
+      await new Promise<void>((resolve) => {
+        clipboardSearchDebounceResolver = resolve;
+        clipboardSearchDebounceTimeout = setTimeout(async () => {
+          clipboardSearchDebounceTimeout = null;
+          clipboardSearchDebounceResolver = null;
+
+          try {
+            const results = await invoke<ClipboardItem[]>("search_clipboard", {
+              query,
+              contentType: selectedContentType,
+            });
+            if (
+              requestId !== clipboardSearchRequestId ||
+              get().searchQuery !== query
+            ) {
+              return;
             }
-            state.hasMore = false;
-          }),
-        );
-      } finally {
-        set({ isSearching: false });
-      }
+            set(
+              produce((state) => {
+                state.items = {};
+                state.itemOrder = [];
+                for (const item of results) {
+                  state.items[item.id] = item;
+                  state.itemOrder.push(item.id);
+                }
+                state.hasMore = false;
+                state.page = 0;
+                state.activeContentTypeFilter = selectedContentType;
+                state.activeFavoriteOnly = false;
+              }),
+            );
+          } finally {
+            if (requestId === clipboardSearchRequestId) {
+              set({ isSearching: false });
+            }
+            resolve();
+          }
+        }, SEARCH_DEBOUNCE_MS);
+      });
     },
 
     toggleFavorite: async (id: number) => {
@@ -397,7 +533,11 @@ export const useClipboardStore = create<ClipboardStore>()(
 
     clearHistory: async (keepPinned: boolean) => {
       await invoke("clear_clipboard_history", { keepPinned });
-      await get().loadItems(true);
+      const { activeContentTypeFilter, activeFavoriteOnly } = get();
+      await get().loadItems(true, {
+        contentType: activeContentTypeFilter,
+        favoriteOnly: activeFavoriteOnly,
+      });
       await get().refreshStats();
     },
 
@@ -409,16 +549,25 @@ export const useClipboardStore = create<ClipboardStore>()(
 
     setSortOrder: (order) => {
       set({ sortOrder: order });
-      get().loadItems(true);
+      const { searchQuery, activeContentTypeFilter, activeFavoriteOnly } =
+        get();
+      if (searchQuery.trim()) {
+        get().search(searchQuery, activeContentTypeFilter);
+      } else {
+        get().loadItems(true, {
+          contentType: activeContentTypeFilter,
+          favoriteOnly: activeFavoriteOnly,
+        });
+      }
     },
 
     setContentTypeFilter: (filter) => {
       set({ contentTypeFilter: filter });
       const { searchQuery } = get();
       if (searchQuery.trim()) {
-        get().search(searchQuery);
+        get().search(searchQuery, filter);
       } else {
-        get().loadItems(true);
+        get().loadItems(true, { contentType: filter, favoriteOnly: false });
       }
     },
 
