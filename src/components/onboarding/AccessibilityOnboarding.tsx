@@ -3,13 +3,13 @@ import { useTranslation } from "react-i18next";
 import {
   checkAccessibilityPermission,
   requestAccessibilityPermission,
-  checkMicrophonePermission,
   requestMicrophonePermission,
 } from "tauri-plugin-macos-permissions-api";
 import { toast } from "sonner";
 import { commands } from "@/bindings";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { getSafePlatform } from "@/lib/tauriPlatform";
+import { hasMacMicrophoneAccess } from "@/lib/microphonePermission";
 import HandyTextLogo from "../icons/HandyTextLogo";
 import { Keyboard, Mic, Check, Loader2 } from "lucide-react";
 
@@ -140,7 +140,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
         try {
           const [accessibilityGranted, microphoneGranted] = await Promise.all([
             hasMacAccessibilityAccess(),
-            checkMicrophonePermission(),
+            hasMacMicrophoneAccess(),
           ]);
 
           const newState: PermissionsState = {
@@ -217,7 +217,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
 
       const [accessibilityGranted, microphoneGranted] = await Promise.all([
         hasMacAccessibilityAccess(true),
-        checkMicrophonePermission(),
+        hasMacMicrophoneAccess({ allowHardwareProbe: true }),
       ]);
 
       const nextState: PermissionsState = {

@@ -9,7 +9,6 @@ use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIcon;
 use tauri::{AppHandle, Manager, Theme};
-use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TrayIconState {
@@ -93,7 +92,11 @@ fn version_label() -> String {
     }
 }
 
-pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&str>) {
+pub fn build_tray_menu(
+    app: &AppHandle,
+    state: &TrayIconState,
+    locale: Option<&str>,
+) -> Menu<tauri::Wry> {
     let settings = settings::get_settings(app);
 
     let locale = locale.unwrap_or(&settings.app_language);
@@ -133,6 +136,14 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
         None::<&str>,
     )
     .expect("failed to create copy last transcript item");
+    let clipboard_history_i = MenuItem::with_id(
+        app,
+        "clipboard_history",
+        &strings.clipboard_history,
+        settings.clipboard_enabled,
+        None::<&str>,
+    )
+    .expect("failed to create clipboard history item");
     let model_loaded = app.state::<Arc<TranscriptionManager>>().is_model_loaded();
     let quit_i = MenuItem::with_id(app, "quit", &strings.quit, true, quit_accelerator)
         .expect("failed to create quit item");
@@ -189,6 +200,7 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
                     &cancel_i,
                     &separator(),
                     &copy_last_transcript_i,
+                    &clipboard_history_i,
                     &separator(),
                     &settings_i,
                     &check_updates_i,
@@ -204,6 +216,7 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
                 &version_i,
                 &separator(),
                 &copy_last_transcript_i,
+                &clipboard_history_i,
                 &separator(),
                 &model_submenu,
                 &unload_model_i,
@@ -217,10 +230,18 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
         .expect("failed to create menu"),
     };
 
+    menu
+}
+
+pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&str>) {
     let tray = app.state::<TrayIcon>();
+
+    let menu = build_tray_menu(app, state, locale);
     let _ = tray.set_menu(Some(menu));
+
+    let _ = tray.set_show_menu_on_left_click(false);
     let _ = tray.set_icon_as_template(false);
-    let _ = tray.set_tooltip(Some(version_label));
+    let _ = tray.set_tooltip(Some(version_label()));
 }
 
 fn last_transcript_text(entry: &HistoryEntry) -> &str {
@@ -262,7 +283,7 @@ pub fn copy_last_transcript(app: &AppHandle) {
         return;
     }
 
-    if let Err(err) = app.clipboard().write_text(text) {
+    if let Err(err) = crate::clipboard::write_text_to_system_clipboard(app, text.to_string()) {
         error!("Failed to copy last transcript to clipboard: {}", err);
         return;
     }

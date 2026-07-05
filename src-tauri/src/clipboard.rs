@@ -4,6 +4,8 @@ use crate::settings::TypingTool;
 use crate::settings::{get_settings, AutoSubmitKey, ClipboardHandling, PasteMethod};
 use enigo::{Direction, Enigo, Key, Keyboard};
 use log::info;
+#[cfg(target_os = "macos")]
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::process::Command;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
@@ -11,6 +13,93 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[cfg(target_os = "linux")]
 use crate::utils::{is_kde_wayland, is_wayland};
+
+#[cfg(target_os = "macos")]
+fn run_clipboard_on_main_thread_sync<R, F>(
+    app_handle: &AppHandle,
+    operation: &str,
+    action: F,
+) -> Result<R, String>
+where
+    R: Send + 'static,
+    F: FnOnce(AppHandle) -> Result<R, String> + Send + 'static,
+{
+    if tauri_nspanel::objc2::MainThreadMarker::new().is_some() {
+        return action(app_handle.clone());
+    }
+
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let app = app_handle.clone();
+    let operation_name = operation.to_string();
+    let operation_for_closure = operation_name.clone();
+
+    app_handle
+        .run_on_main_thread(move || {
+            let result = catch_unwind(AssertUnwindSafe(|| action(app))).unwrap_or_else(|_| {
+                Err(format!(
+                    "macOS clipboard operation panicked while trying to {}",
+                    operation_for_closure
+                ))
+            });
+            let _ = sender.send(result);
+        })
+        .map_err(|e| {
+            format!(
+                "Failed to schedule macOS clipboard {} on main thread: {}",
+                operation_name, e
+            )
+        })?;
+
+    receiver.recv_timeout(Duration::from_secs(2)).map_err(|e| {
+        format!(
+            "Timed out waiting for macOS clipboard operation {}: {}",
+            operation_name, e
+        )
+    })?
+}
+
+fn read_text_from_system_clipboard(app_handle: &AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        return run_clipboard_on_main_thread_sync(app_handle, "read text", |app| {
+            app.clipboard()
+                .read_text()
+                .map_err(|e| format!("Failed to read clipboard: {}", e))
+        });
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        app_handle
+            .clipboard()
+            .read_text()
+            .map_err(|e| format!("Failed to read clipboard: {}", e))
+    }
+}
+
+pub fn write_text_to_system_clipboard(
+    app_handle: &AppHandle,
+    text: impl Into<String>,
+) -> Result<(), String> {
+    let text = text.into();
+
+    #[cfg(target_os = "macos")]
+    {
+        return run_clipboard_on_main_thread_sync(app_handle, "write text", move |app| {
+            app.clipboard()
+                .write_text(text)
+                .map_err(|e| format!("Failed to write to clipboard: {}", e))
+        });
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        app_handle
+            .clipboard()
+            .write_text(text)
+            .map_err(|e| format!("Failed to write to clipboard: {}", e))
+    }
+}
 
 /// Pastes text using the clipboard: saves current content, writes text, sends paste keystroke, restores clipboard.
 fn paste_via_clipboard(
@@ -20,8 +109,9 @@ fn paste_via_clipboard(
     paste_method: &PasteMethod,
     paste_delay_ms: u64,
 ) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
     let clipboard = app_handle.clipboard();
-    let clipboard_content = clipboard.read_text().unwrap_or_default();
+    let clipboard_content = read_text_from_system_clipboard(app_handle).unwrap_or_default();
 
     // Write text to clipboard first
     // On Wayland, prefer wl-copy for better compatibility (especially with umlauts)
@@ -36,9 +126,7 @@ fn paste_via_clipboard(
     };
 
     #[cfg(not(target_os = "linux"))]
-    let write_result = clipboard
-        .write_text(text)
-        .map_err(|e| format!("Failed to write to clipboard: {}", e));
+    let write_result = write_text_to_system_clipboard(app_handle, text.to_string());
 
     write_result?;
 
@@ -73,7 +161,7 @@ fn paste_via_clipboard(
     }
 
     #[cfg(not(target_os = "linux"))]
-    let _ = clipboard.write_text(&clipboard_content);
+    let _ = write_text_to_system_clipboard(app_handle, clipboard_content);
 
     Ok(())
 }
@@ -653,10 +741,7 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
 
     // After pasting, optionally copy to clipboard based on settings
     if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
-        let clipboard = app_handle.clipboard();
-        clipboard
-            .write_text(&text)
-            .map_err(|e| format!("Failed to copy to clipboard: {}", e))?;
+        write_text_to_system_clipboard(&app_handle, text)?;
     }
 
     Ok(())

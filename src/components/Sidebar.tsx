@@ -40,6 +40,13 @@ interface SectionConfig {
   enabled: (settings: any) => boolean;
 }
 
+type ClipboardFeatureSettings =
+  | {
+      clipboard_enabled?: boolean;
+    }
+  | null
+  | undefined;
+
 export const SECTIONS_CONFIG = {
   general: {
     labelKey: "sidebar.general",
@@ -70,25 +77,7 @@ export const SECTIONS_CONFIG = {
     icon: ClipboardList,
     component: ClipboardSettings,
     enabled: (settings) =>
-      Boolean(
-        (
-          settings as
-            | {
-                experimental_enabled?: boolean;
-                clipboard_enabled?: boolean;
-              }
-            | null
-            | undefined
-        )?.experimental_enabled &&
-          (
-            settings as
-              | {
-                  clipboard_enabled?: boolean;
-                }
-              | null
-              | undefined
-          )?.clipboard_enabled,
-      ),
+      Boolean((settings as ClipboardFeatureSettings)?.clipboard_enabled),
   },
   postprocessing: {
     labelKey: "sidebar.postProcessing",

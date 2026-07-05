@@ -2,10 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { toast, Toaster } from "sonner";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
-import {
-  checkAccessibilityPermission,
-  checkMicrophonePermission,
-} from "tauri-plugin-macos-permissions-api";
+import { checkAccessibilityPermission } from "tauri-plugin-macos-permissions-api";
 import { ModelStateEvent, RecordingErrorEvent } from "./lib/types/events";
 import "./App.css";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
@@ -17,6 +14,7 @@ import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 import { getSafePlatform } from "@/lib/tauriPlatform";
+import { hasMacMicrophoneAccess } from "@/lib/microphonePermission";
 
 type OnboardingStep = "accessibility" | "model" | "done";
 
@@ -187,7 +185,7 @@ function App() {
           try {
             const [hasAccessibility, hasMicrophone] = await Promise.all([
               checkAccessibilityPermission(),
-              checkMicrophonePermission(),
+              hasMacMicrophoneAccess({ allowHardwareProbe: true }),
             ]);
             if (!hasAccessibility || !hasMicrophone) {
               await revealMainWindowForPermissions();

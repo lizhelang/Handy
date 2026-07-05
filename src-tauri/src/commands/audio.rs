@@ -1,11 +1,15 @@
 use crate::audio_feedback;
-use crate::audio_toolkit::audio::{list_input_devices, list_output_devices};
+use crate::audio_toolkit::audio::{
+    is_microphone_access_denied, is_no_input_device_error, list_input_devices, list_output_devices,
+};
 use crate::managers::audio::{AudioRecordingManager, MicrophoneMode};
 use crate::settings::{get_settings, write_settings};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use log::warn;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 #[cfg(target_os = "windows")]
@@ -146,6 +150,79 @@ pub fn open_microphone_privacy_settings() -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     {
         Err("Opening microphone privacy settings is only supported on Windows".to_string())
+    }
+}
+
+fn build_microphone_probe_stream<T>(
+    device: &cpal::Device,
+    config: &cpal::SupportedStreamConfig,
+) -> Result<cpal::Stream, cpal::BuildStreamError>
+where
+    T: cpal::SizedSample + Send + 'static,
+{
+    device.build_input_stream(
+        &config.clone().into(),
+        |_data: &[T], _| {},
+        |err| warn!("Microphone probe stream error: {err}"),
+        None,
+    )
+}
+
+fn build_microphone_probe_for_format(
+    device: &cpal::Device,
+    config: &cpal::SupportedStreamConfig,
+) -> Result<cpal::Stream, String> {
+    match config.sample_format() {
+        cpal::SampleFormat::I8 => build_microphone_probe_stream::<i8>(device, config),
+        cpal::SampleFormat::I16 => build_microphone_probe_stream::<i16>(device, config),
+        cpal::SampleFormat::I24 => build_microphone_probe_stream::<cpal::I24>(device, config),
+        cpal::SampleFormat::I32 => build_microphone_probe_stream::<i32>(device, config),
+        cpal::SampleFormat::I64 => build_microphone_probe_stream::<i64>(device, config),
+        cpal::SampleFormat::U8 => build_microphone_probe_stream::<u8>(device, config),
+        cpal::SampleFormat::U16 => build_microphone_probe_stream::<u16>(device, config),
+        cpal::SampleFormat::U32 => build_microphone_probe_stream::<u32>(device, config),
+        cpal::SampleFormat::U64 => build_microphone_probe_stream::<u64>(device, config),
+        cpal::SampleFormat::F32 => build_microphone_probe_stream::<f32>(device, config),
+        cpal::SampleFormat::F64 => build_microphone_probe_stream::<f64>(device, config),
+        sample_format => {
+            return Err(format!(
+                "Unsupported microphone sample format: {sample_format:?}"
+            ))
+        }
+    }
+    .map_err(|e| format!("Failed to build microphone probe stream: {e}"))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn has_microphone_input_access() -> Result<bool, String> {
+    let probe_result = (|| -> Result<(), String> {
+        let host = crate::audio_toolkit::get_cpal_host();
+        let device = host
+            .default_input_device()
+            .ok_or_else(|| "No input device found".to_string())?;
+        let config = device
+            .default_input_config()
+            .map_err(|e| format!("Failed to fetch preferred config: {e}"))?;
+        let stream = build_microphone_probe_for_format(&device, &config)?;
+        stream
+            .play()
+            .map_err(|e| format!("Failed to start microphone probe stream: {e}"))?;
+
+        std::thread::sleep(Duration::from_millis(50));
+        drop(stream);
+
+        Ok(())
+    })();
+
+    match probe_result {
+        Ok(()) => Ok(true),
+        Err(message) => {
+            if !is_microphone_access_denied(&message) && !is_no_input_device_error(&message) {
+                warn!("Microphone probe failed: {message}");
+            }
+            Ok(false)
+        }
     }
 }
 

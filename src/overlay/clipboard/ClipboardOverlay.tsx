@@ -281,7 +281,7 @@ const ClipboardOverlay: React.FC = () => {
     const nextValue = !windowPinned;
     setWindowPinned(nextValue);
     try {
-      await getCurrentWindow().setAlwaysOnTop(nextValue);
+      await invoke("set_clipboard_overlay_pinned", { pinned: nextValue });
     } catch {
       setWindowPinned(!nextValue);
     }
@@ -351,9 +351,7 @@ const ClipboardOverlay: React.FC = () => {
   const hideAfterConfirm = useCallback(() => {
     if (windowPinned) return;
 
-    void getCurrentWindow()
-      .hide()
-      .catch(() => undefined);
+    void invoke("hide_clipboard_overlay").catch(() => undefined);
   }, [windowPinned]);
 
   const handleConfirmItem = useCallback(
@@ -436,6 +434,8 @@ const ClipboardOverlay: React.FC = () => {
             handleSetPanel("list");
           } else if (searchQuery) {
             search("", contentFilter as ClipboardContentTypeFilter);
+          } else {
+            hideAfterConfirm();
           }
           break;
       }
@@ -451,6 +451,7 @@ const ClipboardOverlay: React.FC = () => {
       searchQuery,
       activePanel,
       handleSetPanel,
+      hideAfterConfirm,
       contentFilter,
     ],
   );

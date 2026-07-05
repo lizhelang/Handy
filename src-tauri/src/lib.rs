@@ -46,6 +46,9 @@ use tauri::{AppHandle, Emitter, Listener, Manager};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_log::{Builder as LogBuilder, RotationStrategy, Target, TargetKind};
 
+#[cfg(target_os = "macos")]
+use tauri_nspanel::objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+
 use crate::settings::get_settings;
 
 // Global atomic to store the file log level filter
@@ -86,24 +89,115 @@ fn build_console_filter() -> env_filter::Filter {
     builder.build()
 }
 
-fn show_main_window(app: &AppHandle) {
+#[cfg(target_os = "macos")]
+fn apply_app_activation_policy(policy: NSApplicationActivationPolicy, activate: bool) {
+    if let Some(mtm) = tauri_nspanel::objc2::MainThreadMarker::new() {
+        let app = NSApplication::sharedApplication(mtm);
+        app.setActivationPolicy(policy);
+        if activate {
+            #[allow(deprecated)]
+            app.activateIgnoringOtherApps(true);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn activate_app_with_policy(policy: NSApplicationActivationPolicy) {
+    apply_app_activation_policy(policy, true);
+}
+
+#[cfg(target_os = "macos")]
+fn with_native_ns_window<F>(window: &tauri::WebviewWindow, operation: &str, action: F) -> bool
+where
+    F: FnOnce(&tauri_nspanel::NSWindow),
+{
+    if tauri_nspanel::objc2::MainThreadMarker::new().is_none() {
+        log::error!("Refusing to {operation} off the macOS main thread");
+        return false;
+    }
+
+    match window.ns_window() {
+        Ok(ns_window) => {
+            // Tauri exposes the raw AppKit pointer; AppKit window operations must
+            // stay on the main thread, which is checked above.
+            let ns_window = unsafe { &*ns_window.cast::<tauri_nspanel::NSWindow>() };
+            action(ns_window);
+            true
+        }
+        Err(err) => {
+            log::error!("Failed to get native NSWindow for {operation}: {err}");
+            false
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn with_native_app_window<F>(window: &tauri::Window, operation: &str, action: F) -> bool
+where
+    F: FnOnce(&tauri_nspanel::NSWindow),
+{
+    if tauri_nspanel::objc2::MainThreadMarker::new().is_none() {
+        log::error!("Refusing to {operation} off the macOS main thread");
+        return false;
+    }
+
+    match window.ns_window() {
+        Ok(ns_window) => {
+            // Tauri exposes the raw AppKit pointer; AppKit window operations must
+            // stay on the main thread, which is checked above.
+            let ns_window = unsafe { &*ns_window.cast::<tauri_nspanel::NSWindow>() };
+            action(ns_window);
+            true
+        }
+        Err(err) => {
+            log::error!("Failed to get native NSWindow for {operation}: {err}");
+            false
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn show_native_window_on_main_thread(window: &tauri::WebviewWindow) {
+    if !with_native_ns_window(window, "show main window", |ns_window| {
+        ns_window.deminiaturize(None);
+        ns_window.makeKeyAndOrderFront(None);
+    }) {
+        log::error!("Failed to show main window through native NSWindow");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn hide_native_app_window_on_main_thread(window: &tauri::Window) {
+    if !with_native_app_window(window, "hide window", |ns_window| {
+        ns_window.orderOut(None);
+    }) {
+        log::error!("Failed to hide window through native NSWindow");
+    }
+}
+
+fn show_main_window_on_main_thread(app: &AppHandle) {
     if let Some(main_window) = app.get_webview_window("main") {
-        if let Err(e) = main_window.unminimize() {
-            log::error!("Failed to unminimize webview window: {}", e);
-        }
-        if let Err(e) = main_window.show() {
-            log::error!("Failed to show webview window: {}", e);
-        }
-        if let Err(e) = main_window.set_focus() {
-            log::error!("Failed to focus webview window: {}", e);
-        }
         #[cfg(target_os = "macos")]
         {
-            if let Err(e) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
-                log::error!("Failed to set activation policy to Regular: {}", e);
-            }
+            activate_app_with_policy(NSApplicationActivationPolicy::Regular);
+            show_native_window_on_main_thread(&main_window);
+            activate_app_with_policy(NSApplicationActivationPolicy::Regular);
+            return;
         }
-        return;
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            if let Err(e) = main_window.unminimize() {
+                log::error!("Failed to unminimize webview window: {}", e);
+            }
+            if let Err(e) = main_window.show() {
+                log::error!("Failed to show webview window: {}", e);
+            }
+            if let Err(e) = main_window.set_focus() {
+                log::error!("Failed to focus webview window: {}", e);
+            }
+            return;
+        }
     }
 
     let webview_labels = app.webview_windows().keys().cloned().collect::<Vec<_>>();
@@ -111,6 +205,32 @@ fn show_main_window(app: &AppHandle) {
         "Main window not found. Webview labels: {:?}",
         webview_labels
     );
+}
+
+fn show_main_window(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        if tauri_nspanel::objc2::MainThreadMarker::new().is_some() {
+            show_main_window_on_main_thread(app);
+            return;
+        }
+
+        let app_handle = app.clone();
+        let app_for_show = app_handle.clone();
+        if let Err(err) = app_handle.run_on_main_thread(move || {
+            show_main_window_on_main_thread(&app_for_show);
+        }) {
+            log::error!(
+                "Failed to schedule main window show on main thread: {}",
+                err
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        show_main_window_on_main_thread(app);
+    }
 }
 
 #[allow(unused_variables)]
@@ -188,7 +308,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     {
         let settings = settings::get_settings(app_handle);
         if settings.start_hidden && settings.show_tray_icon {
-            let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            apply_app_activation_policy(NSApplicationActivationPolicy::Accessory, false);
         }
     }
     // Get the current theme to set the appropriate initial icon
@@ -196,8 +316,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Choose the appropriate initial icon based on theme
     let initial_icon_path = tray::get_icon_path(initial_theme, tray::TrayIconState::Idle);
-
-    let tray = TrayIconBuilder::new()
+    let tray_builder = TrayIconBuilder::new()
         .icon(
             Image::from_path(
                 app_handle
@@ -209,17 +328,24 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         )
         .tooltip(tray::tray_tooltip())
         .show_menu_on_left_click(false)
-        .icon_as_template(false)
+        .icon_as_template(false);
+
+    let tray = tray_builder
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
                 position,
-                button: MouseButton::Left,
+                button,
                 button_state: MouseButtonState::Up,
                 ..
             } = event
             {
                 let _ = position;
-                utils::show_clipboard_overlay(tray.app_handle());
+                let should_toggle = matches!(button, MouseButton::Left);
+
+                if should_toggle {
+                    log::info!("Tray left click toggling clipboard overlay");
+                    utils::toggle_clipboard_overlay(tray.app_handle());
+                }
             }
         })
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -235,6 +361,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             }
             "copy_last_transcript" => {
                 tray::copy_last_transcript(app);
+            }
+            "clipboard_history" => {
+                log::info!("Tray menu toggling clipboard overlay");
+                utils::toggle_clipboard_overlay(app);
             }
             "unload_model" => {
                 let transcription_manager = app.state::<Arc<TranscriptionManager>>();
@@ -433,6 +563,7 @@ pub fn run(cli_args: CliArgs) {
             commands::audio::get_microphone_mode,
             commands::audio::get_windows_microphone_permission_status,
             commands::audio::open_microphone_privacy_settings,
+            commands::audio::has_microphone_input_access,
             commands::audio::get_available_microphones,
             commands::audio::set_selected_microphone,
             commands::audio::get_selected_microphone,
@@ -465,6 +596,8 @@ pub fn run(cli_args: CliArgs) {
             commands::clipboard::clear_clipboard_history,
             commands::clipboard::copy_clipboard_to_system,
             commands::clipboard::copy_clipboard_content_to_system,
+            commands::clipboard::set_clipboard_overlay_pinned,
+            commands::clipboard::hide_clipboard_overlay,
             commands::clipboard::get_clipboard_stats,
             commands::clipboard::get_clipboard_settings,
             commands::clipboard::update_clipboard_settings,
@@ -620,41 +753,57 @@ pub fn run(cli_args: CliArgs) {
             Ok(())
         })
         .on_window_event(|window, event| match event {
+            tauri::WindowEvent::Focused(true) if window.label() == "clipboard_overlay" => {
+                utils::set_clipboard_overlay_focused(true);
+            }
             tauri::WindowEvent::Focused(false) if window.label() == "clipboard_overlay" => {
-                match window.is_always_on_top() {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        if let Err(e) = window.hide() {
-                            log::error!("Failed to hide clipboard overlay after focus loss: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Failed to read clipboard overlay pinned state: {}", e);
-                        if let Err(e) = window.hide() {
-                            log::error!("Failed to hide clipboard overlay after focus loss: {}", e);
-                        }
-                    }
-                }
+                utils::set_clipboard_overlay_focused(false);
+                let app_handle = window.app_handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(180)).await;
+                    utils::hide_clipboard_overlay_if_unfocused(&app_handle);
+                });
             }
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
-                let _res = window.hide();
 
                 #[cfg(target_os = "macos")]
                 {
+                    let app_handle = window.app_handle().clone();
+                    let window_for_hide = window.clone();
+                    let is_main_window = window.label() == "main";
                     let settings = get_settings(&window.app_handle());
                     let tray_visible =
                         settings.show_tray_icon && !window.app_handle().state::<CliArgs>().no_tray;
-                    if tray_visible {
-                        // Tray is available: hide the dock icon, app lives in the tray
-                        let res = window
-                            .app_handle()
-                            .set_activation_policy(tauri::ActivationPolicy::Accessory);
-                        if let Err(e) = res {
-                            log::error!("Failed to set activation policy: {}", e);
+
+                    if tauri_nspanel::objc2::MainThreadMarker::new().is_some() {
+                        hide_native_app_window_on_main_thread(&window_for_hide);
+                        if is_main_window && tray_visible {
+                            apply_app_activation_policy(
+                                NSApplicationActivationPolicy::Accessory,
+                                false,
+                            );
+                        }
+                    } else {
+                        if let Err(err) = app_handle.run_on_main_thread(move || {
+                            hide_native_app_window_on_main_thread(&window_for_hide);
+                            if is_main_window && tray_visible {
+                                apply_app_activation_policy(
+                                    NSApplicationActivationPolicy::Accessory,
+                                    false,
+                                );
+                            }
+                        }) {
+                            log::error!("Failed to schedule window close handling: {err}");
                         }
                     }
-                    // No tray: keep the dock icon visible so the user can reopen
+                }
+
+                #[cfg(not(target_os = "macos"))]
+                {
+                    if let Err(err) = window.hide() {
+                        log::error!("Failed to hide window on close: {err}");
+                    }
                 }
             }
             tauri::WindowEvent::ThemeChanged(theme) => {

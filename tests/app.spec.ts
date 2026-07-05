@@ -115,6 +115,8 @@ const installClipboardOverlayMocks = async (page: Page) => {
           case "plugin:window|hide":
           case "plugin:window|start_dragging":
           case "plugin:window|set_always_on_top":
+          case "hide_clipboard_overlay":
+          case "set_clipboard_overlay_pinned":
             return null;
           case "get_clipboard_stats":
             return {
@@ -181,6 +183,160 @@ const installClipboardOverlayMocks = async (page: Page) => {
   }, clipboardOverlayItems);
 };
 
+const installMainAppMocks = async (
+  page: Page,
+  settingsOverrides: Record<string, unknown> = {},
+) => {
+  await page.addInitScript((overrides) => {
+    const callbacks = new Map<number, (data: unknown) => unknown>();
+    const model = {
+      id: "mock-model",
+      name: "Mock Model",
+      description: "Mock downloaded model",
+      size: 0,
+      is_downloaded: true,
+      is_downloading: false,
+      supports_language_selection: false,
+      supports_translation: false,
+      supported_languages: [],
+      is_custom: false,
+    };
+    const baseSettings = {
+      app_language: "en",
+      audio_feedback: false,
+      audio_feedback_volume: 1,
+      bindings: {
+        transcribe: {
+          id: "transcribe",
+          name: "Transcribe",
+          description: "Transcribe",
+          default_binding: "CommandOrControl+Shift+Space",
+          current_binding: "CommandOrControl+Shift+Space",
+        },
+        cancel: {
+          id: "cancel",
+          name: "Cancel",
+          description: "Cancel",
+          default_binding: "Escape",
+          current_binding: "Escape",
+        },
+      },
+      clipboard_enabled: false,
+      clipboard_handling: "dont_modify",
+      experimental_enabled: false,
+      external_script_path: null,
+      keyboard_implementation: "tauri",
+      mute_while_recording: false,
+      paste_delay_ms: 60,
+      paste_method: "ctrl_v",
+      push_to_talk: false,
+      selected_microphone: "Default",
+      selected_model: "mock-model",
+      selected_output_device: "Default",
+      show_tray_icon: true,
+      update_checks_enabled: false,
+    };
+    const currentSettings = {
+      ...baseSettings,
+      ...(overrides as Record<string, unknown>),
+    };
+
+    window.__HANDY_TEST_INVOKES__ = [];
+    window.__HANDY_TEST_EVENT_HANDLERS__ = {};
+    window.__HANDY_TEST_EMIT_TAURI_EVENT__ = (event, payload) => {
+      for (const handlerId of window.__HANDY_TEST_EVENT_HANDLERS__[event] ??
+        []) {
+        window.__TAURI_INTERNALS__.runCallback(handlerId, {
+          event,
+          id: handlerId,
+          payload,
+        });
+      }
+    };
+    window.__TAURI_OS_PLUGIN_INTERNALS__ = {
+      arch: "aarch64",
+      eol: "\n",
+      exe_extension: "",
+      family: "unix",
+      os_type: "linux",
+      platform: "linux",
+      version: "6.0",
+    };
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener: () => undefined,
+    };
+    window.__TAURI_INTERNALS__ = {
+      callbacks,
+      convertFileSrc: (filePath: string) => `asset://localhost/${filePath}`,
+      invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
+        window.__HANDY_TEST_INVOKES__.push({ cmd, args });
+
+        switch (cmd) {
+          case "plugin:app|version":
+            return "0.8.3";
+          case "plugin:os|locale":
+            return "en-US";
+          case "plugin:event|listen":
+            window.__HANDY_TEST_EVENT_HANDLERS__[args.event as string] ??= [];
+            window.__HANDY_TEST_EVENT_HANDLERS__[args.event as string].push(
+              args.handler as number,
+            );
+            return args.handler;
+          case "plugin:event|unlisten":
+            return null;
+          case "get_available_models":
+            return [model];
+          case "get_current_model":
+          case "get_transcription_model_status":
+            return "mock-model";
+          case "has_any_models_available":
+            return true;
+          case "get_app_settings":
+            return currentSettings;
+          case "get_default_settings":
+            return baseSettings;
+          case "check_custom_sounds":
+            return { start: false, stop: false };
+          case "initialize_enigo":
+          case "initialize_shortcuts":
+            return null;
+          case "get_available_microphones":
+          case "get_available_output_devices":
+            return [];
+          case "get_clipboard_stats":
+            return {
+              favorites_count: 0,
+              pinned_count: 0,
+              total_items: 0,
+              total_size_bytes: 0,
+            };
+          case "get_clipboard_settings":
+            return {
+              confirm_mode: "copy",
+              hotkey: "CommandOrControl+Shift+V",
+              max_records: 0,
+            };
+          case "get_clipboard_items":
+            return { has_more: false, items: [] };
+          default:
+            return null;
+        }
+      },
+      metadata: {
+        currentWebview: { label: "main", windowLabel: "main" },
+        currentWindow: { label: "main" },
+      },
+      runCallback: (id: number, data: unknown) => callbacks.get(id)?.(data),
+      transformCallback: (callback: (data: unknown) => unknown) => {
+        const id = window.crypto.getRandomValues(new Uint32Array(1))[0];
+        callbacks.set(id, callback);
+        return id;
+      },
+      unregisterCallback: (id: number) => callbacks.delete(id),
+    };
+  }, settingsOverrides);
+};
+
 test.describe("Handy App", () => {
   test("dev server responds", async ({ page }) => {
     // Just verify the dev server is running and responds
@@ -195,6 +351,20 @@ test.describe("Handy App", () => {
     const html = await page.content();
     expect(html).toContain("<html");
     expect(html).toContain("<body");
+  });
+
+  test("main window keeps clipboard section available when clipboard is enabled", async ({
+    page,
+  }) => {
+    await installMainAppMocks(page, {
+      clipboard_enabled: true,
+      experimental_enabled: false,
+    });
+    await page.goto("/");
+
+    await expect(page.getByTitle("Clipboard")).toBeVisible();
+    await page.getByTitle("Clipboard").click();
+    await expect(page.getByText("Clipboard Manager")).toBeVisible();
   });
 
   test("clipboard overlay copies an item on single click", async ({ page }) => {
@@ -221,7 +391,7 @@ test.describe("Handy App", () => {
     ]);
     const hideInvokes = await page.evaluate(() =>
       window.__HANDY_TEST_INVOKES__.filter(
-        (record) => record.cmd === "plugin:window|hide",
+        (record) => record.cmd === "hide_clipboard_overlay",
       ),
     );
     expect(hideInvokes).toHaveLength(1);
@@ -264,7 +434,7 @@ test.describe("Handy App", () => {
     expect(copyInvokesAfterAction).toHaveLength(1);
     const hideInvokesAfterAction = await page.evaluate(() =>
       window.__HANDY_TEST_INVOKES__.filter(
-        (record) => record.cmd === "plugin:window|hide",
+        (record) => record.cmd === "hide_clipboard_overlay",
       ),
     );
     expect(hideInvokesAfterAction).toHaveLength(1);

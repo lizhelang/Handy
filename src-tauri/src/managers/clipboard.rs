@@ -17,13 +17,16 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use std::time::Duration;
 use tauri::image::Image;
 use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_specta::Event;
+
+#[cfg(target_os = "macos")]
+use tauri_nspanel::objc2::MainThreadMarker;
 
 const TEXT_PREVIEW_MAX_CHARS: usize = 200;
 const SEARCH_RESULT_LIMIT: i64 = 100;
@@ -116,6 +119,25 @@ pub struct ClipboardManager {
     db_path: PathBuf,
     images_dir: PathBuf,
     monitoring_started: Arc<AtomicBool>,
+    last_seen_hash: Arc<Mutex<Option<String>>>,
+}
+
+#[cfg(target_os = "macos")]
+fn process_macos_clipboard_representations<I, T>(try_image: I, try_text: T) -> Result<()>
+where
+    I: FnOnce() -> Result<bool>,
+    T: FnOnce() -> Result<bool>,
+{
+    if try_image()? {
+        return Ok(());
+    }
+
+    if try_text()? {
+        return Ok(());
+    }
+
+    debug!("Clipboard change did not contain supported text or image content");
+    Ok(())
 }
 
 impl ClipboardManager {
@@ -147,6 +169,7 @@ impl ClipboardManager {
             db_path,
             images_dir,
             monitoring_started: Arc::new(AtomicBool::new(false)),
+            last_seen_hash: Arc::new(Mutex::new(None)),
         };
 
         // Initialize database
@@ -286,46 +309,84 @@ impl ClipboardManager {
 
     #[cfg(target_os = "macos")]
     fn run_polling_monitor(&self) {
-        info!("Using change-count clipboard monitor on macOS");
-        let mut last_change_count = Self::macos_clipboard_change_count();
+        info!("Using main-thread clipboard polling monitor on macOS");
 
         loop {
-            if !self.monitoring_enabled() {
-                std::thread::sleep(Duration::from_millis(500));
-                continue;
-            }
-
-            let change_count = Self::macos_clipboard_change_count();
-            let should_sync = match (last_change_count, change_count) {
-                (Some(last), Some(current)) => current != last,
-                (None, Some(_)) => true,
-                (Some(_), None) => false,
-                (None, None) => false,
-            };
-
-            if should_sync {
+            if self.monitoring_enabled() {
                 self.sync_current_clipboard_for_monitor("poll clipboard state");
-                last_change_count = change_count;
             }
 
-            std::thread::sleep(Duration::from_millis(500));
+            std::thread::sleep(Duration::from_millis(750));
         }
     }
 
     #[cfg(target_os = "macos")]
-    fn macos_clipboard_change_count() -> Option<isize> {
-        match catch_unwind(AssertUnwindSafe(|| {
-            let pasteboard = objc2_app_kit::NSPasteboard::generalPasteboard();
-            pasteboard.changeCount()
-        })) {
-            Ok(change_count) => Some(change_count),
-            Err(_) => {
-                error!("Failed to read macOS pasteboard change count");
+    fn run_on_main_thread_sync<R, F>(&self, operation: &str, action: F) -> Option<R>
+    where
+        R: Send + 'static,
+        F: FnOnce(ClipboardManager) -> R + Send + 'static,
+    {
+        if MainThreadMarker::new().is_some() {
+            return match catch_unwind(AssertUnwindSafe(|| action(self.clone()))) {
+                Ok(result) => Some(result),
+                Err(_) => {
+                    error!(
+                        "macOS clipboard monitor panicked while trying to {}",
+                        operation
+                    );
+                    None
+                }
+            };
+        }
+
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let manager = self.clone();
+        let operation_name = operation.to_string();
+
+        if let Err(err) = self.app_handle.run_on_main_thread(move || {
+            let result = catch_unwind(AssertUnwindSafe(|| action(manager)));
+            let _ = sender.send(result);
+        }) {
+            error!(
+                "Failed to schedule macOS clipboard monitor {} on main thread: {}",
+                operation, err
+            );
+            return None;
+        }
+
+        match receiver.recv_timeout(Duration::from_secs(2)) {
+            Ok(Ok(result)) => Some(result),
+            Ok(Err(_)) => {
+                error!(
+                    "macOS clipboard monitor panicked while trying to {}",
+                    operation_name
+                );
+                None
+            }
+            Err(err) => {
+                error!(
+                    "Timed out waiting for macOS clipboard monitor to {}: {}",
+                    operation_name, err
+                );
                 None
             }
         }
     }
 
+    #[cfg(target_os = "macos")]
+    fn sync_current_clipboard_for_monitor(&self, context: &str) {
+        let context = context.to_string();
+        let result =
+            self.run_on_main_thread_sync(&context, |manager| manager.sync_current_clipboard());
+
+        match result {
+            Some(Ok(())) => {}
+            Some(Err(e)) => error!("Failed to {}: {}", context, e),
+            None => error!("Clipboard monitor failed while trying to {}", context),
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
     fn sync_current_clipboard_for_monitor(&self, context: &str) {
         match catch_unwind(AssertUnwindSafe(|| self.sync_current_clipboard())) {
             Ok(Ok(())) => {}
@@ -383,7 +444,11 @@ impl ClipboardManager {
     pub fn sync_current_clipboard(&self) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
-            return self.process_tauri_clipboard_change();
+            return self
+                .run_on_main_thread_sync("sync current clipboard", |manager| {
+                    manager.process_tauri_clipboard_change_on_main_thread()
+                })
+                .ok_or_else(|| anyhow!("Failed to sync clipboard on the macOS main thread"))?;
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -396,11 +461,26 @@ impl ClipboardManager {
 
     fn monitoring_enabled(&self) -> bool {
         let settings = crate::settings::get_settings(&self.app_handle);
-        settings.experimental_enabled && settings.clipboard_enabled
+        settings.clipboard_enabled
     }
 
     fn process_text_change(&self, text: &str) -> Result<()> {
         self.add_text(text).map(|_| ())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn is_last_seen_hash(&self, hash: &str) -> bool {
+        self.last_seen_hash
+            .lock()
+            .map(|last_seen| last_seen.as_deref() == Some(hash))
+            .unwrap_or(false)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn remember_last_seen_hash(&self, hash: String) {
+        if let Ok(mut last_seen) = self.last_seen_hash.lock() {
+            *last_seen = Some(hash);
+        }
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -413,30 +493,70 @@ impl ClipboardManager {
         let png_bytes = Self::encode_tauri_image_png(image)?;
         let hash = Self::compute_hash(&png_bytes);
 
-        self.add_image_png(hash, image.width(), image.height(), &png_bytes)
-            .map(|_| ())
+        if self.is_last_seen_hash(&hash) {
+            return Ok(());
+        }
+
+        let result = self
+            .add_image_png(hash.clone(), image.width(), image.height(), &png_bytes)
+            .map(|_| ());
+
+        if result.is_ok() {
+            self.remember_last_seen_hash(hash);
+        }
+
+        result
     }
 
     #[cfg(target_os = "macos")]
-    fn process_tauri_clipboard_change(&self) -> Result<()> {
+    fn process_tauri_text_change(&self, text: &str) -> Result<()> {
+        if text.is_empty() {
+            return Ok(());
+        }
+
+        let hash = Self::compute_hash(text.as_bytes());
+        if self.is_last_seen_hash(&hash) {
+            return Ok(());
+        }
+
+        let result = self.process_text_change(text);
+        if result.is_ok() {
+            self.remember_last_seen_hash(hash);
+        }
+
+        result
+    }
+
+    #[cfg(target_os = "macos")]
+    fn process_tauri_clipboard_change_on_main_thread(&self) -> Result<()> {
+        if MainThreadMarker::new().is_none() {
+            return Err(anyhow!(
+                "Refusing to read macOS clipboard off the main thread"
+            ));
+        }
+
         if !self.monitoring_enabled() {
             return Ok(());
         }
 
         let clipboard = self.app_handle.clipboard();
 
-        if let Ok(text) = clipboard.read_text() {
-            if !text.is_empty() {
-                return self.process_text_change(&text);
-            }
-        }
-
-        if let Ok(image) = clipboard.read_image() {
-            return self.process_tauri_image_change(&image);
-        }
-
-        debug!("Clipboard change did not contain supported text or image content");
-        Ok(())
+        process_macos_clipboard_representations(
+            || match clipboard.read_image() {
+                Ok(image) => {
+                    self.process_tauri_image_change(&image)?;
+                    Ok(true)
+                }
+                Err(_) => Ok(false),
+            },
+            || match clipboard.read_text() {
+                Ok(text) if !text.is_empty() => {
+                    self.process_tauri_text_change(&text)?;
+                    Ok(true)
+                }
+                Ok(_) | Err(_) => Ok(false),
+            },
+        )
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -549,6 +669,60 @@ impl ClipboardManager {
         Ok(full_path)
     }
 
+    fn write_text_to_system_clipboard(&self, text: String) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            return self
+                .run_on_main_thread_sync("write text to system clipboard", move |manager| {
+                    manager
+                        .app_handle
+                        .clipboard()
+                        .write_text(text)
+                        .map_err(|e| anyhow!("Failed to write text to system clipboard: {}", e))
+                })
+                .ok_or_else(|| {
+                    anyhow!("Failed to write text to system clipboard on the macOS main thread")
+                })?;
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.app_handle
+                .clipboard()
+                .write_text(text)
+                .map_err(|e| anyhow!("Failed to write text to system clipboard: {}", e))
+        }
+    }
+
+    fn write_image_path_to_system_clipboard(&self, full_path: PathBuf) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            return self
+                .run_on_main_thread_sync("write image to system clipboard", move |manager| {
+                    let image = Image::from_path(&full_path)
+                        .map_err(|e| anyhow!("Failed to load clipboard image: {}", e))?;
+                    manager
+                        .app_handle
+                        .clipboard()
+                        .write_image(&image)
+                        .map_err(|e| anyhow!("Failed to write image to system clipboard: {}", e))
+                })
+                .ok_or_else(|| {
+                    anyhow!("Failed to write image to system clipboard on the macOS main thread")
+                })?;
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let image = Image::from_path(&full_path)
+                .map_err(|e| anyhow!("Failed to load clipboard image: {}", e))?;
+            self.app_handle
+                .clipboard()
+                .write_image(&image)
+                .map_err(|e| anyhow!("Failed to write image to system clipboard: {}", e))
+        }
+    }
+
     /// Copy an already-loaded clipboard payload without re-querying history.
     pub fn copy_content_to_clipboard(
         &self,
@@ -559,22 +733,12 @@ impl ClipboardManager {
         match content_type {
             "text" | "richtext" | "file" => {
                 let text = text.ok_or_else(|| anyhow!("Text content not found"))?;
-                self.app_handle
-                    .clipboard()
-                    .write_text(text)
-                    .map_err(|e| anyhow!("Failed to write text to system clipboard: {}", e))?;
-                Ok(())
+                self.write_text_to_system_clipboard(text)
             }
             "image" => {
                 let path = image_path.ok_or_else(|| anyhow!("Image path not found"))?;
                 let full_path = self.resolve_clipboard_image_path(&path)?;
-                let image = Image::from_path(&full_path)
-                    .map_err(|e| anyhow!("Failed to load clipboard image: {}", e))?;
-                self.app_handle
-                    .clipboard()
-                    .write_image(&image)
-                    .map_err(|e| anyhow!("Failed to write image to system clipboard: {}", e))?;
-                Ok(())
+                self.write_image_path_to_system_clipboard(full_path)
             }
             _ => Err(anyhow!("Unsupported content type")),
         }
@@ -1132,24 +1296,14 @@ impl ClipboardManager {
         match item.content_type.as_str() {
             "text" | "richtext" | "file" => {
                 let text = item.full_text.unwrap_or(item.content_preview);
-                self.app_handle
-                    .clipboard()
-                    .write_text(text)
-                    .map_err(|e| anyhow!("Failed to write text to system clipboard: {}", e))?;
-                Ok(())
+                self.write_text_to_system_clipboard(text)
             }
             "image" => {
                 let path = item
                     .image_path
                     .ok_or_else(|| anyhow!("Image path not found"))?;
                 let full_path = self.images_dir.join(&path);
-                let image = Image::from_path(&full_path)
-                    .map_err(|e| anyhow!("Failed to load clipboard image: {}", e))?;
-                self.app_handle
-                    .clipboard()
-                    .write_image(&image)
-                    .map_err(|e| anyhow!("Failed to write image to system clipboard: {}", e))?;
-                Ok(())
+                self.write_image_path_to_system_clipboard(full_path)
             }
             _ => Err(anyhow!("Unsupported content type")),
         }
@@ -1269,6 +1423,8 @@ impl ClipboardHandler for ClipboardChangeHandler {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    use super::process_macos_clipboard_representations;
     use super::{ClipboardManager, TEXT_PREVIEW_MAX_CHARS};
 
     #[test]
@@ -1294,5 +1450,45 @@ mod tests {
 
         assert_eq!(preview.chars().count(), TEXT_PREVIEW_MAX_CHARS + 3);
         assert!(preview.ends_with("..."));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_clipboard_processing_prefers_image_when_both_formats_exist() {
+        let calls = std::cell::RefCell::new(Vec::new());
+
+        process_macos_clipboard_representations(
+            || {
+                calls.borrow_mut().push("image");
+                Ok(true)
+            },
+            || {
+                calls.borrow_mut().push("text");
+                Ok(true)
+            },
+        )
+        .unwrap();
+
+        assert_eq!(calls.into_inner(), vec!["image"]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_clipboard_processing_falls_back_to_text_without_image() {
+        let calls = std::cell::RefCell::new(Vec::new());
+
+        process_macos_clipboard_representations(
+            || {
+                calls.borrow_mut().push("image");
+                Ok(false)
+            },
+            || {
+                calls.borrow_mut().push("text");
+                Ok(true)
+            },
+        )
+        .unwrap();
+
+        assert_eq!(calls.into_inner(), vec!["image", "text"]);
     }
 }

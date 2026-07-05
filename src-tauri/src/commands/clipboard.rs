@@ -116,6 +116,20 @@ pub async fn copy_clipboard_content_to_system(
 
 #[tauri::command]
 #[specta::specta]
+pub fn set_clipboard_overlay_pinned(app: AppHandle, pinned: bool) -> Result<(), String> {
+    crate::overlay::set_clipboard_overlay_pinned(&app, pinned);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn hide_clipboard_overlay(app: AppHandle) -> Result<(), String> {
+    crate::overlay::hide_clipboard_overlay(&app);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn get_clipboard_stats(
     manager: State<'_, Arc<ClipboardManager>>,
 ) -> Result<ClipboardStats, String> {

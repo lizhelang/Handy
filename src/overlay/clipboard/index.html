@@ -22,6 +22,19 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      document.getElementById("root").textContent = "clipboard overlay loading";
+      window.addEventListener("error", (event) => {
+        document.body.style.background = "#fff";
+        document.getElementById("root").textContent =
+          event.message || "clipboard overlay script error";
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        document.body.style.background = "#fff";
+        document.getElementById("root").textContent =
+          event.reason?.message || String(event.reason);
+      });
+    </script>
     <script type="module" src="/src/overlay/clipboard/main.tsx"></script>
   </body>
 </html>

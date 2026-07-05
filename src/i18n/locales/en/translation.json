@@ -3,6 +3,7 @@
     "settings": "Settings...",
     "checkUpdates": "Check for Updates...",
     "copyLastTranscript": "Copy Last Transcript",
+    "clipboardHistory": "Clipboard History",
     "unloadModel": "Unload Model",
     "model": "Model",
     "quit": "Quit",
