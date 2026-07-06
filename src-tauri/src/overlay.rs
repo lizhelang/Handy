@@ -1,25 +1,21 @@
 use crate::input;
 use crate::settings;
-use crate::settings::OverlayPosition;
-use tauri::WebviewWindowBuilder;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
-
+use crate::settings::{OverlayPosition, OverlayStyle};
 use log::debug;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindowBuilder};
 
 #[cfg(target_os = "macos")]
 use tauri::WebviewUrl;
 
 #[cfg(target_os = "macos")]
-use tauri_nspanel::{tauri_panel, CollectionBehavior, ManagerExt, PanelBuilder, PanelLevel};
+use tauri_nspanel::{tauri_panel, CollectionBehavior, PanelBuilder, PanelLevel, StyleMask};
 
 #[cfg(target_os = "linux")]
 use gtk_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 #[cfg(target_os = "linux")]
 use std::env;
-
-#[cfg(target_os = "macos")]
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(target_os = "macos")]
 tauri_panel! {
@@ -31,8 +27,22 @@ tauri_panel! {
     })
 }
 
-const OVERLAY_WIDTH: f64 = 172.0;
-const OVERLAY_HEIGHT: f64 = 36.0;
+// Native overlay window sizes (logical points). One window is reused for every
+// state and resized in `show_overlay_state`; each size need only be at least as
+// large as the card it hosts (the `--ov-*` vars in RecordingOverlay.css). The
+// card is CSS-anchored flush to the screen edge, so window height doesn't move
+// where the card sits — only OVERLAY_TOP_OFFSET / OVERLAY_BOTTOM_OFFSET do. Keep
+// these in sync with the CSS card geometry.
+//
+// Compact overlay (Minimal / transcribing / processing): the 40h pill animates
+// width from 172 (--ov-rest-w) to 216 (--ov-work-w) and expands from center, so
+// the window must fit the widest state plus a little slack.
+const OVERLAY_WIDTH: f64 = 256.0;
+const OVERLAY_HEIGHT: f64 = 46.0;
+
+// Actual is 394x118, just a little extra
+const OVERLAY_STREAM_WIDTH: f64 = 400.0;
+const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 const CLIPBOARD_OVERLAY_WIDTH: f64 = 400.0;
 const CLIPBOARD_OVERLAY_HEIGHT: f64 = 550.0;
 
@@ -41,6 +51,15 @@ static CLIPBOARD_OVERLAY_PINNED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(target_os = "macos")]
 static CLIPBOARD_OVERLAY_FOCUSED: AtomicBool = AtomicBool::new(false);
+
+/// Overlay window size (logical) for a given UI state.
+fn overlay_dimensions(state: &str) -> (f64, f64) {
+    if state == "streaming" {
+        (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
+    } else {
+        (OVERLAY_WIDTH, OVERLAY_HEIGHT)
+    }
+}
 
 #[cfg(target_os = "macos")]
 const OVERLAY_TOP_OFFSET: f64 = 46.0;
@@ -65,7 +84,7 @@ fn update_gtk_layer_shell_anchors(overlay_window: &tauri::webview::WebviewWindow
                     gtk_window.set_anchor(Edge::Top, true);
                     gtk_window.set_anchor(Edge::Bottom, false);
                 }
-                OverlayPosition::Bottom | OverlayPosition::None => {
+                OverlayPosition::Bottom => {
                     gtk_window.set_anchor(Edge::Bottom, true);
                     gtk_window.set_anchor(Edge::Top, false);
                 }
@@ -208,7 +227,11 @@ fn is_mouse_within_monitor(
 /// We must use LogicalPosition (not PhysicalPosition) because Tauri/tao
 /// converts PhysicalPosition using the scale factor of the monitor the window
 /// is *currently* on, which is wrong when moving cross-monitor.
-fn calculate_overlay_position(app_handle: &AppHandle) -> Option<(f64, f64)> {
+fn calculate_overlay_position(
+    app_handle: &AppHandle,
+    width: f64,
+    height: f64,
+) -> Option<(f64, f64)> {
     let monitor = get_monitor_with_cursor(app_handle)?;
     let scale = monitor.scale_factor();
     let monitor_x = monitor.position().x as f64 / scale;
@@ -218,15 +241,21 @@ fn calculate_overlay_position(app_handle: &AppHandle) -> Option<(f64, f64)> {
 
     let settings = settings::get_settings(app_handle);
 
-    let x = monitor_x + (monitor_width - OVERLAY_WIDTH) / 2.0;
+    let x = monitor_x + (monitor_width - width) / 2.0;
     let y = match settings.overlay_position {
         OverlayPosition::Top => monitor_y + OVERLAY_TOP_OFFSET,
-        OverlayPosition::Bottom | OverlayPosition::None => {
-            monitor_y + monitor_height - OVERLAY_HEIGHT - OVERLAY_BOTTOM_OFFSET
-        }
+        OverlayPosition::Bottom => monitor_y + monitor_height - height - OVERLAY_BOTTOM_OFFSET,
     };
 
     Some((x, y))
+}
+
+/// Current overlay window size in logical units (points), for repositioning
+/// without assuming a fixed size (compact vs. streaming).
+fn current_overlay_logical_size(window: &tauri::webview::WebviewWindow) -> Option<(f64, f64)> {
+    let size = window.inner_size().ok()?;
+    let scale = window.scale_factor().ok()?;
+    Some((size.width as f64 / scale, size.height as f64 / scale))
 }
 
 fn calculate_clipboard_overlay_position(app_handle: &AppHandle) -> Option<(f64, f64)> {
@@ -338,9 +367,13 @@ fn create_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
         builder = builder.center();
     }
 
+    if let Some(data_dir) = crate::portable::data_dir() {
+        builder = builder.data_directory(data_dir.join("webview"));
+    }
+
     match builder.build() {
         Ok(_) => {
-            debug!("Clipboard overlay window created successfully (hidden)");
+            debug!("Clipboard overlay window created successfully");
         }
         Err(e) => {
             debug!("Failed to create clipboard overlay window: {}", e);
@@ -566,7 +599,7 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     // for Layer Shell as we use anchors. On other platforms, we require a monitor.
     #[cfg(not(target_os = "linux"))]
     {
-        let position = calculate_overlay_position(app_handle);
+        let position = calculate_overlay_position(app_handle, OVERLAY_WIDTH, OVERLAY_HEIGHT);
         if position.is_none() {
             debug!("Failed to determine overlay position, not creating overlay window");
             return;
@@ -592,6 +625,7 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     .always_on_top(true)
     .skip_taskbar(true)
     .transparent(true)
+    .focusable(false)
     .focused(false)
     .visible(false);
 
@@ -644,7 +678,7 @@ fn run_recording_overlay_on_main_thread<F>(
 
 #[cfg(target_os = "macos")]
 fn create_recording_overlay_on_main_thread(app_handle: &AppHandle) {
-    if let Some((x, y)) = calculate_overlay_position(app_handle) {
+    if let Some((x, y)) = calculate_overlay_position(app_handle, OVERLAY_WIDTH, OVERLAY_HEIGHT) {
         // PanelBuilder creates a Tauri window then converts it to NSPanel.
         // The window remains registered, so get_webview_window() still works.
         match PanelBuilder::<_, RecordingOverlayPanel>::new(app_handle, "recording_overlay")
@@ -660,7 +694,8 @@ fn create_recording_overlay_on_main_thread(app_handle: &AppHandle) {
             .transparent(true)
             .no_activate(true)
             .corner_radius(0.0)
-            .with_window(|w| w.decorations(false).transparent(true))
+            .style_mask(StyleMask::empty().borderless().nonactivating_panel())
+            .with_window(|w| w.decorations(false).transparent(true).focusable(false))
             .collection_behavior(
                 CollectionBehavior::new()
                     .can_join_all_spaces()
@@ -669,7 +704,7 @@ fn create_recording_overlay_on_main_thread(app_handle: &AppHandle) {
             .build()
         {
             Ok(panel) => {
-                let _ = panel.hide();
+                panel.hide();
             }
             Err(e) => {
                 log::error!("Failed to create recording overlay panel: {}", e);
@@ -685,66 +720,74 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     });
 }
 
-#[cfg(target_os = "macos")]
-fn update_overlay_position_on_main_thread(app_handle: &AppHandle) {
-    if let Some((x, y)) = calculate_overlay_position(app_handle) {
-        if let Ok(panel) = app_handle.get_webview_panel("recording_overlay") {
-            panel
-                .as_panel()
-                .setFrameOrigin(tauri_nspanel::NSPoint::new(x, y));
+fn show_overlay_state_now(app_handle: &AppHandle, state: &str) {
+    // Whether the overlay shows at all is governed by overlay_style; position
+    // only chooses Top vs Bottom placement.
+    let settings = settings::get_settings(app_handle);
+    if settings.overlay_style == OverlayStyle::None {
+        return;
+    }
+
+    // Size the overlay for this state (compact vs. streaming), then position it.
+    let (width, height) = overlay_dimensions(state);
+    if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
+        #[cfg(target_os = "linux")]
+        update_gtk_layer_shell_anchors(&overlay_window);
+
+        let size_started = std::time::Instant::now();
+        let _ = overlay_window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
+        let size_elapsed = size_started.elapsed();
+
+        let pos_started = std::time::Instant::now();
+        let mut set_pos_elapsed = std::time::Duration::ZERO;
+        if let Some((x, y)) = calculate_overlay_position(app_handle, width, height) {
+            let set_pos_started = std::time::Instant::now();
+            let _ = overlay_window
+                .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
+            set_pos_elapsed = set_pos_started.elapsed();
         }
-    }
-}
+        let pos_calc_elapsed = pos_started.elapsed() - set_pos_elapsed;
 
-#[cfg(target_os = "macos")]
-fn show_overlay_state_on_main_thread(app_handle: &AppHandle, state: &'static str) {
-    let settings = settings::get_settings(app_handle);
-    if settings.overlay_position == OverlayPosition::None {
-        return;
-    }
-
-    update_overlay_position_on_main_thread(app_handle);
-
-    if let Ok(panel) = app_handle.get_webview_panel("recording_overlay") {
-        panel.order_front_regardless();
-    }
-
-    if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
-        let _ = overlay_window.emit("show-overlay", state);
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn show_overlay_state(app_handle: &AppHandle, state: &'static str) {
-    run_recording_overlay_on_main_thread(app_handle, "show", move |app_handle| {
-        show_overlay_state_on_main_thread(&app_handle, state);
-    });
-}
-
-#[cfg(not(target_os = "macos"))]
-fn show_overlay_state(app_handle: &AppHandle, state: &str) {
-    // Check if overlay should be shown based on position setting
-    let settings = settings::get_settings(app_handle);
-    if settings.overlay_position == OverlayPosition::None {
-        return;
-    }
-
-    update_overlay_position(app_handle);
-
-    if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
+        let show_started = std::time::Instant::now();
         let _ = overlay_window.show();
+        let show_elapsed = show_started.elapsed();
 
         // On Windows, aggressively re-assert "topmost" in the native Z-order after showing
         #[cfg(target_os = "windows")]
         force_overlay_topmost(&overlay_window);
 
         let _ = overlay_window.emit("show-overlay", state);
+        log::debug!(
+            "overlay '{}': set_size={:?} pos_calc={:?} set_pos={:?} show={:?}",
+            state,
+            size_elapsed,
+            pos_calc_elapsed,
+            set_pos_elapsed,
+            show_elapsed
+        );
     }
+}
+
+#[cfg(target_os = "macos")]
+fn show_overlay_state(app_handle: &AppHandle, state: &'static str) {
+    run_recording_overlay_on_main_thread(app_handle, "show", move |app_handle| {
+        show_overlay_state_now(&app_handle, state);
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn show_overlay_state(app_handle: &AppHandle, state: &str) {
+    show_overlay_state_now(app_handle, state);
 }
 
 /// Shows the recording overlay window with fade-in animation
 pub fn show_recording_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "recording");
+}
+
+/// Shows the larger streaming overlay that displays live transcription text
+pub fn show_streaming_overlay(app_handle: &AppHandle) {
+    show_overlay_state(app_handle, "streaming");
 }
 
 /// Shows the transcribing overlay window
@@ -758,27 +801,36 @@ pub fn show_processing_overlay(app_handle: &AppHandle) {
 }
 
 /// Updates the overlay window position based on current settings
-#[cfg(target_os = "macos")]
-pub fn update_overlay_position(app_handle: &AppHandle) {
-    run_recording_overlay_on_main_thread(app_handle, "position", |app_handle| {
-        update_overlay_position_on_main_thread(&app_handle);
-    });
-}
-
-/// Updates the overlay window position based on current settings
-#[cfg(not(target_os = "macos"))]
-pub fn update_overlay_position(app_handle: &AppHandle) {
+fn update_overlay_position_now(app_handle: &AppHandle) {
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
         #[cfg(target_os = "linux")]
         {
             update_gtk_layer_shell_anchors(&overlay_window);
         }
 
-        if let Some((x, y)) = calculate_overlay_position(app_handle) {
+        // Use the window's current size so centering stays correct whether the
+        // overlay is in compact or streaming layout.
+        let (width, height) = current_overlay_logical_size(&overlay_window)
+            .unwrap_or((OVERLAY_WIDTH, OVERLAY_HEIGHT));
+        if let Some((x, y)) = calculate_overlay_position(app_handle, width, height) {
             let _ = overlay_window
                 .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
         }
     }
+}
+
+/// Updates the overlay window position based on current settings
+#[cfg(target_os = "macos")]
+pub fn update_overlay_position(app_handle: &AppHandle) {
+    run_recording_overlay_on_main_thread(app_handle, "position", |app_handle| {
+        update_overlay_position_now(&app_handle);
+    });
+}
+
+/// Updates the overlay window position based on current settings
+#[cfg(not(target_os = "macos"))]
+pub fn update_overlay_position(app_handle: &AppHandle) {
+    update_overlay_position_now(app_handle);
 }
 
 /// Hides the recording overlay window with fade-out animation
@@ -788,15 +840,16 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
         // Emit event to trigger fade-out animation
         let _ = overlay_window.emit("hide-overlay", ());
-
+        // Hide the window after a short delay to allow animation to complete
         #[cfg(target_os = "macos")]
         {
             let app_handle = app_handle.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(300));
                 run_recording_overlay_on_main_thread(&app_handle, "hide", |app_handle| {
-                    if let Ok(panel) = app_handle.get_webview_panel("recording_overlay") {
-                        panel.hide();
+                    if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay")
+                    {
+                        let _ = overlay_window.hide();
                     }
                 });
             });
@@ -805,7 +858,6 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
 
         #[cfg(not(target_os = "macos"))]
         {
-            // Hide the window after a short delay to allow animation to complete
             let window_clone = overlay_window.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(300));
@@ -820,12 +872,40 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
     }
 }
 
-pub fn emit_levels(app_handle: &AppHandle, levels: &Vec<f32>) {
-    // emit levels to main app
-    let _ = app_handle.emit("mic-level", levels);
+// Cached "overlay is enabled" flag, kept in sync with overlay_style. Avoids
+// reading the Tauri store on every audio callback (~24 Hz during recording).
+// Defaults to false so the audio path doesn't emit until lib.rs::setup
+// populates the cache from initial settings.
+static OVERLAY_ENABLED: AtomicBool = AtomicBool::new(false);
 
-    // also emit to the recording overlay if it's open
-    if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
-        let _ = overlay_window.emit("mic-level", levels);
+/// Update the cached overlay-enabled flag. Called from `lib.rs` at
+/// startup after settings load, and from `change_overlay_style_setting`
+/// whenever the user changes whether the overlay is shown.
+pub fn update_overlay_enabled_cache(enabled: bool) {
+    OVERLAY_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+pub fn emit_levels(app_handle: &AppHandle, levels: &[f32]) {
+    // Skip emission when the overlay is disabled. The recording_overlay
+    // window is created at boot regardless of overlay_style, so without this
+    // guard a hidden overlay's WebKit subprocess still
+    // processes every event. Each event drives some kind of WebKit
+    // C++ allocation that accumulates without bound (mechanism not
+    // directly characterized; see issue #1279 for the investigation).
+    // For users with `overlay_style: none` (the Linux default) this skip
+    // eliminates the upstream driver of that accumulation.
+    if !OVERLAY_ENABLED.load(Ordering::Relaxed) {
+        return;
     }
+
+    // Target only the overlay window. In Tauri 2 both `AppHandle::emit`
+    // and `WebviewWindow::emit` broadcast to all webviews; Tauri's
+    // listener filter then skips webviews with no registered listener
+    // for the event, so the settings webview never received `mic-level`.
+    // But the previous dual-call pattern still produced two `eval_script`
+    // calls to the overlay per audio callback (one from each .emit()).
+    // `emit_to` with the overlay's window label produces a single
+    // eval_script call per callback, cutting the per-callback WebKit
+    // dispatch work in half.
+    let _ = app_handle.emit_to("recording_overlay", "mic-level", levels);
 }

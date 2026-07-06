@@ -3,11 +3,11 @@
     "settings": "Ayarlar...",
     "checkUpdates": "Güncellemeleri Kontrol Et...",
     "copyLastTranscript": "Son transkripti kopyala",
-    "clipboardHistory": "Pano Geçmişi",
     "unloadModel": "Modeli boşalt",
     "model": "Model",
     "quit": "Çıkış",
-    "cancel": "İptal"
+    "cancel": "İptal",
+    "clipboardHistory": "Pano Geçmişi"
   },
   "sidebar": {
     "general": "Genel",
@@ -15,17 +15,18 @@
     "advanced": "Gelişmiş",
     "postProcessing": "Son İşlem",
     "history": "Geçmiş",
-    "clipboard": "Clipboard",
     "debug": "Hata Ayıklama",
-    "about": "Hakkında"
+    "about": "Hakkında",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "Başlamak için bir transkripsiyon modeli seçin",
+    "existingModelsTitle": "Compatible Models",
+    "downloadModelsTitle": "Available to Download",
+    "showAllModels": "Show all {{total}} models",
+    "showFewerModels": "Show fewer models",
     "recommended": "Önerilen",
-    "download": "İndir",
-    "downloading": "İndiriliyor...",
     "customModelDescription": "Resmi olarak desteklenmiyor",
-    "downloadFailed": "İndirme başarısız oldu. Lütfen tekrar deneyin.",
     "modelCard": {
       "accuracy": "doğruluk",
       "speed": "hız"
@@ -97,8 +98,7 @@
       }
     },
     "errors": {
-      "loadModels": "Mevcut modeller yüklenemedi",
-      "downloadModel": "Model indirilemedi: {{error}}"
+      "selectModel": "Failed to select model"
     },
     "permissions": {
       "title": "İzinler Gerekli",
@@ -123,6 +123,7 @@
   },
   "modelSelector": {
     "custom": "Özel",
+    "streaming": "Akış",
     "active": "Aktif",
     "noModelsAvailable": "Kullanılabilir model yok",
     "verifying": "{{modelName}} doğrulanıyor...",
@@ -143,43 +144,44 @@
     "downloadSpeed": "{{speed}} MB/s",
     "capabilities": {
       "languageSelection": "Birden fazla giriş dilini destekler",
-      "multiLanguage": "Çok dilli",
+      "languageCount": "{{total}} languages",
       "translation": "İngilizce'ye çevirebilir",
       "translate": "İngilizce'ye çevir",
       "singleLanguage": "Yalnızca bu dili destekler",
-      "languageOnly": "Yalnızca {{language}}"
+      "languageOnly": "Yalnızca {{language}}",
+      "streaming": "Konuşurken canlı transkripsiyon gösterir"
     },
     "cancel": "İptal",
     "cancelDownload": "İndirmeyi iptal et",
-    "statusTitle": "Model status: {{status}}",
+    "legacy": "Eski",
     "errors": {
       "checkStatus": "Failed to check model status",
       "loadModel": "Failed to load model",
       "switchModel": "Failed to switch model"
-    }
+    },
+    "statusTitle": "Model status: {{status}}"
   },
   "settings": {
     "modelSettings": {
-      "title": "{{model}} Ayarları",
-      "noSettingsNeeded": "Bu model yapılandırma gerektirmeden otomatik olarak çalışır."
+      "title": "{{model}} Ayarları"
     },
     "models": {
       "title": "Transkripsiyon Modelleri",
       "description": "Bir transkripsiyon modeli seçin veya ek modeller indirin. Farklı modeller değişen doğruluk ve hız seviyeleri sunar.",
-      "downloaded": "İndirildi",
-      "available": "İndirilebilir",
       "deleteConfirm": "{{modelName}} modelini silmek istediğinizden emin misiniz? Kullanmak için tekrar indirmeniz gerekecek.",
       "deleteActiveConfirm": "{{modelName}} aktif modelinizdir. Silmek, yeni bir model seçene kadar transkripsiyonları durduracaktır. Emin misiniz?",
       "deleteTitle": "Modeli Sil",
       "filters": {
-        "all": "Tümü",
-        "multiLanguage": "Çok dilli",
-        "translation": "Çeviri",
         "allLanguages": "Tüm Diller"
       },
       "noModelsMatch": "Bu filtreyle eşleşen model yok.",
       "yourModels": "İndirilen modeller",
-      "availableModels": "İndirilebilir"
+      "availableModels": "İndirilebilir",
+      "searchPlaceholder": "Modelleri ada göre ara…",
+      "rescan": {
+        "label": "Yeniden tara",
+        "tooltip": "Handy dışında modeller klasörüne veya Hugging Face önbelleğine eklenen modelleri yeniden tara"
+      }
     },
     "general": {
       "title": "Genel",
@@ -213,7 +215,6 @@
       "language": {
         "title": "Dil",
         "description": "Konuşma tanıma dilini seçin. 'Otomatik' seçeneği dili kendisi belirler, ancak belirli bir dil seçmek o dildeki doğruluğu artırabilir.",
-        "descriptionUnsupported": "Parakeet modeli dili otomatik algılar. Manuel seçim gerekmez.",
         "searchPlaceholder": "Dil ara...",
         "noResults": "Dil bulunamadı",
         "auto": "Otomatik"
@@ -247,7 +248,6 @@
       }
     },
     "advanced": {
-      "title": "Gelişmiş",
       "groups": {
         "app": "Uygulama",
         "output": "Çıktı",
@@ -264,7 +264,7 @@
         "description": "Kayıt durdurulduktan sonra mikrofon akışını 30 saniye açık tutar, ardışık transkripsiyonlarda gecikmeyi azaltır. Etkinken Bluetooth ses kalitesini düşürebilir."
       },
       "acceleration": {
-        "whisper": {
+        "transcribe": {
           "title": "Whisper Hızlandırma",
           "description": "Whisper modelleri için donanım hızlandırma. Otomatik mod, mevcutsa GPU kullanır (macOS'ta Metal, Windows/Linux'ta Vulkan)."
         },
@@ -273,8 +273,6 @@
           "description": "ONNX modelleri için donanım hızlandırma (Parakeet, Canary, Moonshine vb.). Windows'ta DirectML deneyseldir. Modeller transkripsiyon yapamayabilir."
         },
         "gpuDevice": {
-          "title": "GPU Aygıtı",
-          "description": "Whisper çıkarımı için hangi GPU'nun kullanılacağını seçin. Otomatik, özel GPU'yu seçer.",
           "auto": "Otomatik"
         }
       },
@@ -291,12 +289,22 @@
         "description": "Handy simgesini sistem tepsisinde göster."
       },
       "overlay": {
-        "title": "Overlay Konumu",
-        "description": "Kayıt ve transkripsiyon sırasında görsel geri bildirim kaplamasını gösterir. Linux'ta 'Yok' önerilir.",
-        "options": {
-          "none": "Yok",
-          "bottom": "Alt",
-          "top": "Üst"
+        "style": {
+          "title": "Overlay",
+          "description": "Choose the recording overlay: None hides it, Minimal shows a compact pill, Live shows transcription in real time as you speak (streaming-capable models only — look for the Streaming badge in the model picker). On Linux 'None' is recommended.",
+          "options": {
+            "none": "Yok",
+            "minimal": "Minimal",
+            "live": "Live"
+          }
+        },
+        "position": {
+          "title": "Overlay Konumu",
+          "description": "Kayıt ve transkripsiyon sırasında görsel geri bildirim kaplamasını gösterir. Linux'ta 'Yok' önerilir.",
+          "options": {
+            "bottom": "Alt",
+            "top": "Üst"
+          }
         }
       },
       "pasteMethod": {
@@ -340,8 +348,7 @@
       },
       "translateToEnglish": {
         "label": "İngilizceye Çevir",
-        "description": "Transkripsiyon sırasında diğer dillerden İngilizceye otomatik olarak çevirir.",
-        "descriptionUnsupported": "Çeviri {{model}} modeli tarafından desteklenmiyor."
+        "description": "Transkripsiyon sırasında diğer dillerden İngilizceye otomatik olarak çevirir."
       },
       "modelUnload": {
         "title": "Modeli Boşalt",
@@ -365,13 +372,16 @@
         "remove": "{{word}} Kaldır",
         "duplicate": "\"{{word}}\" zaten mevcut"
       },
+      "voiceActivityDetection": {
+        "title": "Voice Activity Detection",
+        "description": "Filter silence from recordings. Streaming-capable models use a longer VAD tail; disabling VAD records raw audio."
+      },
       "clipboardFeature": {
         "label": "Clipboard manager (experimental)",
         "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
-      "title": "Son İşlem",
       "hotkey": {
         "title": "Kısayol Tuşu"
       },
@@ -382,9 +392,6 @@
           "description": "OpenAI uyumlu bir sağlayıcı seçin."
         },
         "appleIntelligence": {
-          "title": "Apple Intelligence",
-          "description": "Tamamen cihaz üzerinde çalışır. API anahtarı veya ağ erişimi gerekmez.",
-          "requirements": "macOS Tahoe (26.0) veya üzeri çalıştıran bir Apple Silicon Mac gerektirir. Sistem Ayarları'nda Apple Intelligence etkin olmalıdır.",
           "unavailable": "Apple Intelligence bu cihazda kullanılamıyor. macOS Tahoe (26.0) veya üzeri ve Sistem Ayarları'nda Apple Intelligence etkin olan bir Apple Silicon Mac gerektirir."
         },
         "baseUrl": {
@@ -400,10 +407,8 @@
         },
         "model": {
           "title": "Model",
-          "descriptionApple": "İsteğe bağlı bir sayısal token sınırı belirleyin veya varsayılan cihaz içi ön ayarı kullanın.",
           "descriptionCustom": "Özel uç noktanızın beklediği model tanımlayıcısını girin.",
           "descriptionDefault": "Seçili sağlayıcının sunduğu bir modeli seçin.",
-          "placeholderApple": "Apple Intelligence",
           "placeholderWithOptions": "Model ara veya seç",
           "placeholderNoOptions": "Model adı yazın",
           "refreshModels": "Modelleri Yenile",
@@ -446,6 +451,147 @@
       "retranscribeError": "Yeniden yazıya dökme başarısız oldu. Lütfen tekrar deneyin.",
       "transcribing": "Yazıya döküyor...",
       "transcriptionFailed": "Transkripsiyon başarısız oldu. Yeniden deneme simgesini kullanarak tekrar yazıya dökebilirsiniz."
+    },
+    "debug": {
+      "title": "Hata Ayıklama",
+      "logDirectory": {
+        "title": "Log Dizini",
+        "description": "Log dosyalarının saklandığı konum"
+      },
+      "logLevel": {
+        "title": "Log Seviyesi",
+        "description": "Loglamanın ayrıntı düzeyini ayarla",
+        "options": {
+          "error": "Error",
+          "warn": "Warning",
+          "info": "Info",
+          "debug": "Debug",
+          "trace": "Trace"
+        }
+      },
+      "liveLogs": {
+        "title": "Canlı Loglar",
+        "description": "Sorunları log dosyasını açmadan teşhis etmek için uygulama loglarını gerçek zamanlı olarak akıtın. Yalnızca bu panel açıkken oluşturulan loglar gösterilir; yukarıdaki Log Seviyesi ayarına uyar.",
+        "live": "Canlı",
+        "paused": "Duraklatıldı",
+        "pause": "Duraklat",
+        "resume": "Sürdür",
+        "copied": "Kopyalandı",
+        "lineCount": "{{count}} satır",
+        "empty": "Loglar bekleniyor… Uygulama logları ürettikçe girişler burada görünür."
+      },
+      "updateChecks": {
+        "label": "Güncellemeleri Kontrol Et",
+        "description": "Handy için yeni sürümleri otomatik olarak kontrol eder"
+      },
+      "soundTheme": {
+        "label": "Ses Teması",
+        "description": "Kayıt başlangıç ve bitişi için sesli geri bildirim temasını seçin",
+        "preview": "Preview sound theme"
+      },
+      "wordCorrectionThreshold": {
+        "title": "Kelime Düzeltme Eşiği",
+        "description": "Özel kelime düzeltmeleri için hassasiyet"
+      },
+      "historyLimit": {
+        "title": "Geçmiş Limiti",
+        "description": "Saklanacak maksimum geçmiş kaydı sayısı",
+        "entries": "kayıt"
+      },
+      "recordingRetention": {
+        "title": "Kayıtları Otomatik Sil",
+        "description": "Alan tasarrufu için eski kayıtları otomatik olarak siler",
+        "never": "Asla",
+        "preserveLimit": "Son {{count}} kaydı tut",
+        "days3": "3 gün sonra",
+        "weeks2": "2 hafta sonra",
+        "months3": "3 ay sonra",
+        "placeholder": "Saklama süresi seçin..."
+      },
+      "alwaysOnMicrophone": {
+        "label": "Mikrofon Her Zaman Açık",
+        "description": "Daha hızlı yanıt için mikrofonu aktif tutar"
+      },
+      "clamshellMicrophone": {
+        "title": "Kapalı Kapak Mikrofonu",
+        "description": "Dizüstü bilgisayar kapağı kapalıyken kullanılacak mikrofon"
+      },
+      "postProcessingToggle": {
+        "label": "Son İşlem",
+        "description": "Transkripsiyon sonrası yapay zekâ destekli metin iyileştirmeyi etkinleştirir"
+      },
+      "muteWhileRecording": {
+        "label": "Kayıt Sırasında Sessize Al",
+        "description": "Kayıt sırasında sistem sesini kapatır"
+      },
+      "appendTrailingSpace": {
+        "label": "Sonuna Boşluk Ekle",
+        "description": "Yapıştırılan transkripsiyondan sonra boşluk ekler"
+      },
+      "keyboardImplementation": {
+        "title": "Klavye Uygulaması",
+        "description": "Klavye kısayolları için kullanılacak altyapıyı seçin.",
+        "bindingsReset": "Klavye kısayolları uyumsuzdu ve varsayılan ayarlara sıfırlandı",
+        "options": {
+          "tauriGlobalShortcut": "Tauri Global Shortcut",
+          "handyKeys": "Handy Keys"
+        }
+      },
+      "paths": {
+        "appData": "Uygulama Verileri:",
+        "models": "Modeller:",
+        "settings": "Ayarlar:",
+        "description": "Display internal file paths and directories for debugging purposes",
+        "title": "Debug Paths"
+      },
+      "pasteDelay": {
+        "title": "Yapıştırma gecikmesi",
+        "description": "Yapıştırma tuşu göndermeden önce gecikme (milisaniye cinsinden). Yanlış metin yapıştırılıyorsa artırın."
+      },
+      "recordingBuffer": {
+        "title": "Ekstra kayıt tamponu",
+        "description": "Tuşu bıraktıktan sonra arka plandaki sesi yakalamak için kaydı sürdürme süresi (milisaniye). 0 = ekstra tampon yok."
+      },
+      "whatsNewPreview": {
+        "title": "Yenilikleri Önizle",
+        "description": "En son paketlenmiş sürüm notunu görüldü olarak işaretlemeden aç",
+        "button": "Önizle",
+        "noNotes": "Paketlenmiş sürüm notu bulunamadı",
+        "error": "Sürüm notları önizlenemedi"
+      }
+    },
+    "about": {
+      "title": "Hakkında",
+      "version": {
+        "title": "Sürüm",
+        "description": "Handy'nin mevcut sürümü"
+      },
+      "appDataDirectory": {
+        "title": "Uygulama Veri Dizini",
+        "description": "Handy'nin verilerini sakladığı konum"
+      },
+      "sourceCode": {
+        "title": "Kaynak Kodu",
+        "description": "Kaynak kodunu görüntüle ve katkıda bulun",
+        "button": "GitHub'da Görüntüle"
+      },
+      "supportDevelopment": {
+        "title": "Geliştirmeyi Destekle",
+        "description": "Handy'yi geliştirmeye devam etmemize yardımcı olun",
+        "button": "Bağış Yap"
+      },
+      "acknowledgments": {
+        "title": "Teşekkürler",
+        "ggml": {
+          "title": "ggml",
+          "description": "OpenAI'nin Whisper otomatik konuşma tanıma modelinin yüksek performanslı çıkarımı",
+          "details": "Handy, hızlı ve yerel konuşmadan metne dönüştürme için ggml kullanır. Georgi Gerganov ve katkıda bulunanların harika çalışmaları için teşekkür ederiz."
+        }
+      },
+      "whatsNewUpdates": {
+        "label": "Yenilikleri Göster",
+        "description": "Handy güncellemelerinden sonra sürüm notlarını göster"
+      }
     },
     "clipboard": {
       "title": "Pano Yöneticisi",
@@ -515,177 +661,38 @@
         "wholeWord": "Whole word",
         "unlimited": "Unlimited"
       }
-    },
-    "debug": {
-      "title": "Hata Ayıklama",
-      "logDirectory": {
-        "title": "Log Dizini",
-        "description": "Log dosyalarının saklandığı konum"
-      },
-      "logLevel": {
-        "title": "Log Seviyesi",
-        "description": "Loglamanın ayrıntı düzeyini ayarla",
-        "options": {
-          "error": "Error",
-          "warn": "Warning",
-          "info": "Info",
-          "debug": "Debug",
-          "trace": "Trace"
-        }
-      },
-      "updateChecks": {
-        "label": "Güncellemeleri Kontrol Et",
-        "description": "Handy için yeni sürümleri otomatik olarak kontrol eder"
-      },
-      "soundTheme": {
-        "label": "Ses Teması",
-        "description": "Kayıt başlangıç ve bitişi için sesli geri bildirim temasını seçin",
-        "preview": "Preview sound theme"
-      },
-      "wordCorrectionThreshold": {
-        "title": "Kelime Düzeltme Eşiği",
-        "description": "Özel kelime düzeltmeleri için hassasiyet"
-      },
-      "historyLimit": {
-        "title": "Geçmiş Limiti",
-        "description": "Saklanacak maksimum geçmiş kaydı sayısı",
-        "entries": "kayıt"
-      },
-      "recordingRetention": {
-        "title": "Kayıtları Otomatik Sil",
-        "description": "Alan tasarrufu için eski kayıtları otomatik olarak siler",
-        "never": "Asla",
-        "preserveLimit": "Son {{count}} kaydı tut",
-        "days3": "3 gün sonra",
-        "weeks2": "2 hafta sonra",
-        "months3": "3 ay sonra",
-        "placeholder": "Saklama süresi seçin..."
-      },
-      "alwaysOnMicrophone": {
-        "label": "Mikrofon Her Zaman Açık",
-        "description": "Daha hızlı yanıt için mikrofonu aktif tutar"
-      },
-      "clamshellMicrophone": {
-        "title": "Kapalı Kapak Mikrofonu",
-        "description": "Dizüstü bilgisayar kapağı kapalıyken kullanılacak mikrofon"
-      },
-      "postProcessingToggle": {
-        "label": "Son İşlem",
-        "description": "Transkripsiyon sonrası yapay zekâ destekli metin iyileştirmeyi etkinleştirir"
-      },
-      "muteWhileRecording": {
-        "label": "Kayıt Sırasında Sessize Al",
-        "description": "Kayıt sırasında sistem sesini kapatır"
-      },
-      "appendTrailingSpace": {
-        "label": "Sonuna Boşluk Ekle",
-        "description": "Yapıştırılan transkripsiyondan sonra boşluk ekler"
-      },
-      "keyboardImplementation": {
-        "title": "Klavye Uygulaması",
-        "description": "Klavye kısayolları için kullanılacak altyapıyı seçin.",
-        "bindingsReset": "Klavye kısayolları uyumsuzdu ve varsayılan ayarlara sıfırlandı",
-        "options": {
-          "tauriGlobalShortcut": "Tauri Global Shortcut",
-          "handyKeys": "Handy Keys"
-        }
-      },
-      "paths": {
-        "appData": "Uygulama Verileri:",
-        "models": "Modeller:",
-        "settings": "Ayarlar:",
-        "title": "Debug Paths",
-        "description": "Display internal file paths and directories for debugging purposes"
-      },
-      "pasteDelay": {
-        "title": "Yapıştırma gecikmesi",
-        "description": "Yapıştırma tuşu göndermeden önce gecikme (milisaniye cinsinden). Yanlış metin yapıştırılıyorsa artırın."
-      },
-      "recordingBuffer": {
-        "title": "Ekstra kayıt tamponu",
-        "description": "Tuşu bıraktıktan sonra arka plandaki sesi yakalamak için kaydı sürdürme süresi (milisaniye). 0 = ekstra tampon yok."
-      }
-    },
-    "about": {
-      "title": "Hakkında",
-      "version": {
-        "title": "Sürüm",
-        "description": "Handy'nin mevcut sürümü"
-      },
-      "appDataDirectory": {
-        "title": "Uygulama Veri Dizini",
-        "description": "Handy'nin verilerini sakladığı konum"
-      },
-      "sourceCode": {
-        "title": "Kaynak Kodu",
-        "description": "Kaynak kodunu görüntüle ve katkıda bulun",
-        "button": "GitHub'da Görüntüle"
-      },
-      "supportDevelopment": {
-        "title": "Geliştirmeyi Destekle",
-        "description": "Handy'yi geliştirmeye devam etmemize yardımcı olun",
-        "button": "Bağış Yap"
-      },
-      "acknowledgments": {
-        "title": "Teşekkürler",
-        "whisper": {
-          "title": "Whisper.cpp",
-          "description": "OpenAI'nin Whisper otomatik konuşma tanıma modelinin yüksek performanslı çıkarımı",
-          "details": "Handy, hızlı ve yerel konuşmadan metne dönüştürme için Whisper.cpp kullanır. Georgi Gerganov ve katkıda bulunanların harika çalışmaları için teşekkür ederiz."
-        }
-      }
     }
   },
   "footer": {
-    "downloadingModel": "{{model}} indiriliyor...",
     "checkingUpdates": "Güncellemeler kontrol ediliyor...",
-    "updateAvailable": "Güncelleme mevcut: {{version}}",
     "updateAvailableShort": "Güncelleme mevcut",
     "upToDate": "Güncel",
-    "downloadUpdate": "Güncellemeyi İndir",
-    "restart": "Yeniden Başlat",
     "updateCheckingDisabled": "Güncelleme Kontrolü Devre Dışı",
     "downloading": "İndiriliyor... %{{progress}}",
     "installing": "Yükleniyor...",
     "preparing": "Hazırlanıyor...",
     "checkForUpdates": "Güncellemeleri kontrol et",
-    "portableUpdateTitle": "Manual update required",
-    "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
-    "portableUpdateButton": "Open GitHub Releases"
+    "portableUpdateTitle": "Manuel güncelleme gerekli",
+    "portableUpdateMessage": "Taşınabilir kurulumlar otomatik olarak güncellenemez. Güncellemek için: GitHub Releases’ten en son NSIS yükleyicisini indirin, aynı klasöre kurun ve ardından Data/ klasörünüzü (ayarlar, modeller, kayıtlar) eski sürümden yenisine kopyalayın.",
+    "portableUpdateButton": "GitHub Releases’i aç"
   },
   "common": {
     "loading": "Yükleniyor...",
-    "save": "Kaydet",
-    "cancel": "İptal",
-    "reset": "Sıfırla",
-    "add": "Ekle",
-    "remove": "Kaldır",
     "delete": "Sil",
-    "edit": "Düzenle",
-    "create": "Oluştur",
-    "update": "Güncelle",
     "close": "Kapat",
     "open": "Aç",
-    "default": "Varsayılan",
-    "enabled": "Etkin",
-    "disabled": "Devre Dışı",
-    "on": "Açık",
-    "off": "Kapalı",
-    "yes": "Evet",
-    "no": "Hayır",
-    "noOptionsFound": "Seçenek bulunamadı",
     "copy": "Copy",
+    "clear": "Temizle",
+    "noOptionsFound": "Seçenek bulunamadı",
     "moreInformation": "More information",
     "notAvailable": "Not available",
-    "selectOption": "Select an option...",
+    "pause": "Pause",
     "play": "Play",
-    "pause": "Pause"
+    "selectOption": "Select an option..."
   },
   "accessibility": {
-    "permissionsRequired": "Erişilebilirlik İzinleri Gerekli",
     "permissionsDescription": "Handy, transkribe edilen metni yazabilmek için erişilebilirlik izinlerine ihtiyaç duyar.",
-    "openSettings": "Sistem Ayarlarını Aç",
-    "dismiss": "Yoksay"
+    "openSettings": "Sistem Ayarlarını Aç"
   },
   "errors": {
     "loadDirectory": "Dizin yüklenirken hata oluştu: {{error}}",
@@ -702,7 +709,8 @@
     "modelLoadFailed": "Model yüklenemedi: {{model}}",
     "modelLoadFailedUnknown": "bilinmeyen model",
     "pasteFailedTitle": "Metin yapıştırılamadı",
-    "pasteFailed": "Metin etkin uygulamaya yapıştırılamadı."
+    "pasteFailed": "Metin etkin uygulamaya yapıştırılamadı.",
+    "transcriptionFailedTitle": "Transkripsiyon başarısız oldu"
   },
   "appLanguage": {
     "title": "Uygulama Dili",
@@ -711,5 +719,8 @@
   "overlay": {
     "transcribing": "Transkribe ediliyor...",
     "processing": "İşleniyor..."
+  },
+  "whatsNew": {
+    "title": "Handy v{{version}} yenilikleri"
   }
 }

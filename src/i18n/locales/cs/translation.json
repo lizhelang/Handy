@@ -3,11 +3,11 @@
     "settings": "Nastavení...",
     "checkUpdates": "Zkontrolovat aktualizace...",
     "copyLastTranscript": "Zkopírovat poslední přepis",
-    "clipboardHistory": "Historie schránky",
     "unloadModel": "Uvolnit model",
     "model": "Model",
     "quit": "Ukončit",
-    "cancel": "Zrušit"
+    "cancel": "Zrušit",
+    "clipboardHistory": "Historie schránky"
   },
   "sidebar": {
     "general": "Obecné",
@@ -15,17 +15,18 @@
     "advanced": "Pokročilé",
     "postProcessing": "Následné zpracování",
     "history": "Historie",
-    "clipboard": "Clipboard",
     "debug": "Ladění",
-    "about": "O aplikaci"
+    "about": "O aplikaci",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "Pro začátek vyberte model pro přepis",
+    "existingModelsTitle": "Compatible Models",
+    "downloadModelsTitle": "Available to Download",
+    "showAllModels": "Show all {{total}} models",
+    "showFewerModels": "Show fewer models",
     "recommended": "Doporučeno",
-    "download": "Stáhnout",
-    "downloading": "Stahování...",
     "customModelDescription": "Oficiálně nepodporováno",
-    "downloadFailed": "Stahování se nezdařilo. Zkuste to prosím znovu.",
     "modelCard": {
       "accuracy": "přesnost",
       "speed": "rychlost"
@@ -97,8 +98,7 @@
       }
     },
     "errors": {
-      "loadModels": "Nepodařilo se načíst dostupné modely",
-      "downloadModel": "Nepodařilo se stáhnout model: {{error}}"
+      "selectModel": "Failed to select model"
     },
     "permissions": {
       "title": "Vyžadována oprávnění",
@@ -123,6 +123,7 @@
   },
   "modelSelector": {
     "custom": "Vlastní",
+    "streaming": "Streaming",
     "active": "Aktivní",
     "noModelsAvailable": "Nejsou dostupné žádné modely",
     "verifying": "Ověřování {{modelName}}...",
@@ -143,43 +144,44 @@
     "downloadSpeed": "{{speed}} MB/s",
     "capabilities": {
       "languageSelection": "Podporuje více vstupních jazyků",
-      "multiLanguage": "Vícejazyčný",
+      "languageCount": "{{total}} languages",
       "translation": "Umí překládat do angličtiny",
       "translate": "Přeložit do angličtiny",
       "singleLanguage": "Podporuje pouze tento jazyk",
-      "languageOnly": "Pouze {{language}}"
+      "languageOnly": "Pouze {{language}}",
+      "streaming": "Zobrazuje přepis živě, jak mluvíte"
     },
     "cancel": "Zrušit",
     "cancelDownload": "Zrušit stahování",
-    "statusTitle": "Model status: {{status}}",
+    "legacy": "Zastaralé",
     "errors": {
       "checkStatus": "Failed to check model status",
       "loadModel": "Failed to load model",
       "switchModel": "Failed to switch model"
-    }
+    },
+    "statusTitle": "Model status: {{status}}"
   },
   "settings": {
     "modelSettings": {
-      "title": "Nastavení {{model}}",
-      "noSettingsNeeded": "Tento model funguje automaticky bez nutnosti konfigurace."
+      "title": "Nastavení {{model}}"
     },
     "models": {
       "title": "Modely přepisu",
       "description": "Vyberte model přepisu nebo stáhněte další modely. Různé modely nabízejí různé úrovně přesnosti a rychlosti.",
-      "downloaded": "Staženo",
-      "available": "K dispozici ke stažení",
       "deleteConfirm": "Opravdu chcete smazat {{modelName}}? Pro opětovné použití jej budete muset znovu stáhnout.",
       "deleteActiveConfirm": "{{modelName}} je váš aktivní model. Jeho smazáním se zastaví přepisy, dokud nevyberete nový model. Opravdu chcete pokračovat?",
       "deleteTitle": "Smazat model",
       "filters": {
-        "all": "Vše",
-        "multiLanguage": "Vícejazyčný",
-        "translation": "Překlad",
         "allLanguages": "Všechny jazyky"
       },
       "noModelsMatch": "Tomuto filtru neodpovídají žádné modely.",
       "yourModels": "Stažené modely",
-      "availableModels": "Dostupné ke stažení"
+      "availableModels": "Dostupné ke stažení",
+      "searchPlaceholder": "Hledat modely podle názvu…",
+      "rescan": {
+        "label": "Znovu prohledat",
+        "tooltip": "Znovu prohledat modely přidané do složky modelů nebo mezipaměti Hugging Face mimo Handy"
+      }
     },
     "general": {
       "title": "Obecné",
@@ -213,7 +215,6 @@
       "language": {
         "title": "Jazyk",
         "description": "Vyberte jazyk rozpoznávání řeči. Auto jazyk určí automaticky, zatímco výběr konkrétního jazyka může zlepšit přesnost.",
-        "descriptionUnsupported": "Model Parakeet rozpozná jazyk automaticky. Ruční výběr není potřeba.",
         "searchPlaceholder": "Hledat jazyky...",
         "noResults": "Žádné jazyky nenalezeny",
         "auto": "Auto"
@@ -247,7 +248,6 @@
       }
     },
     "advanced": {
-      "title": "Pokročilé",
       "groups": {
         "app": "Aplikace",
         "output": "Výstup",
@@ -264,7 +264,7 @@
         "description": "Ponechá stream mikrofonu otevřený po dobu 30 sekund po zastavení nahrávání, čímž se sníží latence při opakovaném přepisu. Může zhoršit kvalitu zvuku Bluetooth."
       },
       "acceleration": {
-        "whisper": {
+        "transcribe": {
           "title": "Akcelerace Whisper",
           "description": "Hardwarová akcelerace pro modely Whisper. Automatický režim používá GPU, pokud je k dispozici (Metal na macOS, Vulkan na Windows/Linux)."
         },
@@ -273,8 +273,6 @@
           "description": "Hardwarová akcelerace pro modely ONNX (Parakeet, Canary, Moonshine atd.). DirectML na Windows je experimentální. Modely nemusí správně přepisovat."
         },
         "gpuDevice": {
-          "title": "GPU zařízení",
-          "description": "Vyberte, který GPU použít pro Whisper. Automaticky vybere dedikovaný GPU.",
           "auto": "Automaticky"
         }
       },
@@ -291,12 +289,22 @@
         "description": "Zobrazit ikonu Handy v systémové liště."
       },
       "overlay": {
-        "title": "Pozice překryvu",
-        "description": "Zobrazovat vizuální překryv během nahrávání a přepisu. Na Linuxu je doporučeno 'Žádné'.",
-        "options": {
-          "none": "Žádné",
-          "bottom": "Dole",
-          "top": "Nahoře"
+        "style": {
+          "title": "Overlay",
+          "description": "Choose the recording overlay: None hides it, Minimal shows a compact pill, Live shows transcription in real time as you speak (streaming-capable models only — look for the Streaming badge in the model picker). On Linux 'None' is recommended.",
+          "options": {
+            "none": "Žádné",
+            "minimal": "Minimal",
+            "live": "Live"
+          }
+        },
+        "position": {
+          "title": "Pozice překryvu",
+          "description": "Zobrazovat vizuální překryv během nahrávání a přepisu. Na Linuxu je doporučeno 'Žádné'.",
+          "options": {
+            "bottom": "Dole",
+            "top": "Nahoře"
+          }
         }
       },
       "pasteMethod": {
@@ -340,8 +348,7 @@
       },
       "translateToEnglish": {
         "label": "Překládat do angličtiny",
-        "description": "Během přepisu automaticky překládat řeč z jiných jazyků do angličtiny.",
-        "descriptionUnsupported": "Překlad není podporován modelem {{model}}."
+        "description": "Během přepisu automaticky překládat řeč z jiných jazyků do angličtiny."
       },
       "modelUnload": {
         "title": "Uvolnění modelu",
@@ -365,13 +372,16 @@
         "remove": "Odebrat {{word}}",
         "duplicate": "\"{{word}}\" již existuje"
       },
+      "voiceActivityDetection": {
+        "title": "Voice Activity Detection",
+        "description": "Filter silence from recordings. Streaming-capable models use a longer VAD tail; disabling VAD records raw audio."
+      },
       "clipboardFeature": {
         "label": "Clipboard manager (experimental)",
         "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
-      "title": "Následné zpracování",
       "hotkey": {
         "title": "Klávesová zkratka"
       },
@@ -382,9 +392,6 @@
           "description": "Vyberte poskytovatele kompatibilního s OpenAI."
         },
         "appleIntelligence": {
-          "title": "Apple Intelligence",
-          "description": "Běží plně na zařízení. Není potřeba API klíč ani síťové připojení.",
-          "requirements": "Vyžaduje Mac s Apple Silicon a macOS Tahoe (26.0) nebo novější. Apple Intelligence musí být povoleno v Nastavení systému.",
           "unavailable": "Apple Intelligence není na tomto zařízení k dispozici. Vyžaduje Mac s Apple Silicon a macOS Tahoe (26.0) nebo novější a povolené Apple Intelligence v Nastavení systému."
         },
         "baseUrl": {
@@ -400,10 +407,8 @@
         },
         "model": {
           "title": "Model",
-          "descriptionApple": "Zadejte volitelný číselný limit tokenů nebo ponechte výchozí předvolbu na zařízení.",
           "descriptionCustom": "Zadejte identifikátor modelu očekávaný vaším vlastním endpointem.",
           "descriptionDefault": "Vyberte model dostupný u vybraného poskytovatele.",
-          "placeholderApple": "Apple Intelligence",
           "placeholderWithOptions": "Vyhledejte nebo vyberte model",
           "placeholderNoOptions": "Zadejte název modelu",
           "refreshModels": "Obnovit modely",
@@ -446,6 +451,147 @@
       "retranscribeError": "Opětovný přepis se nezdařil. Zkuste to prosím znovu.",
       "transcribing": "Přepisuji...",
       "transcriptionFailed": "Přepis selhal. Můžete zkusit přepis znovu pomocí ikony opakování."
+    },
+    "debug": {
+      "title": "Ladění",
+      "logDirectory": {
+        "title": "Složka protokolů",
+        "description": "Umístění, kde jsou uloženy soubory protokolu"
+      },
+      "logLevel": {
+        "title": "Úroveň logování",
+        "description": "Nastavte úroveň podrobnosti logování",
+        "options": {
+          "error": "Error",
+          "warn": "Warning",
+          "info": "Info",
+          "debug": "Debug",
+          "trace": "Trace"
+        }
+      },
+      "liveLogs": {
+        "title": "Živé logy",
+        "description": "Sledujte logy aplikace v reálném čase a diagnostikujte problémy bez otevírání souboru logu. Zobrazují se pouze logy vytvořené, když je tento panel otevřený; respektuje nastavení Úroveň logování výše.",
+        "live": "Živě",
+        "paused": "Pozastaveno",
+        "pause": "Pozastavit",
+        "resume": "Pokračovat",
+        "copied": "Zkopírováno",
+        "lineCount": "Řádků: {{count}}",
+        "empty": "Čekání na logy… Záznamy se zde zobrazí, jakmile je aplikace vygeneruje."
+      },
+      "updateChecks": {
+        "label": "Kontrolovat aktualizace",
+        "description": "Automaticky kontrolovat nové verze Handy"
+      },
+      "soundTheme": {
+        "label": "Zvukový motiv",
+        "description": "Vyberte zvukový motiv pro odezvu při startu a ukončení nahrávání",
+        "preview": "Preview sound theme"
+      },
+      "wordCorrectionThreshold": {
+        "title": "Práh korekce slov",
+        "description": "Citlivost pro opravy vlastních slov"
+      },
+      "historyLimit": {
+        "title": "Limit historie",
+        "description": "Maximální počet záznamů historie k uchování",
+        "entries": "záznamů"
+      },
+      "recordingRetention": {
+        "title": "Automatické mazání nahrávek",
+        "description": "Automaticky mazat staré nahrávky pro úsporu místa",
+        "never": "Nikdy",
+        "preserveLimit": "Ponechat posledních {{count}}",
+        "days3": "Po 3 dnech",
+        "weeks2": "Po 2 týdnech",
+        "months3": "Po 3 měsících",
+        "placeholder": "Vyberte dobu uchování..."
+      },
+      "alwaysOnMicrophone": {
+        "label": "Vždy zapnutý mikrofon",
+        "description": "Udržovat mikrofon aktivní pro rychlejší odezvu"
+      },
+      "clamshellMicrophone": {
+        "title": "Mikrofon při zavřeném víku",
+        "description": "Mikrofon, který se použije při zavřeném víku notebooku"
+      },
+      "postProcessingToggle": {
+        "label": "Následné zpracování",
+        "description": "Povolit AI vylepšení textu po přepisu"
+      },
+      "muteWhileRecording": {
+        "label": "Ztlumit při nahrávání",
+        "description": "Ztlumit systémový zvuk během nahrávání"
+      },
+      "appendTrailingSpace": {
+        "label": "Přidat koncovou mezeru",
+        "description": "Přidat mezeru po vloženém přepisu"
+      },
+      "keyboardImplementation": {
+        "title": "Implementace klávesnice",
+        "description": "Zvolte backend pro klávesové zkratky.",
+        "bindingsReset": "Klávesové zkratky byly nekompatibilní a byly obnoveny na výchozí hodnoty",
+        "options": {
+          "tauriGlobalShortcut": "Tauri Global Shortcut",
+          "handyKeys": "Handy Keys"
+        }
+      },
+      "paths": {
+        "appData": "Data aplikace:",
+        "models": "Modely:",
+        "settings": "Nastavení:",
+        "description": "Display internal file paths and directories for debugging purposes",
+        "title": "Debug Paths"
+      },
+      "pasteDelay": {
+        "title": "Zpoždění vložení",
+        "description": "Zpoždění před odesláním klávesy pro vložení (v milisekundách). Zvyšte, pokud se vkládá špatný text."
+      },
+      "recordingBuffer": {
+        "title": "Extra vyrovnávací paměť nahrávání",
+        "description": "Extra čas (v milisekundách) pro pokračování nahrávání po uvolnění klávesy, pro zachycení zbývajícího zvuku. 0 = žádná extra vyrovnávací paměť."
+      },
+      "whatsNewPreview": {
+        "title": "Náhled novinek",
+        "description": "Otevřít nejnovější přibalené poznámky k vydání bez označení jako zobrazené",
+        "button": "Náhled",
+        "noNotes": "Nebyly nalezeny žádné přibalené poznámky k vydání",
+        "error": "Nepodařilo se zobrazit náhled poznámek k vydání"
+      }
+    },
+    "about": {
+      "title": "O aplikaci",
+      "version": {
+        "title": "Verze",
+        "description": "Aktuální verze Handy"
+      },
+      "appDataDirectory": {
+        "title": "Adresář dat aplikace",
+        "description": "Umístění, kde Handy ukládá data"
+      },
+      "sourceCode": {
+        "title": "Zdrojový kód",
+        "description": "Zobrazit zdrojový kód a přispět",
+        "button": "Zobrazit na GitHubu"
+      },
+      "supportDevelopment": {
+        "title": "Podpořte vývoj",
+        "description": "Pomozte nám pokračovat ve vývoji Handy",
+        "button": "Přispět"
+      },
+      "acknowledgments": {
+        "title": "Poděkování",
+        "ggml": {
+          "title": "ggml",
+          "description": "Vysoce výkonné inferenční zpracování modelu automatického rozpoznávání řeči Whisper od OpenAI",
+          "details": "Handy používá ggml pro rychlé lokální zpracování řeči na text. Díky skvělé práci Georgiho Gerganova a přispěvatelů."
+        }
+      },
+      "whatsNewUpdates": {
+        "label": "Zobrazovat novinky",
+        "description": "Zobrazovat poznámky k vydání po aktualizacích Handy"
+      }
     },
     "clipboard": {
       "title": "Správce schránky",
@@ -515,177 +661,38 @@
         "wholeWord": "Whole word",
         "unlimited": "Unlimited"
       }
-    },
-    "debug": {
-      "title": "Ladění",
-      "logDirectory": {
-        "title": "Složka protokolů",
-        "description": "Umístění, kde jsou uloženy soubory protokolu"
-      },
-      "logLevel": {
-        "title": "Úroveň logování",
-        "description": "Nastavte úroveň podrobnosti logování",
-        "options": {
-          "error": "Error",
-          "warn": "Warning",
-          "info": "Info",
-          "debug": "Debug",
-          "trace": "Trace"
-        }
-      },
-      "updateChecks": {
-        "label": "Kontrolovat aktualizace",
-        "description": "Automaticky kontrolovat nové verze Handy"
-      },
-      "soundTheme": {
-        "label": "Zvukový motiv",
-        "description": "Vyberte zvukový motiv pro odezvu při startu a ukončení nahrávání",
-        "preview": "Preview sound theme"
-      },
-      "wordCorrectionThreshold": {
-        "title": "Práh korekce slov",
-        "description": "Citlivost pro opravy vlastních slov"
-      },
-      "historyLimit": {
-        "title": "Limit historie",
-        "description": "Maximální počet záznamů historie k uchování",
-        "entries": "záznamů"
-      },
-      "recordingRetention": {
-        "title": "Automatické mazání nahrávek",
-        "description": "Automaticky mazat staré nahrávky pro úsporu místa",
-        "never": "Nikdy",
-        "preserveLimit": "Ponechat posledních {{count}}",
-        "days3": "Po 3 dnech",
-        "weeks2": "Po 2 týdnech",
-        "months3": "Po 3 měsících",
-        "placeholder": "Vyberte dobu uchování..."
-      },
-      "alwaysOnMicrophone": {
-        "label": "Vždy zapnutý mikrofon",
-        "description": "Udržovat mikrofon aktivní pro rychlejší odezvu"
-      },
-      "clamshellMicrophone": {
-        "title": "Mikrofon při zavřeném víku",
-        "description": "Mikrofon, který se použije při zavřeném víku notebooku"
-      },
-      "postProcessingToggle": {
-        "label": "Následné zpracování",
-        "description": "Povolit AI vylepšení textu po přepisu"
-      },
-      "muteWhileRecording": {
-        "label": "Ztlumit při nahrávání",
-        "description": "Ztlumit systémový zvuk během nahrávání"
-      },
-      "appendTrailingSpace": {
-        "label": "Přidat koncovou mezeru",
-        "description": "Přidat mezeru po vloženém přepisu"
-      },
-      "keyboardImplementation": {
-        "title": "Implementace klávesnice",
-        "description": "Zvolte backend pro klávesové zkratky.",
-        "bindingsReset": "Klávesové zkratky byly nekompatibilní a byly obnoveny na výchozí hodnoty",
-        "options": {
-          "tauriGlobalShortcut": "Tauri Global Shortcut",
-          "handyKeys": "Handy Keys"
-        }
-      },
-      "paths": {
-        "appData": "Data aplikace:",
-        "models": "Modely:",
-        "settings": "Nastavení:",
-        "title": "Debug Paths",
-        "description": "Display internal file paths and directories for debugging purposes"
-      },
-      "pasteDelay": {
-        "title": "Zpoždění vložení",
-        "description": "Zpoždění před odesláním klávesy pro vložení (v milisekundách). Zvyšte, pokud se vkládá špatný text."
-      },
-      "recordingBuffer": {
-        "title": "Extra vyrovnávací paměť nahrávání",
-        "description": "Extra čas (v milisekundách) pro pokračování nahrávání po uvolnění klávesy, pro zachycení zbývajícího zvuku. 0 = žádná extra vyrovnávací paměť."
-      }
-    },
-    "about": {
-      "title": "O aplikaci",
-      "version": {
-        "title": "Verze",
-        "description": "Aktuální verze Handy"
-      },
-      "appDataDirectory": {
-        "title": "Adresář dat aplikace",
-        "description": "Umístění, kde Handy ukládá data"
-      },
-      "sourceCode": {
-        "title": "Zdrojový kód",
-        "description": "Zobrazit zdrojový kód a přispět",
-        "button": "Zobrazit na GitHubu"
-      },
-      "supportDevelopment": {
-        "title": "Podpořte vývoj",
-        "description": "Pomozte nám pokračovat ve vývoji Handy",
-        "button": "Přispět"
-      },
-      "acknowledgments": {
-        "title": "Poděkování",
-        "whisper": {
-          "title": "Whisper.cpp",
-          "description": "Vysoce výkonné inferenční zpracování modelu automatického rozpoznávání řeči Whisper od OpenAI",
-          "details": "Handy používá Whisper.cpp pro rychlé lokální zpracování řeči na text. Díky skvělé práci Georgiho Gerganova a přispěvatelů."
-        }
-      }
     }
   },
   "footer": {
-    "downloadingModel": "Stahuji {{model}}...",
     "checkingUpdates": "Kontroluji aktualizace...",
-    "updateAvailable": "Dostupná aktualizace: {{version}}",
     "updateAvailableShort": "Dostupná aktualizace",
     "upToDate": "Vše aktuální",
-    "downloadUpdate": "Stáhnout aktualizaci",
-    "restart": "Restartovat",
     "updateCheckingDisabled": "Kontrola aktualizací vypnuta",
     "downloading": "Stahování... {{progress}}%",
     "installing": "Instalace...",
     "preparing": "Příprava...",
     "checkForUpdates": "Zkontrolovat aktualizace",
-    "portableUpdateTitle": "Manual update required",
-    "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
-    "portableUpdateButton": "Open GitHub Releases"
+    "portableUpdateTitle": "Vyžadována ruční aktualizace",
+    "portableUpdateMessage": "Přenosné instalace nelze aktualizovat automaticky. Postup aktualizace: stáhněte nejnovější instalátor NSIS z GitHub Releases, nainstalujte jej do stejné složky a poté zkopírujte svou složku Data/ (nastavení, modely, nahrávky) ze staré verze do nové.",
+    "portableUpdateButton": "Otevřít GitHub Releases"
   },
   "common": {
     "loading": "Načítání...",
-    "save": "Uložit",
-    "cancel": "Zrušit",
-    "reset": "Obnovit",
-    "add": "Přidat",
-    "remove": "Odebrat",
     "delete": "Smazat",
-    "edit": "Upravit",
-    "create": "Vytvořit",
-    "update": "Aktualizovat",
     "close": "Zavřít",
     "open": "Otevřít",
-    "default": "Výchozí",
-    "enabled": "Zapnuto",
-    "disabled": "Vypnuto",
-    "on": "Zapnuto",
-    "off": "Vypnuto",
-    "yes": "Ano",
-    "no": "Ne",
-    "noOptionsFound": "Nenalezeny žádné možnosti",
     "copy": "Copy",
+    "clear": "Vymazat",
+    "noOptionsFound": "Nenalezeny žádné možnosti",
     "moreInformation": "More information",
     "notAvailable": "Not available",
-    "selectOption": "Select an option...",
+    "pause": "Pause",
     "play": "Play",
-    "pause": "Pause"
+    "selectOption": "Select an option..."
   },
   "accessibility": {
-    "permissionsRequired": "Vyžadována oprávnění usnadnění přístupu",
     "permissionsDescription": "Handy potřebuje oprávnění usnadnění přístupu, aby mohlo psát přepsaný text.",
-    "openSettings": "Otevřít Nastavení systému",
-    "dismiss": "Zavřít"
+    "openSettings": "Otevřít Nastavení systému"
   },
   "errors": {
     "loadDirectory": "Chyba při načítání adresáře: {{error}}",
@@ -702,7 +709,8 @@
     "modelLoadFailed": "Nepodařilo se načíst model: {{model}}",
     "modelLoadFailedUnknown": "neznámý model",
     "pasteFailedTitle": "Vložení textu se nezdařilo",
-    "pasteFailed": "Text nebylo možné vložit do aktivní aplikace."
+    "pasteFailed": "Text nebylo možné vložit do aktivní aplikace.",
+    "transcriptionFailedTitle": "Přepis selhal"
   },
   "appLanguage": {
     "title": "Jazyk aplikace",
@@ -711,5 +719,8 @@
   "overlay": {
     "transcribing": "Přepisuji...",
     "processing": "Zpracovávám..."
+  },
+  "whatsNew": {
+    "title": "Novinky v Handy v{{version}}"
   }
 }

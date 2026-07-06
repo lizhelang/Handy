@@ -3,11 +3,11 @@
     "settings": "Настройки...",
     "checkUpdates": "Проверка за актуализации...",
     "copyLastTranscript": "Копиране на последния транскрипт",
-    "clipboardHistory": "История на клипборда",
     "unloadModel": "Разтоварване на модела",
     "model": "Модел",
     "quit": "Изход",
-    "cancel": "Отказ"
+    "cancel": "Отказ",
+    "clipboardHistory": "История на клипборда"
   },
   "sidebar": {
     "general": "Общи",
@@ -15,17 +15,18 @@
     "advanced": "Разширени",
     "postProcessing": "Постобработка",
     "history": "История",
-    "clipboard": "Clipboard",
     "debug": "Отстраняване",
-    "about": "За приложението"
+    "about": "За приложението",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "За да започнете, изберете модел за транскрипция",
+    "existingModelsTitle": "Compatible Models",
+    "downloadModelsTitle": "Available to Download",
+    "showAllModels": "Show all {{total}} models",
+    "showFewerModels": "Show fewer models",
     "recommended": "Препоръчан",
-    "download": "Изтегляне",
-    "downloading": "Изтегля се...",
     "customModelDescription": "Не се поддържа официално",
-    "downloadFailed": "Изтеглянето не бе успешно. Опитайте отново.",
     "modelCard": {
       "accuracy": "точност",
       "speed": "скорост"
@@ -97,8 +98,7 @@
       }
     },
     "errors": {
-      "loadModels": "Неуспешно зареждане на наличните модели",
-      "downloadModel": "Неуспешно изтегляне на модела: {{error}}"
+      "selectModel": "Failed to select model"
     },
     "permissions": {
       "title": "Необходими разрешения",
@@ -123,6 +123,7 @@
   },
   "modelSelector": {
     "custom": "Персонализиран",
+    "streaming": "Стрийминг",
     "active": "Активен",
     "switching": "Превключване...",
     "noModelsAvailable": "Няма налични модели",
@@ -146,22 +147,23 @@
     "capabilities": {
       "languageSelection": "Поддържа няколко входни езика",
       "singleLanguage": "Поддържа само този език",
-      "multiLanguage": "Многоезичен",
+      "languageCount": "{{total}} languages",
       "languageOnly": "Само {{language}}",
       "translation": "Може да превежда на английски",
-      "translate": "Превод на английски"
+      "translate": "Превод на английски",
+      "streaming": "Показва транскрипция на живо, докато говорите"
     },
-    "statusTitle": "Model status: {{status}}",
+    "legacy": "Наследен",
     "errors": {
       "checkStatus": "Failed to check model status",
       "loadModel": "Failed to load model",
       "switchModel": "Failed to switch model"
-    }
+    },
+    "statusTitle": "Model status: {{status}}"
   },
   "settings": {
     "modelSettings": {
-      "title": "Настройки на {{model}}",
-      "noSettingsNeeded": "Този модел работи автоматично без нужда от конфигурация."
+      "title": "Настройки на {{model}}"
     },
     "general": {
       "title": "Общи",
@@ -195,7 +197,6 @@
       "language": {
         "title": "Език",
         "description": "Изберете езика за разпознаване на реч. „Автоматично“ определя езика сам, а изборът на конкретен език може да подобри точността за него.",
-        "descriptionUnsupported": "Моделът Parakeet автоматично открива езика. Ръчен избор не е необходим.",
         "searchPlaceholder": "Търсене на езици...",
         "noResults": "Няма намерени езици",
         "auto": "Автоматично"
@@ -210,18 +211,18 @@
       "description": "Изберете модел за транскрипция или изтеглете допълнителни. Различните модели предлагат различна точност и скорост.",
       "yourModels": "Изтеглени модели",
       "availableModels": "Налични за изтегляне",
-      "downloaded": "Изтеглен",
-      "available": "Наличен за изтегляне",
       "deleteConfirm": "Сигурни ли сте, че искате да изтриете {{modelName}}? Ще трябва да го изтеглите отново, за да го използвате.",
       "deleteActiveConfirm": "{{modelName}} е вашият активен модел. Изтриването му ще спре транскрипциите, докато не изберете нов модел. Сигурни ли сте?",
       "deleteTitle": "Изтриване на модел",
       "filters": {
-        "all": "Всички",
-        "multiLanguage": "Многоезични",
-        "translation": "Превод",
         "allLanguages": "Всички езици"
       },
-      "noModelsMatch": "Няма модели, отговарящи на този филтър."
+      "noModelsMatch": "Няма модели, отговарящи на този филтър.",
+      "searchPlaceholder": "Търсене на модели по име…",
+      "rescan": {
+        "label": "Сканиране отново",
+        "tooltip": "Сканиране отново за модели, добавени в папката с модели или кеша на Hugging Face извън Handy"
+      }
     },
     "sound": {
       "title": "Звук",
@@ -247,7 +248,6 @@
       }
     },
     "advanced": {
-      "title": "Разширени",
       "groups": {
         "app": "Приложение",
         "output": "Изход",
@@ -264,7 +264,7 @@
         "description": "Държи потокът от микрофона отворен 30 секунди след спиране на записа, което намалява забавянето при поредни транскрипции. Може да влоши качеството на Bluetooth аудио, докато е активно."
       },
       "acceleration": {
-        "whisper": {
+        "transcribe": {
           "title": "Ускорение за Whisper",
           "description": "Хардуерно ускорение за моделите Whisper. „Автоматично“ използва GPU при наличност (Metal на macOS, Vulkan на Windows/Linux)."
         },
@@ -273,8 +273,6 @@
           "description": "Хардуерно ускорение за ONNX модели (Parakeet, Canary, Moonshine и др.). DirectML на Windows е експериментален. Моделите може да не транскрибират."
         },
         "gpuDevice": {
-          "title": "GPU устройство",
-          "description": "Изберете кой GPU да се използва за Whisper. Автоматично избира специализирания GPU.",
           "auto": "Автоматично"
         }
       },
@@ -291,12 +289,22 @@
         "description": "Показване на иконата на Handy в системната област."
       },
       "overlay": {
-        "title": "Позиция на наслагването",
-        "description": "Показване на визуална обратна връзка при запис и транскрипция. На Linux се препоръчва „Няма“.",
-        "options": {
-          "none": "Няма",
-          "bottom": "Долу",
-          "top": "Горе"
+        "style": {
+          "title": "Overlay",
+          "description": "Choose the recording overlay: None hides it, Minimal shows a compact pill, Live shows transcription in real time as you speak (streaming-capable models only — look for the Streaming badge in the model picker). On Linux 'None' is recommended.",
+          "options": {
+            "none": "Няма",
+            "minimal": "Minimal",
+            "live": "Live"
+          }
+        },
+        "position": {
+          "title": "Позиция на наслагването",
+          "description": "Показване на визуална обратна връзка при запис и транскрипция. На Linux се препоръчва „Няма“.",
+          "options": {
+            "bottom": "Долу",
+            "top": "Горе"
+          }
         }
       },
       "pasteMethod": {
@@ -340,8 +348,7 @@
       },
       "translateToEnglish": {
         "label": "Превод на английски",
-        "description": "Автоматичен превод на реч от други езици на английски по време на транскрипция.",
-        "descriptionUnsupported": "Моделът {{model}} не поддържа превод."
+        "description": "Автоматичен превод на реч от други езици на английски по време на транскрипция."
       },
       "modelUnload": {
         "title": "Разтоварване на модела",
@@ -365,13 +372,16 @@
         "remove": "Премахване на {{word}}",
         "duplicate": "„{{word}}“ вече съществува"
       },
+      "voiceActivityDetection": {
+        "title": "Voice Activity Detection",
+        "description": "Filter silence from recordings. Streaming-capable models use a longer VAD tail; disabling VAD records raw audio."
+      },
       "clipboardFeature": {
         "label": "Clipboard manager (experimental)",
         "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
-      "title": "Постобработка",
       "hotkey": {
         "title": "Бърз клавиш"
       },
@@ -382,9 +392,6 @@
           "description": "Изберете доставчик, съвместим с OpenAI."
         },
         "appleIntelligence": {
-          "title": "Apple Intelligence",
-          "description": "Работи изцяло на устройството. Не са нужни API ключ или мрежов достъп.",
-          "requirements": "Изисква Mac с Apple Silicon и macOS Tahoe (26.0) или по-нова. Apple Intelligence трябва да е включена в Системните настройки.",
           "unavailable": "Apple Intelligence не е налична на това устройство. Необходим е Mac с Apple Silicon и macOS Tahoe (26.0) или по-нова с включена Apple Intelligence в Системните настройки."
         },
         "baseUrl": {
@@ -400,10 +407,8 @@
         },
         "model": {
           "title": "Модел",
-          "descriptionApple": "Задайте по избор числен лимит на токени или запазете стандартната настройка на устройството.",
           "descriptionCustom": "Въведете идентификатора на модела, очакван от вашия персонализиран краен адрес.",
           "descriptionDefault": "Изберете модел, предлаган от избрания доставчик.",
-          "placeholderApple": "Apple Intelligence",
           "placeholderWithOptions": "Търсене или избор на модел",
           "placeholderNoOptions": "Въведете име на модел",
           "refreshModels": "Опресняване на моделите",
@@ -446,6 +451,147 @@
       "retranscribeError": "Повторната транскрипция не бе успешна. Опитайте отново.",
       "transcribing": "Транскрибиране...",
       "transcriptionFailed": "Транскрипцията не бе успешна. Можете да опитате отново с иконата за повторен опит."
+    },
+    "debug": {
+      "title": "Отстраняване",
+      "logDirectory": {
+        "title": "Папка с логове",
+        "description": "Мястото, където се съхраняват лог файловете"
+      },
+      "logLevel": {
+        "title": "Ниво на логване",
+        "description": "Задаване на подробността на логовете",
+        "options": {
+          "error": "Error",
+          "warn": "Warning",
+          "info": "Info",
+          "debug": "Debug",
+          "trace": "Trace"
+        }
+      },
+      "liveLogs": {
+        "title": "Логове на живо",
+        "description": "Преглеждайте логовете на приложението в реално време, за да диагностицирате проблеми, без да отваряте лог файла. Показват се само логове, създадени докато този панел е отворен; спазва настройката «Ниво на логване» по-горе.",
+        "live": "На живо",
+        "paused": "На пауза",
+        "pause": "Пауза",
+        "resume": "Възобновяване",
+        "copied": "Копирано",
+        "lineCount": "Редове: {{count}}",
+        "empty": "Изчакване на логове… Записите ще се появят тук, щом приложението ги генерира."
+      },
+      "updateChecks": {
+        "label": "Проверка за актуализации",
+        "description": "Автоматична проверка за нови версии на Handy"
+      },
+      "soundTheme": {
+        "label": "Звукова тема",
+        "description": "Избор на звукова тема за сигнал при старт и край на записа",
+        "preview": "Preview sound theme"
+      },
+      "wordCorrectionThreshold": {
+        "title": "Праг за корекция на думи",
+        "description": "Чувствителност при корекция на персонализирани думи"
+      },
+      "historyLimit": {
+        "title": "Лимит на историята",
+        "description": "Максимален брой записи в историята за пазене",
+        "entries": "записа"
+      },
+      "recordingRetention": {
+        "title": "Автоматично изтриване на записи",
+        "description": "Автоматично изтриване на стари записи за пестене на място",
+        "never": "Никога",
+        "preserveLimit": "Запазване на последните {{count}}",
+        "days3": "След 3 дни",
+        "weeks2": "След 2 седмици",
+        "months3": "След 3 месеца",
+        "placeholder": "Изберете период на съхранение..."
+      },
+      "alwaysOnMicrophone": {
+        "label": "Постоянно активен микрофон",
+        "description": "Държане на микрофона активен за по-бърз отговор"
+      },
+      "clamshellMicrophone": {
+        "title": "Микрофон при затворен капак",
+        "description": "Микрофон за използване, когато капакът на лаптопа е затворен"
+      },
+      "postProcessingToggle": {
+        "label": "Постобработка",
+        "description": "Включване на подобряване на текста с ИИ след транскрипция"
+      },
+      "muteWhileRecording": {
+        "label": "Заглушаване при запис",
+        "description": "Заглушаване на системния звук по време на запис"
+      },
+      "appendTrailingSpace": {
+        "label": "Интервал в края",
+        "description": "Добавяне на интервал след поставената транскрипция"
+      },
+      "keyboardImplementation": {
+        "title": "Реализация на клавиатурата",
+        "description": "Избор на бекенд за глобалните бързи клавиши.",
+        "bindingsReset": "Бързите клавиши бяха несъвместими и са нулирани към подразбираните",
+        "options": {
+          "tauriGlobalShortcut": "Tauri Global Shortcut",
+          "handyKeys": "Handy Keys"
+        }
+      },
+      "paths": {
+        "appData": "Данни на приложението:",
+        "models": "Модели:",
+        "settings": "Настройки:",
+        "description": "Display internal file paths and directories for debugging purposes",
+        "title": "Debug Paths"
+      },
+      "pasteDelay": {
+        "title": "Забавяне при поставяне",
+        "description": "Забавяне преди симулацията на поставяне (в милисекунди). Увеличете, ако се поставя грешен текст."
+      },
+      "recordingBuffer": {
+        "title": "Допълнителен буфер на записа",
+        "description": "Допълнително време (в милисекунди) за запис след пускане на клавиша, за да се улови краят на аудиото. 0 = без допълнителен буфер."
+      },
+      "whatsNewPreview": {
+        "title": "Преглед на новостите",
+        "description": "Отваря последните включени бележки към изданието, без да ги маркира като видени",
+        "button": "Преглед",
+        "noNotes": "Не са намерени включени бележки към изданието",
+        "error": "Неуспешен преглед на бележките към изданието"
+      }
+    },
+    "about": {
+      "title": "За приложението",
+      "version": {
+        "title": "Версия",
+        "description": "Текуща версия на Handy"
+      },
+      "appDataDirectory": {
+        "title": "Папка с данни на приложението",
+        "description": "Мястото, където Handy съхранява данните си"
+      },
+      "sourceCode": {
+        "title": "Изходен код",
+        "description": "Преглед на изходния код и принос",
+        "button": "Вижте в GitHub"
+      },
+      "supportDevelopment": {
+        "title": "Подкрепете разработката",
+        "description": "Помогнете ни да продължим да развиваме Handy",
+        "button": "Дарение"
+      },
+      "acknowledgments": {
+        "title": "Благодарности",
+        "ggml": {
+          "title": "ggml",
+          "description": "Високопроизводително изпълнение на автоматичния модел за разпознаване на реч Whisper на OpenAI",
+          "details": "Handy използва ggml за бързо локално реч-към-текст. Благодарности на Georgi Gerganov и сътрудниците за отличната работа."
+        }
+      },
+      "whatsNewUpdates": {
+        "label": "Показвай новостите",
+        "description": "Показвай бележки към изданието след актуализации на Handy"
+      }
     },
     "clipboard": {
       "title": "Мениджър на клипборда",
@@ -515,135 +661,12 @@
         "wholeWord": "Whole word",
         "unlimited": "Unlimited"
       }
-    },
-    "debug": {
-      "title": "Отстраняване",
-      "logDirectory": {
-        "title": "Папка с логове",
-        "description": "Мястото, където се съхраняват лог файловете"
-      },
-      "logLevel": {
-        "title": "Ниво на логване",
-        "description": "Задаване на подробността на логовете",
-        "options": {
-          "error": "Error",
-          "warn": "Warning",
-          "info": "Info",
-          "debug": "Debug",
-          "trace": "Trace"
-        }
-      },
-      "updateChecks": {
-        "label": "Проверка за актуализации",
-        "description": "Автоматична проверка за нови версии на Handy"
-      },
-      "soundTheme": {
-        "label": "Звукова тема",
-        "description": "Избор на звукова тема за сигнал при старт и край на записа",
-        "preview": "Preview sound theme"
-      },
-      "wordCorrectionThreshold": {
-        "title": "Праг за корекция на думи",
-        "description": "Чувствителност при корекция на персонализирани думи"
-      },
-      "historyLimit": {
-        "title": "Лимит на историята",
-        "description": "Максимален брой записи в историята за пазене",
-        "entries": "записа"
-      },
-      "recordingRetention": {
-        "title": "Автоматично изтриване на записи",
-        "description": "Автоматично изтриване на стари записи за пестене на място",
-        "never": "Никога",
-        "preserveLimit": "Запазване на последните {{count}}",
-        "days3": "След 3 дни",
-        "weeks2": "След 2 седмици",
-        "months3": "След 3 месеца",
-        "placeholder": "Изберете период на съхранение..."
-      },
-      "alwaysOnMicrophone": {
-        "label": "Постоянно активен микрофон",
-        "description": "Държане на микрофона активен за по-бърз отговор"
-      },
-      "clamshellMicrophone": {
-        "title": "Микрофон при затворен капак",
-        "description": "Микрофон за използване, когато капакът на лаптопа е затворен"
-      },
-      "postProcessingToggle": {
-        "label": "Постобработка",
-        "description": "Включване на подобряване на текста с ИИ след транскрипция"
-      },
-      "muteWhileRecording": {
-        "label": "Заглушаване при запис",
-        "description": "Заглушаване на системния звук по време на запис"
-      },
-      "appendTrailingSpace": {
-        "label": "Интервал в края",
-        "description": "Добавяне на интервал след поставената транскрипция"
-      },
-      "keyboardImplementation": {
-        "title": "Реализация на клавиатурата",
-        "description": "Избор на бекенд за глобалните бързи клавиши.",
-        "bindingsReset": "Бързите клавиши бяха несъвместими и са нулирани към подразбираните",
-        "options": {
-          "tauriGlobalShortcut": "Tauri Global Shortcut",
-          "handyKeys": "Handy Keys"
-        }
-      },
-      "paths": {
-        "appData": "Данни на приложението:",
-        "models": "Модели:",
-        "settings": "Настройки:",
-        "title": "Debug Paths",
-        "description": "Display internal file paths and directories for debugging purposes"
-      },
-      "pasteDelay": {
-        "title": "Забавяне при поставяне",
-        "description": "Забавяне преди симулацията на поставяне (в милисекунди). Увеличете, ако се поставя грешен текст."
-      },
-      "recordingBuffer": {
-        "title": "Допълнителен буфер на записа",
-        "description": "Допълнително време (в милисекунди) за запис след пускане на клавиша, за да се улови краят на аудиото. 0 = без допълнителен буфер."
-      }
-    },
-    "about": {
-      "title": "За приложението",
-      "version": {
-        "title": "Версия",
-        "description": "Текуща версия на Handy"
-      },
-      "appDataDirectory": {
-        "title": "Папка с данни на приложението",
-        "description": "Мястото, където Handy съхранява данните си"
-      },
-      "sourceCode": {
-        "title": "Изходен код",
-        "description": "Преглед на изходния код и принос",
-        "button": "Вижте в GitHub"
-      },
-      "supportDevelopment": {
-        "title": "Подкрепете разработката",
-        "description": "Помогнете ни да продължим да развиваме Handy",
-        "button": "Дарение"
-      },
-      "acknowledgments": {
-        "title": "Благодарности",
-        "whisper": {
-          "title": "Whisper.cpp",
-          "description": "Високопроизводително изпълнение на автоматичния модел за разпознаване на реч Whisper на OpenAI",
-          "details": "Handy използва Whisper.cpp за бързо локално реч-към-текст. Благодарности на Georgi Gerganov и сътрудниците за отличната работа."
-        }
-      }
     }
   },
   "footer": {
-    "downloadingModel": "Изтегляне на {{model}}...",
     "checkingUpdates": "Проверка за актуализации...",
-    "updateAvailable": "Налична актуализация: {{version}}",
     "updateAvailableShort": "Налична актуализация",
     "upToDate": "Актуална версия",
-    "downloadUpdate": "Изтегляне на актуализацията",
-    "restart": "Рестартиране",
     "updateCheckingDisabled": "Проверката за актуализации е изключена",
     "downloading": "Изтегля се... {{progress}}%",
     "installing": "Инсталиране...",
@@ -655,37 +678,21 @@
   },
   "common": {
     "loading": "Зареждане...",
-    "save": "Запазване",
-    "cancel": "Отказ",
-    "reset": "Нулиране",
-    "add": "Добавяне",
-    "remove": "Премахване",
     "delete": "Изтриване",
-    "edit": "Редактиране",
-    "create": "Създаване",
-    "update": "Обновяване",
     "close": "Затваряне",
     "open": "Отваряне",
-    "default": "По подразбиране",
-    "enabled": "Включено",
-    "disabled": "Изключено",
-    "on": "Вкл.",
-    "off": "Изкл.",
-    "yes": "Да",
-    "no": "Не",
-    "noOptionsFound": "Няма намерени опции",
     "copy": "Copy",
+    "clear": "Изчистване",
+    "noOptionsFound": "Няма намерени опции",
     "moreInformation": "More information",
     "notAvailable": "Not available",
-    "selectOption": "Select an option...",
+    "pause": "Pause",
     "play": "Play",
-    "pause": "Pause"
+    "selectOption": "Select an option..."
   },
   "accessibility": {
-    "permissionsRequired": "Необходими са разрешения за достъпност",
     "permissionsDescription": "Handy се нуждае от разрешения за достъпност, за да въвежда транскрибирания текст.",
-    "openSettings": "Отваряне на системните настройки",
-    "dismiss": "Затваряне"
+    "openSettings": "Отваряне на системните настройки"
   },
   "errors": {
     "loadDirectory": "Грешка при зареждане на папката: {{error}}",
@@ -702,7 +709,8 @@
     "modelLoadFailed": "Зареждането на модела не бе успешно: {{model}}",
     "modelLoadFailedUnknown": "неизвестен модел",
     "pasteFailedTitle": "Неуспешно поставяне на текст",
-    "pasteFailed": "Текстът не можа да бъде поставен в активното приложение."
+    "pasteFailed": "Текстът не можа да бъде поставен в активното приложение.",
+    "transcriptionFailedTitle": "Неуспешна транскрипция"
   },
   "appLanguage": {
     "title": "Език на приложението",
@@ -711,5 +719,8 @@
   "overlay": {
     "transcribing": "Транскрибиране...",
     "processing": "Обработка..."
+  },
+  "whatsNew": {
+    "title": "Ново в Handy v{{version}}"
   }
 }

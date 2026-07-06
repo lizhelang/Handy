@@ -230,11 +230,14 @@ const installMainAppMocks = async (
       paste_delay_ms: 60,
       paste_method: "ctrl_v",
       push_to_talk: false,
+      onboarding_completed: true,
       selected_microphone: "Default",
       selected_model: "mock-model",
       selected_output_device: "Default",
       show_tray_icon: true,
+      show_whats_new_on_update: false,
       update_checks_enabled: false,
+      whats_new_last_seen_version: "0.9.0",
     };
     const currentSettings = {
       ...baseSettings,

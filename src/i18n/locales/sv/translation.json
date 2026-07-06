@@ -3,11 +3,11 @@
     "settings": "Inställningar...",
     "checkUpdates": "Sök efter uppdateringar...",
     "copyLastTranscript": "Kopiera senaste transkriptionen",
-    "clipboardHistory": "Urklippshistorik",
     "unloadModel": "Avlasta modell",
     "model": "Modell",
     "quit": "Avsluta",
-    "cancel": "Avbryt"
+    "cancel": "Avbryt",
+    "clipboardHistory": "Urklippshistorik"
   },
   "sidebar": {
     "general": "Allmänt",
@@ -15,17 +15,18 @@
     "advanced": "Avancerat",
     "postProcessing": "Efterbearbetning",
     "history": "Historik",
-    "clipboard": "Clipboard",
     "debug": "Felsökning",
-    "about": "Om"
+    "about": "Om",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "För att komma igång, välj en transkriptionsmodell",
+    "existingModelsTitle": "Compatible Models",
+    "downloadModelsTitle": "Available to Download",
+    "showAllModels": "Show all {{total}} models",
+    "showFewerModels": "Show fewer models",
     "recommended": "Rekommenderat",
-    "download": "Ladda ner",
-    "downloading": "Laddar ner...",
     "customModelDescription": "Stöds inte officiellt",
-    "downloadFailed": "Nedladdningen misslyckades. Försök igen.",
     "modelCard": {
       "accuracy": "noggrannhet",
       "speed": "hastighet"
@@ -97,8 +98,7 @@
       }
     },
     "errors": {
-      "loadModels": "Misslyckades med att ladda tillgängliga modeller",
-      "downloadModel": "Misslyckades med att ladda ner modell: {{error}}"
+      "selectModel": "Failed to select model"
     },
     "permissions": {
       "title": "Behörigheter krävs",
@@ -123,6 +123,7 @@
   },
   "modelSelector": {
     "custom": "Anpassad",
+    "streaming": "Streaming",
     "active": "Aktiv",
     "switching": "Byter...",
     "noModelsAvailable": "Inga modeller tillgängliga",
@@ -146,22 +147,23 @@
     "capabilities": {
       "languageSelection": "Stöder flera indataspråk",
       "singleLanguage": "Stöder endast detta språk",
-      "multiLanguage": "Flerspråkig",
+      "languageCount": "{{total}} languages",
       "languageOnly": "Endast {{language}}",
       "translation": "Kan översätta till engelska",
-      "translate": "Översätt till engelska"
+      "translate": "Översätt till engelska",
+      "streaming": "Visar transkription i realtid medan du talar"
     },
-    "statusTitle": "Model status: {{status}}",
+    "legacy": "Äldre",
     "errors": {
       "checkStatus": "Failed to check model status",
       "loadModel": "Failed to load model",
       "switchModel": "Failed to switch model"
-    }
+    },
+    "statusTitle": "Model status: {{status}}"
   },
   "settings": {
     "modelSettings": {
-      "title": "{{model}}-inställningar",
-      "noSettingsNeeded": "Denna modell fungerar automatiskt utan att någon konfiguration krävs."
+      "title": "{{model}}-inställningar"
     },
     "general": {
       "title": "Allmänt",
@@ -195,7 +197,6 @@
       "language": {
         "title": "Språk",
         "description": "Välj språk för taligenkänning. Auto kommer automatiskt att bestämma språket, medan val av ett specifikt språk kan förbättra noggrannheten för det språket.",
-        "descriptionUnsupported": "Parakeet-modellen upptäcker automatiskt språket. Inget manuellt val behövs.",
         "searchPlaceholder": "Sök språk...",
         "noResults": "Inga språk hittades",
         "auto": "Auto"
@@ -210,18 +211,18 @@
       "description": "Välj en transkriptionsmodell eller ladda ner ytterligare modeller. Olika modeller erbjuder varierande nivåer av noggrannhet och hastighet.",
       "yourModels": "Nedladdade modeller",
       "availableModels": "Tillgängliga att ladda ner",
-      "downloaded": "Nedladdad",
-      "available": "Tillgänglig att ladda ner",
       "deleteConfirm": "Är du säker på att du vill ta bort {{modelName}}? Du måste ladda ner den igen för att använda den.",
       "deleteActiveConfirm": "{{modelName}} är din aktiva modell. Om du tar bort den avbryts transkriptioner tills du väljer en ny modell. Är du säker?",
       "deleteTitle": "Ta bort modell",
       "filters": {
-        "all": "Alla",
-        "multiLanguage": "Flerspråkig",
-        "translation": "Översättning",
         "allLanguages": "Alla språk"
       },
-      "noModelsMatch": "Inga modeller matchar detta filter."
+      "noModelsMatch": "Inga modeller matchar detta filter.",
+      "searchPlaceholder": "Sök modeller efter namn…",
+      "rescan": {
+        "label": "Skanna om",
+        "tooltip": "Skanna om efter modeller som lagts till i modellmappen eller Hugging Face-cachen utanför Handy"
+      }
     },
     "sound": {
       "title": "Ljud",
@@ -247,7 +248,6 @@
       }
     },
     "advanced": {
-      "title": "Avancerat",
       "groups": {
         "app": "App",
         "output": "Utmatning",
@@ -264,7 +264,7 @@
         "description": "Håller mikrofonströmmen öppen i 30 sekunder efter att inspelningen avslutats, vilket minskar latensen för transkriptioner efter varandra. Kan försämra Bluetooth-ljudkvaliteten medan den är aktiv."
       },
       "acceleration": {
-        "whisper": {
+        "transcribe": {
           "title": "Whisper-acceleration",
           "description": "Hårdvaruacceleration för Whisper-modeller. Auto använder GPU om tillgängligt (Metal på macOS, Vulkan på Windows/Linux)."
         },
@@ -273,8 +273,6 @@
           "description": "Hårdvaruacceleration för ONNX-modeller (Parakeet, Canary, Moonshine, etc.). DirectML på Windows är experimentellt. Modeller kan misslyckas med att transkribera."
         },
         "gpuDevice": {
-          "title": "GPU-enhet",
-          "description": "Välj vilken GPU som ska användas för Whisper-inferens. Auto väljer den dedikerade GPU:n.",
           "auto": "Auto"
         }
       },
@@ -291,12 +289,22 @@
         "description": "Visa Handy-ikonen i systemfältet."
       },
       "overlay": {
-        "title": "Överlagringsposition",
-        "description": "Visa visuell återkoppling under inspelning och transkription. På Linux rekommenderas 'Ingen'.",
-        "options": {
-          "none": "Ingen",
-          "bottom": "Nederst",
-          "top": "Överst"
+        "style": {
+          "title": "Overlay",
+          "description": "Choose the recording overlay: None hides it, Minimal shows a compact pill, Live shows transcription in real time as you speak (streaming-capable models only — look for the Streaming badge in the model picker). On Linux 'None' is recommended.",
+          "options": {
+            "none": "Ingen",
+            "minimal": "Minimal",
+            "live": "Live"
+          }
+        },
+        "position": {
+          "title": "Överlagringsposition",
+          "description": "Visa visuell återkoppling under inspelning och transkription. På Linux rekommenderas 'Ingen'.",
+          "options": {
+            "bottom": "Nederst",
+            "top": "Överst"
+          }
         }
       },
       "pasteMethod": {
@@ -340,8 +348,7 @@
       },
       "translateToEnglish": {
         "label": "Översätt till engelska",
-        "description": "Översätt automatiskt tal från andra språk till engelska under transkription.",
-        "descriptionUnsupported": "Översättning stöds inte av {{model}}-modellen."
+        "description": "Översätt automatiskt tal från andra språk till engelska under transkription."
       },
       "modelUnload": {
         "title": "Avlasta modell",
@@ -365,13 +372,16 @@
         "remove": "Ta bort {{word}}",
         "duplicate": "\"{{word}}\" finns redan"
       },
+      "voiceActivityDetection": {
+        "title": "Voice Activity Detection",
+        "description": "Filter silence from recordings. Streaming-capable models use a longer VAD tail; disabling VAD records raw audio."
+      },
       "clipboardFeature": {
         "label": "Clipboard manager (experimental)",
         "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
-      "title": "Efterbearbetning",
       "hotkey": {
         "title": "Snabbkommando"
       },
@@ -382,9 +392,6 @@
           "description": "Välj en OpenAI-kompatibel leverantör."
         },
         "appleIntelligence": {
-          "title": "Apple Intelligence",
-          "description": "Körs helt lokalt på enheten. Ingen API-nyckel eller nätverksåtkomst krävs.",
-          "requirements": "Kräver en Apple Silicon Mac som kör macOS Tahoe (26.0) eller senare. Apple Intelligence måste vara aktiverat i systeminställningarna.",
           "unavailable": "Apple Intelligence är inte tillgängligt på den här enheten. Kräver en Apple Silicon Mac som kör macOS Tahoe (26.0) eller senare med Apple Intelligence aktiverat i systeminställningarna."
         },
         "baseUrl": {
@@ -400,10 +407,8 @@
         },
         "model": {
           "title": "Modell",
-          "descriptionApple": "Ange en valfri numerisk tokengräns eller behåll standardinställningen på enheten.",
           "descriptionCustom": "Ange den modellidentifierare som förväntas av din anpassade slutpunkt.",
           "descriptionDefault": "Välj en modell som exponeras av den valda leverantören.",
-          "placeholderApple": "Apple Intelligence",
           "placeholderWithOptions": "Sök eller välj en modell",
           "placeholderNoOptions": "Ange ett modellnamn",
           "refreshModels": "Uppdatera modeller",
@@ -446,6 +451,147 @@
       "retranscribeError": "Misslyckades med att transkribera igen. Försök igen.",
       "transcribing": "Transkriberar...",
       "transcriptionFailed": "Transkribering misslyckades. Du kan transkribera igen med hjälp av ikonen för nytt försök."
+    },
+    "debug": {
+      "title": "Felsökning",
+      "logDirectory": {
+        "title": "Loggmapp",
+        "description": "Plats där loggfiler lagras"
+      },
+      "logLevel": {
+        "title": "Loggnivå",
+        "description": "Ställ in loggningens detaljrikedom",
+        "options": {
+          "error": "Error",
+          "warn": "Warning",
+          "info": "Info",
+          "debug": "Debug",
+          "trace": "Trace"
+        }
+      },
+      "liveLogs": {
+        "title": "Liveloggar",
+        "description": "Strömma programmets loggar i realtid för att diagnostisera problem utan att öppna loggfilen. Endast loggar som skapas medan den här panelen är öppen visas; följer inställningen Loggnivå ovan.",
+        "live": "Live",
+        "paused": "Pausad",
+        "pause": "Pausa",
+        "resume": "Återuppta",
+        "copied": "Kopierad",
+        "lineCount": "{{count}} rader",
+        "empty": "Väntar på loggar… Poster visas här när appen skickar dem."
+      },
+      "updateChecks": {
+        "label": "Sök efter uppdateringar",
+        "description": "Sök automatiskt efter nya versioner av Handy"
+      },
+      "soundTheme": {
+        "label": "Ljudtema",
+        "description": "Välj ett ljudtema för återkoppling vid start och stopp av inspelning",
+        "preview": "Preview sound theme"
+      },
+      "wordCorrectionThreshold": {
+        "title": "Tröskelvärde för ordkorrigering",
+        "description": "Känslighet för anpassade ordkorrigeringar"
+      },
+      "historyLimit": {
+        "title": "Historikgräns",
+        "description": "Maximalt antal historikposter som ska sparas",
+        "entries": "poster"
+      },
+      "recordingRetention": {
+        "title": "Radera inspelningar automatiskt",
+        "description": "Radera gamla inspelningar automatiskt för att spara utrymme",
+        "never": "Aldrig",
+        "preserveLimit": "Behåll de senaste {{count}}",
+        "days3": "Efter 3 dagar",
+        "weeks2": "Efter 2 veckor",
+        "months3": "Efter 3 månader",
+        "placeholder": "Välj lagringsperiod..."
+      },
+      "alwaysOnMicrophone": {
+        "label": "Alltid påslagen mikrofon",
+        "description": "Håll mikrofonen aktiv för snabbare svar"
+      },
+      "clamshellMicrophone": {
+        "title": "Clamshell-mikrofon",
+        "description": "Mikrofon som ska användas när bärbara datorns lock är stängt"
+      },
+      "postProcessingToggle": {
+        "label": "Efterbearbetning",
+        "description": "Aktivera AI-driven textförfining efter transkription"
+      },
+      "muteWhileRecording": {
+        "label": "Ljudlös under inspelning",
+        "description": "Stäng av systemljudet under inspelning"
+      },
+      "appendTrailingSpace": {
+        "label": "Lägg till avslutande mellanslag",
+        "description": "Lägg till ett mellanslag efter klistrad transkription"
+      },
+      "keyboardImplementation": {
+        "title": "Tangentbordsimplementering",
+        "description": "Välj tangentbordsgenvägens implementation.",
+        "bindingsReset": "Kortkommandona var inkompatibla och återställdes till standardvärden",
+        "options": {
+          "tauriGlobalShortcut": "Tauri Global Shortcut",
+          "handyKeys": "Handy Keys"
+        }
+      },
+      "paths": {
+        "appData": "Appdata:",
+        "models": "Modeller:",
+        "settings": "Inställningar:",
+        "description": "Display internal file paths and directories for debugging purposes",
+        "title": "Debug Paths"
+      },
+      "pasteDelay": {
+        "title": "Fördröjning vid klistra in",
+        "description": "Fördröjning innan klistra in-tangenttryckning skickas (i millisekunder). Öka om fel text klistras in."
+      },
+      "recordingBuffer": {
+        "title": "Extra inspelningsbuffert",
+        "description": "Extra tid (i millisekunder) för att fortsätta spela in efter att du släppt tangenten, för att fånga upp avslutande ljud. 0 = ingen extra buffert."
+      },
+      "whatsNewPreview": {
+        "title": "Förhandsvisa nyheter",
+        "description": "Öppna den senaste medföljande versionsinformationen utan att markera den som visad",
+        "button": "Förhandsvisa",
+        "noNotes": "Ingen medföljande versionsinformation hittades",
+        "error": "Det gick inte att förhandsvisa versionsinformationen"
+      }
+    },
+    "about": {
+      "title": "Om",
+      "version": {
+        "title": "Version",
+        "description": "Nuvarande version av Handy"
+      },
+      "appDataDirectory": {
+        "title": "Mapp för appdata",
+        "description": "Plats där Handy lagrar sina data"
+      },
+      "sourceCode": {
+        "title": "Källkod",
+        "description": "Visa källkod och bidra",
+        "button": "Visa på GitHub"
+      },
+      "supportDevelopment": {
+        "title": "Stöd utvecklingen",
+        "description": "Hjälp oss att fortsätta bygga Handy",
+        "button": "Donera"
+      },
+      "acknowledgments": {
+        "title": "Tack till",
+        "ggml": {
+          "title": "ggml",
+          "description": "Högpresterande inferens av OpenAI:s Whisper-modell för automatisk taligenkänning",
+          "details": "Handy använder ggml för snabb, lokal tal-till-text-behandling. Tack till det fantastiska arbete som utförts av Georgi Gerganov med medarbetare."
+        }
+      },
+      "whatsNewUpdates": {
+        "label": "Visa nyheter",
+        "description": "Visa versionsinformation efter Handy-uppdateringar"
+      }
     },
     "clipboard": {
       "title": "Urklippshanterare",
@@ -515,177 +661,38 @@
         "wholeWord": "Whole word",
         "unlimited": "Unlimited"
       }
-    },
-    "debug": {
-      "title": "Felsökning",
-      "logDirectory": {
-        "title": "Loggmapp",
-        "description": "Plats där loggfiler lagras"
-      },
-      "logLevel": {
-        "title": "Loggnivå",
-        "description": "Ställ in loggningens detaljrikedom",
-        "options": {
-          "error": "Error",
-          "warn": "Warning",
-          "info": "Info",
-          "debug": "Debug",
-          "trace": "Trace"
-        }
-      },
-      "updateChecks": {
-        "label": "Sök efter uppdateringar",
-        "description": "Sök automatiskt efter nya versioner av Handy"
-      },
-      "soundTheme": {
-        "label": "Ljudtema",
-        "description": "Välj ett ljudtema för återkoppling vid start och stopp av inspelning",
-        "preview": "Preview sound theme"
-      },
-      "wordCorrectionThreshold": {
-        "title": "Tröskelvärde för ordkorrigering",
-        "description": "Känslighet för anpassade ordkorrigeringar"
-      },
-      "historyLimit": {
-        "title": "Historikgräns",
-        "description": "Maximalt antal historikposter som ska sparas",
-        "entries": "poster"
-      },
-      "recordingRetention": {
-        "title": "Radera inspelningar automatiskt",
-        "description": "Radera gamla inspelningar automatiskt för att spara utrymme",
-        "never": "Aldrig",
-        "preserveLimit": "Behåll de senaste {{count}}",
-        "days3": "Efter 3 dagar",
-        "weeks2": "Efter 2 veckor",
-        "months3": "Efter 3 månader",
-        "placeholder": "Välj lagringsperiod..."
-      },
-      "alwaysOnMicrophone": {
-        "label": "Alltid påslagen mikrofon",
-        "description": "Håll mikrofonen aktiv för snabbare svar"
-      },
-      "clamshellMicrophone": {
-        "title": "Clamshell-mikrofon",
-        "description": "Mikrofon som ska användas när bärbara datorns lock är stängt"
-      },
-      "postProcessingToggle": {
-        "label": "Efterbearbetning",
-        "description": "Aktivera AI-driven textförfining efter transkription"
-      },
-      "muteWhileRecording": {
-        "label": "Ljudlös under inspelning",
-        "description": "Stäng av systemljudet under inspelning"
-      },
-      "appendTrailingSpace": {
-        "label": "Lägg till avslutande mellanslag",
-        "description": "Lägg till ett mellanslag efter klistrad transkription"
-      },
-      "keyboardImplementation": {
-        "title": "Tangentbordsimplementering",
-        "description": "Välj tangentbordsgenvägens implementation.",
-        "bindingsReset": "Kortkommandona var inkompatibla och återställdes till standardvärden",
-        "options": {
-          "tauriGlobalShortcut": "Tauri Global Shortcut",
-          "handyKeys": "Handy Keys"
-        }
-      },
-      "paths": {
-        "appData": "Appdata:",
-        "models": "Modeller:",
-        "settings": "Inställningar:",
-        "title": "Debug Paths",
-        "description": "Display internal file paths and directories for debugging purposes"
-      },
-      "pasteDelay": {
-        "title": "Fördröjning vid klistra in",
-        "description": "Fördröjning innan klistra in-tangenttryckning skickas (i millisekunder). Öka om fel text klistras in."
-      },
-      "recordingBuffer": {
-        "title": "Extra inspelningsbuffert",
-        "description": "Extra tid (i millisekunder) för att fortsätta spela in efter att du släppt tangenten, för att fånga upp avslutande ljud. 0 = ingen extra buffert."
-      }
-    },
-    "about": {
-      "title": "Om",
-      "version": {
-        "title": "Version",
-        "description": "Nuvarande version av Handy"
-      },
-      "appDataDirectory": {
-        "title": "Mapp för appdata",
-        "description": "Plats där Handy lagrar sina data"
-      },
-      "sourceCode": {
-        "title": "Källkod",
-        "description": "Visa källkod och bidra",
-        "button": "Visa på GitHub"
-      },
-      "supportDevelopment": {
-        "title": "Stöd utvecklingen",
-        "description": "Hjälp oss att fortsätta bygga Handy",
-        "button": "Donera"
-      },
-      "acknowledgments": {
-        "title": "Tack till",
-        "whisper": {
-          "title": "Whisper.cpp",
-          "description": "Högpresterande inferens av OpenAI:s Whisper-modell för automatisk taligenkänning",
-          "details": "Handy använder Whisper.cpp för snabb, lokal tal-till-text-behandling. Tack till det fantastiska arbete som utförts av Georgi Gerganov med medarbetare."
-        }
-      }
     }
   },
   "footer": {
-    "downloadingModel": "Laddar ner {{model}}...",
     "checkingUpdates": "Söker efter uppdateringar...",
-    "updateAvailable": "Uppdatering tillgänglig: {{version}}",
     "updateAvailableShort": "Uppdatering tillgänglig",
     "upToDate": "Uppdaterad",
-    "downloadUpdate": "Ladda ner uppdatering",
-    "restart": "Starta om",
     "updateCheckingDisabled": "Uppdateringskontroll inaktiverad",
     "downloading": "Laddar ner... {{progress}}%",
     "installing": "Installerar...",
     "preparing": "Förbereder...",
     "checkForUpdates": "Sök efter uppdateringar",
-    "portableUpdateTitle": "Manual update required",
-    "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
-    "portableUpdateButton": "Open GitHub Releases"
+    "portableUpdateTitle": "Manuell uppdatering krävs",
+    "portableUpdateMessage": "Portabla installationer kan inte uppdateras automatiskt. Så här uppdaterar du: ladda ner den senaste NSIS-installeraren från GitHub Releases, installera den i samma mapp och kopiera sedan din Data/-mapp (inställningar, modeller, inspelningar) från den gamla versionen till den nya.",
+    "portableUpdateButton": "Öppna GitHub Releases"
   },
   "common": {
     "loading": "Laddar...",
-    "save": "Spara",
-    "cancel": "Avbryt",
-    "reset": "Återställ",
-    "add": "Lägg till",
-    "remove": "Ta bort",
     "delete": "Ta bort",
-    "edit": "Redigera",
-    "create": "Skapa",
-    "update": "Uppdatera",
     "close": "Stäng",
     "open": "Öppna",
-    "default": "Standard",
-    "enabled": "Aktiverad",
-    "disabled": "Inaktiverad",
-    "on": "På",
-    "off": "Av",
-    "yes": "Ja",
-    "no": "Nej",
-    "noOptionsFound": "Inga alternativ hittades",
     "copy": "Copy",
+    "clear": "Rensa",
+    "noOptionsFound": "Inga alternativ hittades",
     "moreInformation": "More information",
     "notAvailable": "Not available",
-    "selectOption": "Select an option...",
+    "pause": "Pause",
     "play": "Play",
-    "pause": "Pause"
+    "selectOption": "Select an option..."
   },
   "accessibility": {
-    "permissionsRequired": "Behörigheter för hjälpmedel krävs",
     "permissionsDescription": "Handy behöver behörighet för hjälpmedel för att kunna skriva transkriberad text.",
-    "openSettings": "Öppna systeminställningar",
-    "dismiss": "Avvisa"
+    "openSettings": "Öppna systeminställningar"
   },
   "errors": {
     "loadDirectory": "Fel vid laddning av mapp: {{error}}",
@@ -702,7 +709,8 @@
     "noInputDeviceTitle": "Ingen mikrofon hittades",
     "noInputDevice": "Ingen ljudenhet hittades. Anslut en mikrofon eller ett headset och försök igen.",
     "pasteFailedTitle": "Det gick inte att klistra in texten",
-    "pasteFailed": "Texten kunde inte klistras in i det aktiva programmet."
+    "pasteFailed": "Texten kunde inte klistras in i det aktiva programmet.",
+    "transcriptionFailedTitle": "Transkriptionen misslyckades"
   },
   "appLanguage": {
     "title": "Applikationsspråk",
@@ -711,5 +719,8 @@
   "overlay": {
     "transcribing": "Transkriberar...",
     "processing": "Bearbetar..."
+  },
+  "whatsNew": {
+    "title": "Nytt i Handy v{{version}}"
   }
 }

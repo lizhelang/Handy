@@ -3,11 +3,11 @@
     "settings": "Настройки...",
     "checkUpdates": "Проверить обновления...",
     "copyLastTranscript": "Скопировать последнюю транскрипцию",
-    "clipboardHistory": "История буфера обмена",
     "unloadModel": "Выгрузить модель",
     "model": "Модель",
     "quit": "Выход",
-    "cancel": "Отмена"
+    "cancel": "Отмена",
+    "clipboardHistory": "История буфера обмена"
   },
   "sidebar": {
     "general": "Общие",
@@ -15,17 +15,18 @@
     "advanced": "Продвинутые",
     "postProcessing": "Постобработка",
     "history": "История",
-    "clipboard": "Clipboard",
     "debug": "Отладка",
-    "about": "О программе"
+    "about": "О программе",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "Для начала выберите модель транскрипции",
+    "existingModelsTitle": "Compatible Models",
+    "downloadModelsTitle": "Available to Download",
+    "showAllModels": "Show all {{total}} models",
+    "showFewerModels": "Show fewer models",
     "recommended": "Рекомендуется",
-    "download": "Скачать",
-    "downloading": "Загрузка...",
     "customModelDescription": "Официально не поддерживается",
-    "downloadFailed": "Загрузка не удалась. Пожалуйста, попробуйте снова.",
     "modelCard": {
       "accuracy": "точность",
       "speed": "скорость"
@@ -97,8 +98,7 @@
       }
     },
     "errors": {
-      "loadModels": "Не удалось загрузить доступные модели.",
-      "downloadModel": "Не удалось загрузить модель: {{error}}."
+      "selectModel": "Failed to select model"
     },
     "permissions": {
       "title": "Требуются разрешения",
@@ -123,6 +123,7 @@
   },
   "modelSelector": {
     "custom": "Пользовательская",
+    "streaming": "Потоковый",
     "active": "Активный",
     "switching": "Переключение...",
     "noModelsAvailable": "Нет доступных моделей",
@@ -143,43 +144,44 @@
     "downloadSpeed": "{{speed}} МБ/с",
     "capabilities": {
       "languageSelection": "Поддерживает несколько языков ввода",
-      "multiLanguage": "Многоязычная",
+      "languageCount": "{{total}} languages",
       "translation": "Может переводить на английский",
       "translate": "Перевод на английский",
       "singleLanguage": "Поддерживает только этот язык",
-      "languageOnly": "Только {{language}}"
+      "languageOnly": "Только {{language}}",
+      "streaming": "Показывает транскрипцию в реальном времени во время речи"
     },
     "cancel": "Отмена",
     "cancelDownload": "Отменить загрузку",
-    "statusTitle": "Model status: {{status}}",
+    "legacy": "Устаревшее",
     "errors": {
       "checkStatus": "Failed to check model status",
       "loadModel": "Failed to load model",
       "switchModel": "Failed to switch model"
-    }
+    },
+    "statusTitle": "Model status: {{status}}"
   },
   "settings": {
     "modelSettings": {
-      "title": "Настройки {{model}}",
-      "noSettingsNeeded": "Эта модель работает автоматически без необходимости настройки."
+      "title": "Настройки {{model}}"
     },
     "models": {
       "title": "Модели транскрипции",
       "description": "Выберите модель транскрипции или загрузите дополнительные модели. Разные модели предлагают разные уровни точности и скорости.",
-      "downloaded": "Загружено",
-      "available": "Доступные для загрузки",
       "deleteConfirm": "Вы уверены, что хотите удалить {{modelName}}? Вам нужно будет загрузить её снова, чтобы использовать.",
       "deleteActiveConfirm": "{{modelName}} — ваша активная модель. Удаление остановит транскрипцию, пока вы не выберете новую модель. Вы уверены?",
       "deleteTitle": "Удалить модель",
       "filters": {
-        "all": "Все",
-        "multiLanguage": "Многоязычные",
-        "translation": "Перевод",
         "allLanguages": "Все языки"
       },
       "noModelsMatch": "Нет моделей, соответствующих этому фильтру.",
       "yourModels": "Загруженные модели",
-      "availableModels": "Доступны для загрузки"
+      "availableModels": "Доступны для загрузки",
+      "searchPlaceholder": "Поиск моделей по имени…",
+      "rescan": {
+        "label": "Пересканировать",
+        "tooltip": "Пересканировать модели, добавленные в папку моделей или кэш Hugging Face вне Handy"
+      }
     },
     "general": {
       "title": "Общие",
@@ -213,7 +215,6 @@
       "language": {
         "title": "Язык",
         "description": "Выберите язык для распознавания речи. «Авто» автоматически определит язык, а выбор конкретного языка может повысить точность определения этого языка.",
-        "descriptionUnsupported": "Модель Parakeet автоматически определяет язык. Ручной выбор не требуется.",
         "searchPlaceholder": "Поиск языков...",
         "noResults": "Языки не найдены",
         "auto": "Авто"
@@ -247,7 +248,6 @@
       }
     },
     "advanced": {
-      "title": "Продвинутые",
       "groups": {
         "app": "Приложение",
         "output": "Вывод",
@@ -264,7 +264,7 @@
         "description": "Оставляет поток микрофона открытым в течение 30 секунд после остановки записи, уменьшая задержку при последовательных транскрипциях. Может ухудшить качество звука Bluetooth."
       },
       "acceleration": {
-        "whisper": {
+        "transcribe": {
           "title": "Ускорение Whisper",
           "description": "Аппаратное ускорение для моделей Whisper. Автоматический режим использует GPU при наличии (Metal на macOS, Vulkan на Windows/Linux)."
         },
@@ -273,8 +273,6 @@
           "description": "Аппаратное ускорение для моделей ONNX (Parakeet, Canary, Moonshine и др.). DirectML на Windows является экспериментальным. Модели могут не выполнять транскрипцию."
         },
         "gpuDevice": {
-          "title": "Устройство GPU",
-          "description": "Выберите GPU для инференса Whisper. Авто выбирает выделенный GPU.",
           "auto": "Авто"
         }
       },
@@ -291,12 +289,22 @@
         "description": "Отображать значок Handy в системном трее."
       },
       "overlay": {
-        "title": "Позиция индикатора",
-        "description": "Отображение индикатора визуальной обратной связи во время записи и транскрипции. В Linux рекомендуется выбрать «Нет».",
-        "options": {
-          "none": "Нет",
-          "bottom": "Снизу",
-          "top": "Сверху"
+        "style": {
+          "title": "Overlay",
+          "description": "Choose the recording overlay: None hides it, Minimal shows a compact pill, Live shows transcription in real time as you speak (streaming-capable models only — look for the Streaming badge in the model picker). On Linux 'None' is recommended.",
+          "options": {
+            "none": "Нет",
+            "minimal": "Minimal",
+            "live": "Live"
+          }
+        },
+        "position": {
+          "title": "Позиция индикатора",
+          "description": "Отображение индикатора визуальной обратной связи во время записи и транскрипции. В Linux рекомендуется выбрать «Нет».",
+          "options": {
+            "bottom": "Снизу",
+            "top": "Сверху"
+          }
         }
       },
       "pasteMethod": {
@@ -340,8 +348,7 @@
       },
       "translateToEnglish": {
         "label": "Перевести на английский",
-        "description": "Автоматически переводить речь с других языков на английский во время транскрипции.",
-        "descriptionUnsupported": "Перевод не поддерживается моделью {{model}}."
+        "description": "Автоматически переводить речь с других языков на английский во время транскрипции."
       },
       "modelUnload": {
         "title": "Выгрузить модель",
@@ -365,13 +372,16 @@
         "remove": "Удалить {{word}}",
         "duplicate": "\"{{word}}\" уже существует"
       },
+      "voiceActivityDetection": {
+        "title": "Voice Activity Detection",
+        "description": "Filter silence from recordings. Streaming-capable models use a longer VAD tail; disabling VAD records raw audio."
+      },
       "clipboardFeature": {
         "label": "Clipboard manager (experimental)",
         "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
-      "title": "Постобработка",
       "hotkey": {
         "title": "Горячая клавиша"
       },
@@ -382,9 +392,6 @@
           "description": "Выберите поставщика, совместимого с OpenAI."
         },
         "appleIntelligence": {
-          "title": "Apple Интеллект",
-          "description": "Полностью работает на устройстве. Никакой ключ API или доступ к сети не требуется.",
-          "requirements": "Требуется Apple Silicon Mac под управлением macOS Tahoe (26.0) или более поздней версии. Apple Intelligence должен быть включен в настройках системы.",
           "unavailable": "Apple Intelligence недоступен на этом устройстве. Требуется Apple Silicon Mac под управлением macOS Tahoe (26.0) или более поздней версии с включенным Apple Intelligence в настройках системы."
         },
         "baseUrl": {
@@ -400,10 +407,8 @@
         },
         "model": {
           "title": "Модель",
-          "descriptionApple": "Укажите дополнительный числовой лимит токенов или сохраните настройки по умолчанию, установленные на устройстве.",
           "descriptionCustom": "Укажите идентификатор модели, ожидаемый вашей пользовательской конечной точкой.",
           "descriptionDefault": "Выберите модель, предоставляемую выбранным поставщиком.",
-          "placeholderApple": "Apple Интеллект",
           "placeholderWithOptions": "Найдите или выберите модель",
           "placeholderNoOptions": "Введите название модели",
           "refreshModels": "Обновить модели",
@@ -446,6 +451,147 @@
       "retranscribeError": "Не удалось перетранскрибировать. Пожалуйста, попробуйте снова.",
       "transcribing": "Транскрибирование...",
       "transcriptionFailed": "Транскрипция не удалась. Вы можете перетранскрибировать, используя значок повтора."
+    },
+    "debug": {
+      "title": "Отлаживать",
+      "logDirectory": {
+        "title": "Каталог журналов",
+        "description": "Место хранения файлов журналов"
+      },
+      "logLevel": {
+        "title": "Уровень журнала",
+        "description": "Установите уровень детализации журнала",
+        "options": {
+          "error": "Error",
+          "warn": "Warning",
+          "info": "Info",
+          "debug": "Debug",
+          "trace": "Trace"
+        }
+      },
+      "liveLogs": {
+        "title": "Журнал в реальном времени",
+        "description": "Просмотр журналов приложения в реальном времени для диагностики проблем без открытия файла журнала. Отображаются только записи, созданные пока эта панель открыта; учитывает настройку «Уровень журнала» выше.",
+        "live": "В реальном времени",
+        "paused": "Приостановлено",
+        "pause": "Приостановить",
+        "resume": "Возобновить",
+        "copied": "Скопировано",
+        "lineCount": "Строк: {{count}}",
+        "empty": "Ожидание журналов… Записи появятся здесь, как только приложение их создаст."
+      },
+      "updateChecks": {
+        "label": "Проверять наличие обновлений",
+        "description": "Автоматически проверять наличие новых версий Handy"
+      },
+      "soundTheme": {
+        "label": "Звуковая тема",
+        "description": "Выберите звуковую тему для начала и остановки записи обратной связи.",
+        "preview": "Preview sound theme"
+      },
+      "wordCorrectionThreshold": {
+        "title": "Порог исправления слов",
+        "description": "Чувствительность к пользовательским исправлениям слов"
+      },
+      "historyLimit": {
+        "title": "Размер истории",
+        "description": "Максимальное количество записей истории, которые можно сохранить",
+        "entries": "записи"
+      },
+      "recordingRetention": {
+        "title": "Автоматическое удаление записей",
+        "description": "Автоматически удалять старые записи для экономии места",
+        "never": "Никогда",
+        "preserveLimit": "Хранить последние {{count}}",
+        "days3": "Через 3 дня",
+        "weeks2": "Через 2 недели",
+        "months3": "Через 3 месяца",
+        "placeholder": "Выберите срок хранения..."
+      },
+      "alwaysOnMicrophone": {
+        "label": "Всегда включенный микрофон",
+        "description": "Держите микрофон активным для более быстрого ответа"
+      },
+      "clamshellMicrophone": {
+        "title": "Раскладной микрофон",
+        "description": "Микрофон для использования при закрытой крышке ноутбука"
+      },
+      "postProcessingToggle": {
+        "label": "Постобработка",
+        "description": "Включить уточнение текста с помощью искусственного интеллекта после транскрипции"
+      },
+      "muteWhileRecording": {
+        "label": "Отключить звук во время записи",
+        "description": "Отключение звука системы во время записи"
+      },
+      "appendTrailingSpace": {
+        "label": "Добавить пробел",
+        "description": "Добавить пробел после вставленной транскрипции"
+      },
+      "keyboardImplementation": {
+        "title": "Реализация клавиатуры",
+        "description": "Выберите бэкенд для клавиатурных сочетаний.",
+        "bindingsReset": "Клавиатурные сочетания были несовместимы и сброшены к значениям по умолчанию",
+        "options": {
+          "tauriGlobalShortcut": "Tauri Global Shortcut",
+          "handyKeys": "Handy Keys"
+        }
+      },
+      "paths": {
+        "appData": "Данные приложения:",
+        "models": "Модели:",
+        "settings": "Настройки:",
+        "description": "Display internal file paths and directories for debugging purposes",
+        "title": "Debug Paths"
+      },
+      "pasteDelay": {
+        "title": "Задержка вставки",
+        "description": "Задержка перед отправкой нажатия клавиши вставки (в миллисекундах). Увеличьте, если вставляется неправильный текст."
+      },
+      "recordingBuffer": {
+        "title": "Дополнительный буфер записи",
+        "description": "Дополнительное время (в миллисекундах) для продолжения записи после отпускания клавиши, чтобы захватить завершающий звук. 0 = без дополнительного буфера."
+      },
+      "whatsNewPreview": {
+        "title": "Предпросмотр новинок",
+        "description": "Открыть последние встроенные примечания к выпуску, не отмечая их как просмотренные",
+        "button": "Предпросмотр",
+        "noNotes": "Встроенные примечания к выпуску не найдены",
+        "error": "Не удалось показать предварительный просмотр примечаний к выпуску"
+      }
+    },
+    "about": {
+      "title": "О программе",
+      "version": {
+        "title": "Версия",
+        "description": "Текущая версия Handy"
+      },
+      "appDataDirectory": {
+        "title": "Каталог данных приложения",
+        "description": "Место, где Handy хранит свои данные"
+      },
+      "sourceCode": {
+        "title": "Исходный код",
+        "description": "Просмотреть исходный код и внести свой вклад",
+        "button": "Посмотреть на GitHub"
+      },
+      "supportDevelopment": {
+        "title": "Поддержка развития",
+        "description": "Помогите нам продолжать развитие Handy",
+        "button": "Поддержать"
+      },
+      "acknowledgments": {
+        "title": "Благодарности",
+        "ggml": {
+          "title": "ggml",
+          "description": "Высокопроизводительная модель автоматического распознавания речи OpenAI Whisper",
+          "details": "Handy использует ggml для быстрого локального преобразования речи в текст. Спасибо великолепной работе Георгия Герганова и участников."
+        }
+      },
+      "whatsNewUpdates": {
+        "label": "Показывать новинки",
+        "description": "Показывать примечания к выпуску после обновлений Handy"
+      }
     },
     "clipboard": {
       "title": "Менеджер буфера обмена",
@@ -515,177 +661,38 @@
         "wholeWord": "Whole word",
         "unlimited": "Unlimited"
       }
-    },
-    "debug": {
-      "title": "Отлаживать",
-      "logDirectory": {
-        "title": "Каталог журналов",
-        "description": "Место хранения файлов журналов"
-      },
-      "logLevel": {
-        "title": "Уровень журнала",
-        "description": "Установите уровень детализации журнала",
-        "options": {
-          "error": "Error",
-          "warn": "Warning",
-          "info": "Info",
-          "debug": "Debug",
-          "trace": "Trace"
-        }
-      },
-      "updateChecks": {
-        "label": "Проверять наличие обновлений",
-        "description": "Автоматически проверять наличие новых версий Handy"
-      },
-      "soundTheme": {
-        "label": "Звуковая тема",
-        "description": "Выберите звуковую тему для начала и остановки записи обратной связи.",
-        "preview": "Preview sound theme"
-      },
-      "wordCorrectionThreshold": {
-        "title": "Порог исправления слов",
-        "description": "Чувствительность к пользовательским исправлениям слов"
-      },
-      "historyLimit": {
-        "title": "Размер истории",
-        "description": "Максимальное количество записей истории, которые можно сохранить",
-        "entries": "записи"
-      },
-      "recordingRetention": {
-        "title": "Автоматическое удаление записей",
-        "description": "Автоматически удалять старые записи для экономии места",
-        "never": "Никогда",
-        "preserveLimit": "Хранить последние {{count}}",
-        "days3": "Через 3 дня",
-        "weeks2": "Через 2 недели",
-        "months3": "Через 3 месяца",
-        "placeholder": "Выберите срок хранения..."
-      },
-      "alwaysOnMicrophone": {
-        "label": "Всегда включенный микрофон",
-        "description": "Держите микрофон активным для более быстрого ответа"
-      },
-      "clamshellMicrophone": {
-        "title": "Раскладной микрофон",
-        "description": "Микрофон для использования при закрытой крышке ноутбука"
-      },
-      "postProcessingToggle": {
-        "label": "Постобработка",
-        "description": "Включить уточнение текста с помощью искусственного интеллекта после транскрипции"
-      },
-      "muteWhileRecording": {
-        "label": "Отключить звук во время записи",
-        "description": "Отключение звука системы во время записи"
-      },
-      "appendTrailingSpace": {
-        "label": "Добавить пробел",
-        "description": "Добавить пробел после вставленной транскрипции"
-      },
-      "keyboardImplementation": {
-        "title": "Реализация клавиатуры",
-        "description": "Выберите бэкенд для клавиатурных сочетаний.",
-        "bindingsReset": "Клавиатурные сочетания были несовместимы и сброшены к значениям по умолчанию",
-        "options": {
-          "tauriGlobalShortcut": "Tauri Global Shortcut",
-          "handyKeys": "Handy Keys"
-        }
-      },
-      "paths": {
-        "appData": "Данные приложения:",
-        "models": "Модели:",
-        "settings": "Настройки:",
-        "title": "Debug Paths",
-        "description": "Display internal file paths and directories for debugging purposes"
-      },
-      "pasteDelay": {
-        "title": "Задержка вставки",
-        "description": "Задержка перед отправкой нажатия клавиши вставки (в миллисекундах). Увеличьте, если вставляется неправильный текст."
-      },
-      "recordingBuffer": {
-        "title": "Дополнительный буфер записи",
-        "description": "Дополнительное время (в миллисекундах) для продолжения записи после отпускания клавиши, чтобы захватить завершающий звук. 0 = без дополнительного буфера."
-      }
-    },
-    "about": {
-      "title": "О программе",
-      "version": {
-        "title": "Версия",
-        "description": "Текущая версия Handy"
-      },
-      "appDataDirectory": {
-        "title": "Каталог данных приложения",
-        "description": "Место, где Handy хранит свои данные"
-      },
-      "sourceCode": {
-        "title": "Исходный код",
-        "description": "Просмотреть исходный код и внести свой вклад",
-        "button": "Посмотреть на GitHub"
-      },
-      "supportDevelopment": {
-        "title": "Поддержка развития",
-        "description": "Помогите нам продолжать развитие Handy",
-        "button": "Поддержать"
-      },
-      "acknowledgments": {
-        "title": "Благодарности",
-        "whisper": {
-          "title": "Whisper.cpp",
-          "description": "Высокопроизводительная модель автоматического распознавания речи OpenAI Whisper",
-          "details": "Handy использует Whisper.cpp для быстрого локального преобразования речи в текст. Спасибо великолепной работе Георгия Герганова и участников."
-        }
-      }
     }
   },
   "footer": {
-    "downloadingModel": "Загрузка {{model}}...",
     "checkingUpdates": "Проверяем наличие обновлений...",
-    "updateAvailable": "Доступно обновление: {{version}}",
     "updateAvailableShort": "Доступно обновление",
     "upToDate": "Не требует обновлений",
-    "downloadUpdate": "Скачать обновление",
-    "restart": "Перезапуск",
     "updateCheckingDisabled": "Проверка обновлений отключена",
     "downloading": "Загрузка... {{progress}} %",
     "installing": "Установка...",
     "preparing": "Подготовка...",
     "checkForUpdates": "Проверить наличие обновлений",
-    "portableUpdateTitle": "Manual update required",
-    "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
-    "portableUpdateButton": "Open GitHub Releases"
+    "portableUpdateTitle": "Требуется ручное обновление",
+    "portableUpdateMessage": "Портативные установки нельзя обновить автоматически. Чтобы обновить: скачайте последний установщик NSIS со страницы GitHub Releases, установите его в ту же папку, затем скопируйте папку Data/ (настройки, модели, записи) из старой версии в новую.",
+    "portableUpdateButton": "Открыть GitHub Releases"
   },
   "common": {
     "loading": "Загрузка...",
-    "save": "Сохранять",
-    "cancel": "Отмена",
-    "reset": "Перезагрузить",
-    "add": "Добавлять",
-    "remove": "Удалять",
     "delete": "Удалить",
-    "edit": "Редактировать",
-    "create": "Создавать",
-    "update": "Обновлять",
     "close": "Закрывать",
     "open": "Открыть",
-    "default": "По умолчанию",
-    "enabled": "Включено",
-    "disabled": "Неполноценный",
-    "on": "На",
-    "off": "Выключенный",
-    "yes": "Да",
-    "no": "Нет",
-    "noOptionsFound": "Вариантов не найдено",
     "copy": "Copy",
+    "clear": "Очистить",
+    "noOptionsFound": "Вариантов не найдено",
     "moreInformation": "More information",
     "notAvailable": "Not available",
-    "selectOption": "Select an option...",
+    "pause": "Pause",
     "play": "Play",
-    "pause": "Pause"
+    "selectOption": "Select an option..."
   },
   "accessibility": {
-    "permissionsRequired": "Требуются разрешения на доступ",
     "permissionsDescription": "Handy необходимы разрешения на доступ для ввода расшифрованного текста.",
-    "openSettings": "Открыть настройки системы",
-    "dismiss": "Увольнять"
+    "openSettings": "Открыть настройки системы"
   },
   "errors": {
     "loadDirectory": "Ошибка загрузки каталога: {{error}}.",
@@ -702,7 +709,8 @@
     "modelLoadFailed": "Не удалось загрузить модель: {{model}}",
     "modelLoadFailedUnknown": "неизвестная модель",
     "pasteFailedTitle": "Не удалось вставить текст",
-    "pasteFailed": "Не удалось вставить текст в активное приложение."
+    "pasteFailed": "Не удалось вставить текст в активное приложение.",
+    "transcriptionFailedTitle": "Ошибка транскрипции"
   },
   "appLanguage": {
     "title": "Язык приложения",
@@ -711,5 +719,8 @@
   "overlay": {
     "transcribing": "Расшифровка...",
     "processing": "Обработка..."
+  },
+  "whatsNew": {
+    "title": "Новое в Handy v{{version}}"
   }
 }

@@ -543,10 +543,10 @@
     hash = "sha512-TAcgQh2sSkykPRWLrdyy2AiceMckNf5loITqXxFI5VuQjS5tSuw3WlwdN8qv8vzjLAUTvYaH/mVjSFpbkFbpTg==";
     name = "rollup-win32-x64-msvc-4.52.5.tgz";
   };
-  "@rollup/wasm-node@4.60.4" = fetchurl {
-    url = "https://registry.npmmirror.com/@rollup/wasm-node/-/wasm-node-4.60.4.tgz";
-    hash = "sha512-j6qaRjdDujJ5utX5l6+8eiWlvMLmBfPMBht8mHP2au3xuzf+4deu6PuCquH5GvDIvIOsWHZhA1UVz/s0FvvgAA==";
-    name = "wasm-node-4.60.4.tgz";
+  "@rollup/wasm-node@4.62.2" = fetchurl {
+    url = "https://registry.npmmirror.com/@rollup/wasm-node/-/wasm-node-4.62.2.tgz";
+    hash = "sha512-LseVv64SSO6S7eyc+LFGUnH36NMMFbtKN28vTUHFinRVzFKH4cVQ/BB22JfXM9Ei5l7x46AIQp+n2QzzJ9kxHg==";
+    name = "wasm-node-4.62.2.tgz";
   };
   "@tailwindcss/node@4.1.16" = fetchurl {
     url = "https://registry.npmmirror.com/@tailwindcss/node/-/node-4.1.16.tgz";
@@ -633,65 +633,65 @@
     hash = "sha512-qD5tMjh7utwBk9/5PrTA/aGr3i5QaJ/Mlt7p8NilQ45WgbifUNPyKWsA63iQ8YfQq6R8ajMapU+/Q8nMcPRLNw==";
     name = "api-2.9.0.tgz";
   };
-  "@tauri-apps/cli-darwin-arm64@2.11.2" = fetchurl {
-    url = "https://registry.npmmirror.com/@tauri-apps/cli-darwin-arm64/-/cli-darwin-arm64-2.11.2.tgz";
-    hash = "sha512-+4UZzLt+eOAEQCwgd+TqKgyUJMrvx+BgdXLLaqJYmPqzP+nE6YZr/hY6CWLYGQb8jFn99jEkmC6uA3tNvamA1w==";
-    name = "cli-darwin-arm64-2.11.2.tgz";
+  "@tauri-apps/cli-darwin-arm64@2.11.4" = fetchurl {
+    url = "https://registry.npmmirror.com/@tauri-apps/cli-darwin-arm64/-/cli-darwin-arm64-2.11.4.tgz";
+    hash = "sha512-1ryOF3ZhpZ/nemHV5zVwBQBz9jDGKmKPvWPADOhc83ig0P4bMc2iER4NbC6r9sjeIZ6RVQ4g3RZIYvezhcl4TQ==";
+    name = "cli-darwin-arm64-2.11.4.tgz";
   };
-  "@tauri-apps/cli-darwin-x64@2.11.2" = fetchurl {
-    url = "https://registry.npmmirror.com/@tauri-apps/cli-darwin-x64/-/cli-darwin-x64-2.11.2.tgz";
-    hash = "sha512-VjYYtZUPqDMLutSfJEyxFE3Bz+DPi7c8wC3imckgvciLDZLq4qwKJxBicg0BXGhXjJsl8vKWgWRFNMPELQ+Xyg==";
-    name = "cli-darwin-x64-2.11.2.tgz";
+  "@tauri-apps/cli-darwin-x64@2.11.4" = fetchurl {
+    url = "https://registry.npmmirror.com/@tauri-apps/cli-darwin-x64/-/cli-darwin-x64-2.11.4.tgz";
+    hash = "sha512-uFsGQAAfuyz1k/yGLmkWfkBlgKAqZfxqlHmLWx81QU27RJWfmbNHCIq8T8w1e+VClleIuZUjpHWfoE4E3DLo3A==";
+    name = "cli-darwin-x64-2.11.4.tgz";
   };
-  "@tauri-apps/cli-linux-arm-gnueabihf@2.11.2" = fetchurl {
-    url = "https://registry.npmmirror.com/@tauri-apps/cli-linux-arm-gnueabihf/-/cli-linux-arm-gnueabihf-2.11.2.tgz";
-    hash = "sha512-yMemD6f4i95AQriS8EazyOFzbE34yjnP16i3IOzpHGQvBoy2DjypFMFBq0NtPuITURv/cOGguRtHR5d79/9CSA==";
-    name = "cli-linux-arm-gnueabihf-2.11.2.tgz";
+  "@tauri-apps/cli-linux-arm-gnueabihf@2.11.4" = fetchurl {
+    url = "https://registry.npmmirror.com/@tauri-apps/cli-linux-arm-gnueabihf/-/cli-linux-arm-gnueabihf-2.11.4.tgz";
+    hash = "sha512-IaHZn5CdBL21oUmjiVOS1ctw6Ip1O0pjp70FwOWmYz1myWe0SY96ZIj2FYf7pT0m8bI2h/hrs5ZbEXXh44/MkQ==";
+    name = "cli-linux-arm-gnueabihf-2.11.4.tgz";
   };
-  "@tauri-apps/cli-linux-arm64-gnu@2.11.2" = fetchurl {
-    url = "https://registry.npmmirror.com/@tauri-apps/cli-linux-arm64-gnu/-/cli-linux-arm64-gnu-2.11.2.tgz";
-    hash = "sha512-cgI91D2wL8GSgoWwZXDqt+DwnuZCP2/bz03QAE4TrhgAKIsrB4hX26W/H1EONPUUNkqrsgeCD0wU6pcNjV/5kw==";
-    name = "cli-linux-arm64-gnu-2.11.2.tgz";
+  "@tauri-apps/cli-linux-arm64-gnu@2.11.4" = fetchurl {
+    url = "https://registry.npmmirror.com/@tauri-apps/cli-linux-arm64-gnu/-/cli-linux-arm64-gnu-2.11.4.tgz";
+    hash = "sha512-N41/ukTRVe6XSuUTESuFdGeOW2i7k62tK+6gHK5Kd5/q5RPvvi19GaWAVPPb9u95HSGmTChSolBfzynUsssFaA==";
+    name = "cli-linux-arm64-gnu-2.11.4.tgz";
   };
-  "@tauri-apps/cli-linux-arm64-musl@2.11.2" = fetchurl {
-    url = "https://registry.npmmirror.com/@tauri-apps/cli-linux-arm64-musl/-/cli-linux-arm64-musl-2.11.2.tgz";
-    hash = "sha512-X1rm0BERqAAggtYTESSgXrS3sz4Sb/OiPiz54UqISlXW+GkR3vNIGnsy/lejNmoXGVqri3Q53BCfQiclOIyRPw==";
-    name = "cli-linux-arm64-musl-2.11.2.tgz";
+  "@tauri-apps/cli-linux-arm64-musl@2.11.4" = fetchurl {
+    url = "https://registry.npmmirror.com/@tauri-apps/cli-linux-arm64-musl/-/cli-linux-arm64-musl-2.11.4.tgz";
+    hash = "sha512-v277UnT/fB64xAfSroL5N3Km3tLmvATWqJJw/wRI+g6o+HkeD0slyE7gOhNs1MbjE41R7bQOTxMVoL3aomUJmw==";
+    name = "cli-linux-arm64-musl-2.11.4.tgz";
   };
-  "@tauri-apps/cli-linux-riscv64-gnu@2.11.2" = fetchurl {
-    url = "https://registry.npmmirror.com/@tauri-apps/cli-linux-riscv64-gnu/-/cli-linux-riscv64-gnu-2.11.2.tgz";
-    hash = "sha512-usbMLJbT3KtkOrBMDVeGYNM35aTHXx38SJSzTMSqqjeUIOQ+iVPjb2yAGNAE+KqmBbAx4FOFIyMeKXx2M/JKGQ==";
-    name = "cli-linux-riscv64-gnu-2.11.2.tgz";
+  "@tauri-apps/cli-linux-riscv64-gnu@2.11.4" = fetchurl {
+    url = "https://registry.npmmirror.com/@tauri-apps/cli-linux-riscv64-gnu/-/cli-linux-riscv64-gnu-2.11.4.tgz";
+    hash = "sha512-qqgNkQ2u1yZHxjhxsZaxUtRDW8dIqIYm33rx/mzwQv0SfY9x1B+iraj8vWeFiXjjSVVhEMepXSOts1TqPzvXNQ==";
+    name = "cli-linux-riscv64-gnu-2.11.4.tgz";
   };
-  "@tauri-apps/cli-linux-x64-gnu@2.11.2" = fetchurl {
-    url = "https://registry.npmmirror.com/@tauri-apps/cli-linux-x64-gnu/-/cli-linux-x64-gnu-2.11.2.tgz";
-    hash = "sha512-Ru4gwJKPG0ctVGchRGpRup4Y4lW2SSfFnrbQcyHhCliKy4g8Qz97TrUgCur4CbWyAgKxvGh3SjrkA0LDYzDGiw==";
-    name = "cli-linux-x64-gnu-2.11.2.tgz";
+  "@tauri-apps/cli-linux-x64-gnu@2.11.4" = fetchurl {
+    url = "https://registry.npmmirror.com/@tauri-apps/cli-linux-x64-gnu/-/cli-linux-x64-gnu-2.11.4.tgz";
+    hash = "sha512-2VRNWl84FOH0m2giiDkO2h0QXlcMJeX+zJDpI5kDIQAx6s+geF3v48F4DXfJez4GS/FdoDGnPnw1C2iYGbQ7bQ==";
+    name = "cli-linux-x64-gnu-2.11.4.tgz";
   };
-  "@tauri-apps/cli-linux-x64-musl@2.11.2" = fetchurl {
-    url = "https://registry.npmmirror.com/@tauri-apps/cli-linux-x64-musl/-/cli-linux-x64-musl-2.11.2.tgz";
-    hash = "sha512-eUm7T6clN1MMmNSRQ9gaWsQdyehQx2Gmn5hht/QUlqZQI/qcP2OJK5dnaxqwFzCr2HdsEo9ydxaqcS1oJzMvUw==";
-    name = "cli-linux-x64-musl-2.11.2.tgz";
+  "@tauri-apps/cli-linux-x64-musl@2.11.4" = fetchurl {
+    url = "https://registry.npmmirror.com/@tauri-apps/cli-linux-x64-musl/-/cli-linux-x64-musl-2.11.4.tgz";
+    hash = "sha512-o9GyhYor/nc7xarmwDE3ka2szuW3uuZzXjHWh64Q8YX5AtSgxdQkFWzrY4O8KiGtVNvFBI14H3Q49Qj5TOIP/A==";
+    name = "cli-linux-x64-musl-2.11.4.tgz";
   };
-  "@tauri-apps/cli-win32-arm64-msvc@2.11.2" = fetchurl {
-    url = "https://registry.npmmirror.com/@tauri-apps/cli-win32-arm64-msvc/-/cli-win32-arm64-msvc-2.11.2.tgz";
-    hash = "sha512-HeeZW80jU+gVTOEX4X/hC6NVSAdDVXajwP5fxIZ/3z9WvUC7qrudX2GMTilYq6Dg0e0sk0XgsAJD1hZ5wPBXUA==";
-    name = "cli-win32-arm64-msvc-2.11.2.tgz";
+  "@tauri-apps/cli-win32-arm64-msvc@2.11.4" = fetchurl {
+    url = "https://registry.npmmirror.com/@tauri-apps/cli-win32-arm64-msvc/-/cli-win32-arm64-msvc-2.11.4.tgz";
+    hash = "sha512-ld5Ehb598m0VkYyylRPNeCFsBe/km0jxis6KgMpl3IGY6I/i1RwQXO05I1AsXUXO2WC6AvB/Lw4qTf/asiuEiQ==";
+    name = "cli-win32-arm64-msvc-2.11.4.tgz";
   };
-  "@tauri-apps/cli-win32-ia32-msvc@2.11.2" = fetchurl {
-    url = "https://registry.npmmirror.com/@tauri-apps/cli-win32-ia32-msvc/-/cli-win32-ia32-msvc-2.11.2.tgz";
-    hash = "sha512-YhjQNZcXfbkCLyazSv1nPnJ9iRFE1wm6kc51FDbU10/Dk09io+6PAGMLjkxnX2GdM0qMnDmTjstY8mTDVvtKeA==";
-    name = "cli-win32-ia32-msvc-2.11.2.tgz";
+  "@tauri-apps/cli-win32-ia32-msvc@2.11.4" = fetchurl {
+    url = "https://registry.npmmirror.com/@tauri-apps/cli-win32-ia32-msvc/-/cli-win32-ia32-msvc-2.11.4.tgz";
+    hash = "sha512-12Hxi0XX/H5VFxO/bGgHkFWhml9VMgEOu9CidjeCeTNQ1l6fpUlbiGgSP7CLI3PFtW9/FfbeHieZ+kyWK5H7CA==";
+    name = "cli-win32-ia32-msvc-2.11.4.tgz";
   };
-  "@tauri-apps/cli-win32-x64-msvc@2.11.2" = fetchurl {
-    url = "https://registry.npmmirror.com/@tauri-apps/cli-win32-x64-msvc/-/cli-win32-x64-msvc-2.11.2.tgz";
-    hash = "sha512-d2JchlFIpZevZVReyqhQOekJmb1UH3rhZ5VX6sH3ty9ETE0TKQavpihvoScUXfKKpW6HZC0MrFGRU0ZtD+w3gA==";
-    name = "cli-win32-x64-msvc-2.11.2.tgz";
+  "@tauri-apps/cli-win32-x64-msvc@2.11.4" = fetchurl {
+    url = "https://registry.npmmirror.com/@tauri-apps/cli-win32-x64-msvc/-/cli-win32-x64-msvc-2.11.4.tgz";
+    hash = "sha512-+vDiqBIU5dMISg/wNvX3sF+ZHfgJGJ5T0AcO+EHNXV9GGAG+P5fzodlDXD3QdKCRgZxMoCm5PPvj3BqLNjBthw==";
+    name = "cli-win32-x64-msvc-2.11.4.tgz";
   };
-  "@tauri-apps/cli@2.11.2" = fetchurl {
-    url = "https://registry.npmmirror.com/@tauri-apps/cli/-/cli-2.11.2.tgz";
-    hash = "sha512-bk3HemqvGRoy+5D/dVMUQHKMYLglD0jVnMm/0iGMH6ufZ+p8r14m6BpIixwij3PBvZdvORUp1YifTD8QxVZ1Nw==";
-    name = "cli-2.11.2.tgz";
+  "@tauri-apps/cli@2.11.4" = fetchurl {
+    url = "https://registry.npmmirror.com/@tauri-apps/cli/-/cli-2.11.4.tgz";
+    hash = "sha512-R8xGtMpwyetawSqm9kYOuMmEqkhUbvcUy8n0aNXIxollKBLESUu5f4Fx+64hgASYm1H+jSWq6jCW6zqTnH6hqQ==";
+    name = "cli-2.11.4.tgz";
   };
   "@tauri-apps/plugin-autostart@2.5.1" = fetchurl {
     url = "https://registry.npmmirror.com/@tauri-apps/plugin-autostart/-/plugin-autostart-2.5.1.tgz";
@@ -773,15 +773,45 @@
     hash = "sha512-8PvcXf70gTDZBgt9ptxJ8elBeBjcLOAcOtoO/mPJjtji1+CdGbHgm77om1GrsPxsiE+uXIpNSK64UYaIwQXd4Q==";
     name = "babel__traverse-7.28.0.tgz";
   };
+  "@types/debug@4.1.13" = fetchurl {
+    url = "https://registry.npmmirror.com/@types/debug/-/debug-4.1.13.tgz";
+    hash = "sha512-KSVgmQmzMwPlmtljOomayoR89W4FynCAi3E8PPs7vmDVPe84hT+vGPKkJfThkmXs0x0jAaa9U8uW8bbfyS2fWw==";
+    name = "debug-4.1.13.tgz";
+  };
+  "@types/estree-jsx@1.0.5" = fetchurl {
+    url = "https://registry.npmmirror.com/@types/estree-jsx/-/estree-jsx-1.0.5.tgz";
+    hash = "sha512-52CcUVNFyfb1A2ALocQw/Dd1BQFNmSdkuC3BkZ6iqhdMfQz7JWOFRuJFloOzjk+6WijU56m9oKXFAXc7o3Towg==";
+    name = "estree-jsx-1.0.5.tgz";
+  };
   "@types/estree@1.0.8" = fetchurl {
     url = "https://registry.npmmirror.com/@types/estree/-/estree-1.0.8.tgz";
     hash = "sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==";
     name = "estree-1.0.8.tgz";
   };
+  "@types/estree@1.0.9" = fetchurl {
+    url = "https://registry.npmmirror.com/@types/estree/-/estree-1.0.9.tgz";
+    hash = "sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==";
+    name = "estree-1.0.9.tgz";
+  };
+  "@types/hast@3.0.4" = fetchurl {
+    url = "https://registry.npmmirror.com/@types/hast/-/hast-3.0.4.tgz";
+    hash = "sha512-WPs+bbQw5aCj+x6laNGWLH3wviHtoCv/P3+otBhbOhJgG8qtpdAMlTCxLtsTWA7LH1Oh/bFCHsBn0TPS5m30EQ==";
+    name = "hast-3.0.4.tgz";
+  };
   "@types/json-schema@7.0.15" = fetchurl {
     url = "https://registry.npmmirror.com/@types/json-schema/-/json-schema-7.0.15.tgz";
     hash = "sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==";
     name = "json-schema-7.0.15.tgz";
+  };
+  "@types/mdast@4.0.4" = fetchurl {
+    url = "https://registry.npmmirror.com/@types/mdast/-/mdast-4.0.4.tgz";
+    hash = "sha512-kGaNbPh1k7AFzgpud/gMdvIm5xuECykRR+JnWKQno9TAXVa6WIVCGTPvYGekIDL4uwCZQSYbUxNBSb1aUo79oA==";
+    name = "mdast-4.0.4.tgz";
+  };
+  "@types/ms@2.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/@types/ms/-/ms-2.1.0.tgz";
+    hash = "sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==";
+    name = "ms-2.1.0.tgz";
   };
   "@types/node@24.9.1" = fetchurl {
     url = "https://registry.npmmirror.com/@types/node/-/node-24.9.1.tgz";
@@ -817,6 +847,16 @@
     url = "https://registry.npmmirror.com/@types/react/-/react-18.3.26.tgz";
     hash = "sha512-RFA/bURkcKzx/X9oumPG9Vp3D3JUgus/d0b67KB0t5S/raciymilkOa66olh78MUI92QLbEJevO7rvqU/kjwKA==";
     name = "react-18.3.26.tgz";
+  };
+  "@types/unist@2.0.11" = fetchurl {
+    url = "https://registry.npmmirror.com/@types/unist/-/unist-2.0.11.tgz";
+    hash = "sha512-CmBKiL6NNo/OqgmMn95Fk9Whlp2mtvIv+KNpQKN2F4SjvrEesubTRWGYSg+BnWZOnlCaSTU1sMpsBOzgbYhnsA==";
+    name = "unist-2.0.11.tgz";
+  };
+  "@types/unist@3.0.3" = fetchurl {
+    url = "https://registry.npmmirror.com/@types/unist/-/unist-3.0.3.tgz";
+    hash = "sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==";
+    name = "unist-3.0.3.tgz";
   };
   "@typescript-eslint/eslint-plugin@8.49.0" = fetchurl {
     url = "https://registry.npmmirror.com/@typescript-eslint/eslint-plugin/-/eslint-plugin-8.49.0.tgz";
@@ -868,6 +908,11 @@
     hash = "sha512-LlKaciDe3GmZFphXIc79THF/YYBugZ7FS1pO581E/edlVVNbZKDy93evqmrfQ9/Y4uN0vVhX4iuchq26mK/iiA==";
     name = "visitor-keys-8.49.0.tgz";
   };
+  "@ungap/structured-clone@1.3.2" = fetchurl {
+    url = "https://registry.npmmirror.com/@ungap/structured-clone/-/structured-clone-1.3.2.tgz";
+    hash = "sha512-5jsZFwgR5rTdKwidH9Qmat75RKwqfpKlWWB1frDkljN127mwqBu8K0PYo7/hFpF03IEJpfVPpCQDY/eDx3iHvA==";
+    name = "structured-clone-1.3.2.tgz";
+  };
   "@vitejs/plugin-react@4.7.0" = fetchurl {
     url = "https://registry.npmmirror.com/@vitejs/plugin-react/-/plugin-react-4.7.0.tgz";
     hash = "sha512-gUu9hwfWvvEDBBmgtAowQCojwZmJ5mcLn3aufeCsitijs3+f2NsrPtlAWIR6OPiqljl96GVCUbLe0HyqIpVaoA==";
@@ -902,6 +947,11 @@
     url = "https://registry.npmmirror.com/babel-plugin-macros/-/babel-plugin-macros-3.1.0.tgz";
     hash = "sha512-Cg7TFGpIr01vOQNODXOOaGz2NpCU5gl8x1qJFbb6hbZxR7XrcE2vtbAsTAbJ7/xwJtUuJEw8K8Zr/AE0LHlesg==";
     name = "babel-plugin-macros-3.1.0.tgz";
+  };
+  "bail@2.0.2" = fetchurl {
+    url = "https://registry.npmmirror.com/bail/-/bail-2.0.2.tgz";
+    hash = "sha512-0xO6mYd7JB2YesxDKplafRpsiOzPt9V02ddPCLbY1xYGPOX24NTyN50qnUxgCPcSoYMhKpAuBTjQoRZCAkUDRw==";
+    name = "bail-2.0.2.tgz";
   };
   "balanced-match@1.0.2" = fetchurl {
     url = "https://registry.npmmirror.com/balanced-match/-/balanced-match-1.0.2.tgz";
@@ -938,10 +988,35 @@
     hash = "sha512-A0QJhug0Ly64Ii3eIqHu5X51ebln3k4yTUkY1j8drqpWHVreg/VLijN48cZ1bYPiqOQuqpkIKnzr/Ul8V+p6Cw==";
     name = "caniuse-lite-1.0.30001751.tgz";
   };
+  "ccount@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/ccount/-/ccount-2.0.1.tgz";
+    hash = "sha512-eyrF0jiFpY+3drT6383f1qhkbGsLSifNAjA61IUjZjmLCWjItY6LB9ft9YhoDgwfmclB2zhu51Lc7+95b8NRAg==";
+    name = "ccount-2.0.1.tgz";
+  };
   "chalk@4.1.2" = fetchurl {
     url = "https://registry.npmmirror.com/chalk/-/chalk-4.1.2.tgz";
     hash = "sha512-oKnbhFyRIXpUuez8iBMmyEa4nbj4IOQyuhc/wy9kY7/WVPcwIO9VA668Pu8RkO7+0G76SLROeyw9CpQ061i4mA==";
     name = "chalk-4.1.2.tgz";
+  };
+  "character-entities-html4@2.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/character-entities-html4/-/character-entities-html4-2.1.0.tgz";
+    hash = "sha512-1v7fgQRj6hnSwFpq1Eu0ynr/CDEw0rXo2B61qXrLNdHZmPKgb7fqS1a2JwF0rISo9q77jDI8VMEHoApn8qDoZA==";
+    name = "character-entities-html4-2.1.0.tgz";
+  };
+  "character-entities-legacy@3.0.0" = fetchurl {
+    url = "https://registry.npmmirror.com/character-entities-legacy/-/character-entities-legacy-3.0.0.tgz";
+    hash = "sha512-RpPp0asT/6ufRm//AJVwpViZbGM/MkjQFxJccQRHmISF/22NBtsHqAWmL+/pmkPWoIUJdWyeVleTl1wydHATVQ==";
+    name = "character-entities-legacy-3.0.0.tgz";
+  };
+  "character-entities@2.0.2" = fetchurl {
+    url = "https://registry.npmmirror.com/character-entities/-/character-entities-2.0.2.tgz";
+    hash = "sha512-shx7oQ0Awen/BRIdkjkvz54PnEEI/EjwXDSIZp86/KKdbafHh1Df/RYGBhn4hbe2+uKC9FnT5UCEdyPz3ai9hQ==";
+    name = "character-entities-2.0.2.tgz";
+  };
+  "character-reference-invalid@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/character-reference-invalid/-/character-reference-invalid-2.0.1.tgz";
+    hash = "sha512-iBZ4F4wRbyORVsu0jPV7gXkOsGYjGHPmAyv+HiHG8gi5PtC9KI2j1+v8/tlibRvjoWX027ypmG/n0HtO5t7unw==";
+    name = "character-reference-invalid-2.0.1.tgz";
   };
   "color-convert@2.0.1" = fetchurl {
     url = "https://registry.npmmirror.com/color-convert/-/color-convert-2.0.1.tgz";
@@ -952,6 +1027,11 @@
     url = "https://registry.npmmirror.com/color-name/-/color-name-1.1.4.tgz";
     hash = "sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==";
     name = "color-name-1.1.4.tgz";
+  };
+  "comma-separated-tokens@2.0.3" = fetchurl {
+    url = "https://registry.npmmirror.com/comma-separated-tokens/-/comma-separated-tokens-2.0.3.tgz";
+    hash = "sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg==";
+    name = "comma-separated-tokens-2.0.3.tgz";
   };
   "concat-map@0.0.1" = fetchurl {
     url = "https://registry.npmmirror.com/concat-map/-/concat-map-0.0.1.tgz";
@@ -988,15 +1068,30 @@
     hash = "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==";
     name = "debug-4.4.3.tgz";
   };
+  "decode-named-character-reference@1.3.0" = fetchurl {
+    url = "https://registry.npmmirror.com/decode-named-character-reference/-/decode-named-character-reference-1.3.0.tgz";
+    hash = "sha512-GtpQYB283KrPp6nRw50q3U9/VfOutZOe103qlN7BPP6Ad27xYnOIWv4lPzo8HCAL+mMZofJ9KEy30fq6MfaK6Q==";
+    name = "decode-named-character-reference-1.3.0.tgz";
+  };
   "deep-is@0.1.4" = fetchurl {
     url = "https://registry.npmmirror.com/deep-is/-/deep-is-0.1.4.tgz";
     hash = "sha512-oIPzksmTg4/MriiaYGO+okXDT7ztn/w3Eptv/+gSIdMdKsJo0u4CfYNFJPy+4SKMuCqGw2wxnA+URMg3t8a/bQ==";
     name = "deep-is-0.1.4.tgz";
   };
+  "dequal@2.0.3" = fetchurl {
+    url = "https://registry.npmmirror.com/dequal/-/dequal-2.0.3.tgz";
+    hash = "sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==";
+    name = "dequal-2.0.3.tgz";
+  };
   "detect-libc@2.1.2" = fetchurl {
     url = "https://registry.npmmirror.com/detect-libc/-/detect-libc-2.1.2.tgz";
     hash = "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==";
     name = "detect-libc-2.1.2.tgz";
+  };
+  "devlop@1.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/devlop/-/devlop-1.1.0.tgz";
+    hash = "sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==";
+    name = "devlop-1.1.0.tgz";
   };
   "dom-helpers@5.2.1" = fetchurl {
     url = "https://registry.npmmirror.com/dom-helpers/-/dom-helpers-5.2.1.tgz";
@@ -1032,6 +1127,11 @@
     url = "https://registry.npmmirror.com/escape-string-regexp/-/escape-string-regexp-4.0.0.tgz";
     hash = "sha512-TtpcNJ3XAzx3Gq8sWRzJaVajRs0uVxA2YAkdb1jm2YkPz4G6egUFAyA3n5vtEIZefPk5Wa4UXbKuS5fKkJWdgA==";
     name = "escape-string-regexp-4.0.0.tgz";
+  };
+  "escape-string-regexp@5.0.0" = fetchurl {
+    url = "https://registry.npmmirror.com/escape-string-regexp/-/escape-string-regexp-5.0.0.tgz";
+    hash = "sha512-/veY75JbMK4j1yjvuUxuVsiS/hr/4iHs9FTT6cgTexxdE0Ly/glccBAkloH/DofkjRbZU3bnoj38mOmhkZ0lHw==";
+    name = "escape-string-regexp-5.0.0.tgz";
   };
   "eslint-plugin-i18next@6.1.3" = fetchurl {
     url = "https://registry.npmmirror.com/eslint-plugin-i18next/-/eslint-plugin-i18next-6.1.3.tgz";
@@ -1078,10 +1178,20 @@
     hash = "sha512-MMdARuVEQziNTeJD8DgMqmhwR11BRQ/cBP+pLtYdSTnf3MIO8fFeiINEbX36ZdNlfU/7A9f3gUw49B3oQsvwBA==";
     name = "estraverse-5.3.0.tgz";
   };
+  "estree-util-is-identifier-name@3.0.0" = fetchurl {
+    url = "https://registry.npmmirror.com/estree-util-is-identifier-name/-/estree-util-is-identifier-name-3.0.0.tgz";
+    hash = "sha512-hFtqIDZTIUZ9BXLb8y4pYGyk6+wekIivNVTcmvk8NoOh+VeRn5y6cEHzbURrWbfp1fIqdVipilzj+lfaadNZmg==";
+    name = "estree-util-is-identifier-name-3.0.0.tgz";
+  };
   "esutils@2.0.3" = fetchurl {
     url = "https://registry.npmmirror.com/esutils/-/esutils-2.0.3.tgz";
     hash = "sha512-kVscqXk4OCp68SZ0dkgEKVi6/8ij300KBWTJq32P/dYeWTSwK41WyTxalN1eRmA5Z9UU/LX9D7FWSmV9SAYx6g==";
     name = "esutils-2.0.3.tgz";
+  };
+  "extend@3.0.2" = fetchurl {
+    url = "https://registry.npmmirror.com/extend/-/extend-3.0.2.tgz";
+    hash = "sha512-fjquC59cD7CyW6urNXK0FBufkZcoiGG80wTuPujX590cB5Ttln20E2UB4S/WARVqhXffZl2LNgS+gQdPIIim/g==";
+    name = "extend-3.0.2.tgz";
   };
   "fast-deep-equal@3.1.3" = fetchurl {
     url = "https://registry.npmmirror.com/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz";
@@ -1173,6 +1283,16 @@
     hash = "sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==";
     name = "hasown-2.0.2.tgz";
   };
+  "hast-util-to-jsx-runtime@2.3.6" = fetchurl {
+    url = "https://registry.npmmirror.com/hast-util-to-jsx-runtime/-/hast-util-to-jsx-runtime-2.3.6.tgz";
+    hash = "sha512-zl6s8LwNyo1P9uw+XJGvZtdFF1GdAkOg8ujOw+4Pyb76874fLps4ueHXDhXWdk6YHQ6OgUtinliG7RsYvCbbBg==";
+    name = "hast-util-to-jsx-runtime-2.3.6.tgz";
+  };
+  "hast-util-whitespace@3.0.0" = fetchurl {
+    url = "https://registry.npmmirror.com/hast-util-whitespace/-/hast-util-whitespace-3.0.0.tgz";
+    hash = "sha512-88JUN06ipLwsnv+dVn+OIYOvAuvBMy/Qoi6O7mQHxdPXpjy+Cd6xRkWwux7DKO+4sYILtLBRIKgsdpS2gQc7qw==";
+    name = "hast-util-whitespace-3.0.0.tgz";
+  };
   "hoist-non-react-statics@3.3.2" = fetchurl {
     url = "https://registry.npmmirror.com/hoist-non-react-statics/-/hoist-non-react-statics-3.3.2.tgz";
     hash = "sha512-/gGivxi8JPKWNm/W0jSmzcMPpfpPLc3dY/6GxhX2hQ9iGj3aDfklV4ET7NjKpSinLpJ5vafa9iiGIEZg10SfBw==";
@@ -1182,6 +1302,11 @@
     url = "https://registry.npmmirror.com/html-parse-stringify/-/html-parse-stringify-3.0.1.tgz";
     hash = "sha512-KknJ50kTInJ7qIScF3jeaFRpMpE8/lfiTdzf/twXyPBLAGrLRTmkz3AdTnKeh40X8k9L2fdYwEp/42WGXIRGcg==";
     name = "html-parse-stringify-3.0.1.tgz";
+  };
+  "html-url-attributes@3.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/html-url-attributes/-/html-url-attributes-3.0.1.tgz";
+    hash = "sha512-ol6UPyBWqsrO6EJySPz2O7ZSr856WDrEzM5zMqp+FJJLGMW35cLYmmZnl0vztAZxRUoNZJFTCohfjuIJ8I4QBQ==";
+    name = "html-url-attributes-3.0.1.tgz";
   };
   "i18next@25.7.2" = fetchurl {
     url = "https://registry.npmmirror.com/i18next/-/i18next-25.7.2.tgz";
@@ -1213,6 +1338,21 @@
     hash = "sha512-JmXMZ6wuvDmLiHEml9ykzqO6lwFbof0GG4IkcGaENdCRDDmMVnny7s5HsIgHCbaq0w2MyPhDqkhTUgS2LU2PHA==";
     name = "imurmurhash-0.1.4.tgz";
   };
+  "inline-style-parser@0.2.7" = fetchurl {
+    url = "https://registry.npmmirror.com/inline-style-parser/-/inline-style-parser-0.2.7.tgz";
+    hash = "sha512-Nb2ctOyNR8DqQoR0OwRG95uNWIC0C1lCgf5Naz5H6Ji72KZ8OcFZLz2P5sNgwlyoJ8Yif11oMuYs5pBQa86csA==";
+    name = "inline-style-parser-0.2.7.tgz";
+  };
+  "is-alphabetical@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/is-alphabetical/-/is-alphabetical-2.0.1.tgz";
+    hash = "sha512-FWyyY60MeTNyeSRpkM2Iry0G9hpr7/9kD40mD/cGQEuilcZYS4okz8SN2Q6rLCJ8gbCt6fN+rC+6tMGS99LaxQ==";
+    name = "is-alphabetical-2.0.1.tgz";
+  };
+  "is-alphanumerical@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/is-alphanumerical/-/is-alphanumerical-2.0.1.tgz";
+    hash = "sha512-hmbYhX/9MUMF5uh7tOXyK/n0ZvWpad5caBA17GsC6vyuCqaWliRG5K1qS9inmUhEMaOBIW7/whAnSwveW/LtZw==";
+    name = "is-alphanumerical-2.0.1.tgz";
+  };
   "is-arrayish@0.2.1" = fetchurl {
     url = "https://registry.npmmirror.com/is-arrayish/-/is-arrayish-0.2.1.tgz";
     hash = "sha512-zz06S8t0ozoDXMG+ube26zeCTNXcKIPJZJi8hBrF4idCLms4CG9QtK7qBl1boi5ODzFpjswb5JPmHCbMpjaYzg==";
@@ -1223,6 +1363,11 @@
     hash = "sha512-UfoeMA6fIJ8wTYFEUjelnaGI67v6+N7qXJEvQuIGa99l4xsCruSYOVSQ0uPANn4dAzm8lkYPaKLrrijLq7x23w==";
     name = "is-core-module-2.16.1.tgz";
   };
+  "is-decimal@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/is-decimal/-/is-decimal-2.0.1.tgz";
+    hash = "sha512-AAB9hiomQs5DXWcRB1rqsxGUstbRroFOPPVAomNk/3XHR5JyEZChOyTWe2oayKnsSsr/kcGqF+z6yuH6HHpN0A==";
+    name = "is-decimal-2.0.1.tgz";
+  };
   "is-extglob@2.1.1" = fetchurl {
     url = "https://registry.npmmirror.com/is-extglob/-/is-extglob-2.1.1.tgz";
     hash = "sha512-SbKbANkN603Vi4jEZv49LeVJMn4yGwsbzZworEoyEiutsN3nJYdbO36zfhGJ6QEDpOZIFkDtnq5JRxmvl3jsoQ==";
@@ -1232,6 +1377,16 @@
     url = "https://registry.npmmirror.com/is-glob/-/is-glob-4.0.3.tgz";
     hash = "sha512-xelSayHH36ZgE7ZWhli7pW34hNbNl8Ojv5KVmkJD4hBdD3th8Tfk9vYasLM+mXWOZhFkgZfxhLSnrwRr4elSSg==";
     name = "is-glob-4.0.3.tgz";
+  };
+  "is-hexadecimal@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/is-hexadecimal/-/is-hexadecimal-2.0.1.tgz";
+    hash = "sha512-DgZQp241c8oO6cA1SbTEWiXeoxV42vlcJxgH+B3hi1AiqqKruZR3ZGF8In3fj4+/y/7rHvlOZLZtgJ/4ttYGZg==";
+    name = "is-hexadecimal-2.0.1.tgz";
+  };
+  "is-plain-obj@4.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/is-plain-obj/-/is-plain-obj-4.1.0.tgz";
+    hash = "sha512-+Pgi+vMuUNkJyExiMBt5IlFoMyKnr5zhJ4Uspz58WOhBF5QoIZkFyNHIbBAtHwzVAgk5RtndVNsDRN61/mmDqg==";
+    name = "is-plain-obj-4.1.0.tgz";
   };
   "isexe@2.0.0" = fetchurl {
     url = "https://registry.npmmirror.com/isexe/-/isexe-2.0.0.tgz";
@@ -1373,6 +1528,11 @@
     hash = "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==";
     name = "lodash-4.17.21.tgz";
   };
+  "longest-streak@3.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/longest-streak/-/longest-streak-3.1.0.tgz";
+    hash = "sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g==";
+    name = "longest-streak-3.1.0.tgz";
+  };
   "loose-envify@1.4.0" = fetchurl {
     url = "https://registry.npmmirror.com/loose-envify/-/loose-envify-1.4.0.tgz";
     hash = "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==";
@@ -1393,10 +1553,230 @@
     hash = "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==";
     name = "magic-string-0.30.21.tgz";
   };
+  "markdown-table@3.0.4" = fetchurl {
+    url = "https://registry.npmmirror.com/markdown-table/-/markdown-table-3.0.4.tgz";
+    hash = "sha512-wiYz4+JrLyb/DqW2hkFJxP7Vd7JuTDm77fvbM8VfEQdmSMqcImWeeRbHwZjBjIFki/VaMK2BhFi7oUUZeM5bqw==";
+    name = "markdown-table-3.0.4.tgz";
+  };
+  "mdast-util-find-and-replace@3.0.2" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-find-and-replace/-/mdast-util-find-and-replace-3.0.2.tgz";
+    hash = "sha512-Tmd1Vg/m3Xz43afeNxDIhWRtFZgM2VLyaf4vSTYwudTyeuTneoL3qtWMA5jeLyz/O1vDJmmV4QuScFCA2tBPwg==";
+    name = "mdast-util-find-and-replace-3.0.2.tgz";
+  };
+  "mdast-util-from-markdown@2.0.3" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-from-markdown/-/mdast-util-from-markdown-2.0.3.tgz";
+    hash = "sha512-W4mAWTvSlKvf8L6J+VN9yLSqQ9AOAAvHuoDAmPkz4dHf553m5gVj2ejadHJhoJmcmxEnOv6Pa8XJhpxE93kb8Q==";
+    name = "mdast-util-from-markdown-2.0.3.tgz";
+  };
+  "mdast-util-gfm-autolink-literal@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-gfm-autolink-literal/-/mdast-util-gfm-autolink-literal-2.0.1.tgz";
+    hash = "sha512-5HVP2MKaP6L+G6YaxPNjuL0BPrq9orG3TsrZ9YXbA3vDw/ACI4MEsnoDpn6ZNm7GnZgtAcONJyPhOP8tNJQavQ==";
+    name = "mdast-util-gfm-autolink-literal-2.0.1.tgz";
+  };
+  "mdast-util-gfm-footnote@2.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-gfm-footnote/-/mdast-util-gfm-footnote-2.1.0.tgz";
+    hash = "sha512-sqpDWlsHn7Ac9GNZQMeUzPQSMzR6Wv0WKRNvQRg0KqHh02fpTz69Qc1QSseNX29bhz1ROIyNyxExfawVKTm1GQ==";
+    name = "mdast-util-gfm-footnote-2.1.0.tgz";
+  };
+  "mdast-util-gfm-strikethrough@2.0.0" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-gfm-strikethrough/-/mdast-util-gfm-strikethrough-2.0.0.tgz";
+    hash = "sha512-mKKb915TF+OC5ptj5bJ7WFRPdYtuHv0yTRxK2tJvi+BDqbkiG7h7u/9SI89nRAYcmap2xHQL9D+QG/6wSrTtXg==";
+    name = "mdast-util-gfm-strikethrough-2.0.0.tgz";
+  };
+  "mdast-util-gfm-table@2.0.0" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-gfm-table/-/mdast-util-gfm-table-2.0.0.tgz";
+    hash = "sha512-78UEvebzz/rJIxLvE7ZtDd/vIQ0RHv+3Mh5DR96p7cS7HsBhYIICDBCu8csTNWNO6tBWfqXPWekRuj2FNOGOZg==";
+    name = "mdast-util-gfm-table-2.0.0.tgz";
+  };
+  "mdast-util-gfm-task-list-item@2.0.0" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-gfm-task-list-item/-/mdast-util-gfm-task-list-item-2.0.0.tgz";
+    hash = "sha512-IrtvNvjxC1o06taBAVJznEnkiHxLFTzgonUdy8hzFVeDun0uTjxxrRGVaNFqkU1wJR3RBPEfsxmU6jDWPofrTQ==";
+    name = "mdast-util-gfm-task-list-item-2.0.0.tgz";
+  };
+  "mdast-util-gfm@3.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-gfm/-/mdast-util-gfm-3.1.0.tgz";
+    hash = "sha512-0ulfdQOM3ysHhCJ1p06l0b0VKlhU0wuQs3thxZQagjcjPrlFRqY215uZGHHJan9GEAXd9MbfPjFJz+qMkVR6zQ==";
+    name = "mdast-util-gfm-3.1.0.tgz";
+  };
+  "mdast-util-mdx-expression@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-mdx-expression/-/mdast-util-mdx-expression-2.0.1.tgz";
+    hash = "sha512-J6f+9hUp+ldTZqKRSg7Vw5V6MqjATc+3E4gf3CFNcuZNWD8XdyI6zQ8GqH7f8169MM6P7hMBRDVGnn7oHB9kXQ==";
+    name = "mdast-util-mdx-expression-2.0.1.tgz";
+  };
+  "mdast-util-mdx-jsx@3.2.0" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-mdx-jsx/-/mdast-util-mdx-jsx-3.2.0.tgz";
+    hash = "sha512-lj/z8v0r6ZtsN/cGNNtemmmfoLAFZnjMbNyLzBafjzikOM+glrjNHPlf6lQDOTccj9n5b0PPihEBbhneMyGs1Q==";
+    name = "mdast-util-mdx-jsx-3.2.0.tgz";
+  };
+  "mdast-util-mdxjs-esm@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-mdxjs-esm/-/mdast-util-mdxjs-esm-2.0.1.tgz";
+    hash = "sha512-EcmOpxsZ96CvlP03NghtH1EsLtr0n9Tm4lPUJUBccV9RwUOneqSycg19n5HGzCf+10LozMRSObtVr3ee1WoHtg==";
+    name = "mdast-util-mdxjs-esm-2.0.1.tgz";
+  };
+  "mdast-util-phrasing@4.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-phrasing/-/mdast-util-phrasing-4.1.0.tgz";
+    hash = "sha512-TqICwyvJJpBwvGAMZjj4J2n0X8QWp21b9l0o7eXyVJ25YNWYbJDVIyD1bZXE6WtV6RmKJVYmQAKWa0zWOABz2w==";
+    name = "mdast-util-phrasing-4.1.0.tgz";
+  };
+  "mdast-util-to-hast@13.2.1" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-to-hast/-/mdast-util-to-hast-13.2.1.tgz";
+    hash = "sha512-cctsq2wp5vTsLIcaymblUriiTcZd0CwWtCbLvrOzYCDZoWyMNV8sZ7krj09FSnsiJi3WVsHLM4k6Dq/yaPyCXA==";
+    name = "mdast-util-to-hast-13.2.1.tgz";
+  };
+  "mdast-util-to-markdown@2.1.2" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-to-markdown/-/mdast-util-to-markdown-2.1.2.tgz";
+    hash = "sha512-xj68wMTvGXVOKonmog6LwyJKrYXZPvlwabaryTjLh9LuvovB/KAH+kvi8Gjj+7rJjsFi23nkUxRQv1KqSroMqA==";
+    name = "mdast-util-to-markdown-2.1.2.tgz";
+  };
+  "mdast-util-to-string@4.0.0" = fetchurl {
+    url = "https://registry.npmmirror.com/mdast-util-to-string/-/mdast-util-to-string-4.0.0.tgz";
+    hash = "sha512-0H44vDimn51F0YwvxSJSm0eCDOJTRlmN0R1yBh4HLj9wiV1Dn0QoXGbvFAWj2hSItVTlCmBF1hqKlIyUBVFLPg==";
+    name = "mdast-util-to-string-4.0.0.tgz";
+  };
   "memoize-one@6.0.0" = fetchurl {
     url = "https://registry.npmmirror.com/memoize-one/-/memoize-one-6.0.0.tgz";
     hash = "sha512-rkpe71W0N0c0Xz6QD0eJETuWAJGnJ9afsl1srmwPrI+yBCkge5EycXXbYRyvL29zZVUWQCY7InPRCv3GDXuZNw==";
     name = "memoize-one-6.0.0.tgz";
+  };
+  "micromark-core-commonmark@2.0.3" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-core-commonmark/-/micromark-core-commonmark-2.0.3.tgz";
+    hash = "sha512-RDBrHEMSxVFLg6xvnXmb1Ayr2WzLAWjeSATAoxwKYJV94TeNavgoIdA0a9ytzDSVzBy2YKFK+emCPOEibLeCrg==";
+    name = "micromark-core-commonmark-2.0.3.tgz";
+  };
+  "micromark-extension-gfm-autolink-literal@2.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-extension-gfm-autolink-literal/-/micromark-extension-gfm-autolink-literal-2.1.0.tgz";
+    hash = "sha512-oOg7knzhicgQ3t4QCjCWgTmfNhvQbDDnJeVu9v81r7NltNCVmhPy1fJRX27pISafdjL+SVc4d3l48Gb6pbRypw==";
+    name = "micromark-extension-gfm-autolink-literal-2.1.0.tgz";
+  };
+  "micromark-extension-gfm-footnote@2.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-extension-gfm-footnote/-/micromark-extension-gfm-footnote-2.1.0.tgz";
+    hash = "sha512-/yPhxI1ntnDNsiHtzLKYnE3vf9JZ6cAisqVDauhp4CEHxlb4uoOTxOCJ+9s51bIB8U1N1FJ1RXOKTIlD5B/gqw==";
+    name = "micromark-extension-gfm-footnote-2.1.0.tgz";
+  };
+  "micromark-extension-gfm-strikethrough@2.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-extension-gfm-strikethrough/-/micromark-extension-gfm-strikethrough-2.1.0.tgz";
+    hash = "sha512-ADVjpOOkjz1hhkZLlBiYA9cR2Anf8F4HqZUO6e5eDcPQd0Txw5fxLzzxnEkSkfnD0wziSGiv7sYhk/ktvbf1uw==";
+    name = "micromark-extension-gfm-strikethrough-2.1.0.tgz";
+  };
+  "micromark-extension-gfm-table@2.1.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-extension-gfm-table/-/micromark-extension-gfm-table-2.1.1.tgz";
+    hash = "sha512-t2OU/dXXioARrC6yWfJ4hqB7rct14e8f7m0cbI5hUmDyyIlwv5vEtooptH8INkbLzOatzKuVbQmAYcbWoyz6Dg==";
+    name = "micromark-extension-gfm-table-2.1.1.tgz";
+  };
+  "micromark-extension-gfm-tagfilter@2.0.0" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-extension-gfm-tagfilter/-/micromark-extension-gfm-tagfilter-2.0.0.tgz";
+    hash = "sha512-xHlTOmuCSotIA8TW1mDIM6X2O1SiX5P9IuDtqGonFhEK0qgRI4yeC6vMxEV2dgyr2TiD+2PQ10o+cOhdVAcwfg==";
+    name = "micromark-extension-gfm-tagfilter-2.0.0.tgz";
+  };
+  "micromark-extension-gfm-task-list-item@2.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-extension-gfm-task-list-item/-/micromark-extension-gfm-task-list-item-2.1.0.tgz";
+    hash = "sha512-qIBZhqxqI6fjLDYFTBIa4eivDMnP+OZqsNwmQ3xNLE4Cxwc+zfQEfbs6tzAo2Hjq+bh6q5F+Z8/cksrLFYWQQw==";
+    name = "micromark-extension-gfm-task-list-item-2.1.0.tgz";
+  };
+  "micromark-extension-gfm@3.0.0" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-extension-gfm/-/micromark-extension-gfm-3.0.0.tgz";
+    hash = "sha512-vsKArQsicm7t0z2GugkCKtZehqUm31oeGBV/KVSorWSy8ZlNAv7ytjFhvaryUiCUJYqs+NoE6AFhpQvBTM6Q4w==";
+    name = "micromark-extension-gfm-3.0.0.tgz";
+  };
+  "micromark-factory-destination@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-factory-destination/-/micromark-factory-destination-2.0.1.tgz";
+    hash = "sha512-Xe6rDdJlkmbFRExpTOmRj9N3MaWmbAgdpSrBQvCFqhezUn4AHqJHbaEnfbVYYiexVSs//tqOdY/DxhjdCiJnIA==";
+    name = "micromark-factory-destination-2.0.1.tgz";
+  };
+  "micromark-factory-label@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-factory-label/-/micromark-factory-label-2.0.1.tgz";
+    hash = "sha512-VFMekyQExqIW7xIChcXn4ok29YE3rnuyveW3wZQWWqF4Nv9Wk5rgJ99KzPvHjkmPXF93FXIbBp6YdW3t71/7Vg==";
+    name = "micromark-factory-label-2.0.1.tgz";
+  };
+  "micromark-factory-space@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-factory-space/-/micromark-factory-space-2.0.1.tgz";
+    hash = "sha512-zRkxjtBxxLd2Sc0d+fbnEunsTj46SWXgXciZmHq0kDYGnck/ZSGj9/wULTV95uoeYiK5hRXP2mJ98Uo4cq/LQg==";
+    name = "micromark-factory-space-2.0.1.tgz";
+  };
+  "micromark-factory-title@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-factory-title/-/micromark-factory-title-2.0.1.tgz";
+    hash = "sha512-5bZ+3CjhAd9eChYTHsjy6TGxpOFSKgKKJPJxr293jTbfry2KDoWkhBb6TcPVB4NmzaPhMs1Frm9AZH7OD4Cjzw==";
+    name = "micromark-factory-title-2.0.1.tgz";
+  };
+  "micromark-factory-whitespace@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-factory-whitespace/-/micromark-factory-whitespace-2.0.1.tgz";
+    hash = "sha512-Ob0nuZ3PKt/n0hORHyvoD9uZhr+Za8sFoP+OnMcnWK5lngSzALgQYKMr9RJVOWLqQYuyn6ulqGWSXdwf6F80lQ==";
+    name = "micromark-factory-whitespace-2.0.1.tgz";
+  };
+  "micromark-util-character@2.1.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-util-character/-/micromark-util-character-2.1.1.tgz";
+    hash = "sha512-wv8tdUTJ3thSFFFJKtpYKOYiGP2+v96Hvk4Tu8KpCAsTMs6yi+nVmGh1syvSCsaxz45J6Jbw+9DD6g97+NV67Q==";
+    name = "micromark-util-character-2.1.1.tgz";
+  };
+  "micromark-util-chunked@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-util-chunked/-/micromark-util-chunked-2.0.1.tgz";
+    hash = "sha512-QUNFEOPELfmvv+4xiNg2sRYeS/P84pTW0TCgP5zc9FpXetHY0ab7SxKyAQCNCc1eK0459uoLI1y5oO5Vc1dbhA==";
+    name = "micromark-util-chunked-2.0.1.tgz";
+  };
+  "micromark-util-classify-character@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-util-classify-character/-/micromark-util-classify-character-2.0.1.tgz";
+    hash = "sha512-K0kHzM6afW/MbeWYWLjoHQv1sgg2Q9EccHEDzSkxiP/EaagNzCm7T/WMKZ3rjMbvIpvBiZgwR3dKMygtA4mG1Q==";
+    name = "micromark-util-classify-character-2.0.1.tgz";
+  };
+  "micromark-util-combine-extensions@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-util-combine-extensions/-/micromark-util-combine-extensions-2.0.1.tgz";
+    hash = "sha512-OnAnH8Ujmy59JcyZw8JSbK9cGpdVY44NKgSM7E9Eh7DiLS2E9RNQf0dONaGDzEG9yjEl5hcqeIsj4hfRkLH/Bg==";
+    name = "micromark-util-combine-extensions-2.0.1.tgz";
+  };
+  "micromark-util-decode-numeric-character-reference@2.0.2" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-util-decode-numeric-character-reference/-/micromark-util-decode-numeric-character-reference-2.0.2.tgz";
+    hash = "sha512-ccUbYk6CwVdkmCQMyr64dXz42EfHGkPQlBj5p7YVGzq8I7CtjXZJrubAYezf7Rp+bjPseiROqe7G6foFd+lEuw==";
+    name = "micromark-util-decode-numeric-character-reference-2.0.2.tgz";
+  };
+  "micromark-util-decode-string@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-util-decode-string/-/micromark-util-decode-string-2.0.1.tgz";
+    hash = "sha512-nDV/77Fj6eH1ynwscYTOsbK7rR//Uj0bZXBwJZRfaLEJ1iGBR6kIfNmlNqaqJf649EP0F3NWNdeJi03elllNUQ==";
+    name = "micromark-util-decode-string-2.0.1.tgz";
+  };
+  "micromark-util-encode@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-util-encode/-/micromark-util-encode-2.0.1.tgz";
+    hash = "sha512-c3cVx2y4KqUnwopcO9b/SCdo2O67LwJJ/UyqGfbigahfegL9myoEFoDYZgkT7f36T0bLrM9hZTAaAyH+PCAXjw==";
+    name = "micromark-util-encode-2.0.1.tgz";
+  };
+  "micromark-util-html-tag-name@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-util-html-tag-name/-/micromark-util-html-tag-name-2.0.1.tgz";
+    hash = "sha512-2cNEiYDhCWKI+Gs9T0Tiysk136SnR13hhO8yW6BGNyhOC4qYFnwF1nKfD3HFAIXA5c45RrIG1ub11GiXeYd1xA==";
+    name = "micromark-util-html-tag-name-2.0.1.tgz";
+  };
+  "micromark-util-normalize-identifier@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-util-normalize-identifier/-/micromark-util-normalize-identifier-2.0.1.tgz";
+    hash = "sha512-sxPqmo70LyARJs0w2UclACPUUEqltCkJ6PhKdMIDuJ3gSf/Q+/GIe3WKl0Ijb/GyH9lOpUkRAO2wp0GVkLvS9Q==";
+    name = "micromark-util-normalize-identifier-2.0.1.tgz";
+  };
+  "micromark-util-resolve-all@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-util-resolve-all/-/micromark-util-resolve-all-2.0.1.tgz";
+    hash = "sha512-VdQyxFWFT2/FGJgwQnJYbe1jjQoNTS4RjglmSjTUlpUMa95Htx9NHeYW4rGDJzbjvCsl9eLjMQwGeElsqmzcHg==";
+    name = "micromark-util-resolve-all-2.0.1.tgz";
+  };
+  "micromark-util-sanitize-uri@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-util-sanitize-uri/-/micromark-util-sanitize-uri-2.0.1.tgz";
+    hash = "sha512-9N9IomZ/YuGGZZmQec1MbgxtlgougxTodVwDzzEouPKo3qFWvymFHWcnDi2vzV1ff6kas9ucW+o3yzJK9YB1AQ==";
+    name = "micromark-util-sanitize-uri-2.0.1.tgz";
+  };
+  "micromark-util-subtokenize@2.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-util-subtokenize/-/micromark-util-subtokenize-2.1.0.tgz";
+    hash = "sha512-XQLu552iSctvnEcgXw6+Sx75GflAPNED1qx7eBJ+wydBb2KCbRZe+NwvIEEMM83uml1+2WSXpBAcp9IUCgCYWA==";
+    name = "micromark-util-subtokenize-2.1.0.tgz";
+  };
+  "micromark-util-symbol@2.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-util-symbol/-/micromark-util-symbol-2.0.1.tgz";
+    hash = "sha512-vs5t8Apaud9N28kgCrRUdEed4UJ+wWNvicHLPxCa9ENlYuAY31M0ETy5y1vA33YoNPDFTghEbnh6efaE8h4x0Q==";
+    name = "micromark-util-symbol-2.0.1.tgz";
+  };
+  "micromark-util-types@2.0.2" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark-util-types/-/micromark-util-types-2.0.2.tgz";
+    hash = "sha512-Yw0ECSpJoViF1qTU4DC6NwtC4aWGt1EkzaQB8KPPyCRR8z9TWeV0HbEFGTO+ZY1wB22zmxnJqhPyTpOVCpeHTA==";
+    name = "micromark-util-types-2.0.2.tgz";
+  };
+  "micromark@4.0.2" = fetchurl {
+    url = "https://registry.npmmirror.com/micromark/-/micromark-4.0.2.tgz";
+    hash = "sha512-zpe98Q6kvavpCr1NPVSCMebCKfD7CA2NqZ+rykeNhONIJBpc1tFKt9hucLGwha3jNTNI8lHpctWJWoimVF4PfA==";
+    name = "micromark-4.0.2.tgz";
   };
   "minimatch@3.1.2" = fetchurl {
     url = "https://registry.npmmirror.com/minimatch/-/minimatch-3.1.2.tgz";
@@ -1452,6 +1832,11 @@
     url = "https://registry.npmmirror.com/parent-module/-/parent-module-1.0.1.tgz";
     hash = "sha512-GQ2EWRpQV8/o+Aw8YqtfZZPfNRWZYkbidE9k5rpl/hC3vtHHBfGm2Ifi6qWV+coDGkrUKZAxE3Lot5kcsRlh+g==";
     name = "parent-module-1.0.1.tgz";
+  };
+  "parse-entities@4.0.2" = fetchurl {
+    url = "https://registry.npmmirror.com/parse-entities/-/parse-entities-4.0.2.tgz";
+    hash = "sha512-GG2AQYWoLgL877gQIKeRPGO1xF9+eG1ujIb5soS5gPvLQ1y2o8FL90w2QWNdf9I361Mpp7726c+lj3U0qK1uGw==";
+    name = "parse-entities-4.0.2.tgz";
   };
   "parse-json@5.2.0" = fetchurl {
     url = "https://registry.npmmirror.com/parse-json/-/parse-json-5.2.0.tgz";
@@ -1518,6 +1903,11 @@
     hash = "sha512-oj87CgZICdulUohogVAR7AjlC0327U4el4L6eAvOqCeudMDVU0NThNaV+b9Df4dXgSP1gXMTnPdhfe/2qDH5cg==";
     name = "prop-types-15.8.1.tgz";
   };
+  "property-information@7.2.0" = fetchurl {
+    url = "https://registry.npmmirror.com/property-information/-/property-information-7.2.0.tgz";
+    hash = "sha512-IAtzIB6sUiWaJYrX9smp3V46pBGbBeLFRGdh25kg1334VcBlD8HzhPeNIWQH9zhGmo2itIe25EHt9dQP7G5hmg==";
+    name = "property-information-7.2.0.tgz";
+  };
   "punycode@2.3.1" = fetchurl {
     url = "https://registry.npmmirror.com/punycode/-/punycode-2.3.1.tgz";
     hash = "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==";
@@ -1538,6 +1928,11 @@
     hash = "sha512-24e6ynE2H+OKt4kqsOvNd8kBpV65zoxbA4BVsEOB3ARVWQki/DHzaUoC5KuON/BiccDaCCTZBuOcfZs70kR8bQ==";
     name = "react-is-16.13.1.tgz";
   };
+  "react-markdown@10.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/react-markdown/-/react-markdown-10.1.0.tgz";
+    hash = "sha512-qKxVopLT/TyA6BX3Ue5NwabOsAzm0Q7kAPwq6L+wWDwisYs7R8vZ0nRXqq6rkueboxpkjvLGU9fWifiX/ZZFxQ==";
+    name = "react-markdown-10.1.0.tgz";
+  };
   "react-refresh@0.17.0" = fetchurl {
     url = "https://registry.npmmirror.com/react-refresh/-/react-refresh-0.17.0.tgz";
     hash = "sha512-z6F7K9bV85EfseRCp2bzrpyQ0Gkw1uLoCel9XBVWPg/TjRj94SkJzUTGfOa4bs7iJvBWtQG0Wq7wnI0syw3EBQ==";
@@ -1557,6 +1952,26 @@
     url = "https://registry.npmmirror.com/react/-/react-18.3.1.tgz";
     hash = "sha512-wS+hAgJShR0KhEvPJArfuPVN1+Hz1t0Y6n5jLrGQbkb4urgPE/0Rve+1kMB1v/oWgHgm4WIcV+i7F2pTVj+2iQ==";
     name = "react-18.3.1.tgz";
+  };
+  "remark-gfm@4.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/remark-gfm/-/remark-gfm-4.0.1.tgz";
+    hash = "sha512-1quofZ2RQ9EWdeN34S79+KExV1764+wCUGop5CPL1WGdD0ocPpu91lzPGbwWMECpEpd42kJGQwzRfyov9j4yNg==";
+    name = "remark-gfm-4.0.1.tgz";
+  };
+  "remark-parse@11.0.0" = fetchurl {
+    url = "https://registry.npmmirror.com/remark-parse/-/remark-parse-11.0.0.tgz";
+    hash = "sha512-FCxlKLNGknS5ba/1lmpYijMUzX2esxW5xQqjWxw2eHFfS2MSdaHVINFmhjo+qN1WhZhNimq0dZATN9pH0IDrpA==";
+    name = "remark-parse-11.0.0.tgz";
+  };
+  "remark-rehype@11.1.2" = fetchurl {
+    url = "https://registry.npmmirror.com/remark-rehype/-/remark-rehype-11.1.2.tgz";
+    hash = "sha512-Dh7l57ianaEoIpzbp0PC9UKAdCSVklD8E5Rpw7ETfbTl3FqcOOgq5q2LVDhgGCkaBv7p24JXikPdvhhmHvKMsw==";
+    name = "remark-rehype-11.1.2.tgz";
+  };
+  "remark-stringify@11.0.0" = fetchurl {
+    url = "https://registry.npmmirror.com/remark-stringify/-/remark-stringify-11.0.0.tgz";
+    hash = "sha512-1OSmLd3awB/t8qdoEOMazZkNsfVTeY4fTsgzcQFdXNq8ToTN4ZGwrMnlda4K6smTFKD+GRV6O48i6Z4iKgPPpw==";
+    name = "remark-stringify-11.0.0.tgz";
   };
   "requireindex@1.1.0" = fetchurl {
     url = "https://registry.npmmirror.com/requireindex/-/requireindex-1.1.0.tgz";
@@ -1618,10 +2033,30 @@
     hash = "sha512-LbrmJOMUSdEVxIKvdcJzQC+nQhe8FUZQTXQy6+I75skNgn3OoQ0DZA8YnFa7gp8tqtL3KPf1kmo0R5DoApeSGQ==";
     name = "source-map-0.5.7.tgz";
   };
+  "space-separated-tokens@2.0.2" = fetchurl {
+    url = "https://registry.npmmirror.com/space-separated-tokens/-/space-separated-tokens-2.0.2.tgz";
+    hash = "sha512-PEGlAwrG8yXGXRjW32fGbg66JAlOAwbObuqVoJpv/mRgoWDQfgH1wDPvtzWyUSNAXBGSk8h755YDbbcEy3SH2Q==";
+    name = "space-separated-tokens-2.0.2.tgz";
+  };
+  "stringify-entities@4.0.4" = fetchurl {
+    url = "https://registry.npmmirror.com/stringify-entities/-/stringify-entities-4.0.4.tgz";
+    hash = "sha512-IwfBptatlO+QCJUo19AqvrPNqlVMpW9YEL2LIVY+Rpv2qsjCGxaDLNRgeGsQWJhfItebuJhsGSLjaBbNSQ+ieg==";
+    name = "stringify-entities-4.0.4.tgz";
+  };
   "strip-json-comments@3.1.1" = fetchurl {
     url = "https://registry.npmmirror.com/strip-json-comments/-/strip-json-comments-3.1.1.tgz";
     hash = "sha512-6fPc+R4ihwqP6N/aIv2f1gMH8lOVtWQHoqC4yK6oSDVVocumAsfCqjkXnqiYMhmMwS/mEHLp7Vehlt3ql6lEig==";
     name = "strip-json-comments-3.1.1.tgz";
+  };
+  "style-to-js@1.1.21" = fetchurl {
+    url = "https://registry.npmmirror.com/style-to-js/-/style-to-js-1.1.21.tgz";
+    hash = "sha512-RjQetxJrrUJLQPHbLku6U/ocGtzyjbJMP9lCNK7Ag0CNh690nSH8woqWH9u16nMjYBAok+i7JO1NP2pOy8IsPQ==";
+    name = "style-to-js-1.1.21.tgz";
+  };
+  "style-to-object@1.0.14" = fetchurl {
+    url = "https://registry.npmmirror.com/style-to-object/-/style-to-object-1.0.14.tgz";
+    hash = "sha512-LIN7rULI0jBscWQYaSswptyderlarFkjQ+t79nzty8tcIAceVomEVlLzH5VP4Cmsv6MtKhs7qaAiwlcp+Mgaxw==";
+    name = "style-to-object-1.0.14.tgz";
   };
   "stylis@4.2.0" = fetchurl {
     url = "https://registry.npmmirror.com/stylis/-/stylis-4.2.0.tgz";
@@ -1658,6 +2093,16 @@
     hash = "sha512-j2Zq4NyQYG5XMST4cbs02Ak8iJUdxRM0XI5QyxXuZOzKOINmWurp3smXu3y5wDcJrptwpSjgXHzIQxR0omXljQ==";
     name = "tinyglobby-0.2.15.tgz";
   };
+  "trim-lines@3.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/trim-lines/-/trim-lines-3.0.1.tgz";
+    hash = "sha512-kRj8B+YHZCc9kQYdWfJB2/oUl9rA99qbowYYBtr4ui4mZyAQ2JpvVBd/6U2YloATfqBhBTSMhTpgBHtU0Mf3Rg==";
+    name = "trim-lines-3.0.1.tgz";
+  };
+  "trough@2.2.0" = fetchurl {
+    url = "https://registry.npmmirror.com/trough/-/trough-2.2.0.tgz";
+    hash = "sha512-tmMpK00BjZiUyVyvrBK7knerNgmgvcV/KLVyuma/SC+TQN167GrMRciANTz09+k3zW8L8t60jWO1GpfkZdjTaw==";
+    name = "trough-2.2.0.tgz";
+  };
   "ts-api-utils@2.1.0" = fetchurl {
     url = "https://registry.npmmirror.com/ts-api-utils/-/ts-api-utils-2.1.0.tgz";
     hash = "sha512-CUgTZL1irw8u29bzrOD/nH85jqyc74D6SshFgujOIA7osm2Rz7dYH77agkx7H4FBNxDq7Cjf+IjaX/8zwFW+ZQ==";
@@ -1683,6 +2128,36 @@
     hash = "sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==";
     name = "undici-types-7.16.0.tgz";
   };
+  "unified@11.0.5" = fetchurl {
+    url = "https://registry.npmmirror.com/unified/-/unified-11.0.5.tgz";
+    hash = "sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA==";
+    name = "unified-11.0.5.tgz";
+  };
+  "unist-util-is@6.0.1" = fetchurl {
+    url = "https://registry.npmmirror.com/unist-util-is/-/unist-util-is-6.0.1.tgz";
+    hash = "sha512-LsiILbtBETkDz8I9p1dQ0uyRUWuaQzd/cuEeS1hoRSyW5E5XGmTzlwY1OrNzzakGowI9Dr/I8HVaw4hTtnxy8g==";
+    name = "unist-util-is-6.0.1.tgz";
+  };
+  "unist-util-position@5.0.0" = fetchurl {
+    url = "https://registry.npmmirror.com/unist-util-position/-/unist-util-position-5.0.0.tgz";
+    hash = "sha512-fucsC7HjXvkB5R3kTCO7kUjRdrS0BJt3M/FPxmHMBOm8JQi2BsHAHFsy27E0EolP8rp0NzXsJ+jNPyDWvOJZPA==";
+    name = "unist-util-position-5.0.0.tgz";
+  };
+  "unist-util-stringify-position@4.0.0" = fetchurl {
+    url = "https://registry.npmmirror.com/unist-util-stringify-position/-/unist-util-stringify-position-4.0.0.tgz";
+    hash = "sha512-0ASV06AAoKCDkS2+xw5RXJywruurpbC4JZSm7nr7MOt1ojAzvyyaO+UxZf18j8FCF6kmzCZKcAgN/yu2gm2XgQ==";
+    name = "unist-util-stringify-position-4.0.0.tgz";
+  };
+  "unist-util-visit-parents@6.0.2" = fetchurl {
+    url = "https://registry.npmmirror.com/unist-util-visit-parents/-/unist-util-visit-parents-6.0.2.tgz";
+    hash = "sha512-goh1s1TBrqSqukSc8wrjwWhL0hiJxgA8m4kFxGlQ+8FYQ3C/m11FcTs4YYem7V664AhHVvgoQLk890Ssdsr2IQ==";
+    name = "unist-util-visit-parents-6.0.2.tgz";
+  };
+  "unist-util-visit@5.1.0" = fetchurl {
+    url = "https://registry.npmmirror.com/unist-util-visit/-/unist-util-visit-5.1.0.tgz";
+    hash = "sha512-m+vIdyeCOpdr/QeQCu2EzxX/ohgS8KbnPDgFni4dQsfSCtpz8UqDyY5GjRru8PDKuYn7Fq19j1CQ+nJSsGKOzg==";
+    name = "unist-util-visit-5.1.0.tgz";
+  };
   "update-browserslist-db@1.1.4" = fetchurl {
     url = "https://registry.npmmirror.com/update-browserslist-db/-/update-browserslist-db-1.1.4.tgz";
     hash = "sha512-q0SPT4xyU84saUX+tomz1WLkxUbuaJnR1xWt17M7fJtEJigJeWUNGUqrauFXsHnqev9y9JTRGwk13tFBuKby4A==";
@@ -1702,6 +2177,16 @@
     url = "https://registry.npmmirror.com/use-sync-external-store/-/use-sync-external-store-1.6.0.tgz";
     hash = "sha512-Pp6GSwGP/NrPIrxVFAIkOQeyw8lFenOHijQWkUTrDvrF4ALqylP2C/KCkeS9dpUM3KvYRQhna5vt7IL95+ZQ9w==";
     name = "use-sync-external-store-1.6.0.tgz";
+  };
+  "vfile-message@4.0.3" = fetchurl {
+    url = "https://registry.npmmirror.com/vfile-message/-/vfile-message-4.0.3.tgz";
+    hash = "sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw==";
+    name = "vfile-message-4.0.3.tgz";
+  };
+  "vfile@6.0.3" = fetchurl {
+    url = "https://registry.npmmirror.com/vfile/-/vfile-6.0.3.tgz";
+    hash = "sha512-KzIbH/9tXat2u30jf+smMwFCsno4wHVdNmzFyL+T/L3UGqqk6JKfVqOFOZEpZSHADH1k40ab6NUIXZq422ov3Q==";
+    name = "vfile-6.0.3.tgz";
   };
   "vite@6.4.1" = fetchurl {
     url = "https://registry.npmmirror.com/vite/-/vite-6.4.1.tgz";
@@ -1747,5 +2232,10 @@
     url = "https://registry.npmmirror.com/zustand/-/zustand-5.0.8.tgz";
     hash = "sha512-gyPKpIaxY9XcO2vSMrLbiER7QMAMGOQZVRdJ6Zi782jkbzZygq5GI9nG8g+sMgitRtndwaBSl7uiqC49o1SSiw==";
     name = "zustand-5.0.8.tgz";
+  };
+  "zwitch@2.0.4" = fetchurl {
+    url = "https://registry.npmmirror.com/zwitch/-/zwitch-2.0.4.tgz";
+    hash = "sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==";
+    name = "zwitch-2.0.4.tgz";
   };
 }
