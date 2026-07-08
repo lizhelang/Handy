@@ -25469,3 +25469,177 @@ spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMe
 - 当前本地开发签名/Gatekeeper 路径已达成：系统安装版 accepted，且 build/system/pkg 三者 CDHash 一致。
 - 非 GUI verifier 通过，且确认 UI smoke 在 `tis-not-ready` 时不会启动，不会抢用户光标。
 - 真实 GUI smoke 仍未运行，因为 readiness 仍是 `missing-enabled-source`，不是签名或 pkg blocker。
+
+## v62 Mac mini：停止手写 HIToolbox enabled/selected，避免继续制造假启用状态
+
+时间：2026-07-08 16:13:06 +0800
+
+背景：
+
+- v60/v61 以后继续按根因链追 TIS：系统 app 已被 Gatekeeper 本地开发模式放行，但 `TISCreateInputSourceList(nil, false)` 仍枚举不到 Inputia。
+- 新复核发现同一进程内 `TISEnableInputSource` 后能短暂看到 `enabledSourceAlreadyPresent=true`，但新进程立刻 `inputSourceFound=false`；这说明 TIS enable 状态没有跨进程持久化。
+- 同时 `defaults read com.apple.HIToolbox` / `defaults read com.apple.inputsources` 都返回 domain missing，即使 `~/Library/Preferences/com.apple.HIToolbox.plist` 和 `com.apple.inputsources.plist` 文件存在且 `plutil -lint` 通过。
+- 当前 `id` 仍显示 `uid=501` 但 `whoami` 只能返回 `501`，`pwd.getpwuid(501)` 失败；`TextInputMenuAgent` / `SystemUIServer` / `cfprefsd` 以数字用户 `501` 运行。
+
+关键诊断：
+
+```text
+/Library/Input Methods/InputiaInputMethod.app/Contents/MacOS/InputiaInputMethod --enable-input-source
+  enabledSourceAlreadyPresent=true
+  id=com.inputia.inputmethod.Inputia.Main
+  enabled=true
+  selectable=true
+
+/Library/Input Methods/InputiaInputMethod.app/Contents/MacOS/InputiaInputMethod --select-input-source
+  inputSourceFoundInEnabledList=true
+  selectStatus=-50
+  selectCurrentID=com.apple.keylayout.ABC
+  selectCurrentMatchesTarget=false
+
+/Library/Input Methods/InputiaInputMethod.app/Contents/MacOS/InputiaInputMethod --dump-enabled-input-source
+  inputSourceFound=false
+
+defaults read com.apple.HIToolbox
+  Domain com.apple.HIToolbox does not exist
+
+__CFPREFERENCES_AVOID_DAEMON=1 defaults read com.apple.HIToolbox
+  Domain com.apple.HIToolbox does not exist
+```
+
+结论：
+
+- 手写 `AppleEnabledInputSources` / `AppleSelectedInputSources` 不能解决当前 TIS readiness：TIS 新进程仍看不到 enabled list。
+- 更糟的是，直接写 HIToolbox plist 会制造“偏好文件像是添加了 Inputia、菜单/TIS 仍不能用”的假状态，并可能污染用户输入源状态。
+- 因此本轮把 `--normalize-hitoolbox` 降级为诊断/保护性 no-op：保留命令名和计数输出，但不再调用 `setPreferenceArray`、不再写 `~/Library/Preferences/com.apple.HIToolbox.plist`，只输出 requiredAction。
+
+代码处理：
+
+```text
+InputiaInputMethod --normalize-hitoolbox
+  hitoolboxNormalizeTargetModeID=com.inputia.inputmethod.Inputia.Main
+  hitoolboxNormalizeEnabledBefore=3
+  hitoolboxNormalizeEnabledAfter=3
+  hitoolboxNormalizeSelectedBefore=1
+  hitoolboxNormalizeSelectedAfter=1
+  hitoolboxNormalizeHistoryBefore=1
+  hitoolboxNormalizeHistoryAfter=1
+  thirdPartyEnabledBefore=0
+  thirdPartyEnabledAfter=0
+  hitoolboxNormalizeSkipped=true reason=manual-hitoolbox-write-disabled
+  hitoolboxNormalizeRequiredAction=enable-via-system-settings-or-fix-user-preference-service
+  hitoolboxNormalize=true
+
+hash check
+  hitoolboxUnchanged=true
+  inputsourcesUnchanged=true
+```
+
+验证：
+
+```text
+./macos/InputiaInputMethod/build-pkg.sh
+  buildPkgSigned=false reason=unsigned-local-package
+  appCDHash=0ec2f7d06f720212e3e6039eb19fc84b984d06da
+  archiveAppCDHash=0ec2f7d06f720212e3e6039eb19fc84b984d06da
+  pkgVerificationPassed=true
+
+/tmp/inputia-verify-nongui-20260708-161150-no-manual-hitoolbox-final.log
+  awaitUiNotReady.rc=2
+  awaitUiNotReadyNoLaunchPassed=true
+  statusGuiSmokeBlockReasons=target-cdhash-mismatch,admin-required,tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,frontmost-unavailable
+  residue=false
+  tmpResidue=false
+  nonGuiVerificationPassed=true
+```
+
+当前状态：
+
+- 这一步没有解决 `tisReadiness=false`，但去掉了一个已被证据否定且会污染状态的安装副作用。
+- 新 build/package CDHash 是 `0ec2f7d06f720212e3e6039eb19fc84b984d06da`；系统目录仍是上一版 `3623ad086abd01db2c60fb05d7b03229cb060c41`，因为当前 Mac mini `sudo` / 管理员安装仍被 UID/passwd 问题阻塞。
+- 真实 TextEdit/Safari/Clipboard GUI smoke 仍未运行；readiness 未过时 verifier 明确证明 UI smoke 不会启动。
+
+## v62 Mac mini：停止系统设置 UI 探测，回到终端验证 Gatekeeper/TIS/menu 状态
+
+时间：2026-07-08 16:14:00 +0800
+
+背景：
+
+- 本轮按用户要求停止 System Settings UI 探测，只走终端验证。
+- 明确本轮路径是“本地开发模式，复刻 MacBook Gatekeeper disabled 路径”，不是正式分发路径；正式分发后续仍应走 Developer ID + notarization。
+- 终端确认 Mac mini 已关闭 Gatekeeper assessments：
+
+```text
+spctl --status
+  assessments disabled
+
+spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  /Library/Input Methods/InputiaInputMethod.app: accepted
+  override=security disabled
+```
+
+安装版/TIS 终端验证：
+
+```text
+./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  buildCDHash=3623ad086abd01db2c60fb05d7b03229cb060c41
+  appCDHash=3623ad086abd01db2c60fb05d7b03229cb060c41
+  appSignatureAccepted=true
+  appMatchesBuild=true
+  tis.enabledMatches=3
+  tis.installedMatches=3
+  tis.targetEnabledMatches=2
+  tis.targetInstalledMatches=2
+  tis.hansEnabled=true
+  tis.hansSelectable=true
+  tis.hansSelected=true
+  tis.currentID=com.inputia.inputmethod.Inputia.Main
+  tis.currentMatchesTarget=true
+  tis.readinessBlockReason=none
+  tisReadiness=true
+
+./macos/InputiaInputMethod/status.sh
+  systemMatchesBuild=true
+  statusSignatureAccepted=true
+  statusTISEnabledMatches=3
+  statusTISInstalledMatches=3
+  statusMenuReadiness=false
+  statusMenuBlockReason=inputia-menu-item-missing
+  statusTextEditPreflight=not-running
+  statusSafariPreflight=not-running
+  statusInputiaHostPreflight=not-running
+  statusGuiSmokeReady=false reason=menu-inputia-menu-item-missing
+```
+
+终端 spike：
+
+- 只用 `TISEnableInputSource` / `TISSelectInputSource`，不写偏好域：失败，父输入法仍未 enabled，`tisReadiness=false`，日志 `/tmp/inputia-terminal-reset-enable-20260708-160523.log`。
+- 保留 `com.apple.inputsources AppleEnabledThirdPartyInputSources`，但从 `com.apple.HIToolbox AppleEnabledInputSources` 移除 Inputia：成功消除 TIS 重复项，`tis.enabledMatches=2`、`tis.installedMatches=2`、`tisReadiness=true`；菜单仍缺 Inputia，日志 `/tmp/inputia-terminal-thirdparty-only-20260708-160723.log`。
+- 因此源码修正为：`normalizeHIToolbox()` 不再把 Inputia 写进 `AppleEnabledInputSources`，只保留 selected/history，并把 parent + mode 写入 `AppleEnabledThirdPartyInputSources`。
+
+当前 blocker：
+
+- 签名/Gatekeeper blocker 已消失：系统安装版 accepted，原因是本地开发模式 `override=security disabled`。
+- TIS readiness 现在可通过，但菜单栏代理仍未显示 Inputia：`menuReadiness=false reason=inputia-menu-item-missing`。
+- 因菜单 readiness 未过，本轮没有运行 TextEdit/Safari/Clipboard GUI smoke，避免抢用户光标。
+- 重新安装 patched binary 时非交互 sudo credential 失败，安装脚本未进入日志阶段；没有弹系统设置或授权 UI。
+
+本轮最小验证：
+
+```text
+swiftc -parse macos/InputiaInputMethod/Sources/InputiaInputMethod/main.swift ... InputiaRustBridge.swift
+  ok
+
+bash -n macos/InputiaInputMethod/verify-nongui.sh
+  ok
+
+zsh -n macos/InputiaInputMethod/install-system.sh macos/InputiaInputMethod/status.sh
+  ok
+
+pgrep verify/build/status/tis processes
+  no residue
+```
+
+结论：
+
+- 本轮不要再把 Developer ID / notarization 当作 MVP 阻塞；Mac mini 已进入与 MacBook 对齐的本地开发 Gatekeeper disabled 方向。
+- 下一步应继续终端优先定位菜单栏代理为什么没有把 `AppleEnabledThirdPartyInputSources` 中的 Inputia 渲染进输入菜单；在 `menuReadiness=true` 前仍不要跑真实 GUI smoke。
