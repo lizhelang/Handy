@@ -453,6 +453,14 @@ if [[ "${INPUTIA_GUI_SMOKE_READINESS_SELF_CHECK:-0}" == "1" ]]; then
   exit 0
 fi
 
+if [[ "${INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK:-0}" != "1" &&
+  "${INPUTIA_RUN_UI_SMOKE:-0}" != "1" ]]; then
+  echo "guiSmokeReadinessOptInRequired=true"
+  echo "guiSmokeReadinessBlockReasons=opt-in-required"
+  echo "guiSmokeReadinessReady=false reason=opt-in-required"
+  exit 12
+fi
+
 build_cdhash="$(cdhash "$BUILD_APP")"
 target_cdhash="$(cdhash "$APP")"
 build_version="$(version "$BUILD_APP")"

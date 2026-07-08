@@ -10,6 +10,13 @@ if [[ -n "$CACHE_FILE" && -s "$CACHE_FILE" && "${INPUTIA_MENU_READINESS_DISABLE_
   exit 0
 fi
 
+if [[ "${INPUTIA_MENU_READINESS_ALLOW_AXPRESS:-0}" != "1" ]]; then
+  echo "menuAXPressAllowed=false"
+  echo "menuReadiness=unknown"
+  echo "menuReadinessBlockReason=opt-in-required"
+  exit 0
+fi
+
 osascript_output="$(
   /usr/bin/osascript <<'APPLESCRIPT' 2>&1 || true
 tell application "System Events"
@@ -51,7 +58,7 @@ APPLESCRIPT
 )"
 
 normalized_output="$(printf '%s\n' "$osascript_output" | tr '\r' '\n')"
-final_output="$normalized_output"
+final_output="menuAXPressAllowed=true"$'\n'"$normalized_output"
 
 append_line() {
   final_output="${final_output}"$'\n'"$1"

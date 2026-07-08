@@ -339,7 +339,7 @@ elif [[ "${INPUTIA_TIS_SKIP_MENU_READINESS:-0}" == "1" ]]; then
   menu_readiness=unknown
   menu_block_reason=skipped
 elif [[ -x "$ROOT_DIR/menu-readiness.sh" ]]; then
-  menu_output="$("$ROOT_DIR/menu-readiness.sh" 2>&1 || true)"
+  menu_output="$(INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1 "$ROOT_DIR/menu-readiness.sh" 2>&1 || true)"
   menu_readiness="$(/usr/bin/awk -F= '$1 == "menuReadiness" { print $2; exit }' <<<"$menu_output")"
   menu_block_reason="$(/usr/bin/awk -F= '$1 == "menuReadinessBlockReason" { print $2; exit }' <<<"$menu_output")"
   menu_inputia_count="$(/usr/bin/awk -F= '$1 == "menuInputiaCount" { print $2; exit }' <<<"$menu_output")"

@@ -82,6 +82,8 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 
 `release/full-check.sh` 是显式 opt-in 的重型入口，会跑 pkg/postinstall、公证 readiness、菜单栏 AXPress、TextEdit/Safari/Clipboard GUI smoke。它会为一次验证周期创建 `INPUTIA_MENU_READINESS_CACHE_FILE`，让菜单栏 AXPress 最多执行一次，后续子脚本只读 cache。
 
+`menu-readiness.sh` 和 `gui-smoke-readiness.sh` 本身也带硬门禁：直接运行时默认只输出 opt-in-required，不会打开菜单栏或读取 GUI readiness。只有 `release/full-check.sh` 或显式设置 `INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1` / `INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK=1` 的诊断才允许进入这些检查。
+
 查看当前 build、系统安装、运行进程、设置启动器和最新安装包是否同版本：
 
 ```bash
@@ -111,6 +113,8 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 ```
 
 `verify-nongui.sh` 现在默认委托到 `dev-fast.sh`，避免日常开发误跑旧的全量聚合验证。确实需要旧全量 non-GUI 聚合时，显式设置 `INPUTIA_VERIFY_NONGUI_FULL=1 ./macos/InputiaInputMethod/verify-nongui.sh`。
+
+普通修候选词、双拼、快捷键、设置 UI 时，不要再把 `verify-nongui.sh` 当主入口；用 `dev-fast.sh`。重装或安装链路变化用 `install-check.sh`。发布前、pkg/postinstall/signing/notarization 或 GUI smoke 相关改动才用 `release/full-check.sh`。
 
 `verify-nongui.sh` 会使用 `/tmp/inputia-verify-nongui.lock` 防止两条聚合验证并发互相污染残留判断。活锁存在时会返回 rc=20，并输出 `nonGuiVerificationPassed=false reason=verify-already-running` 与 `verifyLockOwnerPid=...`；pid 不存在的 stale lock 会自动清理并继续验证。不要手工删除仍在运行的 owner pid 对应锁；异常中断后再次运行脚本即可自愈。
 
@@ -289,6 +293,14 @@ INPUTIA_CODESIGN_IDENTITY="Codexbar Local Code Signing Leaf v4" \
 ```
 
 `open-installer.sh` 会构建带 CDHash 的唯一 pkg 文件名，并打开刚生成的那一个，避免 Installer 缓存旧 digest。
+
+如果当前环境不能非交互取得管理员权限，先生成不抢前台的安装交接清单：
+
+```bash
+./macos/InputiaInputMethod/install-handoff.sh
+```
+
+`install-handoff.sh` 不会打开 Installer，也不会改系统输入源；它会重建并验证最新 pkg，然后在 `build/install-handoff.txt` 里写入 pkg 路径、SHA256、当前 build CDHash、系统已安装 CDHash、管理员终端安装命令，以及安装后的 `await-system-install.sh` / `install-check.sh` 验证命令。
 
 `postinstall` 会打印 `inputiaInstalledVersion` / `inputiaInstalledCDHash`，并按 Squirrel 的路线 kill 旧 Host、register、以登录用户 enable/select，然后刷新 Text Input 菜单服务。
 

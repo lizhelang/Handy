@@ -39,6 +39,9 @@ echo "rustToolchain=$RUST_TOOLCHAIN"
 section "build artifact lock self-check"
 "$ROOT_DIR/build-artifact-lock-self-check.sh"
 
+section "validation policy self-check"
+"$ROOT_DIR/validation-policy-self-check.sh"
+
 section "build"
 run_rust "$ROOT_DIR/build.sh"
 

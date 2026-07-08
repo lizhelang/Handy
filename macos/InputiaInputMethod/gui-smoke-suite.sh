@@ -20,6 +20,7 @@ readiness_output() {
 
   env INPUTIA_TEXTEDIT_SMOKE_ALLOW_EXISTING=0 \
     INPUTIA_SAFARI_SMOKE_ALLOW_EXISTING=0 \
+    INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK=1 \
     "$READINESS_SCRIPT" "$APP"
 }
 
@@ -174,6 +175,13 @@ if [[ "${INPUTIA_GUI_SMOKE_SUITE_SELF_CHECK:-0}" == "1" ]]; then
   fi
   echo "guiSmokeSuiteSelfCheck=true"
   exit 0
+fi
+
+if [[ "${INPUTIA_RUN_UI_SMOKE:-0}" != "1" ]]; then
+  echo "guiSmokeSuiteReady=false reason=ui-smoke-opt-in-required"
+  echo "guiSmokeSuiteBlockReasons=ui-smoke-opt-in-required"
+  echo "guiSmokeSuiteWouldRun=false"
+  exit 12
 fi
 
 run_gui_smoke_suite
