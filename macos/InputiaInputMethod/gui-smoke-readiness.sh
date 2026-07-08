@@ -411,6 +411,9 @@ admin_ready=false
 if [[ "$admin_line" == adminInstallReady=true* ]]; then
   admin_ready=true
 fi
+if [[ "$APP" == "$USER_APP" ]]; then
+  admin_ready=true
+fi
 gui_block="$(gui_session_block_reason)"
 textedit_state="$(process_state TextEdit)"
 safari_state="$(process_state Safari)"
