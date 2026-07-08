@@ -40,6 +40,11 @@ PY
 }
 
 run_install_check() {
+  local stage="${1:-default}"
+  if [[ "$stage" == "after-install" && -n "${INPUTIA_APPLY_AFTER_INSTALL_CHECK_FOR_TEST:-}" ]]; then
+    printf '%s\n' "$INPUTIA_APPLY_AFTER_INSTALL_CHECK_FOR_TEST"
+    return 0
+  fi
   if [[ -n "${INPUTIA_APPLY_INSTALL_CHECK_FOR_TEST:-}" ]]; then
     printf '%s\n' "$INPUTIA_APPLY_INSTALL_CHECK_FOR_TEST"
     return 0
@@ -179,11 +184,11 @@ if [[ "${INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK:-0}" == "1" ]]; then
       INPUTIA_APPLY_REPAIR_TIS_FOR_TEST=1 \
       INPUTIA_APPLY_AWAIT_INSTALL_FOR_TEST=1 \
       INPUTIA_APPLY_INSTALL_CHECK_FOR_TEST=$'installHandoffCurrent=true\ninstallHandoffBlockReasons=none\ninstallHandoffPackagePath='"$success_pkg"$'\ninstallCheckBlockReasons=system-cdhash-mismatch,tis-duplicate-matches,running-cdhash-mismatch,admin-required\ninstallCheckRequiredAction=admin-install-current-handoff\ninstallCheckRequiredActions=admin-install-current-handoff,run-repair-tis-duplicates,restart-inputia-host-after-install\ninstallCheckPassed=false\n' \
+      INPUTIA_APPLY_AFTER_INSTALL_CHECK_FOR_TEST=$'installHandoffCurrent=true\ninstallHandoffBlockReasons=none\ninstallHandoffPackagePath='"$success_pkg"$'\ninstallCheckBlockReasons=tis-duplicate-matches,running-cdhash-mismatch\ninstallCheckRequiredAction=remove-duplicate-inputia-and-readd-once\ninstallCheckRequiredActions=run-repair-tis-duplicates,restart-inputia-host-after-install\ninstallCheckPassed=false\n' \
       INPUTIA_APPLY_FINAL_INSTALL_CHECK_FOR_TEST=$'installCheckPassed=true\ninstallCheckRequiredAction=none\ninstallCheckRequiredActions=none\ninstallCheckNextStep=none\n' \
       INPUTIA_APPLY_FINAL_INSTALL_CHECK_RC_FOR_TEST=0 \
       "$0" 2>&1
   )"
-  /bin/rm -rf "$success_root" >/dev/null 2>&1 || true
   for marker in \
     applyCurrentHandoffAdminInstallForTest=true \
     applyCurrentHandoffAdminInstallPassed=true \
@@ -206,6 +211,25 @@ if [[ "${INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK:-0}" == "1" ]]; then
     echo "applyCurrentHandoffSelfCheckOrder=admin:$admin_line repair:$repair_line await:$await_line final:$final_line passed:$passed_line"
     exit 1
   fi
+  admin_still_required_output="$(
+    INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=0 \
+      INPUTIA_INSTALL_HANDOFF_PATH="$success_handoff" \
+      INPUTIA_APPLY_ADMIN_INSTALL_FOR_TEST=1 \
+      INPUTIA_APPLY_REPAIR_TIS_FOR_TEST=1 \
+      INPUTIA_APPLY_AWAIT_INSTALL_FOR_TEST=1 \
+      INPUTIA_APPLY_INSTALL_CHECK_FOR_TEST=$'installHandoffCurrent=true\ninstallHandoffBlockReasons=none\ninstallHandoffPackagePath='"$success_pkg"$'\ninstallCheckBlockReasons=system-cdhash-mismatch,admin-required\ninstallCheckRequiredAction=admin-install-current-handoff\ninstallCheckRequiredActions=admin-install-current-handoff,run-repair-tis-duplicates,restart-inputia-host-after-install\ninstallCheckPassed=false\n' \
+      INPUTIA_APPLY_AFTER_INSTALL_CHECK_FOR_TEST=$'installHandoffCurrent=true\ninstallHandoffBlockReasons=none\ninstallHandoffPackagePath='"$success_pkg"$'\ninstallCheckBlockReasons=system-cdhash-mismatch,admin-required\ninstallCheckRequiredAction=admin-install-current-handoff\ninstallCheckRequiredActions=admin-install-current-handoff,run-repair-tis-duplicates,restart-inputia-host-after-install\ninstallCheckPassed=false\n' \
+      "$0" 2>&1 || true
+  )"
+  if ! /usr/bin/grep -q '^applyCurrentHandoffPassed=false reason=admin-install-did-not-update-system$' <<<"$admin_still_required_output"; then
+    echo "applyCurrentHandoffSelfCheck=false reason=missing-admin-still-required-marker"
+    exit 1
+  fi
+  if /usr/bin/grep -q '^applyCurrentHandoffRepairTISForTest=true$' <<<"$admin_still_required_output"; then
+    echo "applyCurrentHandoffSelfCheck=false reason=repair-ran-after-admin-still-required"
+    exit 1
+  fi
+  /bin/rm -rf "$success_root" >/dev/null 2>&1 || true
   final_failure_output="$(
     INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=0 \
       INPUTIA_APPLY_FINAL_INSTALL_CHECK_FOR_TEST=$'installCheckPassed=false\ninstallCheckRequiredAction=restart-inputia-host-after-install\ninstallCheckRequiredActions=restart-inputia-host-after-install\ninstallCheckNextStep=apply-current-handoff\n' \
@@ -260,7 +284,7 @@ if [[ ! -f "$HANDOFF_PATH" ]]; then
   exit 11
 fi
 
-initial_check="$(run_install_check)"
+initial_check="$(run_install_check initial)"
 print_install_check_summary "initial" "$initial_check"
 
 handoff_current="$(value_from_output "$initial_check" "installHandoffCurrent")"
@@ -292,9 +316,17 @@ else
   echo "applyCurrentHandoffAdminInstallSkipped=true"
 fi
 
-after_install_check="$(run_install_check)"
+after_install_check="$(run_install_check after-install)"
 print_install_check_summary "afterInstall" "$after_install_check"
 after_install_actions="$(value_from_output "$after_install_check" "installCheckRequiredActions")"
+
+if contains_action "$after_install_actions" "admin-install-current-handoff" ||
+  contains_action "$after_install_actions" "run-install-handoff-and-admin-install"; then
+  echo "applyCurrentHandoffPassed=false reason=admin-install-did-not-update-system"
+  echo "applyCurrentHandoffRequiredAction=$(value_from_output "$after_install_check" "installCheckRequiredAction")"
+  echo "applyCurrentHandoffRequiredActions=$after_install_actions"
+  exit 14
+fi
 
 section "tis duplicate repair"
 if contains_action "$after_install_actions" "run-repair-tis-duplicates"; then

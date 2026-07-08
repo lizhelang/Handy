@@ -27624,3 +27624,46 @@ INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=1 ./macos/InputiaInputMethod/apply-curr
 
 - 默认开发验证可以证明安装动作链顺序，但不会执行管理员安装或修改系统输入源。
 - 真正进入系统运行态仍需要显式运行 `INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh`，然后重跑 `install-check.sh`。
+
+## 2026-07-09 05:22 CST - apply-current-handoff 安装后 admin 仍未解除时停止 repair
+
+背景：
+
+- `apply-current-handoff.sh` 的成功 dry-run 需要区分“安装前检查”和“安装后检查”。
+- 如果管理员安装动作返回后，`install-check` 仍报告 `admin-install-current-handoff`，说明系统目录还没有进入当前 build；这时继续 TIS duplicate repair 会把系统输入源修到一个错误前提上。
+
+实现：
+
+- `run_install_check` 增加 `after-install` stage，并允许 `INPUTIA_APPLY_AFTER_INSTALL_CHECK_FOR_TEST` 只注入安装后的模拟结果。
+- 真正执行链路中，安装后若动作链仍包含 `admin-install-current-handoff` 或 `run-install-handoff-and-admin-install`，立即输出 `applyCurrentHandoffPassed=false reason=admin-install-did-not-update-system` 并退出，不进入 repair。
+- 自检新增“admin 仍未解除”分支，要求这个失败 marker 出现，并要求 `applyCurrentHandoffRepairTISForTest=true` 不得出现。
+
+验证：
+
+```text
+zsh -n macos/InputiaInputMethod/apply-current-handoff.sh
+  rc=0
+
+INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=1 ./macos/InputiaInputMethod/apply-current-handoff.sh
+  applyCurrentHandoffSelfCheck=true
+
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+
+INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/dev-fast.sh
+  validationTier=dev-fast
+  touchesMenuBar=false
+  opensGUI=false
+  changesSystemInputSource=false
+  checksNotarization=false
+  candidate[0]=你来
+  page_size=7
+  rimeLatencyIncrementalMs=39.744
+  rimeLatencySelfCheck=true
+  devFastPassed=true
+```
+
+结论：
+
+- 默认开发验证仍只走 `dev-fast`，不会打开菜单栏、GUI 或修改系统输入源。
+- `apply-current-handoff` 的 test-only 自检现在覆盖成功链和“安装后仍需 admin 时不得继续 repair”的失败保护。
