@@ -467,6 +467,7 @@ final class InputiaRustBridge {
     return [
       "textedit": bridge.shouldReadClipboard(bundleId: "com.apple.TextEdit"),
       "onepassword": bridge.shouldReadClipboard(bundleId: "com.1password.1password"),
+      "securityAgent": bridge.shouldReadClipboard(bundleId: "com.apple.SecurityAgent"),
       "unknown": bridge.shouldReadClipboard(bundleId: "unknown"),
       "privateWindow": bridge.shouldReadClipboard(
         bundleId: "com.apple.Safari",

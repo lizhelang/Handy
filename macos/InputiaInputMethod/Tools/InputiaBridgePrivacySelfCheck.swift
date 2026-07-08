@@ -15,6 +15,7 @@ struct InputiaBridgePrivacySelfCheck {
     let checks: [(String, Bool)] = [
       ("texteditAllowsClipboardRead", result["textedit"] == true),
       ("onepasswordRejectsClipboardRead", result["onepassword"] == false),
+      ("securityAgentRejectsClipboardRead", result["securityAgent"] == false),
       ("unknownRejectsClipboardRead", result["unknown"] == false),
       ("privateWindowRejectsClipboardRead", result["privateWindow"] == false),
     ]

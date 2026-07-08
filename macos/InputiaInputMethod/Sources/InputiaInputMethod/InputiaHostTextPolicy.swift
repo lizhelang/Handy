@@ -1,9 +1,24 @@
 import Foundation
 
+struct InputiaSecureDirectDecision: Equatable {
+  let passthrough: Bool
+  let clearComposition: Bool
+  let hideCandidates: Bool
+  let blockClipboardRecall: Bool
+  let readsContext: Bool
+  let callsBridgeHandle: Bool
+  let setsMarkedTextForInput: Bool
+  let showsCandidates: Bool
+  let learns: Bool
+}
+
 enum InputiaHostTextPolicy {
   static let replacementRange = NSRange(location: NSNotFound, length: NSNotFound)
   static let recallClipboardMenuKeyEquivalent = ""
   static let settingsMenuKeyEquivalent = ""
+  private static let secureDirectBundleIdentifiers: Set<String> = [
+    "com.apple.SecurityAgent",
+  ]
   private static let newlineCommandSelectors: Set<String> = [
     "insertNewline:",
     "insertLineBreak:",
@@ -138,6 +153,37 @@ enum InputiaHostTextPolicy {
 
   static func shouldPassThroughAppCommand(selectorName: String) -> Bool {
     appCommandSelectors.contains(selectorName)
+  }
+
+  static func isSecureDirectBundleIdentifier(_ bundleIdentifier: String?) -> Bool {
+    guard let bundleIdentifier else {
+      return false
+    }
+    return secureDirectBundleIdentifiers.contains(
+      bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+    )
+  }
+
+  static func shouldPassThroughSecureDirectText(
+    _ text: String,
+    bundleIdentifier: String?
+  ) -> Bool {
+    isSecureDirectBundleIdentifier(bundleIdentifier) && !text.isEmpty
+  }
+
+  static func secureDirectDecision(bundleIdentifier: String?) -> InputiaSecureDirectDecision {
+    let passthrough = isSecureDirectBundleIdentifier(bundleIdentifier)
+    return InputiaSecureDirectDecision(
+      passthrough: passthrough,
+      clearComposition: passthrough,
+      hideCandidates: passthrough,
+      blockClipboardRecall: passthrough,
+      readsContext: false,
+      callsBridgeHandle: false,
+      setsMarkedTextForInput: false,
+      showsCandidates: false,
+      learns: false
+    )
   }
 
   static func shouldPassThroughNewlineAfterRawFallbackCommit(

@@ -88,6 +88,10 @@ final class InputiaInputController: IMKInputController {
       return false
     }
 
+    if shouldPassThroughSecureDirectClient(client) {
+      return false
+    }
+
     if latestComposing.isEmpty,
       InputiaShortcutClassifier.isInputTextEnter(string) || string == " "
     {
@@ -139,6 +143,10 @@ final class InputiaInputController: IMKInputController {
       let event,
       let client = sender as? IMKTextInput
     else {
+      return false
+    }
+
+    if shouldPassThroughSecureDirectClient(client) {
       return false
     }
 
@@ -318,6 +326,10 @@ final class InputiaInputController: IMKInputController {
   }
 
   override func candidateSelected(_ candidateString: NSAttributedString!) {
+    if let currentClient = client(), shouldPassThroughSecureDirectClient(currentClient) {
+      return
+    }
+
     guard let selected = candidateString?.string else {
       return
     }
@@ -341,6 +353,9 @@ final class InputiaInputController: IMKInputController {
 
   override func commitComposition(_ sender: Any!) {
     guard let client = (sender as? IMKTextInput) ?? client() else {
+      return
+    }
+    if shouldPassThroughSecureDirectClient(client) {
       return
     }
     let context = appContext(for: client)
@@ -380,6 +395,9 @@ final class InputiaInputController: IMKInputController {
 
   override func activateServer(_ sender: Any!) {
     if let client = sender as? IMKTextInput {
+      if shouldPassThroughSecureDirectClient(client) {
+        return
+      }
       if shouldPassThroughSensitiveClient(client) {
         return
       }
@@ -757,6 +775,10 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func showClipboardRecall(client: IMKTextInput) -> Bool {
+    if shouldPassThroughSecureDirectClient(client) {
+      return false
+    }
+
     let context = appContext(for: client)
     guard bridge.shouldReadClipboard(bundleId: context.bundleId, windowTitle: context.windowTitle) else {
       inputiaDebugLog("clipboardRecallSkipped bundle=\(context.bundleId) window=\(context.windowTitle ?? "")")
@@ -985,6 +1007,23 @@ final class InputiaInputController: IMKInputController {
     InputiaHost.candidatePanel?.hide()
   }
 
+  private func clearSecureDirectState() {
+    let shouldResetBridge = !latestComposing.isEmpty || !latestCandidates.isEmpty
+      || !recallCandidates.isEmpty || !englishCompletionPrefix.isEmpty
+      || !englishCompletionCandidates.isEmpty || !bridge.latestOutcome.composing.isEmpty
+    recallCandidates = []
+    latestCandidates = []
+    latestComposing = ""
+    englishCompletionPrefix = ""
+    englishCompletionCandidates = []
+    candidatePanelExpanded = false
+    shiftKeyDownWithoutOtherKey = false
+    if shouldResetBridge {
+      _ = bridge.escape()
+    }
+    InputiaHost.candidatePanel?.hide()
+  }
+
   private func updateCandidateWindow(client: IMKTextInput) {
     guard let panel = InputiaHost.candidatePanel else {
       return
@@ -1015,6 +1054,10 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func shouldPassThroughSensitiveClient(_ client: IMKTextInput) -> Bool {
+    if shouldPassThroughSecureDirectClient(client) {
+      return true
+    }
+
     reloadSettingsIfDue(client: client)
     let context = appContext(for: client)
     let isSensitive: Bool
@@ -1035,6 +1078,19 @@ final class InputiaInputController: IMKInputController {
       _ = bridge.setAppContext(bundleId: context.bundleId, windowTitle: context.windowTitle)
       pushedAppContext = context
     }
+    return true
+  }
+
+  private func shouldPassThroughSecureDirectClient(_ client: IMKTextInput) -> Bool {
+    let bundleId = client.bundleIdentifier()
+    guard InputiaHostTextPolicy.isSecureDirectBundleIdentifier(bundleId) else {
+      return false
+    }
+    clearSecureDirectState()
+    cachedAppContext = nil
+    cachedSensitiveContext = nil
+    cachedSensitiveDecision = false
+    inputiaDebugLog("secureDirectPassthrough bundle=\(bundleId ?? "unknown")")
     return true
   }
 

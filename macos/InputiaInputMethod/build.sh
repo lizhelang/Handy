@@ -232,6 +232,14 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   -o "$BUILD_DIR/inputia-host-text-policy-self-check"
 
 /usr/bin/swiftc \
+  "$ROOT_DIR/Tools/InputiaSecureDirectSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHostTextPolicy.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaShortcutClassifier.swift" \
+  -target "$TARGET_TRIPLE" \
+  -framework AppKit \
+  -o "$BUILD_DIR/inputia-secure-direct-self-check"
+
+/usr/bin/swiftc \
   "$ROOT_DIR/Tools/InputiaCandidatePanelSelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaCandidatePanel.swift" \
   -target "$TARGET_TRIPLE" \
