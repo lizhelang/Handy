@@ -58,6 +58,13 @@ for forbidden in [
 require('verifyNonguiCompatibilityMode=dev-fast' in verify_nongui, "verify-nongui-not-dev-fast-compatible")
 require('exec "$ROOT_DIR/dev-fast.sh" "$@"' in verify_nongui, "verify-nongui-default-does-not-exec-dev-fast")
 require('INPUTIA_VERIFY_NONGUI_FULL:-0' in verify_nongui, "verify-nongui-missing-full-opt-in")
+require('verifyNonguiMenuReadinessCacheFile=' in verify_nongui, "verify-nongui-full-missing-menu-cache-output")
+require('INPUTIA_MENU_READINESS_CACHE_FILE' in verify_nongui, "verify-nongui-full-missing-menu-cache")
+require('VERIFY_TEMP_FILES+=("$INPUTIA_MENU_READINESS_CACHE_FILE")' in verify_nongui, "verify-nongui-full-menu-cache-not-cleaned")
+require(
+    verify_nongui.index('INPUTIA_MENU_READINESS_CACHE_FILE') < verify_nongui.index('INPUTIA_MENU_READINESS_ALLOW_AXPRESS'),
+    "verify-nongui-menu-cache-after-axpress-opt-in",
+)
 
 require('validationTier=install-check' in install_check, "install-check-missing-tier-marker")
 require('INPUTIA_TIS_INCLUDE_MENU_READINESS=0 "$ROOT_DIR/tis-readiness.sh"' in install_check, "install-check-must-disable-menu-readiness")

@@ -120,6 +120,8 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 
 `verify-nongui.sh` 现在默认委托到 `dev-fast.sh`，避免日常开发误跑旧的全量聚合验证。确实需要旧全量 non-GUI 聚合时，显式设置 `INPUTIA_VERIFY_NONGUI_FULL=1 ./macos/InputiaInputMethod/verify-nongui.sh`。
 
+旧 full 兼容模式如果进入菜单栏 readiness，会先设置或继承 `INPUTIA_MENU_READINESS_CACHE_FILE`，保证同一次验证周期里 `menu-readiness.sh` 的 AXPress 结果只采一次，后续子检查只读 cache。普通开发仍不应该打开这个 full 模式。
+
 普通修候选词、双拼、快捷键、设置 UI 时，不要再把 `verify-nongui.sh` 当主入口；用 `dev-fast.sh`。重装或安装链路变化用 `install-check.sh`。发布前、pkg/postinstall/signing/notarization 或 GUI smoke 相关改动才用 `release/full-check.sh`。
 
 `verify-nongui.sh` 会使用 `/tmp/inputia-verify-nongui.lock` 防止两条聚合验证并发互相污染残留判断。活锁存在时会返回 rc=20，并输出 `nonGuiVerificationPassed=false reason=verify-already-running` 与 `verifyLockOwnerPid=...`；pid 不存在的 stale lock 会自动清理并继续验证。不要手工删除仍在运行的 owner pid 对应锁；异常中断后再次运行脚本即可自愈。
