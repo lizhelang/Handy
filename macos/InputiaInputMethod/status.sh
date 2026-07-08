@@ -12,6 +12,18 @@ SYSTEM_SETTINGS_APP="/Applications/Inputia 设置.app"
 USER_SETTINGS_APP="${INPUTIA_USER_SETTINGS_APP_FOR_TEST:-$HOME/Applications/Inputia 设置.app}"
 LATEST_PKG="$ROOT_DIR/dist/InputiaInputMethod-latest.pkg"
 TIS_TOOL="$ROOT_DIR/build/inputia-tis-tool"
+TARGET_APP="${INPUTIA_STATUS_APP:-}"
+if [[ -z "$TARGET_APP" ]]; then
+  if [[ -d "$USER_APP" ]]; then
+    TARGET_APP="$USER_APP"
+  else
+    TARGET_APP="$SYSTEM_APP"
+  fi
+fi
+TARGET_SETTINGS_APP="$SYSTEM_SETTINGS_APP"
+if [[ "$TARGET_APP" == "$USER_APP" ]]; then
+  TARGET_SETTINGS_APP="$USER_SETTINGS_APP"
+fi
 
 section() {
   printf '\n== %s ==\n' "$1"
@@ -313,7 +325,9 @@ else
   user_matches_build=false
   echo "userMatchesBuild=false"
 fi
-if [[ -e "$USER_APP" || -e "$USER_LEGACY_APP" || -e "$USER_SETTINGS_APP" ]]; then
+if [[ -e "$USER_LEGACY_APP" ]]; then
+  user_host_conflict=true
+elif [[ -e "$USER_APP" && -e "$SYSTEM_APP" ]]; then
   user_host_conflict=true
 else
   user_host_conflict=false
@@ -344,11 +358,44 @@ else
   echo "userSettingsMatchesBuildVersion=false"
 fi
 
+section "target host"
+echo "targetPath=$TARGET_APP"
+if [[ "$TARGET_APP" == "$USER_APP" ]]; then
+  echo "targetScope=user"
+elif [[ "$TARGET_APP" == "$SYSTEM_APP" ]]; then
+  echo "targetScope=system"
+else
+  echo "targetScope=custom"
+fi
+print_app "target app" "$TARGET_APP"
+target_assessment="$(app_assessment "$TARGET_APP")"
+if [[ "$target_assessment" == *": accepted"* ]]; then
+  target_signature_accepted=true
+else
+  target_signature_accepted=false
+fi
+if matches_build "$TARGET_APP" "$build_cdhash"; then
+  target_matches_build=true
+  echo "targetMatchesBuild=true"
+else
+  target_matches_build=false
+  echo "targetMatchesBuild=false"
+fi
+echo "targetSettingsPath=$TARGET_SETTINGS_APP"
+target_settings_version="$(app_version "$TARGET_SETTINGS_APP")"
+if [[ -n "$build_version" && "$target_settings_version" == "$build_version" ]]; then
+  target_settings_matches_build=true
+  echo "targetSettingsMatchesBuildVersion=true"
+else
+  target_settings_matches_build=false
+  echo "targetSettingsMatchesBuildVersion=false"
+fi
+
 section "tis sources"
 tis_enabled_matches=unknown
 tis_installed_matches=unknown
 if [[ -x "$TIS_TOOL" ]]; then
-  tis_dump="$("$TIS_TOOL" --dump 2>/dev/null || true)"
+  tis_dump="$(INPUTIA_APP="$TARGET_APP" "$TIS_TOOL" --dump 2>/dev/null || true)"
   tis_enabled_matches="$(/usr/bin/awk -F= '
     $1 == "includeAllInstalled" { active = ($2 == "false") }
     active && $1 == "matches" { print $2; exit }
