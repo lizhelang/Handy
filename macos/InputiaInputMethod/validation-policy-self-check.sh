@@ -169,6 +169,10 @@ require('sourceDirty=' in install_handoff, "install-handoff-missing-source-dirty
 require('pkgVerificationPassed=' in install_handoff, "install-handoff-missing-pkg-verification")
 require('repairTISDuplicatesRequired=' in install_handoff, "install-handoff-missing-duplicate-repair-summary")
 require('INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh' in install_handoff, "install-handoff-missing-duplicate-repair-command")
+require(
+    install_handoff.index('INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh') < install_handoff.index('$await_command'),
+    "install-handoff-repair-command-after-await-command",
+)
 require('handoffOpensGUI=false' in install_handoff, "install-handoff-missing-no-gui-marker")
 require('handoffChangesSystemInputSource=false' in install_handoff, "install-handoff-missing-no-input-source-marker")
 require('installCheckBlockReasons=none' in install_handoff, "install-handoff-missing-success-criteria")

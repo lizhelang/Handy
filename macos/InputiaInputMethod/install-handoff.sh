@@ -169,12 +169,12 @@ $terminal_installer_command
 打开 Installer 安装：
 $open_installer_command
 
+重复 TIS 显式修复（仅当 installCheckBlockReasons 含 tis-duplicate-matches 时运行）：
+$repair_tis_duplicates_command
+
 安装后等待/验证：
 $await_command
 $install_check_command
-
-重复 TIS 显式修复（仅当 installCheckBlockReasons 含 tis-duplicate-matches 时运行）：
-$repair_tis_duplicates_command
 
 安装后通过标准：
 systemMatchesBuild=true
