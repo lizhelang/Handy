@@ -23905,3 +23905,178 @@ spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMe
 - Mac mini 现在的关键 blocker 是 Gatekeeper/TIS 不接受当前签名：虽然已有 `Codexbar Local Code Signing Leaf v4` identity 且 app 被该 identity 签过，但 `TeamIdentifier=not set`，`spctl` 仍 rejected，TIS readiness 明确给出 `signature-rejected`。
 - 系统目录 app 与当前 build CDHash 也不一致，需要在签名链修好后重新 `build.sh` / `install-system.sh`，再验证 `spctl accepted` 和 `tisReadiness=true`。
 - 在 `spctl accepted` 前不运行 TextEdit/Safari/Clipboard GUI smoke，避免继续抢用户焦点并制造假阳性。
+
+## 2026-07-08 v50 - macOS host build/self-check 分组提交前验证
+
+问题：
+
+- 提交 macOS Host 前重跑 `build.sh`，构建预检误判 Codex Desktop 的通知进程为正在运行的 verifier。
+- 误判来源是 `SkyComputerUseClient ... agent-turn-complete` 的 command line 中包含本线程历史消息；历史消息里有 `verify-nongui.sh` 等脚本文本，同时 command line 也包含当前 workspace 路径。
+- `--bridge-self-check` 一度返回 `bridgeSelfCheck=false`，原因是诊断 bridge 使用 direct session，只传 `rime_user_data_dir`，与真实 host 的 settings session 不一致。
+
+修正：
+
+- `build.sh` 的 verifier 并发检测跳过 `SkyComputerUseClient`、`notify-hook.js`、`agent-turn-complete` 进程，避免被 Codex 通知 payload 里的历史文本误伤。
+- `InputiaRustBridge.temporaryForDiagnostics()` 改为写临时 settings 并通过 `inputia_session_new_from_settings` 打开 session；临时 settings 显式包含 bundled `RimeData`、临时 Rime user dir、memory db path，与真实 host 配置路径一致。
+
+验证：
+
+```text
+./macos/InputiaInputMethod/build.sh
+  /Users/minizl/services/Handy/macos/InputiaInputMethod/build/InputiaInputMethod.app
+  /Users/minizl/services/Handy/macos/InputiaInputMethod/build/Inputia 设置.app
+
+./macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInputMethod --self-check
+  bundleIdentifier=com.inputia.inputmethod.Inputia
+  connectionName=com.inputia.inputmethod.Inputia_Connection
+  classFound=true
+
+./macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInputMethod --bridge-self-check
+  bridgeSelfCheck=true
+  consumed=true
+  mode=Chinese
+  firstCandidate=在
+  commit=中国
+
+./macos/InputiaInputMethod/build/inputia-input-text-router-self-check
+  inputTextRouterSelfCheck=true
+  simplifiedScriptCommit=中国
+  traditionalScriptCommit=中國
+
+./macos/InputiaInputMethod/build/inputia-shortcut-self-check
+  shortcutSelfCheck=true
+  commandCPassThrough=true
+  commandVPassThrough=true
+  officialAppleCommandKeyDownSetPassesThrough=true
+```
+
+注意：
+
+- build 仍会输出 Rust staticlib 以 macOS 26 object 链到 `arm64-apple-macos13.0` 的 linker warning；当前它不是阻断项，后续可单独收敛 Rust target / deployment target。
+- 本轮仍未运行 GUI smoke；系统安装 readiness 仍需先解决 `spctl rejected` / notarization blocker。
+
+## v50 Mac mini：快捷键整类透传、简繁路由修复、签名 ACL 推进与 notary blocker
+
+背景：
+
+- 用户反馈 `Command-C` / `Command-V` 在 Inputia 下不可用，要求按常用电脑快捷键举一反三，不能逐个靠用户测试。
+- 用户也要求系统输入法不要显示/堆积 `Inputia 简体` 这类多个入口，简繁应该作为偏好设置里的切换状态。
+- 用户已在 Mac mini 上信任 `Codexbar Local Code Signing Root v4`，需要继续验证 signing/import/install 主线。
+
+实现与选择：
+
+- `main.swift` 的 `handleKeyDown` 最前面调用 `InputiaShortcutClassifier.shouldPassThroughKeyDown(...)`，Command 修饰键整类返回 `false`，让系统/App 原生处理复制、粘贴、剪切、撤销、查找、保存、窗口、截图、切 App 等快捷键。
+- `verify-nongui.sh` 增加静态合同：Host keyDown 的 Command pass-through 必须早于简繁切换、剪贴板召回、标点切换，并且必须 `return false`。
+- Rime 简繁输出从单个 `output_option=true` 改成显式 `(option, enabled)` 列表，切换繁体时会关闭相冲突的 `zh_hans` / `simplification`，并启用 `zh_hant` / `trad_tw`，避免同一 Rime user data 中前一次简体选项污染后续繁体输出。
+- `import-signing-identity.sh` 增强：identity 已存在但 codesign probe 失败时，如果提供 keychain 密码，会先 `unlock-keychain` 并执行 `set-key-partition-list`，再重跑 probe。这个覆盖本轮真实遇到的 private key ACL 问题。
+- `verify-nongui.sh` 的 system preflight 改为只接受两类安全阻断：`cdhash-mismatch` 或 `ui-smoke-disabled`，避免“当前系统还没安装最新 build”被误判为会启动 GUI smoke 的成功条件。
+
+验证：
+
+```text
+INPUTIA_P12_PASSWORD=... INPUTIA_KEYCHAIN_PASSWORD=... ./macos/InputiaInputMethod/import-signing-identity.sh
+  signingIdentityAlreadyAvailable=true
+  12C73495BB5C15FD71C22E823A8A9CBD0CC5243C "Codexbar Local Code Signing Leaf v4"
+  signingIdentityCodesignProbe=true
+  signingIdentityImportVerified=true
+
+INPUTIA_CODESIGN_IDENTITY="Codexbar Local Code Signing Leaf v4" \
+INPUTIA_CODESIGN_OPTIONS="--options runtime" \
+./macos/InputiaInputMethod/build.sh
+  buildRc=0
+  codesign --verify --deep --strict: valid on disk / satisfies Designated Requirement
+
+codesign -dv --verbose=4 macos/InputiaInputMethod/build/InputiaInputMethod.app
+  Authority=Codexbar Local Code Signing Leaf v4
+  Authority=Codexbar Local Code Signing Root v4
+  TeamIdentifier=not set
+  Runtime Version=26.0.0
+
+spctl --assess --type execute --verbose=4 macos/InputiaInputMethod/build/InputiaInputMethod.app
+  rejected
+
+syspolicy_check distribution macos/InputiaInputMethod/build/InputiaInputMethod.app
+  Notary Ticket Missing
+  Severity: Fatal
+
+./macos/InputiaInputMethod/notarization-readiness.sh macos/InputiaInputMethod/build/InputiaInputMethod.app
+  codesignVerify=true
+  codesignAuthority=Codexbar Local Code Signing Leaf v4
+  codesignAuthority=Codexbar Local Code Signing Root v4
+  hardenedRuntime=true
+  spctlAccepted=false
+  syspolicyNotaryTicketMissing=true
+  developerIDApplicationIdentityPresent=false
+  notaryProfileAvailable=false
+  inputiaGatekeeperReady=false
+  notarizationRequiredAction=import-developer-id-application-identity
+
+./macos/InputiaInputMethod/build/inputia-shortcut-self-check
+  shortcutSelfCheck=true
+  commandCPassThrough=true
+  commandVPassThrough=true
+  officialAppleCommandKeyDownSetPassesThrough=true
+  anyCommandModifiedKeyPassesThrough=true
+  allCommandModifierVariantsPassThrough=true
+
+./macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInputMethod --host-shortcut-self-check
+  hostShortcutSelfCheck=true
+  commandCPassThrough=true
+  commandVPassThrough=true
+  officialAppleCommandKeyDownSetPassesThrough=true
+  anyCommandModifiedKeyPassesThrough=true
+  allCommandModifierVariantsPassThrough=true
+
+./macos/InputiaInputMethod/build/inputia-host-text-policy-self-check
+  hostTextPolicySelfCheck=true
+  appCommandcopyPassesThrough=true
+  appCommandpastePassesThrough=true
+  appCommandcutPassesThrough=true
+  appCommandundoPassesThrough=true
+  appCommandredoPassesThrough=true
+  appCommandselectAllPassesThrough=true
+  appCommandsaveDocumentPassesThrough=true
+  appCommandopenDocumentPassesThrough=true
+  appCommandperformClosePassesThrough=true
+  appCommandterminatePassesThrough=true
+  appCommandfindPassesThrough=true
+  appCommandprintPassesThrough=true
+
+./macos/InputiaInputMethod/build/inputia-input-text-router-self-check
+  inputTextRouterSelfCheck=true
+  simplifiedScriptCommit=中国
+  simplifiedScriptCommitsSimplified=true
+  traditionalScriptCommit=中國
+  traditionalScriptCommitsTraditional=true
+
+cargo test --manifest-path crates/inputia-capi/Cargo.toml chinese_script_selects_schema_and_rime_option -- --nocapture
+  1 passed
+
+cargo test --manifest-path crates/inputia-capi/Cargo.toml capi_traditional_script_commits_traditional_chinese -- --nocapture
+  1 passed
+
+CARGO_BUILD_JOBS=1 cargo test --lib --manifest-path crates/inputia-rime/Cargo.toml squirrel_default_config_keeps_rime_outside_core -- --nocapture
+  1 passed
+```
+
+磁盘与回归限制：
+
+```text
+df -h /Users/minizl/services/Handy
+  Avail: 111M -> 423M after cleaning generated build/target artifacts
+
+cargo test --manifest-path crates/inputia-rime/Cargo.toml squirrel_default_config_keeps_rime_outside_core -- --nocapture
+  first failure: No space left on device while creating temp dir
+  second failure: linker write() failed, errno=28
+
+CARGO_BUILD_JOBS=1 cargo test --lib ...
+  passed
+```
+
+结论：
+
+- `Command-C` / `Command-V` 不是单点修复；当前分类器和 Host 路径已把常见 Apple Command 快捷键整类透传，且 `didCommand` 的常见 app command selector 也透传。
+- 简繁路由的真实 bug 已复现并修复：繁体模式现在提交 `中國`，不是被前一轮简体 Rime option 污染成 `中国`。
+- 用户信任 root 后，签名链和 private key ACL 已推进到 `codesign` 可用：build app 由 `Codexbar Local Code Signing Leaf v4` 签名，并带 hardened runtime。
+- 但 Gatekeeper/TIS blocker 没有消失：`spctlAccepted=false`，`syspolicy_check` 明确 fatal 为 `Notary Ticket Missing`，且没有 `Developer ID Application` identity / notarytool profile。继续系统级可用安装需要 Developer ID 签名 + notarize/staple，或者接受本地开发 override 仍不能作为 GUI smoke 前提。
+- 本轮没有运行 TextEdit/Safari/Clipboard GUI smoke。
