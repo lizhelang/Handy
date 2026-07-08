@@ -101,7 +101,12 @@ RIME_USER_DATA_DIR="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/inputia-dev-fast-rime.
 INPUTIA_RIME_SHARED_DATA_DIR="$HOST_APP/Contents/Resources/RimeData" \
   INPUTIA_RIME_USER_DATA_DIR="$RIME_USER_DATA_DIR" \
   run_rust cargo run --manifest-path "$REPO_ROOT/crates/inputia-rime/Cargo.toml" \
-    --example rime_probe -- double_pinyin nillem
+    --example rime_probe -- --matrix \
+    "double_pinyin:nillem:你来:你来" \
+    "double_pinyin:mlle:买了:买了" \
+    "double_pinyin_sogou:mlle:买了:买了" \
+    "guobiao_bispell:mlle:买了:-" \
+    "guobiao_bispell:mkle:买了:买了"
 
 section "rime latency self-check"
 "$ROOT_DIR/rime-latency-self-check.sh"

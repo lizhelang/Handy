@@ -26,6 +26,7 @@ def require(condition: bool, reason: str) -> None:
 
 
 dev_fast = read("dev-fast.sh")
+rime_probe_example = read_repo("crates/inputia-rime/examples/rime_probe.rs")
 rime_latency = read("rime-latency-self-check.sh")
 verify_nongui = read("verify-nongui.sh")
 install_check = read("install-check.sh")
@@ -121,6 +122,15 @@ require('segmentedSingleSelectionKeepsRemaining=' in host_main, "host-diagnostic
 require('debugSegmentedPhraseSelfCheck' in read("Sources/InputiaInputMethod/InputiaRustBridge.swift"), "bridge-missing-segmented-phrase-self-check")
 require('candidateDownArrowExpandsWhenComposing=' in host_main, "host-diagnostics-missing-candidate-down-expand-output")
 require('candidateUpArrowPagesWhenComposing=' in host_main, "host-diagnostics-missing-candidate-up-page-output")
+require('--example rime_probe -- --matrix' in dev_fast, "dev-fast-rime-probe-not-matrix")
+require('double_pinyin:nillem:你来:你来' in dev_fast, "dev-fast-missing-nillem-probe")
+require('double_pinyin:mlle:买了:买了' in dev_fast, "dev-fast-missing-natural-maile-probe")
+require('double_pinyin_sogou:mlle:买了:买了' in dev_fast, "dev-fast-missing-sogou-maile-probe")
+require('guobiao_bispell:mlle:买了:-' in dev_fast, "dev-fast-missing-guobiao-mlle-present-probe")
+require('guobiao_bispell:mkle:买了:买了' in dev_fast, "dev-fast-missing-guobiao-mkle-first-probe")
+require('probeMatrixSelfCheck=true' in rime_probe_example, "rime-probe-missing-matrix-pass-marker")
+require('expectedPresentFound=' in rime_probe_example, "rime-probe-missing-present-assertion")
+require('expectedFirstMatches=' in rime_probe_example, "rime-probe-missing-first-assertion")
 require('settingsMenuHasNoCommandKeyEquivalent' in host_policy_self_check, "host-policy-self-check-missing-settings-menu-key")
 require('showPreferencesCommandPassesThrough' in host_policy_self_check, "host-policy-self-check-missing-show-preferences")
 require('emptyNewlineCommandPassesThrough' in host_policy_self_check, "host-policy-self-check-missing-empty-newline")

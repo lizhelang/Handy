@@ -27810,3 +27810,59 @@ INPUTIA_FULL_CHECK_SELF_CHECK=1 ./macos/InputiaInputMethod/release/full-check.sh
 
 - release/full-check 的重型 opt-in 现在既有静态顺序锁，也有离线执行分支证明。
 - 默认开发验证仍不需要、也不应该运行真实 full-check；这个 self-check 是重型入口自身的可选安全网。
+
+## 2026-07-09 05:47 CST - dev-fast Rime probe 扩展为双拼候选矩阵
+
+背景：
+
+- 用户曾遇到双拼候选偶发不出、候选窗只显示 raw 字母的现象，也曾把国标双拼下的 `mlle` 误判为应当第一候选“买了”。
+- `schema_smoke` 已经覆盖这些 case，但 `dev-fast` 的可见 probe 只有 `double_pinyin + nillem`，不能在默认输出里直接解释自然码/搜狗/国标的差异。
+
+实现：
+
+- `crates/inputia-rime/examples/rime_probe.rs` 新增 `--matrix` 模式，规格为 `schema:keys:expected_present[:expected_first]`。
+- matrix 会逐项输出 schema、keys、候选列表、`expectedPresentFound` 和 `expectedFirstMatches`；若期望候选不存在或期望第一候选不匹配则失败。
+- `dev-fast.sh` 的 Rime probe 改为一次性覆盖：
+  - `double_pinyin:nillem:你来:你来`
+  - `double_pinyin:mlle:买了:买了`
+  - `double_pinyin_sogou:mlle:买了:买了`
+  - `guobiao_bispell:mlle:买了:-`
+  - `guobiao_bispell:mkle:买了:买了`
+- `validation-policy-self-check.sh` 锁住这些 case，防止默认开发验证退回单例 probe。
+
+验证：
+
+```text
+rustup run 1.96.0 cargo fmt --manifest-path crates/inputia-rime/Cargo.toml --check
+  rc=0
+
+INPUTIA_RIME_SHARED_DATA_DIR=macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/Resources/RimeData \
+INPUTIA_RIME_USER_DATA_DIR=<tmp> \
+rustup run 1.96.0 cargo run --manifest-path crates/inputia-rime/Cargo.toml --example rime_probe -- --matrix ...
+  probe[0].schema=double_pinyin
+  probe[0].keys=nillem
+  probe[0].candidate[0]=你来
+  probe[1].schema=double_pinyin
+  probe[1].keys=mlle
+  probe[1].candidate[0]=买了
+  probe[2].schema=double_pinyin_sogou
+  probe[2].keys=mlle
+  probe[2].candidate[0]=买了
+  probe[3].schema=guobiao_bispell
+  probe[3].keys=mlle
+  probe[3].candidate[0]=迷路了
+  probe[3].candidate[1]=买了
+  probe[3].expectedFirstMatches=skipped
+  probe[4].schema=guobiao_bispell
+  probe[4].keys=mkle
+  probe[4].candidate[0]=买了
+  probeMatrixSelfCheck=true
+
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+```
+
+结论：
+
+- 默认开发验证现在直接暴露“国标 `mlle` 不是第一候选买了、`mkle` 才是”的事实，减少后续把键位差异误判成候选丢失。
+- 这些检查仍然只使用本地打包 RimeData 和临时 user data，不打开 GUI、不改系统输入源。
