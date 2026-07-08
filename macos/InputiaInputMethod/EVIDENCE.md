@@ -28021,3 +28021,49 @@ git diff --check
 
 - 真实安装仍必须显式进入 `install-apply` 层；普通 `dev-fast` 不会运行该路径。
 - 当显式允许管理员提示且当前没有交互 TTY 时，脚本有 GUI 授权路径，不再默认把 Codex 终端挂在 sudo 密码输入上。
+
+## 2026-07-09 06:29 CST - apply-current-handoff 管理员授权超时保护
+
+背景：
+
+- 当前 handoff 已对齐 `4f0025af0690`，但本机 `/Library/Input Methods/InputiaInputMethod.app` 和 running Host 仍是旧 CDHash `ef587ead37d7fc3febad02e950b469b228a531a0`。
+- 真实运行 `INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh` 后进入 `applyCurrentHandoffAdminPromptMode=osascript`，`SecurityAgent` 启动但授权未完成。
+- 已中止这次未授权安装；复跑 `install-check.sh` 后系统仍停在旧 CDHash 和 `tis-duplicate-matches`，没有半安装态。
+
+实现：
+
+- `apply-current-handoff.sh` 的 osascript 管理员授权路径增加 `INPUTIA_ADMIN_PROMPT_TIMEOUT_SECONDS`，默认 300 秒。
+- 超时后清理挂起的 `osascript`，输出：
+  - `applyCurrentHandoffAdminPromptTimedOut=true`
+  - `applyCurrentHandoffPassed=false reason=admin-authorization-timeout`
+  - `applyCurrentHandoffRequiredAction=rerun-with-admin-prompt`
+- 等待循环会识别已退出但尚未 `wait` 回收的 `osascript` zombie，避免成功/失败已返回时仍等到超时。
+- `INPUTIA_ADMIN_PROMPT_TIMEOUT_SECONDS=0` 可关闭超时，用于人工值守安装。
+- `INPUTIA_APPLY_ADMIN_OSASCRIPT_TIMEOUT_FOR_TEST=1` 覆盖 timeout 分支，不触发真实管理员安装。
+
+验证：
+
+```text
+zsh -n macos/InputiaInputMethod/apply-current-handoff.sh
+  rc=0
+
+INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=1 ./macos/InputiaInputMethod/apply-current-handoff.sh
+  applyCurrentHandoffSelfCheck=true
+
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+
+INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/dev-fast.sh
+  validationTier=dev-fast
+  touchesMenuBar=false
+  opensGUI=false
+  changesSystemInputSource=false
+  checksNotarization=false
+  applyCurrentHandoffSelfCheck=true
+  devFastPassed=true
+```
+
+结论：
+
+- 真实系统切换仍需要完成管理员授权后再进入 TIS duplicate repair 和 running host 等待。
+- 但 install-apply 现在不会无限卡在后台授权窗口，失败会成为可诊断、可重试的安装层状态。

@@ -99,19 +99,69 @@ admin_install_command() {
 
 run_admin_installer_with_osascript() {
   local pkg_path="$1"
-  local install_command
+  local install_command prompt_timeout output_file osascript_pid waited osascript_rc
   install_command="/usr/sbin/installer -pkg $(quote "$pkg_path") -target /"
+  prompt_timeout="${INPUTIA_ADMIN_PROMPT_TIMEOUT_SECONDS:-300}"
   echo "applyCurrentHandoffAdminPromptMode=osascript"
+  echo "applyCurrentHandoffAdminPromptTimeoutSeconds=$prompt_timeout"
   if [[ "${INPUTIA_APPLY_ADMIN_OSASCRIPT_FOR_TEST:-0}" == "1" ]]; then
     echo "applyCurrentHandoffAdminInstallForTest=osascript"
     return 0
   fi
+  if [[ "${INPUTIA_APPLY_ADMIN_OSASCRIPT_TIMEOUT_FOR_TEST:-0}" == "1" ]]; then
+    echo "applyCurrentHandoffAdminPromptTimedOut=true"
+    echo "applyCurrentHandoffPassed=false reason=admin-authorization-timeout"
+    echo "applyCurrentHandoffRequiredAction=rerun-with-admin-prompt"
+    echo "applyCurrentHandoffCommand=$(admin_install_command "$pkg_path" | /usr/bin/head -n 1)"
+    exit 16
+  fi
+  if ! [[ "$prompt_timeout" =~ ^[0-9]+$ ]]; then
+    echo "applyCurrentHandoffReady=false reason=invalid-admin-prompt-timeout seconds=$prompt_timeout"
+    echo "applyCurrentHandoffRequiredAction=rerun-with-valid-admin-prompt-timeout"
+    exit 17
+  fi
 
-  /usr/bin/osascript - "$install_command" <<'APPLESCRIPT'
+  output_file="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/inputia-admin-osascript.XXXXXX")"
+  /usr/bin/osascript - "$install_command" >"$output_file" 2>&1 <<'APPLESCRIPT' &
 on run argv
   do shell script (item 1 of argv) with administrator privileges
 end run
 APPLESCRIPT
+  osascript_pid=$!
+  waited=0
+  while /bin/kill -0 "$osascript_pid" >/dev/null 2>&1; do
+    if /bin/ps -p "$osascript_pid" -o stat= 2>/dev/null | /usr/bin/grep -q '^[[:space:]]*Z'; then
+      break
+    fi
+    if [[ "$prompt_timeout" != "0" && "$waited" -ge "$prompt_timeout" ]]; then
+      /bin/kill "$osascript_pid" >/dev/null 2>&1 || true
+      /bin/sleep 1
+      /bin/kill -9 "$osascript_pid" >/dev/null 2>&1 || true
+      set +e
+      wait "$osascript_pid" >/dev/null 2>&1
+      set -e
+      if [[ -s "$output_file" ]]; then
+        /bin/cat "$output_file"
+      fi
+      /bin/rm -f "$output_file" >/dev/null 2>&1 || true
+      echo "applyCurrentHandoffAdminPromptTimedOut=true"
+      echo "applyCurrentHandoffPassed=false reason=admin-authorization-timeout"
+      echo "applyCurrentHandoffRequiredAction=rerun-with-admin-prompt"
+      echo "applyCurrentHandoffCommand=$(admin_install_command "$pkg_path" | /usr/bin/head -n 1)"
+      exit 16
+    fi
+    /bin/sleep 1
+    waited=$((waited + 1))
+  done
+  set +e
+  wait "$osascript_pid"
+  osascript_rc=$?
+  set -e
+  if [[ -s "$output_file" ]]; then
+    /bin/cat "$output_file"
+  fi
+  /bin/rm -f "$output_file" >/dev/null 2>&1 || true
+  return "$osascript_rc"
 }
 
 run_admin_installer() {
@@ -267,11 +317,31 @@ if [[ "${INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK:-0}" == "1" ]]; then
   )"
   for marker in \
     applyCurrentHandoffAdminPromptMode=osascript \
+    applyCurrentHandoffAdminPromptTimeoutSeconds=300 \
     applyCurrentHandoffAdminInstallForTest=osascript \
     applyCurrentHandoffAdminInstallPassed=true \
     applyCurrentHandoffPassed=true; do
     if ! /usr/bin/grep -q "^$marker$" <<<"$osascript_admin_output"; then
       echo "applyCurrentHandoffSelfCheck=false reason=missing-osascript-admin-marker marker=$marker"
+      exit 1
+    fi
+  done
+  osascript_timeout_output="$(
+    INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=0 \
+      INPUTIA_INSTALL_HANDOFF_PATH="$success_handoff" \
+      INPUTIA_ALLOW_ADMIN_PROMPT=1 \
+      INPUTIA_ADMIN_PROMPT_MODE=osascript \
+      INPUTIA_APPLY_ADMIN_OSASCRIPT_TIMEOUT_FOR_TEST=1 \
+      INPUTIA_APPLY_INSTALL_CHECK_FOR_TEST=$'installHandoffCurrent=true\ninstallHandoffBlockReasons=none\ninstallHandoffPackagePath='"$success_pkg"$'\ninstallCheckBlockReasons=system-cdhash-mismatch,tis-duplicate-matches,running-cdhash-mismatch,admin-required\ninstallCheckRequiredAction=admin-install-current-handoff\ninstallCheckRequiredActions=admin-install-current-handoff,run-repair-tis-duplicates,restart-inputia-host-after-install\ninstallCheckPassed=false\n' \
+      "$0" 2>&1 || true
+  )"
+  for marker in \
+    applyCurrentHandoffAdminPromptMode=osascript \
+    applyCurrentHandoffAdminPromptTimedOut=true \
+    "applyCurrentHandoffPassed=false reason=admin-authorization-timeout" \
+    applyCurrentHandoffRequiredAction=rerun-with-admin-prompt; do
+    if ! /usr/bin/grep -q "^$marker$" <<<"$osascript_timeout_output"; then
+      echo "applyCurrentHandoffSelfCheck=false reason=missing-osascript-timeout-marker marker=$marker"
       exit 1
     fi
   done
