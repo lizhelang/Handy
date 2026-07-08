@@ -121,17 +121,27 @@ for forbidden in [
     "gui-smoke-readiness.sh",
     "gui-smoke-suite.sh",
     "post-install-regression.sh",
+    "verify-nongui.sh",
     "status.sh",
     "notarization-readiness.sh",
+    "build-pkg.sh",
+    "verify-pkg.sh",
     "smoke-textedit.sh",
     "smoke-safari-typing.sh",
     "smoke-clipboard-recall.sh",
+    "INPUTIA_RUN_UI_SMOKE",
+    "INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1",
+    "INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK=1",
+    "INPUTIA_STATUS_INCLUDE_MENU_READINESS=1",
+    "INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS=1",
+    "INPUTIA_TIS_INCLUDE_MENU_READINESS=1",
 ]:
     require(forbidden not in dev_fast, f"dev-fast-unexpected-{forbidden}")
 
 require('verifyNonguiCompatibilityMode=dev-fast' in verify_nongui, "verify-nongui-not-dev-fast-compatible")
 require('exec "$ROOT_DIR/dev-fast.sh" "$@"' in verify_nongui, "verify-nongui-default-does-not-exec-dev-fast")
 require('INPUTIA_VERIFY_NONGUI_FULL:-0' in verify_nongui, "verify-nongui-missing-full-opt-in")
+require(verify_nongui.index('exec "$ROOT_DIR/dev-fast.sh" "$@"') < verify_nongui.index('VERIFY_NONGUI_MENU_CACHE_OWNED=0'), "verify-nongui-default-can-reach-full-setup")
 require('verifyNonguiMenuReadinessCacheFile=' in verify_nongui, "verify-nongui-full-missing-menu-cache-output")
 require('INPUTIA_MENU_READINESS_CACHE_FILE' in verify_nongui, "verify-nongui-full-missing-menu-cache")
 require('VERIFY_TEMP_FILES+=("$INPUTIA_MENU_READINESS_CACHE_FILE")' in verify_nongui, "verify-nongui-full-menu-cache-not-cleaned")
@@ -152,6 +162,11 @@ require(
 
 require('validationTier=install-check' in install_check, "install-check-missing-tier-marker")
 require('INPUTIA_TIS_INCLUDE_MENU_READINESS=0 "$ROOT_DIR/tis-readiness.sh"' in install_check, "install-check-must-disable-menu-readiness")
+require('INPUTIA_STATUS_INCLUDE_MENU_READINESS=1' not in install_check, "install-check-unexpected-status-menu-opt-in")
+require('INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS=1' not in install_check, "install-check-unexpected-status-gui-opt-in")
+require('INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1' not in install_check, "install-check-unexpected-menu-axpress-opt-in")
+require('INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK=1' not in install_check, "install-check-unexpected-gui-readiness-opt-in")
+require('INPUTIA_RUN_UI_SMOKE=1' not in install_check, "install-check-unexpected-ui-smoke-opt-in")
 require('^tis.targetSourceCount=' in install_check, "install-check-missing-target-source-count-output")
 require('^tis.targetEnabledSourceCount=' in install_check, "install-check-missing-target-enabled-source-count-output")
 require('^tis.targetEnabledUniqueFingerprintCount=' in install_check, "install-check-missing-target-enabled-fingerprint-output")
@@ -273,7 +288,11 @@ require('touchesMenuBar=false' in apply_current_handoff, "apply-current-handoff-
 require('opensGUI=false' in apply_current_handoff, "apply-current-handoff-missing-gui-policy")
 require('checksNotarization=false' in apply_current_handoff, "apply-current-handoff-missing-notarization-policy")
 require('INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK' in apply_current_handoff, "apply-current-handoff-missing-self-check")
+require('INPUTIA_APPLY_INSTALL_CHECK_FOR_TEST' in apply_current_handoff, "apply-current-handoff-missing-install-check-test-injection")
+require('INPUTIA_APPLY_FORCE_ADMIN_REQUIRED_FOR_TEST' in apply_current_handoff, "apply-current-handoff-missing-admin-required-test-injection")
 require('INPUTIA_APPLY_FINAL_INSTALL_CHECK_FOR_TEST' in apply_current_handoff, "apply-current-handoff-missing-final-check-self-test")
+require('applyCurrentHandoffReady=false reason=admin-required' in apply_current_handoff, "apply-current-handoff-missing-admin-required-marker")
+require('applyCurrentHandoffRequiredAction=rerun-with-admin-prompt' in apply_current_handoff, "apply-current-handoff-missing-admin-required-action")
 require('applyCurrentHandoffPassed=false reason=final-install-check-failed' in apply_current_handoff, "apply-current-handoff-missing-final-failure-marker")
 require('applyCurrentHandoffFinalInstallCheckExit=' in apply_current_handoff, "apply-current-handoff-missing-final-check-exit-output")
 require('applyCurrentHandoffNextStep=' in apply_current_handoff, "apply-current-handoff-missing-final-next-step-output")
@@ -315,11 +334,15 @@ require('checksNotarization=true' in full_check, "full-check-missing-notarizatio
 require('INPUTIA_MENU_READINESS_CACHE_FILE="$MENU_CACHE"' in full_check, "full-check-missing-menu-cache")
 require('INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1' in full_check, "full-check-missing-menu-opt-in")
 require('INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK=1' in full_check, "full-check-missing-gui-readiness-opt-in")
+require('INPUTIA_STATUS_INCLUDE_MENU_READINESS=1' in full_check, "full-check-missing-status-menu-opt-in")
+require('INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS=1' in full_check, "full-check-missing-status-gui-opt-in")
+require('INPUTIA_TIS_INCLUDE_MENU_READINESS=1' in full_check, "full-check-missing-tis-menu-opt-in")
 require('INPUTIA_RUN_UI_SMOKE=1' in full_check, "full-check-missing-ui-smoke-opt-in")
 require('"$ROOT_DIR/menu-readiness.sh"' in full_check, "full-check-missing-menu-readiness")
 require(full_check.count('"$ROOT_DIR/menu-readiness.sh"') == 1, "full-check-menu-readiness-must-run-once-directly")
 require(full_check.index('INPUTIA_MENU_READINESS_CACHE_FILE="$MENU_CACHE"') < full_check.index('"$ROOT_DIR/menu-readiness.sh"'), "full-check-menu-cache-after-menu-readiness")
 require(full_check.index('INPUTIA_MENU_READINESS_CACHE_FILE="$MENU_CACHE"') < full_check.index('"$ROOT_DIR/post-install-regression.sh" "$APP"'), "full-check-menu-cache-after-postinstall")
+require(full_check.count('INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1') == 1, "full-check-menu-axpress-opt-in-must-be-centralized")
 require('"$ROOT_DIR/post-install-regression.sh" "$APP"' in full_check, "full-check-missing-postinstall-regression")
 require('"$ROOT_DIR/notarization-readiness.sh"' in full_check, "full-check-missing-notarization-readiness")
 
@@ -333,6 +356,8 @@ require(menu_readiness.index('INPUTIA_MENU_READINESS_ALLOW_AXPRESS') < menu_read
 require('INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1 "$ROOT_DIR/menu-readiness.sh"' in status, "status-menu-opt-in-not-explicit")
 require('INPUTIA_STATUS_INCLUDE_MENU_READINESS:-0' in status, "status-missing-menu-include-gate")
 require('INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS:-0' in status, "status-missing-gui-readiness-gate")
+require(status.index('INPUTIA_STATUS_INCLUDE_MENU_READINESS:-0') < status.index('INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1 "$ROOT_DIR/menu-readiness.sh"'), "status-menu-readiness-call-before-include-gate")
+require(status.index('INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS:-0') < status.index('gui_block_reason="$(gui_session_block_reason)"'), "status-gui-readiness-call-before-include-gate")
 require('INPUTIA_MENU_READINESS_CACHE_FILE="$menu_readiness_cache_file"' in status, "status-menu-readiness-missing-cache-env")
 require('INPUTIA_VERIFICATION_OWNER_PID:-$$' in status, "status-menu-readiness-missing-owner-cache")
 require('menuReadinessCacheFile=' in status, "status-menu-readiness-missing-cache-output")
@@ -346,12 +371,18 @@ require('sourceDirty=' in status, "status-missing-source-dirty-output")
 
 require('INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1 "$ROOT_DIR/menu-readiness.sh"' in tis, "tis-menu-opt-in-not-explicit")
 require('INPUTIA_TIS_INCLUDE_MENU_READINESS:-0' in tis, "tis-missing-menu-include-gate")
+require(tis.index('INPUTIA_TIS_INCLUDE_MENU_READINESS:-0') < tis.index('INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1 "$ROOT_DIR/menu-readiness.sh"'), "tis-menu-readiness-call-before-include-gate")
 require('INPUTIA_MENU_READINESS_CACHE_FILE="$menu_readiness_cache_file"' in tis, "tis-menu-readiness-missing-cache-env")
 require('INPUTIA_VERIFICATION_OWNER_PID:-$$' in tis, "tis-menu-readiness-missing-owner-cache")
 require('tis.menuReadinessCacheFile=' in tis, "tis-menu-readiness-missing-cache-output")
 
 require('INPUTIA_RUN_UI_SMOKE:-0' in post_install, "post-install-missing-ui-smoke-gate")
 require('uiSmokeSkipped=true reason=disabled' in post_install, "post-install-missing-default-skip-marker")
+require(post_install.index('INPUTIA_RUN_UI_SMOKE:-0') < post_install.index('if print_tis_gui_readiness; then'), "post-install-tis-gui-readiness-before-ui-smoke-gate")
+require(post_install.index('INPUTIA_RUN_UI_SMOKE:-0') < post_install.index('"$ROOT_DIR/smoke-textedit.sh" "$APP"'), "post-install-textedit-before-ui-smoke-gate")
+require(post_install.index('INPUTIA_RUN_UI_SMOKE:-0') < post_install.index('"$ROOT_DIR/smoke-safari-typing.sh" "$APP"'), "post-install-safari-before-ui-smoke-gate")
+require('menu-readiness.sh' not in post_install, "post-install-unexpected-direct-menu-readiness")
+require('gui-smoke-readiness.sh' not in post_install, "post-install-unexpected-gui-readiness")
 
 require('rimeLatencyTouchesMenuBar=false' in rime_latency, "rime-latency-missing-menu-policy")
 require('rimeLatencyOpensGUI=false' in rime_latency, "rime-latency-missing-gui-policy")

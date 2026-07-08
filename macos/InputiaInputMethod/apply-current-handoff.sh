@@ -31,6 +31,10 @@ PY
 }
 
 run_install_check() {
+  if [[ -n "${INPUTIA_APPLY_INSTALL_CHECK_FOR_TEST:-}" ]]; then
+    printf '%s\n' "$INPUTIA_APPLY_INSTALL_CHECK_FOR_TEST"
+    return 0
+  fi
   "$ROOT_DIR/install-check.sh" 2>&1 || true
 }
 
@@ -72,7 +76,12 @@ run_admin_installer() {
   fi
 
   echo "applyCurrentHandoffInstallerPackage=$pkg_path"
-  if [[ "$EUID" == "0" ]]; then
+  if [[ "${INPUTIA_APPLY_FORCE_ADMIN_REQUIRED_FOR_TEST:-0}" == "1" ]]; then
+    echo "applyCurrentHandoffReady=false reason=admin-required"
+    echo "applyCurrentHandoffRequiredAction=rerun-with-admin-prompt"
+    echo "applyCurrentHandoffCommand=$(admin_install_command "$pkg_path" | /usr/bin/head -n 1)"
+    exit 12
+  elif [[ "$EUID" == "0" ]]; then
     /usr/sbin/installer -pkg "$pkg_path" -target /
   elif [[ -n "${INPUTIA_SUDO_PASSWORD:-}" ]]; then
     /usr/bin/printf '%s\n' "$INPUTIA_SUDO_PASSWORD" |
@@ -103,6 +112,31 @@ if [[ "${INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK:-0}" == "1" ]]; then
   command_sample="${command_sample%%$'\n'*}"
   if [[ "$command_sample" != *"INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh"* ]]; then
     echo "applyCurrentHandoffSelfCheck=false reason=missing-admin-prompt-command"
+    exit 1
+  fi
+  self_check_root="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/inputia-apply-handoff-self-check.XXXXXX")"
+  self_check_handoff="$self_check_root/install-handoff.txt"
+  self_check_pkg="$self_check_root/InputiaInputMethod.pkg"
+  : > "$self_check_handoff"
+  : > "$self_check_pkg"
+  no_admin_output="$(
+    INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=0 \
+      INPUTIA_INSTALL_HANDOFF_PATH="$self_check_handoff" \
+      INPUTIA_APPLY_FORCE_ADMIN_REQUIRED_FOR_TEST=1 \
+      INPUTIA_APPLY_INSTALL_CHECK_FOR_TEST=$'installHandoffCurrent=true\ninstallHandoffBlockReasons=none\ninstallHandoffPackagePath='"$self_check_pkg"$'\ninstallCheckBlockReasons=system-cdhash-mismatch,admin-required\ninstallCheckRequiredAction=admin-install-current-handoff\ninstallCheckRequiredActions=admin-install-current-handoff,run-repair-tis-duplicates,restart-inputia-host-after-install\ninstallCheckPassed=false\n' \
+      "$0" 2>&1 || true
+  )"
+  /bin/rm -rf "$self_check_root" >/dev/null 2>&1 || true
+  if ! /usr/bin/grep -q '^applyCurrentHandoffReady=false reason=admin-required$' <<<"$no_admin_output"; then
+    echo "applyCurrentHandoffSelfCheck=false reason=missing-no-admin-ready-marker"
+    exit 1
+  fi
+  if ! /usr/bin/grep -q '^applyCurrentHandoffRequiredAction=rerun-with-admin-prompt$' <<<"$no_admin_output"; then
+    echo "applyCurrentHandoffSelfCheck=false reason=missing-no-admin-required-action"
+    exit 1
+  fi
+  if ! /usr/bin/grep -q '^applyCurrentHandoffCommand=.*INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh' <<<"$no_admin_output"; then
+    echo "applyCurrentHandoffSelfCheck=false reason=missing-no-admin-command"
     exit 1
   fi
   final_failure_output="$(

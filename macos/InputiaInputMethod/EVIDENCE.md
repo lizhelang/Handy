@@ -27407,3 +27407,49 @@ INPUTIA_TIS_INCLUDE_MENU_READINESS=0 ./macos/InputiaInputMethod/tis-readiness.sh
 
 - 当前重复态是 enabled list 和 installed list 中各自都有同一 fingerprint 重复，不是两个不同路径或不同 icon 混入。
 - 修复顺序不变：先让系统 app 成为当前 build，再运行显式 duplicate repair，最后等待 host 重启并重跑 `install-check.sh`。
+
+## 2026-07-09 04:31 CST - 验证分层默认路径加固
+
+背景：
+
+- 日常修候选词、双拼、快捷键、设置 UI 时不能反复触发菜单栏 AXPress、GUI smoke、TextEdit/Safari 或公证检查。
+- `verify-nongui.sh`、`status.sh`、`post-install-regression.sh` 的默认路径必须继续保持无 GUI、无菜单栏、无系统输入源变更；`menu-readiness.sh` 和 `gui-smoke-readiness.sh` 必须显式 opt-in。
+
+实现：
+
+- `validation-policy-self-check.sh` 追加三层验证边界断言：`dev-fast` 不得调用 full/pkg/status/menu/gui/notarization/smoke；`install-check` 不得打开 menu/gui opt-in；`release/full-check` 必须集中设置 `INPUTIA_MENU_READINESS_CACHE_FILE` 且直接调用 `menu-readiness.sh` 仅一次。
+- `status.sh` / `tis-readiness.sh` 的 menu readiness 调用顺序被锁在 include gate 之后；`post-install-regression.sh` 的 TIS GUI readiness 和 TextEdit/Safari smoke 调用被锁在 `INPUTIA_RUN_UI_SMOKE` gate 之后。
+- `apply-current-handoff.sh` 增加无管理员权限离线自检，确保没有非交互 sudo 且未显式允许 admin prompt 时输出 `admin-required` 和继续命令，而不是卡住。
+
+验证：
+
+```text
+zsh -n macos/InputiaInputMethod/validation-policy-self-check.sh macos/InputiaInputMethod/apply-current-handoff.sh
+bash -n macos/InputiaInputMethod/dev-fast.sh macos/InputiaInputMethod/install-check.sh macos/InputiaInputMethod/release/full-check.sh macos/InputiaInputMethod/verify-nongui.sh macos/InputiaInputMethod/tis-readiness.sh
+
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+
+INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=1 ./macos/InputiaInputMethod/apply-current-handoff.sh
+  applyCurrentHandoffSelfCheck=true
+
+./macos/InputiaInputMethod/dev-fast.sh
+  validationTier=dev-fast
+  touchesMenuBar=false
+  opensGUI=false
+  changesSystemInputSource=false
+  checksNotarization=false
+  validationPolicySelfCheck=true
+  applyCurrentHandoffSelfCheck=true
+  rimeLatencyTouchesMenuBar=false
+  rimeLatencyOpensGUI=false
+  rimeLatencyChangesSystemInputSource=false
+  rimeLatencyChecksNotarization=false
+  rimeLatencySelfCheck=true
+  devFastPassed=true
+```
+
+结论：
+
+- 默认开发验证现在由 `dev-fast.sh` 收口，且策略自检会阻止重型 menu/gui/pkg/notarization 检查重新混入默认路径。
+- 菜单栏 AXPress 只允许在显式 release/full 或手动 opt-in 诊断中进入，并通过 `INPUTIA_MENU_READINESS_CACHE_FILE` 在一次验证周期内复用结果。
