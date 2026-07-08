@@ -15,6 +15,15 @@ section() {
   printf '\n== %s ==\n' "$1"
 }
 
+quote() {
+  /usr/bin/python3 - "$1" <<'PY'
+import shlex
+import sys
+
+print(shlex.quote(sys.argv[1]))
+PY
+}
+
 plist_value() {
   local plist="$1"
   local key="$2"
@@ -163,6 +172,42 @@ install_required_actions() {
     actions="inspect-install-check-output"
   fi
   echo "$actions"
+}
+
+print_install_required_commands() {
+  local required_actions="$1"
+  local pkg_path="$2"
+  local root_quoted pkg_quoted
+
+  root_quoted="$(quote "$ROOT_DIR")"
+  if [[ -z "$pkg_path" ]]; then
+    pkg_path="$ROOT_DIR/dist/InputiaInputMethod-latest.pkg"
+  fi
+  pkg_quoted="$(quote "$pkg_path")"
+
+  section "required commands"
+  if [[ "$required_actions" == "none" ]]; then
+    echo "installCheckRequiredCommands=none"
+    return
+  fi
+
+  echo "installCheckRequiredCommands=present"
+  if [[ ",$required_actions," == *,run-install-handoff-and-admin-install,* ]]; then
+    echo "installCheckCommand.runInstallHandoff=cd $root_quoted && ./install-handoff.sh"
+    echo "installCheckCommand.adminInstall=sudo /usr/sbin/installer -pkg $pkg_quoted -target /"
+  elif [[ ",$required_actions," == *,run-install-system,* ]]; then
+    echo "installCheckCommand.runInstallSystem=cd $root_quoted && ./install-system.sh"
+  fi
+  if [[ ",$required_actions," == *,run-repair-tis-duplicates,* ]]; then
+    echo "installCheckCommand.repairTISDuplicates=cd $root_quoted && INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh"
+  fi
+  if [[ ",$required_actions," == *,select-or-readd-inputia-in-system-settings,* ]]; then
+    echo "installCheckCommand.openKeyboardSettings=open 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension'"
+  fi
+  if [[ ",$required_actions," == *,restart-inputia-host-after-install,* ]]; then
+    echo "installCheckCommand.awaitSystemInstall=cd $root_quoted && ./await-system-install.sh"
+  fi
+  echo "installCheckCommand.verify=cd $root_quoted && ./install-check.sh"
 }
 
 install_check_block_reasons() {
@@ -440,10 +485,13 @@ echo "installCheckBlockReasons=$block_reasons"
 if [[ "$block_reasons" == "none" ]]; then
   echo "installCheckRequiredAction=none"
   echo "installCheckRequiredActions=none"
+  required_actions=none
 else
   echo "installCheckRequiredAction=$(install_required_action "$block_reasons")"
-  echo "installCheckRequiredActions=$(install_required_actions "$block_reasons")"
+  required_actions="$(install_required_actions "$block_reasons")"
+  echo "installCheckRequiredActions=$required_actions"
 fi
+print_install_required_commands "$required_actions" "$handoff_package_path"
 if [[ "$system_matches_build" == "true" &&
   "$settings_matches_build" == "true" &&
   "$tis_ready" == "true" &&
