@@ -312,7 +312,7 @@ INPUTIA_CODESIGN_IDENTITY="Codexbar Local Code Signing Leaf v4" \
   ./macos/InputiaInputMethod/open-installer.sh
 ```
 
-`open-installer.sh` 会构建带 CDHash 的唯一 pkg 文件名，并打开刚生成的那一个，避免 Installer 缓存旧 digest。
+`open-installer.sh` 会构建带 CDHash 的唯一 pkg 文件名，并打开刚生成的那一个，避免 Installer 缓存旧 digest。默认开发验证只运行它的 preflight 和 dry-run 自检，不会构建 pkg，也不会打开 Installer。
 
 如果当前环境不能非交互取得管理员权限，先生成不抢前台的安装交接清单：
 

@@ -27718,3 +27718,54 @@ INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/dev-fast.sh
 
 - 设置入口稳定性现在进入默认开发验证；普通开发不用打开真实设置窗口就能防止回归。
 - 同版本旧设置启动器/旧 Host 不再被当成当前 build 的可用设置入口。
+
+## 2026-07-09 05:27 CST - Installer 打开入口纳入 dev-fast dry-run
+
+背景：
+
+- `open-installer.sh` 是会打开 macOS Installer 的前台入口，不应该在日常开发验证或验证并发期间被误触发。
+- 之前它有验证进程 preflight，但默认 `dev-fast.sh` 没有覆盖这个入口；同时缺少不构建 pkg、不调用 `/usr/bin/open` 的 dry-run 成功路径证明。
+
+实现：
+
+- `open-installer.sh` 新增 `INPUTIA_OPEN_INSTALLER_DRY_RUN_SELF_CHECK=1`，用临时 fake pkg 验证 `openingInstallerPackage=...` 和 `openInstallerDryRun=true path=...` 输出。
+- 新增 `INPUTIA_OPEN_INSTALLER_PACKAGE_FOR_TEST` 和 `INPUTIA_OPEN_INSTALLER_DRY_RUN`，让测试路径不运行 `build-pkg.sh`，也不打开 Installer。
+- `dev-fast.sh` 增加 `open installer self-check`，覆盖 preflight 和 dry-run 两条路径。
+- `validation-policy-self-check.sh` 锁住这些入口，防止未来把打开 Installer 的行为塞回默认开发验证。
+
+验证：
+
+```text
+zsh -n macos/InputiaInputMethod/open-installer.sh
+  rc=0
+
+INPUTIA_OPEN_INSTALLER_PREFLIGHT_SELF_CHECK=1 ./macos/InputiaInputMethod/open-installer.sh
+  openInstallerPreflightSelfCheck clear=true
+  openInstallerPreflightSelfCheck blocked=true
+  openInstallerPreflightSelfCheck=true
+
+INPUTIA_OPEN_INSTALLER_DRY_RUN_SELF_CHECK=1 ./macos/InputiaInputMethod/open-installer.sh
+  openInstallerDryRunSelfCheck=true
+
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+
+INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/dev-fast.sh
+  validationTier=dev-fast
+  touchesMenuBar=false
+  opensGUI=false
+  changesSystemInputSource=false
+  checksNotarization=false
+  openInstallerPreflightSelfCheck=true
+  openInstallerDryRunSelfCheck=true
+  candidate[0]=你来
+  page_size=7
+  rimeLatencyIncrementalMs=44.479
+  rimeLatencySelfCheck=true
+  devFastPassed=true
+```
+
+结论：
+
+- Installer 入口现在可在默认开发验证中被证明安全，但不会构建 pkg 或打开前台 Installer。
+- 安装链路的真实系统状态仍由 `install-handoff.sh` / `install-check.sh` 管控，管理员安装仍必须显式执行。

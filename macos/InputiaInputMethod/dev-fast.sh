@@ -61,6 +61,10 @@ section "open settings self-check"
 INPUTIA_OPEN_SETTINGS_PREFLIGHT_SELF_CHECK=1 "$ROOT_DIR/open-settings.sh"
 INPUTIA_OPEN_SETTINGS_RESOLUTION_SELF_CHECK=1 "$ROOT_DIR/open-settings.sh"
 
+section "open installer self-check"
+INPUTIA_OPEN_INSTALLER_PREFLIGHT_SELF_CHECK=1 "$ROOT_DIR/open-installer.sh"
+INPUTIA_OPEN_INSTALLER_DRY_RUN_SELF_CHECK=1 "$ROOT_DIR/open-installer.sh"
+
 section "schema catalog self-check"
 "$ROOT_DIR/schema-catalog-self-check.sh"
 

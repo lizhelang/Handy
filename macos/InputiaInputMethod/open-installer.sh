@@ -49,13 +49,51 @@ if [[ "${INPUTIA_OPEN_INSTALLER_PREFLIGHT_SELF_CHECK:-0}" == "1" ]]; then
   exit 1
 fi
 
-require_no_verification_processes
+open_package() {
+  local pkg_path="$1"
+  if [[ "${INPUTIA_OPEN_INSTALLER_DRY_RUN:-0}" == "1" ]]; then
+    echo "openInstallerDryRun=true path=$pkg_path"
+  else
+    /usr/bin/open "$pkg_path"
+  fi
+}
 
-pkg_path="$(
+build_or_test_pkg_path() {
+  if [[ -n "${INPUTIA_OPEN_INSTALLER_PACKAGE_FOR_TEST:-}" ]]; then
+    echo "$INPUTIA_OPEN_INSTALLER_PACKAGE_FOR_TEST"
+    return 0
+  fi
   /bin/zsh "$ROOT_DIR/build-pkg.sh" |
     /usr/bin/tee /dev/stderr |
     /usr/bin/tail -n 1
-)"
+}
+
+if [[ "${INPUTIA_OPEN_INSTALLER_DRY_RUN_SELF_CHECK:-0}" == "1" ]]; then
+  self_check_root="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/inputia-open-installer-self-check.XXXXXX")"
+  trap '/bin/rm -rf "$self_check_root" >/dev/null 2>&1 || true' EXIT
+  fake_pkg="$self_check_root/InputiaInputMethod.pkg"
+  : > "$fake_pkg"
+  dry_run_output="$(
+    INPUTIA_OPEN_INSTALLER_DRY_RUN_SELF_CHECK=0 \
+      INPUTIA_OPEN_INSTALLER_PACKAGE_FOR_TEST="$fake_pkg" \
+      INPUTIA_OPEN_INSTALLER_DRY_RUN=1 \
+      "$0" 2>&1
+  )"
+  if ! /usr/bin/grep -q "^openingInstallerPackage=$fake_pkg$" <<<"$dry_run_output"; then
+    echo "openInstallerDryRunSelfCheck=false reason=missing-opening-package"
+    exit 1
+  fi
+  if ! /usr/bin/grep -q "^openInstallerDryRun=true path=$fake_pkg$" <<<"$dry_run_output"; then
+    echo "openInstallerDryRunSelfCheck=false reason=missing-dry-run-open"
+    exit 1
+  fi
+  echo "openInstallerDryRunSelfCheck=true"
+  exit 0
+fi
+
+require_no_verification_processes
+
+pkg_path="$(build_or_test_pkg_path)"
 
 if [[ ! -f "$pkg_path" ]]; then
   echo "installerPackageFound=false path=$pkg_path" >&2
@@ -63,4 +101,4 @@ if [[ ! -f "$pkg_path" ]]; then
 fi
 
 echo "openingInstallerPackage=$pkg_path"
-/usr/bin/open "$pkg_path"
+open_package "$pkg_path"
