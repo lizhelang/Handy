@@ -45,6 +45,12 @@ section "validation policy self-check"
 section "install check self-check"
 INPUTIA_INSTALL_CHECK_SELF_CHECK=1 "$ROOT_DIR/install-check.sh"
 
+section "install apply self-check"
+INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=1 "$ROOT_DIR/apply-current-handoff.sh"
+
+section "tis duplicate repair self-check"
+INPUTIA_REPAIR_TIS_DUPLICATES_SELF_CHECK=1 "$ROOT_DIR/repair-tis-duplicates.sh"
+
 section "build"
 run_rust "$ROOT_DIR/build.sh"
 

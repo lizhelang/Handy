@@ -193,6 +193,8 @@ require('buildSettingsSourceCommit=' in install_check, "install-check-missing-bu
 require('systemSettingsSourceCommit=' in install_check, "install-check-missing-system-settings-source-commit")
 require('"$ROOT_DIR/install-check.sh"' in dev_fast, "dev-fast-missing-install-check-self-check")
 require('INPUTIA_INSTALL_CHECK_SELF_CHECK=1 "$ROOT_DIR/install-check.sh"' in dev_fast, "dev-fast-install-check-not-self-check-only")
+require('INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=1 "$ROOT_DIR/apply-current-handoff.sh"' in dev_fast, "dev-fast-missing-apply-current-handoff-self-check")
+require('INPUTIA_REPAIR_TIS_DUPLICATES_SELF_CHECK=1 "$ROOT_DIR/repair-tis-duplicates.sh"' in dev_fast, "dev-fast-missing-tis-duplicate-repair-self-check")
 require('installCheckBlockReasons=' in install_handoff, "install-handoff-missing-block-reasons")
 require('installCheckRequiredAction=' in install_handoff, "install-handoff-missing-required-action")
 require('installCheckRequiredActions=' in install_handoff, "install-handoff-missing-required-actions")
@@ -252,7 +254,7 @@ require('--register-input-source' in repair_tis_duplicates, "repair-tis-missing-
 require('--enable-input-source' in repair_tis_duplicates, "repair-tis-missing-enable-command")
 require('--select-input-source' in repair_tis_duplicates, "repair-tis-missing-select-command")
 require('INPUTIA_REPAIR_TIS_DUPLICATES_SELF_CHECK' in repair_tis_duplicates, "repair-tis-missing-self-check")
-require('repair-tis-duplicates.sh' not in dev_fast, "dev-fast-unexpected-repair-tis")
+require('INPUTIA_REPAIR_TIS_DUPLICATES=1 "$ROOT_DIR/repair-tis-duplicates.sh"' not in dev_fast, "dev-fast-unexpected-real-repair-tis")
 require('"$ROOT_DIR/repair-tis-duplicates.sh"' not in install_check, "install-check-unexpected-executed-repair-tis")
 
 require('validationTier=install-apply' in apply_current_handoff, "apply-current-handoff-missing-tier-marker")
@@ -264,7 +266,7 @@ require('INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh' in apply_curre
 require('INPUTIA_REPAIR_TIS_DUPLICATES=1 "$ROOT_DIR/repair-tis-duplicates.sh"' in apply_current_handoff, "apply-current-handoff-missing-repair-command")
 require('"$ROOT_DIR/await-system-install.sh"' in apply_current_handoff, "apply-current-handoff-missing-await-command")
 require('"$ROOT_DIR/install-check.sh"' in apply_current_handoff, "apply-current-handoff-missing-final-install-check")
-require('apply-current-handoff.sh' not in dev_fast, "dev-fast-unexpected-apply-current-handoff")
+require('INPUTIA_ALLOW_ADMIN_PROMPT=1 "$ROOT_DIR/apply-current-handoff.sh"' not in dev_fast, "dev-fast-unexpected-real-apply-current-handoff")
 
 require('InputiaCandidatePanelFormatter' in candidate_panel, "candidate-panel-missing-formatter")
 require('maximumCandidateCount = 9' in candidate_panel, "candidate-panel-missing-nine-candidate-cap")

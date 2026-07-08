@@ -70,7 +70,7 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 
 `dev-fast.sh` 还会运行 `rime-latency-self-check.sh`，用 `persistent_session_probe` 比较冷 evaluate 和持久增量 session 的同一输入前缀。默认只做非 GUI、非系统输入源的宽松性能防回退；阈值可用 `INPUTIA_RIME_LATENCY_MAX_INCREMENTAL_MS` 和 `INPUTIA_RIME_LATENCY_MIN_SPEEDUP` 覆盖。
 
-`dev-fast.sh` 也会用 `INPUTIA_INSTALL_CHECK_SELF_CHECK=1 install-check.sh` 跑安装态纯逻辑自检。这个模式不读取 `/Library`、不查 TIS、不找 running host，只覆盖 `installCheckBlockReasons` / `installCheckRequiredAction`、安装交接清单 freshness，以及 `installCheckRequiredActions` 到 `installCheckCommand.*` 的命令提示映射。
+`dev-fast.sh` 也会跑安装链路纯逻辑自检：`INPUTIA_INSTALL_CHECK_SELF_CHECK=1 install-check.sh`、`INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=1 apply-current-handoff.sh`、`INPUTIA_REPAIR_TIS_DUPLICATES_SELF_CHECK=1 repair-tis-duplicates.sh`。这些模式不读取 `/Library`、不查 TIS、不找 running host，也不会改系统输入源；只覆盖 `installCheckBlockReasons` / `installCheckRequiredAction`、安装交接清单 freshness、`installCheckRequiredActions` 到命令提示映射，以及管理员安装/修复 TIS duplicate 的动作链门禁。
 
 安装链路变化后的验证：
 
