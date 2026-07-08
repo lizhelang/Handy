@@ -137,6 +137,11 @@ tis_matches() {
   ' <<<"$dump"
 }
 
+count_gt_one() {
+  local count="$1"
+  [[ "$count" =~ ^[0-9]+$ && "$count" -gt 1 ]]
+}
+
 current_source_id() {
   if [[ -x "$TIS_TOOL" ]]; then
     "$TIS_TOOL" --dump-current-input-source 2>/dev/null |
@@ -304,6 +309,11 @@ enabled_matches="$(tis_matches "$dump" false)"
 installed_matches="$(tis_matches "$dump" true)"
 target_enabled_matches="$(tis_count_for_icon "$dump" false "$TARGET_MODE_ID" "$expected_icon")"
 target_installed_matches="$(tis_count_for_icon "$dump" true "$TARGET_MODE_ID" "$expected_icon")"
+if count_gt_one "$target_enabled_matches" || count_gt_one "$target_installed_matches"; then
+  target_duplicate_matches=true
+else
+  target_duplicate_matches=false
+fi
 hans_icon="$(tis_value_for_icon "$dump" true "$TARGET_MODE_ID" "$expected_icon" iconURL)"
 hans_enabled="$(tis_value_for_icon "$dump" true "$TARGET_MODE_ID" "$expected_icon" enabled)"
 hans_selected="$(tis_value_for_icon "$dump" true "$TARGET_MODE_ID" "$expected_icon" selected)"
@@ -359,6 +369,7 @@ echo "tis.enabledMatches=${enabled_matches:-unknown}"
 echo "tis.installedMatches=${installed_matches:-unknown}"
 echo "tis.targetEnabledMatches=${target_enabled_matches:-unknown}"
 echo "tis.targetInstalledMatches=${target_installed_matches:-unknown}"
+echo "tis.targetDuplicateMatches=$target_duplicate_matches"
 echo "tis.hansIconURL=${hans_icon:-unknown}"
 echo "tis.hansIconMatchesApp=$icon_matches"
 echo "tis.hansEnabled=${hans_enabled:-unknown}"
@@ -392,6 +403,9 @@ elif [[ "$signature_accepted" != "true" ]]; then
 else
   if [[ "${target_installed_matches:-0}" == "0" || -z "${target_installed_matches:-}" ]]; then
     echo "tis.readinessBlockReason=target-source-not-installed"
+  elif [[ "$target_duplicate_matches" == "true" ]]; then
+    echo "tis.readinessBlockReason=target-source-duplicate"
+    echo "tis.requiredAction=remove-duplicate-inputia-and-readd-once"
   elif [[ "${target_enabled_matches:-0}" == "0" || -z "${target_enabled_matches:-}" ]]; then
     echo "tis.readinessBlockReason=missing-enabled-source"
     if [[ "$user_dir_ready" != "true" || "$hitoolbox_defaults_ok" != "true" ]]; then

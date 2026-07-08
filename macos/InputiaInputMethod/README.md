@@ -78,7 +78,7 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 
 `install-check.sh` 只检查 `/Library/Input Methods/InputiaInputMethod.app`、`/Applications/Inputia 设置.app`、TIS enabled/selectable/current source、running host 是否与当前 build 对齐；默认不碰菜单栏、不做 GUI smoke readiness。
 
-失败时看 `installCheckBlockReasons` 和 `installCheckRequiredAction`。例如系统 app 或设置启动器不是当前 build 且没有非交互管理员权限时，会输出 `installCheckRequiredAction=run-install-handoff-and-admin-install`；running host 不是当前 build 时，会输出 `running-cdhash-mismatch` 和 `restart-inputia-host-after-install`，不要把 TIS 已选中误判成当前代码正在运行。
+失败时看 `installCheckBlockReasons` 和 `installCheckRequiredAction`。例如系统 app 或设置启动器不是当前 build 且没有非交互管理员权限时，会输出 `installCheckRequiredAction=run-install-handoff-and-admin-install`；running host 不是当前 build 时，会输出 `running-cdhash-mismatch` 和 `restart-inputia-host-after-install`，不要把 TIS 已选中误判成当前代码正在运行。若 `TISCreateInputSourceList` 对同一个 Inputia mode 返回多个 enabled/installed 命中，会输出 `tis-duplicate-matches` 和 `remove-duplicate-inputia-and-readd-once`，不要把“菜单里能选”误判成单一干净注册态。
 
 发布前或安装脚本变化后的完整验证：
 

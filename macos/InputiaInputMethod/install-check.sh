@@ -70,6 +70,8 @@ install_required_action() {
     else
       echo "run-install-system"
     fi
+  elif [[ ",$block_reasons," == *,tis-duplicate-matches,* ]]; then
+    echo "remove-duplicate-inputia-and-readd-once"
   elif [[ ",$block_reasons," == *,tis-not-ready,* ]]; then
     echo "select-or-readd-inputia-in-system-settings"
   elif [[ ",$block_reasons," == *,running-host-missing,* ||
@@ -85,9 +87,10 @@ install_check_block_reasons() {
   local system_matches_build="$2"
   local settings_matches_build="$3"
   local tis_ready="$4"
-  local running_found="$5"
-  local running_matches_build="$6"
-  local admin_ready="$7"
+  local tis_duplicate_matches="$5"
+  local running_found="$6"
+  local running_matches_build="$7"
+  local admin_ready="$8"
   local block_reasons=""
 
   if [[ "$system_exists" != "true" ]]; then
@@ -98,7 +101,9 @@ install_check_block_reasons() {
   if [[ "$settings_matches_build" != "true" ]]; then
     block_reasons="$(append_reason "$block_reasons" "settings-version-mismatch")"
   fi
-  if [[ "$tis_ready" != "true" ]]; then
+  if [[ "$tis_duplicate_matches" == "true" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "tis-duplicate-matches")"
+  elif [[ "$tis_ready" != "true" ]]; then
     block_reasons="$(append_reason "$block_reasons" "tis-not-ready")"
   fi
   if [[ "$running_found" != "true" ]]; then
@@ -122,11 +127,12 @@ run_install_check_self_check_case() {
   local system_matches_build="$3"
   local settings_matches_build="$4"
   local tis_ready="$5"
-  local running_found="$6"
-  local running_matches_build="$7"
-  local admin_ready="$8"
-  local expected_reasons="$9"
-  local expected_action="${10}"
+  local tis_duplicate_matches="$6"
+  local running_found="$7"
+  local running_matches_build="$8"
+  local admin_ready="$9"
+  local expected_reasons="${10}"
+  local expected_action="${11}"
   local actual_reasons actual_action
 
   actual_reasons="$(
@@ -135,6 +141,7 @@ run_install_check_self_check_case() {
       "$system_matches_build" \
       "$settings_matches_build" \
       "$tis_ready" \
+      "$tis_duplicate_matches" \
       "$running_found" \
       "$running_matches_build" \
       "$admin_ready"
@@ -153,26 +160,30 @@ run_install_check_self_check_case() {
 
 if [[ "${INPUTIA_INSTALL_CHECK_SELF_CHECK:-0}" == "1" ]]; then
   run_install_check_self_check_case \
-    ready true true true true true true true \
+    ready true true true true false true true true \
     none none
   run_install_check_self_check_case \
-    admin-required true false true true true false false \
+    admin-required true false true true false true false false \
     system-cdhash-mismatch,running-cdhash-mismatch,admin-required \
     run-install-handoff-and-admin-install
   run_install_check_self_check_case \
-    tis-not-ready true true true false true true true \
+    tis-not-ready true true true false false true true true \
     tis-not-ready \
     select-or-readd-inputia-in-system-settings
   run_install_check_self_check_case \
-    running-missing true true true true false false true \
+    tis-duplicate true true true false true true true true \
+    tis-duplicate-matches \
+    remove-duplicate-inputia-and-readd-once
+  run_install_check_self_check_case \
+    running-missing true true true true false false false true \
     running-host-missing \
     restart-inputia-host-after-install
   run_install_check_self_check_case \
-    settings-admin true true false true true true false \
+    settings-admin true true false true false true true false \
     settings-version-mismatch,admin-required \
     run-install-handoff-and-admin-install
   run_install_check_self_check_case \
-    system-missing false false true false false false false \
+    system-missing false false true false false false false false \
     system-app-missing,tis-not-ready,running-host-missing,admin-required \
     run-install-handoff-and-admin-install
   echo "installCheckSelfCheck=true"
@@ -224,13 +235,18 @@ echo "settingsMatchesBuild=$settings_matches_build"
 section "tis"
 tis_output="$(INPUTIA_TIS_INCLUDE_MENU_READINESS=0 "$ROOT_DIR/tis-readiness.sh" "$SYSTEM_APP" 2>&1 || true)"
 printf '%s\n' "$tis_output" | /usr/bin/awk '
-  /^app=|^appExists=|^buildCDHash=|^appCDHash=|^appMatchesBuild=|^expectedTISModeID=|^tis.targetEnabledMatches=|^tis.targetInstalledMatches=|^tis.hansIconMatchesApp=|^tis.hansEnabled=|^tis.hansSelectable=|^tis.hansSelected=|^tis.currentID=|^tis.currentMatchesTarget=|^tis.menuReadiness=|^tis.menuBlockReason=|^tis.readinessBlockReason=|^tisReadiness=/ { print }
+  /^app=|^appExists=|^buildCDHash=|^appCDHash=|^appMatchesBuild=|^expectedTISModeID=|^tis.targetEnabledMatches=|^tis.targetInstalledMatches=|^tis.targetDuplicateMatches=|^tis.hansIconMatchesApp=|^tis.hansEnabled=|^tis.hansSelectable=|^tis.hansSelected=|^tis.currentID=|^tis.currentMatchesTarget=|^tis.menuReadiness=|^tis.menuBlockReason=|^tis.readinessBlockReason=|^tis.requiredAction=|^tisReadiness=/ { print }
 '
 tis_ready=false
 if /usr/bin/grep -q '^tisReadiness=true$' <<<"$tis_output"; then
   tis_ready=true
 fi
+tis_duplicate_matches=false
+if /usr/bin/grep -q '^tis.targetDuplicateMatches=true$' <<<"$tis_output"; then
+  tis_duplicate_matches=true
+fi
 echo "installCheckTISReady=$tis_ready"
+echo "installCheckTISDuplicateMatches=$tis_duplicate_matches"
 
 section "running host"
 running_matches_build=false
@@ -263,6 +279,7 @@ block_reasons="$(
     "$system_matches_build" \
     "$settings_matches_build" \
     "$tis_ready" \
+    "$tis_duplicate_matches" \
     "$running_found" \
     "$running_matches_build" \
     "$admin_ready"
@@ -276,6 +293,7 @@ fi
 if [[ "$system_matches_build" == "true" &&
   "$settings_matches_build" == "true" &&
   "$tis_ready" == "true" &&
+  "$tis_duplicate_matches" != "true" &&
   "$running_matches_build" == "true" ]]; then
   echo "installCheckPassed=true"
 else

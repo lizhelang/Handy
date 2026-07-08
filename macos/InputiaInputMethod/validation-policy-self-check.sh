@@ -66,6 +66,8 @@ require('INPUTIA_INSTALL_CHECK_SELF_CHECK:-0' in install_check, "install-check-m
 require('installCheckSelfCheck=true' in install_check, "install-check-missing-self-check-pass-marker")
 require('run-install-handoff-and-admin-install' in install_check, "install-check-missing-admin-required-action")
 require('restart-inputia-host-after-install' in install_check, "install-check-missing-running-host-action")
+require('tis-duplicate-matches' in install_check, "install-check-missing-tis-duplicate-blocker")
+require('remove-duplicate-inputia-and-readd-once' in install_check, "install-check-missing-tis-duplicate-action")
 require('"$ROOT_DIR/install-check.sh"' in dev_fast, "dev-fast-missing-install-check-self-check")
 require('INPUTIA_INSTALL_CHECK_SELF_CHECK=1 "$ROOT_DIR/install-check.sh"' in dev_fast, "dev-fast-install-check-not-self-check-only")
 require('installCheckBlockReasons=' in install_handoff, "install-handoff-missing-block-reasons")
