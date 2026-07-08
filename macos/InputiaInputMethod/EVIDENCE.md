@@ -28105,3 +28105,75 @@ ps -axo ... | rg "apply-current-handoff|osascript|installer|SecurityAgent"
 - 新增 timeout 行为在真实授权路径上有效：未授权时会退出并清理进程。
 - 当前没有半安装；系统实际运行态仍未切到当前 build。
 - `open-installer.sh` 只能打开 pkg 让系统 Installer 处理，本质仍要求管理员交互，不能替代授权完成。
+
+## 2026-07-09 07:24 CST - 管理员授权后系统安装态闭环
+
+背景：
+
+- 用户完成管理员授权/安装后，重新接管安装层验证。
+- 当前主线为 `0d57f245c9be`，handoff/pkg/build 均已对齐该提交。
+
+执行与证据：
+
+```text
+./macos/InputiaInputMethod/install-check.sh
+  systemMatchesBuild=true
+  settingsMatchesBuild=true
+  installHandoffCurrent=true
+  tis.targetEnabledMatches=1
+  tis.targetInstalledMatches=1
+  tis.targetDuplicateMatches=false
+  tis.hansEnabled=true
+  tis.hansSelectable=true
+  tis.hansSelected=false
+  runningMatchesBuild=true
+  installCheckPassed=false
+  installCheckNextStep=open-keyboard-settings
+
+./macos/InputiaInputMethod/build/inputia-tis-tool --select-source-id com.inputia.inputmethod.Inputia.Hans
+  selectStatus=0
+  selectCurrentID=com.inputia.inputmethod.Inputia.Hans
+  selectCurrentMatchesTarget=true
+
+./macos/InputiaInputMethod/install-check.sh
+  systemMatchesBuild=true
+  settingsMatchesBuild=true
+  installHandoffCurrent=true
+  installCheckTISReady=true
+  installCheckTISDuplicateMatches=false
+  runningMatchesBuild=true
+  installCheckBlockReasons=none
+  installCheckRequiredAction=none
+  installCheckRequiredActions=none
+  installCheckPassed=true
+
+./macos/InputiaInputMethod/status.sh
+  targetMatchesBuild=true
+  targetSettingsMatchesBuild=true
+  statusTISCurrentID=com.inputia.inputmethod.Inputia.Hans
+  statusTISCurrentMatchesTarget=true
+  runningMatchesBuild=true
+  statusMenuBlockReason=opt-in-required
+  statusGuiSmokeReady=unknown reason=skipped
+
+INPUTIA_RUN_UI_SMOKE=0 ./macos/InputiaInputMethod/post-install-regression.sh "/Library/Input Methods/InputiaInputMethod.app"
+  current source id=com.inputia.inputmethod.Inputia.Hans
+  postInstallRegressionPassed=true
+  uiSmokeSkipped=true reason=disabled
+
+INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/dev-fast.sh
+  validationTier=dev-fast
+  touchesMenuBar=false
+  opensGUI=false
+  changesSystemInputSource=false
+  checksNotarization=false
+  selectProbeMatrixSelfCheck=true
+  rimeLatencySelfCheck=true
+  devFastPassed=true
+```
+
+结论：
+
+- 本机 `/Library/Input Methods/InputiaInputMethod.app`、`/Applications/Inputia 设置.app`、TIS enabled/selectable/selected、running Host 和当前 build 已经对齐。
+- TIS duplicate 已清除，`install-check.sh` 达到 `installCheckPassed=true`。
+- 本轮没有运行 menu-readiness、TextEdit/Safari/Clipboard GUI smoke 或 release/full-check。
