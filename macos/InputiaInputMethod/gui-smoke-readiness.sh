@@ -109,7 +109,9 @@ process_state() {
 }
 
 admin_status() {
-  if [[ -w "/Library/Input Methods" && -w "/Applications" ]]; then
+  if [[ "$APP" == "$USER_APP" ]]; then
+    echo "adminInstallReady=true reason=user-scope"
+  elif [[ -w "/Library/Input Methods" && -w "/Applications" ]]; then
     echo "adminInstallReady=true reason=writable"
   elif /usr/bin/sudo -n true >/dev/null 2>&1; then
     echo "adminInstallReady=true reason=sudo-noninteractive"
@@ -409,9 +411,6 @@ admin_line="$(admin_status)"
 echo "$admin_line"
 admin_ready=false
 if [[ "$admin_line" == adminInstallReady=true* ]]; then
-  admin_ready=true
-fi
-if [[ "$APP" == "$USER_APP" ]]; then
   admin_ready=true
 fi
 gui_block="$(gui_session_block_reason)"
