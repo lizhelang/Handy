@@ -477,7 +477,8 @@ impl ChineseEngine for RimeEngine {
                 self.append_candidates(&correction, true, &mut candidates, &mut seen_texts);
             }
         }
-        self.append_candidates(composing, false, &mut candidates, &mut seen_texts);
+        let preedit = self.append_candidates(composing, false, &mut candidates, &mut seen_texts);
+        promote_phrase_candidates_for_segmented_preedit(preedit.as_deref(), &mut candidates);
 
         candidates
     }
@@ -502,7 +503,8 @@ impl RimeEngine {
         corrected: bool,
         candidates: &mut Vec<Candidate>,
         seen_texts: &mut HashSet<String>,
-    ) {
+    ) -> Option<String> {
+        let mut first_preedit = None;
         for page in 0..MAX_CANDIDATE_PAGES {
             let snapshot = if corrected {
                 let key_sequence = paged_key_sequence(composing, page);
@@ -511,8 +513,11 @@ impl RimeEngine {
                 self.evaluate_incremental(composing, page)
             };
             let Ok(snapshot) = snapshot else {
-                return;
+                return first_preedit;
             };
+            if first_preedit.is_none() {
+                first_preedit = Some(snapshot.preedit.clone());
+            }
 
             if snapshot.candidates.is_empty() {
                 break;
@@ -539,6 +544,46 @@ impl RimeEngine {
                 break;
             }
         }
+        first_preedit
+    }
+}
+
+fn promote_phrase_candidates_for_segmented_preedit(
+    preedit: Option<&str>,
+    candidates: &mut Vec<Candidate>,
+) {
+    let Some(preedit) = preedit else {
+        return;
+    };
+    if preedit.split_whitespace().count() < 2 {
+        return;
+    }
+    let Some(first_normal_index) = candidates
+        .iter()
+        .position(|candidate| candidate.id.starts_with("rime:"))
+    else {
+        return;
+    };
+    let normal_candidates = candidates.split_off(first_normal_index);
+    let mut phrase_candidates = Vec::new();
+    let mut other_candidates = Vec::new();
+    for candidate in normal_candidates {
+        if candidate.text.chars().count() > 1 {
+            phrase_candidates.push(candidate);
+        } else {
+            other_candidates.push(candidate);
+        }
+    }
+    if phrase_candidates.is_empty() || other_candidates.is_empty() {
+        candidates.extend(phrase_candidates);
+        candidates.extend(other_candidates);
+        return;
+    }
+
+    candidates.extend(phrase_candidates);
+    candidates.extend(other_candidates);
+    for (index, candidate) in candidates.iter_mut().enumerate() {
+        candidate.base_score = 1_000 - index as i32;
     }
 }
 
@@ -1058,5 +1103,70 @@ mod tests {
         assert!(spelling_correction_variants("tain").contains(&"tian".to_string()));
         assert!(spelling_correction_variants("zhonguo").contains(&"zhongguo".to_string()));
         assert!(spelling_correction_variants("zhongguo").is_empty());
+    }
+
+    #[test]
+    fn segmented_preedit_promotes_phrases_before_single_characters() {
+        let mut candidates = vec![
+            Candidate::new("rime:double_pinyin:0", "你"),
+            Candidate::new("rime:double_pinyin:1", "尼"),
+            Candidate::new("rime:double_pinyin:2", "你来"),
+            Candidate::new("rime:double_pinyin:3", "你来了吗"),
+        ];
+
+        promote_phrase_candidates_for_segmented_preedit(Some("ni lai le ma"), &mut candidates);
+
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["你来", "你来了吗", "你", "尼"]
+        );
+        assert_eq!(candidates[0].base_score, 1_000);
+        assert_eq!(candidates[1].base_score, 999);
+        assert_eq!(
+            candidates[1].id, "rime:double_pinyin:3",
+            "candidate id should continue to point at the original Rime global index"
+        );
+    }
+
+    #[test]
+    fn unsegmented_preedit_preserves_rime_order() {
+        let mut candidates = vec![
+            Candidate::new("rime:luna_pinyin_simp:0", "先"),
+            Candidate::new("rime:luna_pinyin_simp:1", "西安"),
+        ];
+
+        promote_phrase_candidates_for_segmented_preedit(Some("xian"), &mut candidates);
+
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["先", "西安"]
+        );
+    }
+
+    #[test]
+    fn correction_candidates_stay_ahead_of_phrase_promotion() {
+        let mut candidates = vec![
+            Candidate::new("rime-correction:luna_pinyin_simp:0", "中国"),
+            Candidate::new("rime:luna_pinyin_simp:0", "中"),
+            Candidate::new("rime:luna_pinyin_simp:1", "中国"),
+        ];
+
+        promote_phrase_candidates_for_segmented_preedit(Some("zhong guo"), &mut candidates);
+
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["中国", "中国", "中"]
+        );
+        assert!(candidates[0].id.starts_with("rime-correction:"));
+        assert_eq!(candidates[0].base_score, 1_000);
     }
 }

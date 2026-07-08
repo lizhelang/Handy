@@ -123,7 +123,10 @@ fn rime_engine_fills_core_page_beyond_rime_page_size_when_available() {
 
     assert_eq!(outcome.visible_candidates[0].text, "你");
     assert_eq!(outcome.visible_candidates.len(), 9);
-    assert!(outcome.visible_candidates.iter().any(|candidate| candidate.text == "逆"));
+    assert!(outcome
+        .visible_candidates
+        .iter()
+        .any(|candidate| candidate.text == "逆"));
 
     let page_down = core.handle_key(Key::PageDown);
     assert_eq!(page_down.snapshot.page, 1);
