@@ -51,6 +51,9 @@ run_rust "$ROOT_DIR/build.sh"
 section "settings launcher build self-check"
 "$ROOT_DIR/settings-launcher-build-self-check.sh"
 
+section "schema catalog self-check"
+"$ROOT_DIR/schema-catalog-self-check.sh"
+
 section "rust tests"
 run_rust cargo test --manifest-path "$REPO_ROOT/crates/inputia-core/Cargo.toml"
 run_rust cargo test --manifest-path "$REPO_ROOT/crates/inputia-rime/Cargo.toml" --test core_flow
