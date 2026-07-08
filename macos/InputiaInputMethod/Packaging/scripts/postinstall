@@ -1,0 +1,391 @@
+#!/bin/zsh
+set -eu
+set -o pipefail
+
+INSTALL_ROOT="${INPUTIA_INSTALL_ROOT:-}"
+APP="$INSTALL_ROOT/Library/Input Methods/InputiaInputMethod.app"
+LEGACY_APP="$INSTALL_ROOT/Library/Input Methods/IputiaInputMethod.app"
+SETTINGS_APP="$INSTALL_ROOT/Applications/Inputia 设置.app"
+EXECUTABLE="$APP/Contents/MacOS/InputiaInputMethod"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+LOGIN_USER="$(/usr/bin/stat -f%Su /dev/console)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ARCHIVE="$SCRIPT_DIR/InputiaInputMethod.app.tar.gz"
+SETTINGS_ARCHIVE="$SCRIPT_DIR/InputiaSettings.app.tar.gz"
+USER_HOME=""
+USER_APP=""
+USER_LEGACY_APP=""
+
+if [[ -z "$INSTALL_ROOT" && -n "$LOGIN_USER" && "$LOGIN_USER" != "root" && "$LOGIN_USER" != "_mbsetupuser" ]]; then
+  USER_HOME="$(/usr/bin/dscl . -read "/Users/$LOGIN_USER" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}' || true)"
+  if [[ -n "$USER_HOME" && "$USER_HOME" == /* ]]; then
+    USER_APP="$USER_HOME/Library/Input Methods/InputiaInputMethod.app"
+    USER_LEGACY_APP="$USER_HOME/Library/Input Methods/IputiaInputMethod.app"
+  fi
+fi
+
+run_with_timeout() {
+  local timeout_seconds="$1"
+  local label="$2"
+  shift 2
+
+  "$@" &
+  local command_pid=$!
+
+  (
+    /bin/sleep "$timeout_seconds"
+    if /bin/kill -0 "$command_pid" >/dev/null 2>&1; then
+      echo "inputiaPostinstallTimeout=$label seconds=$timeout_seconds" >&2
+      /bin/kill "$command_pid" >/dev/null 2>&1 || true
+      /bin/sleep 1
+      /bin/kill -9 "$command_pid" >/dev/null 2>&1 || true
+    fi
+  ) &
+  local timer_pid=$!
+
+  local exit_status=0
+  wait "$command_pid" || exit_status=$?
+  /bin/kill "$timer_pid" >/dev/null 2>&1 || true
+  wait "$timer_pid" >/dev/null 2>&1 || true
+  return "$exit_status"
+}
+
+run_best_effort() {
+  local timeout_seconds="$1"
+  local label="$2"
+  shift 2
+  run_with_timeout "$timeout_seconds" "$label" "$@" || true
+}
+
+run_login_best_effort() {
+  local timeout_seconds="$1"
+  local label="$2"
+  shift 2
+
+  if [[ -n "$LOGIN_USER" && "$LOGIN_USER" != "root" && "$(/usr/bin/id -un)" != "$LOGIN_USER" ]]; then
+    if [[ -n "$USER_HOME" ]]; then
+      run_best_effort "$timeout_seconds" "$label" /usr/bin/sudo -u "$LOGIN_USER" /usr/bin/env \
+        HOME="$USER_HOME" USER="$LOGIN_USER" LOGNAME="$LOGIN_USER" "$@"
+    else
+      run_best_effort "$timeout_seconds" "$label" /usr/bin/sudo -u "$LOGIN_USER" "$@"
+    fi
+  else
+    run_best_effort "$timeout_seconds" "$label" "$@"
+  fi
+}
+
+run_login_capture() {
+  if [[ -n "$LOGIN_USER" && "$LOGIN_USER" != "root" && "$(/usr/bin/id -un)" != "$LOGIN_USER" ]]; then
+    if [[ -n "$USER_HOME" ]]; then
+      /usr/bin/sudo -u "$LOGIN_USER" /usr/bin/env HOME="$USER_HOME" USER="$LOGIN_USER" LOGNAME="$LOGIN_USER" "$@" 2>&1 || true
+    else
+      /usr/bin/sudo -u "$LOGIN_USER" "$@" 2>&1 || true
+    fi
+  else
+    "$@" 2>&1 || true
+  fi
+}
+
+cleanup_user_inputia_residue() {
+  if [[ -z "$USER_HOME" ]]; then
+    echo "inputiaUserHostBackupRemoved=skipped"
+    return
+  fi
+
+  local input_methods_dir="$USER_HOME/Library/Input Methods"
+  if [[ ! -d "$input_methods_dir" ]]; then
+    echo "inputiaUserHostBackupRemoved=false"
+    return
+  fi
+
+  local removed_paths
+  removed_paths="$(/usr/bin/find "$input_methods_dir" -maxdepth 1 \
+    \( -name 'InputiaInputMethod.app.inputia-smoke-backup-*' -o -name 'IputiaInputMethod.app.inputia-smoke-backup-*' \) \
+    -print 2>/dev/null || true)"
+  if [[ -z "$removed_paths" ]]; then
+    echo "inputiaUserHostBackupRemoved=false"
+    return
+  fi
+
+  while IFS= read -r backup_path; do
+    [[ -z "$backup_path" ]] && continue
+    /bin/rm -rf "$backup_path"
+    echo "inputiaUserHostBackupRemoved=true path=$backup_path"
+  done <<<"$removed_paths"
+}
+
+dump_value() {
+  local dump="$1"
+  local key="$2"
+  /usr/bin/awk -F= -v key="$key" '$1 == key { print $2; exit }' <<<"$dump"
+}
+
+target_mode_id() {
+  local mode_id
+  mode_id="$(/usr/libexec/PlistBuddy -c 'Print :ComponentInputModeDict:tsVisibleInputModeOrderedArrayKey:0' "$APP/Contents/Info.plist" 2>/dev/null || true)"
+  if [[ -z "$mode_id" ]]; then
+    mode_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist").Main"
+  fi
+  printf '%s\n' "$mode_id"
+}
+
+login_defaults() {
+  if [[ -n "$LOGIN_USER" && "$LOGIN_USER" != "root" ]]; then
+    /usr/bin/sudo -u "$LOGIN_USER" /usr/bin/defaults "$@"
+  else
+    /usr/bin/defaults "$@"
+  fi
+}
+
+hitoolbox_contains() {
+  local domain_key="$1"
+  local value="$2"
+  login_defaults read com.apple.HIToolbox "$domain_key" 2>/dev/null | /usr/bin/grep -q -- "$value"
+}
+
+ensure_hitoolbox_inputia_entries() {
+  local target_mode_id="$1"
+
+  if [[ -n "$INSTALL_ROOT" ]]; then
+    echo "inputiaHIToolboxEnsure=skipped reason=install-root"
+    return
+  fi
+  if [[ -n "$LOGIN_USER" && ( "$LOGIN_USER" == "root" || "$LOGIN_USER" == "_mbsetupuser" ) ]]; then
+    echo "inputiaHIToolboxEnsure=skipped reason=login-user"
+    return
+  fi
+
+  run_login_best_effort 12 inputia-normalize-hitoolbox "$EXECUTABLE" --normalize-hitoolbox
+  echo "inputiaHIToolboxEnsure=normalized targetModeID=$target_mode_id"
+}
+
+post_refresh_tis_ready_for() {
+  local target_mode_id="$1"
+  local target_icon="$2"
+  local enabled_output="$3"
+  local id enabled selectable icon reason
+
+  if /usr/bin/grep -q '^inputSourceFound=false$' <<<"$enabled_output"; then
+    echo "inputiaPostRefreshTISReady=false reason=missing-enabled-source targetModeID=$target_mode_id"
+    return
+  fi
+
+  id="$(dump_value "$enabled_output" id)"
+  enabled="$(dump_value "$enabled_output" enabled)"
+  selectable="$(dump_value "$enabled_output" selectable)"
+  icon="$(dump_value "$enabled_output" iconURL)"
+
+  if [[ "$id" != "$target_mode_id" ]]; then
+    reason=id-mismatch
+  elif [[ "$enabled" != "true" ]]; then
+    reason=not-enabled
+  elif [[ "$selectable" != "true" ]]; then
+    reason=not-selectable
+  elif [[ "$icon" != "$target_icon" ]]; then
+    reason=icon-mismatch
+  else
+    echo "inputiaPostRefreshTISReady=true targetModeID=$target_mode_id"
+    return
+  fi
+
+  echo "inputiaPostRefreshTISReady=false reason=$reason targetModeID=$target_mode_id id=${id:-unknown} enabled=${enabled:-unknown} selectable=${selectable:-unknown} iconURL=${icon:-unknown}"
+}
+
+post_refresh_tis_ready() {
+  local enabled_output="$1"
+  local target_mode_id target_icon
+  target_mode_id="$(target_mode_id)"
+  target_icon="$APP/Contents/Resources/inputia.pdf"
+
+  post_refresh_tis_ready_for "$target_mode_id" "$target_icon" "$enabled_output"
+}
+
+post_refresh_enabled_output_is_ready() {
+  local enabled_output="$1"
+  local target_mode_id target_icon id enabled selectable icon
+  target_mode_id="$(target_mode_id)"
+  target_icon="$APP/Contents/Resources/inputia.pdf"
+  id="$(dump_value "$enabled_output" id)"
+  enabled="$(dump_value "$enabled_output" enabled)"
+  selectable="$(dump_value "$enabled_output" selectable)"
+  icon="$(dump_value "$enabled_output" iconURL)"
+
+  [[ "$id" == "$target_mode_id" && "$enabled" == "true" && "$selectable" == "true" && "$icon" == "$target_icon" ]]
+}
+
+wait_for_postinstall_tis_selection() {
+  local target_mode_id="$1"
+  local enabled_output=""
+  local current_output=""
+  local current_id=""
+  local consecutive_ready=0
+
+  for attempt in 1 2 3 4 5 6; do
+    enabled_output="$(run_login_capture "$EXECUTABLE" --dump-enabled-input-source)"
+    current_output="$(run_login_capture "$EXECUTABLE" --dump-current-input-source)"
+    current_id="$(dump_value "$current_output" id)"
+
+    if post_refresh_enabled_output_is_ready "$enabled_output" && [[ "$current_id" == "$target_mode_id" ]]; then
+      consecutive_ready=$((consecutive_ready + 1))
+      echo "inputiaPostRefreshTISStableCheck attempt=$attempt ready=true consecutive=$consecutive_ready"
+      if [[ "$consecutive_ready" -ge 2 ]]; then
+        printf '%s\n' "$enabled_output" | /usr/bin/sed 's/^/inputiaPostRefreshEnabledTIS: /'
+        post_refresh_tis_ready "$enabled_output"
+        printf '%s\n' "$current_output" | /usr/bin/sed 's/^/inputiaPostRefreshCurrentTIS: /'
+        echo "inputiaPostRefreshCurrentMatchesTarget=true"
+        return 0
+      fi
+    else
+      consecutive_ready=0
+      echo "inputiaPostRefreshTISStableCheck attempt=$attempt ready=false currentID=${current_id:-unknown}"
+      run_best_effort 12 inputia-register-retry "$EXECUTABLE" --register-input-source
+      run_login_best_effort 12 inputia-normalize-hitoolbox-retry "$EXECUTABLE" --normalize-hitoolbox
+      /usr/bin/killall cfprefsd >/dev/null 2>&1 || true
+      run_login_best_effort 12 inputia-select-retry "$EXECUTABLE" --select-input-source
+    fi
+    /bin/sleep 1
+  done
+
+  printf '%s\n' "$enabled_output" | /usr/bin/sed 's/^/inputiaPostRefreshEnabledTIS: /'
+  post_refresh_tis_ready "$enabled_output"
+  printf '%s\n' "$current_output" | /usr/bin/sed 's/^/inputiaPostRefreshCurrentTIS: /'
+  echo "inputiaPostRefreshCurrentMatchesTarget=false"
+  return 1
+}
+
+post_refresh_tis_ready_self_check() {
+  local target_mode_id="com.inputia.inputmethod.Inputia.Main"
+  local target_icon="/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf"
+  local good_dump missing_dump id_mismatch_dump disabled_dump unselectable_dump icon_mismatch_dump
+
+  good_dump=$'inputSourceFound=true\nid=com.inputia.inputmethod.Inputia.Main\nenabled=true\nselectable=true\niconURL=/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf'
+  missing_dump=$'inputSourceFound=false'
+  id_mismatch_dump=$'inputSourceFound=true\nid=com.inputia.inputmethod.Inputia.Pinyin\nenabled=true\nselectable=true\niconURL=/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf'
+  disabled_dump=$'inputSourceFound=true\nid=com.inputia.inputmethod.Inputia.Main\nenabled=false\nselectable=true\niconURL=/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf'
+  unselectable_dump=$'inputSourceFound=true\nid=com.inputia.inputmethod.Inputia.Main\nenabled=true\nselectable=false\niconURL=/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf'
+  icon_mismatch_dump=$'inputSourceFound=true\nid=com.inputia.inputmethod.Inputia.Main\nenabled=true\nselectable=true\niconURL=/tmp/inputia.pdf'
+
+  assert_tis_ready_case "ready" "inputiaPostRefreshTISReady=true" "$target_mode_id" "$target_icon" "$good_dump"
+  assert_tis_ready_case "missing" "reason=missing-enabled-source" "$target_mode_id" "$target_icon" "$missing_dump"
+  assert_tis_ready_case "id-mismatch" "reason=id-mismatch" "$target_mode_id" "$target_icon" "$id_mismatch_dump"
+  assert_tis_ready_case "not-enabled" "reason=not-enabled" "$target_mode_id" "$target_icon" "$disabled_dump"
+  assert_tis_ready_case "not-selectable" "reason=not-selectable" "$target_mode_id" "$target_icon" "$unselectable_dump"
+  assert_tis_ready_case "icon-mismatch" "reason=icon-mismatch" "$target_mode_id" "$target_icon" "$icon_mismatch_dump"
+  echo "inputiaPostinstallSelfCheck=true"
+}
+
+assert_tis_ready_case() {
+  local label="$1"
+  local expected="$2"
+  local target_mode_id="$3"
+  local target_icon="$4"
+  local enabled_output="$5"
+  local output
+
+  output="$(post_refresh_tis_ready_for "$target_mode_id" "$target_icon" "$enabled_output")"
+  if ! /usr/bin/grep -q -- "$expected" <<<"$output"; then
+    echo "inputiaPostinstallSelfCheck=false case=$label expected=$expected output=$output" >&2
+    exit 1
+  fi
+  echo "inputiaPostinstallSelfCheckCase=$label passed=true"
+}
+
+if [[ "${INPUTIA_POSTINSTALL_SELF_CHECK:-0}" == "1" ]]; then
+  post_refresh_tis_ready_self_check
+  exit 0
+fi
+
+if [[ -f "$ARCHIVE" ]]; then
+  /bin/mkdir -p "$INSTALL_ROOT/Library/Input Methods"
+  /bin/rm -rf "$APP" "$LEGACY_APP"
+  COPYFILE_DISABLE=1 /usr/bin/tar -xzf "$ARCHIVE" -C "$INSTALL_ROOT/Library/Input Methods"
+  /usr/sbin/chown -R root:wheel "$APP" 2>/dev/null || true
+  /bin/chmod -R go-w "$APP"
+fi
+
+if [[ -f "$SETTINGS_ARCHIVE" ]]; then
+  /bin/mkdir -p "$INSTALL_ROOT/Applications"
+  /bin/rm -rf "$SETTINGS_APP"
+  COPYFILE_DISABLE=1 /usr/bin/tar -xzf "$SETTINGS_ARCHIVE" -C "$INSTALL_ROOT/Applications"
+  /usr/sbin/chown -R root:wheel "$SETTINGS_APP" 2>/dev/null || true
+  /bin/chmod -R go-w "$SETTINGS_APP"
+fi
+
+if [[ ! -x "$EXECUTABLE" ]]; then
+  echo "Inputia executable missing: $EXECUTABLE" >&2
+  exit 1
+fi
+
+installed_cdhash="$(/usr/bin/codesign -dv --verbose=4 "$APP" 2>&1 | /usr/bin/awk -F= '/^CDHash=/{print $2}')"
+installed_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
+echo "inputiaInstalledVersion=$installed_version"
+echo "inputiaInstalledCDHash=$installed_cdhash"
+if [[ -x "$SETTINGS_APP/Contents/MacOS/InputiaSettingsLauncher" ]]; then
+  echo "inputiaSettingsLauncherInstalled=true"
+else
+  echo "inputiaSettingsLauncherInstalled=false"
+fi
+
+assessment_output="$(/usr/sbin/spctl --assess --type execute --verbose=4 "$APP" 2>&1 || true)"
+printf '%s\n' "$assessment_output" | /usr/bin/sed 's/^/inputiaPostinstallAssessment: /'
+if [[ "$assessment_output" != *": accepted"* && "${INPUTIA_ALLOW_REJECTED_SIGNATURE:-0}" != "1" ]]; then
+  echo "inputiaPostinstallUsable=false reason=signature-rejected"
+  echo "inputiaPostinstallRequiredAction=sign-with-accepted-identity"
+  echo "inputiaPostinstallSigningHint=rerun-build-with-INPUTIA_CODESIGN_IDENTITY-that-spctl-accepts"
+  echo "inputiaPostinstallAction=clear-inputia-preferences"
+  run_login_best_effort 12 inputia-clear-input-source-preferences \
+    "$EXECUTABLE" --clear-input-source-preferences
+  /usr/bin/killall TextInputMenuAgent >/dev/null 2>&1 || true
+  /usr/bin/killall SystemUIServer >/dev/null 2>&1 || true
+  /usr/bin/killall cfprefsd >/dev/null 2>&1 || true
+  exit 14
+fi
+echo "inputiaPostinstallSignatureAccepted=true"
+
+if [[ "${INPUTIA_POSTINSTALL_SKIP_TIS:-0}" == "1" ]]; then
+  exit 0
+fi
+
+/usr/bin/killall InputiaInputMethod >/dev/null 2>&1 || true
+/usr/bin/killall IputiaInputMethod >/dev/null 2>&1 || true
+/usr/bin/xattr -dr com.apple.quarantine "$APP" >/dev/null 2>&1 || true
+run_best_effort 8 lsregister-unregister-legacy "$LSREGISTER" -u "$LEGACY_APP"
+run_best_effort 8 lsregister-unregister-inputia "$LSREGISTER" -u "$APP"
+if [[ -n "$USER_APP" ]]; then
+  run_best_effort 8 lsregister-unregister-user-inputia "$LSREGISTER" -u "$USER_APP"
+  run_best_effort 8 lsregister-unregister-user-legacy "$LSREGISTER" -u "$USER_LEGACY_APP"
+  /bin/rm -rf "$USER_APP" "$USER_LEGACY_APP"
+  echo "inputiaUserHostRemoved=true path=$USER_APP"
+else
+  echo "inputiaUserHostRemoved=skipped"
+fi
+cleanup_user_inputia_residue
+run_best_effort 8 lsregister-register-inputia "$LSREGISTER" -f "$APP"
+run_best_effort 8 lsregister-register-settings "$LSREGISTER" -f "$SETTINGS_APP"
+
+run_best_effort 12 inputia-register "$EXECUTABLE" --register-input-source
+
+run_login_best_effort 12 inputia-enable "$EXECUTABLE" --enable-input-source
+run_login_best_effort 12 inputia-normalize-hitoolbox "$EXECUTABLE" --normalize-hitoolbox
+run_login_best_effort 12 inputia-select "$EXECUTABLE" --select-input-source
+
+initial_enabled_output="$("$EXECUTABLE" --dump-enabled-input-source 2>&1 || true)"
+if ! /usr/bin/grep -q '^id='"$(target_mode_id)"'$' <<<"$initial_enabled_output"; then
+  ensure_hitoolbox_inputia_entries "$(target_mode_id)"
+  /usr/bin/killall cfprefsd >/dev/null 2>&1 || true
+  run_login_best_effort 12 inputia-select-after-hitoolbox "$EXECUTABLE" --select-input-source
+else
+  echo "inputiaHIToolboxEnsure=skipped reason=tis-ready"
+fi
+
+/usr/bin/killall TextInputMenuAgent >/dev/null 2>&1 || true
+/usr/bin/killall SystemUIServer >/dev/null 2>&1 || true
+/bin/sleep 1
+run_best_effort 12 inputia-register-after-refresh "$EXECUTABLE" --register-input-source
+run_login_best_effort 12 inputia-enable-after-refresh "$EXECUTABLE" --enable-input-source
+run_login_best_effort 12 inputia-normalize-after-refresh "$EXECUTABLE" --normalize-hitoolbox
+run_login_best_effort 12 inputia-select-after-refresh "$EXECUTABLE" --select-input-source
+/bin/sleep 1
+wait_for_postinstall_tis_selection "$(target_mode_id)"
+
+exit 0
