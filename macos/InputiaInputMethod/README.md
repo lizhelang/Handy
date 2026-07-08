@@ -375,6 +375,6 @@ build 版默认中文自检 ni + Space 可提交 你
 - 第一版设置窗口写入 `~/Library/Application Support/Inputia/settings.json`。
 - 当前可配置：输入方案、候选数量、Shift 切换、中文模式英文标点、本地记忆、隐私学习、敏感 App 排除列表。保存后 Host 会在 App/context 更新时热重载 settings。
 
-候选窗视觉显示已用 build 版进程验收；分页热键还没有完全验收，继续看 `EVIDENCE.md` 的最新限制记录。
+候选窗视觉显示、默认 7 个候选、下箭头展开、上下翻页和 Command 修饰键透传都已纳入非 GUI `dev-fast.sh` 自检；真实宿主 GUI smoke 仍只在安装版 CDHash 对齐并显式 opt-in 后运行。
 
 当前机器的最新事实以 `status.sh` 和 `EVIDENCE.md` 末尾为准。不要把上面的历史能力清单当成当前系统安装版已经匹配当前 build 的证据。

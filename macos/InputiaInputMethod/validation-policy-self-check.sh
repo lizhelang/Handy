@@ -70,6 +70,8 @@ require('`dev-fast.sh` 是候选词、双拼、快捷键、设置 UI 等日常�
 require('`release/full-check.sh` 是显式 opt-in 的重型入口' in inputia_readme, "readme-missing-full-check-opt-in-contract")
 require('让菜单栏 AXPress 最多执行一次' in inputia_readme, "readme-missing-menu-cache-contract")
 require('releaseFullCheckPassed=false reason=install-check-not-ready' in inputia_readme, "readme-missing-full-check-install-gate")
+require('下箭头展开、上下翻页' in inputia_readme, "readme-missing-candidate-navigation-dev-fast-coverage")
+require('分页热键还没有完全验收' not in inputia_readme, "readme-still-claims-candidate-navigation-unverified")
 
 require('validationTier=dev-fast' in dev_fast, "dev-fast-missing-tier-marker")
 require('touchesMenuBar=false' in dev_fast, "dev-fast-missing-menu-policy")
@@ -111,6 +113,8 @@ require('segmentedSingleSelectionComposing=' in host_main, "host-diagnostics-mis
 require('segmentedPhrasePreferred=' in host_main, "host-diagnostics-missing-segmented-phrase-preferred")
 require('segmentedSingleSelectionKeepsRemaining=' in host_main, "host-diagnostics-missing-segmented-single-selection")
 require('debugSegmentedPhraseSelfCheck' in read("Sources/InputiaInputMethod/InputiaRustBridge.swift"), "bridge-missing-segmented-phrase-self-check")
+require('candidateDownArrowExpandsWhenComposing=' in host_main, "host-diagnostics-missing-candidate-down-expand-output")
+require('candidateUpArrowPagesWhenComposing=' in host_main, "host-diagnostics-missing-candidate-up-page-output")
 require('settingsMenuHasNoCommandKeyEquivalent' in host_policy_self_check, "host-policy-self-check-missing-settings-menu-key")
 require('showPreferencesCommandPassesThrough' in host_policy_self_check, "host-policy-self-check-missing-show-preferences")
 require('emptyNewlineCommandPassesThrough' in host_policy_self_check, "host-policy-self-check-missing-empty-newline")
@@ -326,6 +330,7 @@ require('archive-settings-source-commit-mismatch' in verify_pkg, "verify-pkg-mis
 require('candidatePanelSelfCheck=' in candidate_panel_self_check, "candidate-panel-self-check-missing-pass-marker")
 require('candidatePanelExpandedBreaksLines' in candidate_panel_self_check, "candidate-panel-self-check-missing-expanded-lines-case")
 require('candidatePanelCollapsedContainsSeventhCandidate' in candidate_panel_self_check, "candidate-panel-self-check-missing-seventh-candidate-case")
+require('candidatePanelExpandedShowsNineCandidates' in candidate_panel_self_check, "candidate-panel-self-check-missing-expanded-nine-case")
 require('candidatePanelExpandedCapsAtNineCandidates' in candidate_panel_self_check, "candidate-panel-self-check-missing-cap-case")
 
 require('validationTier=release/full-check' in full_check, "full-check-missing-tier-marker")

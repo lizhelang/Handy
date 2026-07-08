@@ -27537,3 +27537,44 @@ INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/release/full-check.sh
 
 - 当前旧安装态下 full-check 会在 install-check gate 停住，且不会进入 `== menu readiness ==` 或 `== postinstall and GUI smoke ==`。
 - 菜单栏 AXPress 和 GUI smoke 的 opt-in 现在只在安装态、公证 readiness 均通过后才会出现在子进程环境里。
+
+## 2026-07-09 04:56 CST - 候选展开/翻页验收口径收敛到 dev-fast
+
+背景：
+
+- README 仍保留“分页热键还没有完全验收”的旧说明，容易让日常候选词/双拼开发误以为必须跑 TextEdit/Safari GUI smoke。
+- 当前 `dev-fast.sh` 已覆盖候选数量 7、下箭头展开、上下翻页、Command 修饰键透传、候选面板展开态 9 个候选可见，以及 `nillem` 第一候选为短语 `你来`。
+
+实现：
+
+- README 改为说明候选窗视觉显示、默认 7 个候选、下箭头展开、上下翻页和 Command 修饰键透传都纳入非 GUI `dev-fast.sh` 自检。
+- `validation-policy-self-check.sh` 锁住该说明，并禁止旧的“分页热键还没有完全验收”文案回流。
+- 策略自检新增 Host 输出断言，要求保留 `candidateDownArrowExpandsWhenComposing=` 和 `candidateUpArrowPagesWhenComposing=`；候选面板自检新增展开态 9 个候选可见断言。
+
+验证：
+
+```text
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+
+INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/dev-fast.sh
+  validationTier=dev-fast
+  touchesMenuBar=false
+  opensGUI=false
+  changesSystemInputSource=false
+  checksNotarization=false
+  candidateDownArrowExpandsWhenComposing=true
+  candidateUpArrowPagesWhenComposing=true
+  candidateDownArrowRejectedWithCommand=true
+  candidatePanelExpandedShowsNineCandidates=true
+  page_size=7
+  candidate[0]=你来
+  rimeLatencyIncrementalMs=45.739
+  rimeLatencySelfCheck=true
+  devFastPassed=true
+```
+
+结论：
+
+- 候选展开/翻页现在是默认开发验证的一部分，不再需要为这个口径启动 GUI smoke。
+- 真实 GUI smoke 仍只在系统安装版 CDHash 对齐并显式 opt-in 后运行。
