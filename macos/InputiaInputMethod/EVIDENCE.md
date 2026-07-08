@@ -24731,3 +24731,241 @@ git diff --check -- notarize-app.sh README.md verify-nongui.sh
 
 - 公证脚本能在当前不满足前置条件时安全早退，并给出下一步：用 Developer ID Application 重新构建签名。
 - 本轮没有提交 notarization，也没有运行真实 TextEdit/Safari/Clipboard GUI smoke。
+
+## v56 Mac mini：信任本地 CA 后仍需 Developer ID / pkg 签名前置门禁
+
+背景：
+
+- 用户已在 Mac mini 信任 `Codexbar Local Code Signing Root v4`，需要重新区分“codesign 链可信”和“Gatekeeper/TIS 接受系统输入法”。
+- 当前 `.pkg` 仍是 unsigned；如果继续生成可双击安装包，必须在构建阶段阻断错误的 app signing identity 被拿来签 installer pkg。
+
+实现：
+
+- `build-pkg.sh` 增加 `INPUTIA_PKG_SIGN_IDENTITY` 前置检查：
+  - 未设置时明确输出 `buildPkgSigned=false reason=unsigned-local-package`，保持本地开发包行为。
+  - 设置但不是 `Developer ID Installer:` 时以 rc=22 早退，并输出 `buildPkgRequiredAction=set-INPUTIA_PKG_SIGN_IDENTITY-to-developer-id-installer`。
+  - 设置为 `Developer ID Installer:` 但当前 keychain 没有该 identity 时以 rc=21 早退，并输出 `buildPkgRequiredAction=import-developer-id-installer-identity`。
+  - `productsign` 后用 `pkgutil --check-signature` 二次确认签名中包含 `Developer ID Installer:`。
+- `verify-nongui.sh` 增加 pkg signing identity 自检，并修正 GUI readiness fake InputiaHost gate 的调用方式，避免 `set -e` 在预期阻断路径提前退出。
+
+验证：
+
+```text
+./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  appCDHash=1a4632993a5c63ccccbf19a78b1b3c11e1b6331d
+  appAssessment=/Library/Input Methods/InputiaInputMethod.app: rejected
+  appSignatureAccepted=false
+  appMatchesBuild=true
+  tis.readinessBlockReason=signature-rejected
+  tis.requiredAction=sign-with-accepted-identity
+  tisReadiness=false
+
+spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  /Library/Input Methods/InputiaInputMethod.app: rejected
+  rc=3
+
+./macos/InputiaInputMethod/verify-nongui.sh
+  notarizeAppPreflightOnly: codesignVerify=true
+  notarizeAppPreflightOnly: teamIdentifier=not set
+  notarizeAppPreflightOnly: developerIDApplicationSignature=false
+  notarizeAppPreflightOnly: notarizeAppReady=false reason=app-not-signed-with-developer-id
+  notarizePkgPreflightOnly: pkgSignatureOutput: Status: no signature
+  notarizePkgPreflightOnly: developerIDInstallerSignature=false
+  notarizePkgPreflightOnly: notarizePkgBlockReasons=pkg-not-signed-with-developer-id-installer,missing-notarytool-profile
+  buildPkgWrongSigningIdentitySelfCheck.rc=22
+  buildPkgWrongSigningIdentitySelfCheck: buildPkgSignIdentityValid=false reason=not-developer-id-installer
+  buildPkgMissingSigningIdentitySelfCheck.rc=21
+  buildPkgMissingSigningIdentitySelfCheck: buildPkgSignIdentityValid=false reason=missing-developer-id-installer-identity
+  guiSmokeReadinessInputiaHostGateSelfCheck=true
+  nonGuiVerificationPassed=true
+```
+
+结论：
+
+- 信任本地 Root 后，`codesign --verify` 已可通过，但系统输入法可用性仍被 Gatekeeper/TIS 拦在 `signature-rejected`；本地 CA 签名不能替代 Developer ID Application + notarization。
+- `.pkg` 路径当前仍需要 Developer ID Installer identity 和 notarytool profile；在这两项缺失前不能声称可双击安装包已达生产可用。
+- 本轮没有运行真实 TextEdit/Safari/Clipboard GUI smoke，没有抢焦点。
+
+## v57 Mac mini：用 syspolicy_check 确认 Gatekeeper fatal blocker
+
+背景：
+
+- `spctl --assess` 只输出 rejected，不够解释为什么用户信任 Root 后仍不能选择 Inputia。
+- macOS 自带 `syspolicy_check` 手册说明它组合 `codesign`、`spctl`、`stapler` 等检查，用来判断 app 是否 ready for distribution / notary submission。
+
+验证：
+
+```text
+/usr/bin/codesign --verify --deep --strict --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  /Library/Input Methods/InputiaInputMethod.app: valid on disk
+  /Library/Input Methods/InputiaInputMethod.app: satisfies its Designated Requirement
+
+/usr/bin/codesign -dv --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  Authority=Codexbar Local Code Signing Leaf v4
+  Authority=Codexbar Local Code Signing Root v4
+  TeamIdentifier=not set
+  CodeDirectory flags=0x10000(runtime)
+
+syspolicy_check distribution "/Library/Input Methods/InputiaInputMethod.app" --verbose --verbose --verbose
+  Top level policy match: none
+  Deep policy match: none
+  App has failed one or more pre-distribution checks.
+  Notary Ticket Missing
+  Severity: Fatal
+  Full Error: A Notarization ticket is not stapled to this application.
+  Suggested Fix: upload to Apple notary service using Xcode or notarytool, then staple.
+  rc=70
+
+syspolicy_check notary-submission "/Library/Input Methods/InputiaInputMethod.app" --verbose --verbose --verbose
+  Top level policy match: none
+  Deep policy match: none
+  App has failed one or more pre-notarization checks.
+  Codesign Error
+  Full Error: Gatekeeper rejected this file.
+  rc=70
+
+/usr/bin/xcrun stapler validate -v "/Library/Input Methods/InputiaInputMethod.app"
+  InputiaInputMethod.app does not have a ticket stapled to it.
+  rc=65
+```
+
+结论：
+
+- 当前不是“证书未信任”这一层了：codesign 链已通过。
+- 当前可执行/可选择 blocker 是 macOS Gatekeeper distribution policy：缺少 Apple notarization ticket，且当前签名没有 Developer ID TeamIdentifier。
+- 在 `spctl accepted` 前继续禁止真实 TextEdit/Safari/Clipboard GUI smoke。
+
+## v58 Mac mini：纠偏为本地开发 Gatekeeper disabled 路径，但当前提权链被账号目录阻断
+
+背景：
+
+- MacBook 只读对照确认：MacBook 上当前可用版本没有走 Developer ID/notarization；可用关键是 `Gatekeeper assessments disabled`，`spctl` 通过 `override=security disabled` 放行。
+- MacBook 的 `syspolicy_check distribution` 同样会因 `Adhoc Signed App` / `Notary Ticket Missing` 失败。
+- 因此 Developer ID + notarization 只是未来正式分发路径，不是当前 MVP 本地开发可用路径。当前目标改为复刻 MacBook 的 Gatekeeper disabled 本地开发模式。
+
+本轮尝试：
+
+```text
+printf password | sudo -S spctl --master-disable
+  sudo: you do not exist in the passwd database
+
+spctl --global-disable
+  Encountered error when allowing the option to globally disable the assessment system
+  spctl --status: assessments enabled
+
+su root -c '/usr/sbin/spctl --global-disable'
+su lizhelang -c 'id; /usr/sbin/spctl --global-disable'
+su minizl -c 'id; /usr/sbin/spctl --global-disable'
+  su: who are you?
+  spctl --status: assessments enabled
+
+authopen -w /var/db/SystemPolicyConfiguration/SystemPolicy-prefs.plist
+  authopen: couldn't open /private/var/db/SystemPolicyConfiguration/SystemPolicy-prefs.plist: Operation not permitted
+  spctl --status: assessments enabled
+
+dscacheutil -q user -a uid 501
+  no output
+
+python3 pwd.getpwuid(os.getuid())
+  KeyError: 'getpwuid(): uid not found: 501'
+
+dscl . -list /Users UniqueID
+  Operation failed with error: eServerError
+
+launchctl print system/com.apple.opendirectoryd
+  Could not print domain: 141: Reentrancy avoided
+```
+
+当前只读状态：
+
+```text
+./macos/InputiaInputMethod/status.sh
+  systemMatchesBuild=true
+  running=false
+  statusTISEnabledMatches=0
+  statusTISInstalledMatches=2
+  statusSignatureAccepted=false
+  statusSigningRequiredAction=sign-with-accepted-identity
+  statusTextEditPreflight=not-running
+  statusSafariPreflight=not-running
+  statusInputiaHostPreflight=not-running
+  statusGuiSmokeBlockReasons=tis-not-ready,signature-rejected,menu-menu-agent-unavailable,frontmost-unavailable
+  statusGuiSmokeReady=false reason=tis-not-ready,signature-rejected,menu-menu-agent-unavailable,frontmost-unavailable
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  appCDHash=1a4632993a5c63ccccbf19a78b1b3c11e1b6331d
+  appSignatureAccepted=false
+  appMatchesBuild=true
+  tis.enabledMatches=0
+  tis.installedMatches=2
+  tis.targetEnabledMatches=0
+  tis.targetInstalledMatches=1
+  tis.hansIconMatchesApp=true
+  tis.hansEnabled=true
+  tis.hansSelectable=true
+  tis.hansSelected=false
+  tis.readinessBlockReason=signature-rejected
+  tis.requiredAction=sign-with-accepted-identity
+  tisReadiness=false
+
+spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  /Library/Input Methods/InputiaInputMethod.app: internal error in Code Signing subsystem
+  rc=1
+
+spctl --status
+  assessments enabled
+
+codesign -dv --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  CDHash=1a4632993a5c63ccccbf19a78b1b3c11e1b6331d
+  Authority=(unavailable)
+  TeamIdentifier=not set
+  Runtime Version=26.0.0
+```
+
+结论：
+
+- 本轮明确纠偏：当前 MVP 应先复刻 MacBook 的本地开发模式，即 `spctl --status` 为 `assessments disabled` 后让 ad-hoc/local 签名 app 被 `override=security disabled` 放行。
+- Mac mini 还没有做到这一点：`spctl --status` 仍是 `assessments enabled`。
+- 当前直接 blocker 是 Mac mini 当前会话的账号目录/提权链异常：UID 501 没有 passwd 记录，导致 `sudo` / `su` / `git push` / 修改 Gatekeeper 全局状态都失败。
+- 因为 Gatekeeper disabled 未成功，未运行真实 TextEdit/Safari/Clipboard GUI smoke。
+
+## v59 Mac mini：复核本地开发路径前置，排除更窄 spctl allow 旁路
+
+时间：2026-07-08 15:21:26 +0800
+
+背景：
+
+- 上一轮已纠偏：当前 MVP 不以 Developer ID / notarization 为阻塞路径，先复刻 MacBook 的本地开发 Gatekeeper disabled 路径。
+- 本轮继续最小复核 Mac mini 是否已经具备该前置条件，以及是否存在更窄的本地 allow 旁路。
+
+验证：
+
+```text
+spctl --status
+  assessments enabled
+
+python3 pwd.getpwuid(os.getuid())
+  uid 501
+  KeyError: 'getpwuid(): uid not found: 501'
+
+dscl . -search /Users UniqueID 501
+  Operation failed with error: eServerError
+
+osascript -l AppleScript -e 'do shell script "echo hi"'
+  0:8: syntax error: A identifier can’t go after this identifier. (-2740)
+
+spctl --add --label InputiaLocalDev "/Library/Input Methods/InputiaInputMethod.app"
+  This operation is no longer supported. Please see the man page for more information.
+  spctlAssessRc=4
+
+spctl --status
+  assessments enabled
+```
+
+结论：
+
+- Mac mini 仍没有进入 MacBook 的本地开发状态：Gatekeeper assessments 仍为 enabled。
+- 当前会话的账号目录服务仍异常：UID 501 无 passwd 记录，`dscl` 返回 `eServerError`；这会连带破坏 `sudo`、`su`、Git SSH 以及需要管理员授权的 Gatekeeper 全局状态修改。
+- AppleScript 管理员提权入口也不可用，不能用 `do shell script ... with administrator privileges` 绕开当前 sudo 问题。
+- `spctl --add` 的更窄本地 allow 规则在当前系统上已不支持，不能作为替代路径。
+- 因为 Gatekeeper disabled 前置仍未满足，本轮没有运行 TextEdit/Safari/Clipboard GUI smoke。
