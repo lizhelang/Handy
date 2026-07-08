@@ -27578,3 +27578,49 @@ INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/dev-fast.sh
 
 - 候选展开/翻页现在是默认开发验证的一部分，不再需要为这个口径启动 GUI smoke。
 - 真实 GUI smoke 仍只在系统安装版 CDHash 对齐并显式 opt-in 后运行。
+
+## 2026-07-09 05:07 CST - apply-current-handoff 成功动作链 dry-run 自检
+
+背景：
+
+- 当前真实安装态仍需要 `admin-install-current-handoff,run-repair-tis-duplicates,restart-inputia-host-after-install`，但不能在默认开发验证里触发 sudo、修改 TIS 或等待真实 Host 重启。
+- 之前 `apply-current-handoff.sh` 已覆盖 admin-required 失败路径和 final install-check 失败路径，但缺少纯 test-only 的成功链路顺序证明。
+
+实现：
+
+- `apply-current-handoff.sh` 新增 test-only 分支：`INPUTIA_APPLY_ADMIN_INSTALL_FOR_TEST`、`INPUTIA_APPLY_REPAIR_TIS_FOR_TEST`、`INPUTIA_APPLY_AWAIT_INSTALL_FOR_TEST`。
+- `INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=1` 现在会模拟当前 handoff 下的完整动作链：管理员安装当前 pkg、TIS duplicate repair、await system install、final install-check。
+- 自检会检查输出顺序，要求 admin install marker 先于 repair，repair 先于 await，await 先于 final install-check，最终再输出 `applyCurrentHandoffPassed=true`。
+- `validation-policy-self-check.sh` 锁住这些 test-only 钩子和成功链顺序断言，避免安装链路自检退化。
+
+验证：
+
+```text
+zsh -n macos/InputiaInputMethod/apply-current-handoff.sh
+INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=1 ./macos/InputiaInputMethod/apply-current-handoff.sh
+  applyCurrentHandoffSelfCheck=true
+
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+```
+
+当前真实安装态边界：
+
+```text
+./macos/InputiaInputMethod/install-check.sh
+  buildSourceCommit=484f8c542fb2
+  buildSourceDirty=false
+  installHandoffCurrent=true
+  systemMatchesBuild=false
+  settingsMatchesBuild=false
+  installCheckTISDuplicateMatches=true
+  runningMatchesBuild=false
+  installCheckRequiredActions=admin-install-current-handoff,run-repair-tis-duplicates,restart-inputia-host-after-install
+  installCheckNextStep=apply-current-handoff
+  installCheckPassed=false
+```
+
+结论：
+
+- 默认开发验证可以证明安装动作链顺序，但不会执行管理员安装或修改系统输入源。
+- 真正进入系统运行态仍需要显式运行 `INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh`，然后重跑 `install-check.sh`。

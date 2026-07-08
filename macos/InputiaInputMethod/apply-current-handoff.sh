@@ -21,6 +21,15 @@ contains_action() {
   [[ ",$actions," == *",$action,"* ]]
 }
 
+line_number() {
+  local output="$1"
+  local pattern="$2"
+  /usr/bin/awk -v pattern="$pattern" '
+    index($0, pattern) { print NR; found = 1; exit }
+    END { if (!found) print 0 }
+  ' <<<"$output"
+}
+
 quote() {
   /usr/bin/python3 - "$1" <<'PY'
 import shlex
@@ -44,6 +53,22 @@ run_final_install_check() {
     return "${INPUTIA_APPLY_FINAL_INSTALL_CHECK_RC_FOR_TEST:-0}"
   fi
   "$ROOT_DIR/install-check.sh" 2>&1
+}
+
+run_repair_tis_duplicates() {
+  if [[ "${INPUTIA_APPLY_REPAIR_TIS_FOR_TEST:-0}" == "1" ]]; then
+    echo "applyCurrentHandoffRepairTISForTest=true"
+    return 0
+  fi
+  INPUTIA_REPAIR_TIS_DUPLICATES=1 "$ROOT_DIR/repair-tis-duplicates.sh"
+}
+
+run_await_system_install() {
+  if [[ "${INPUTIA_APPLY_AWAIT_INSTALL_FOR_TEST:-0}" == "1" ]]; then
+    echo "applyCurrentHandoffAwaitForTest=true"
+    return 0
+  fi
+  "$ROOT_DIR/await-system-install.sh"
 }
 
 print_install_check_summary() {
@@ -76,7 +101,10 @@ run_admin_installer() {
   fi
 
   echo "applyCurrentHandoffInstallerPackage=$pkg_path"
-  if [[ "${INPUTIA_APPLY_FORCE_ADMIN_REQUIRED_FOR_TEST:-0}" == "1" ]]; then
+  if [[ "${INPUTIA_APPLY_ADMIN_INSTALL_FOR_TEST:-0}" == "1" ]]; then
+    echo "applyCurrentHandoffAdminInstallForTest=true"
+    return 0
+  elif [[ "${INPUTIA_APPLY_FORCE_ADMIN_REQUIRED_FOR_TEST:-0}" == "1" ]]; then
     echo "applyCurrentHandoffReady=false reason=admin-required"
     echo "applyCurrentHandoffRequiredAction=rerun-with-admin-prompt"
     echo "applyCurrentHandoffCommand=$(admin_install_command "$pkg_path" | /usr/bin/head -n 1)"
@@ -137,6 +165,45 @@ if [[ "${INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK:-0}" == "1" ]]; then
   fi
   if ! /usr/bin/grep -q '^applyCurrentHandoffCommand=.*INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh' <<<"$no_admin_output"; then
     echo "applyCurrentHandoffSelfCheck=false reason=missing-no-admin-command"
+    exit 1
+  fi
+  success_root="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/inputia-apply-handoff-success-self-check.XXXXXX")"
+  success_handoff="$success_root/install-handoff.txt"
+  success_pkg="$success_root/InputiaInputMethod.pkg"
+  : > "$success_handoff"
+  : > "$success_pkg"
+  success_output="$(
+    INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=0 \
+      INPUTIA_INSTALL_HANDOFF_PATH="$success_handoff" \
+      INPUTIA_APPLY_ADMIN_INSTALL_FOR_TEST=1 \
+      INPUTIA_APPLY_REPAIR_TIS_FOR_TEST=1 \
+      INPUTIA_APPLY_AWAIT_INSTALL_FOR_TEST=1 \
+      INPUTIA_APPLY_INSTALL_CHECK_FOR_TEST=$'installHandoffCurrent=true\ninstallHandoffBlockReasons=none\ninstallHandoffPackagePath='"$success_pkg"$'\ninstallCheckBlockReasons=system-cdhash-mismatch,tis-duplicate-matches,running-cdhash-mismatch,admin-required\ninstallCheckRequiredAction=admin-install-current-handoff\ninstallCheckRequiredActions=admin-install-current-handoff,run-repair-tis-duplicates,restart-inputia-host-after-install\ninstallCheckPassed=false\n' \
+      INPUTIA_APPLY_FINAL_INSTALL_CHECK_FOR_TEST=$'installCheckPassed=true\ninstallCheckRequiredAction=none\ninstallCheckRequiredActions=none\ninstallCheckNextStep=none\n' \
+      INPUTIA_APPLY_FINAL_INSTALL_CHECK_RC_FOR_TEST=0 \
+      "$0" 2>&1
+  )"
+  /bin/rm -rf "$success_root" >/dev/null 2>&1 || true
+  for marker in \
+    applyCurrentHandoffAdminInstallForTest=true \
+    applyCurrentHandoffAdminInstallPassed=true \
+    applyCurrentHandoffRepairTISForTest=true \
+    applyCurrentHandoffRepairTISPassed=true \
+    applyCurrentHandoffAwaitForTest=true \
+    applyCurrentHandoffPassed=true; do
+    if ! /usr/bin/grep -q "^$marker$" <<<"$success_output"; then
+      echo "applyCurrentHandoffSelfCheck=false reason=missing-success-marker marker=$marker"
+      exit 1
+    fi
+  done
+  admin_line="$(line_number "$success_output" "applyCurrentHandoffAdminInstallForTest=true")"
+  repair_line="$(line_number "$success_output" "applyCurrentHandoffRepairTISForTest=true")"
+  await_line="$(line_number "$success_output" "applyCurrentHandoffAwaitForTest=true")"
+  final_line="$(line_number "$success_output" "== final install check ==")"
+  passed_line="$(line_number "$success_output" "applyCurrentHandoffPassed=true")"
+  if (( admin_line == 0 || repair_line <= admin_line || await_line <= repair_line || final_line <= await_line || passed_line <= final_line )); then
+    echo "applyCurrentHandoffSelfCheck=false reason=success-chain-order-mismatch"
+    echo "applyCurrentHandoffSelfCheckOrder=admin:$admin_line repair:$repair_line await:$await_line final:$final_line passed:$passed_line"
     exit 1
   fi
   final_failure_output="$(
@@ -231,14 +298,14 @@ after_install_actions="$(value_from_output "$after_install_check" "installCheckR
 
 section "tis duplicate repair"
 if contains_action "$after_install_actions" "run-repair-tis-duplicates"; then
-  INPUTIA_REPAIR_TIS_DUPLICATES=1 "$ROOT_DIR/repair-tis-duplicates.sh"
+  run_repair_tis_duplicates
   echo "applyCurrentHandoffRepairTISPassed=true"
 else
   echo "applyCurrentHandoffRepairTISSkipped=true"
 fi
 
 section "await system install"
-"$ROOT_DIR/await-system-install.sh"
+run_await_system_install
 
 section "final install check"
 set +e
