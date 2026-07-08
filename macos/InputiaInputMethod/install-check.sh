@@ -104,6 +104,12 @@ append_action() {
   fi
 }
 
+action_present() {
+  local actions="$1"
+  local action="$2"
+  [[ ",$actions," == *",$action,"* ]]
+}
+
 admin_install_ready() {
   if [[ -w "/Library/Input Methods" && -w "/Applications" ]]; then
     echo true
@@ -260,6 +266,59 @@ install_required_command_keys() {
   command_keys="$(append_action "$command_keys" "verify")"
 
   echo "$command_keys"
+}
+
+install_next_step() {
+  local required_actions="$1"
+  local handoff_current="${2:-false}"
+
+  if [[ "$required_actions" == "none" ]]; then
+    echo "none"
+  elif [[ "$handoff_current" != "true" ]]; then
+    echo "run-install-handoff"
+  elif action_present "$required_actions" "admin-install-current-handoff" ||
+    action_present "$required_actions" "run-repair-tis-duplicates" ||
+    action_present "$required_actions" "restart-inputia-host-after-install"; then
+    echo "apply-current-handoff"
+  elif action_present "$required_actions" "run-install-system"; then
+    echo "run-install-system"
+  elif action_present "$required_actions" "select-or-readd-inputia-in-system-settings"; then
+    echo "open-keyboard-settings"
+  else
+    echo "inspect-install-check-output"
+  fi
+}
+
+print_install_next_step() {
+  local required_actions="$1"
+  local handoff_current="$2"
+  local step root_quoted
+
+  root_quoted="$(quote "$ROOT_DIR")"
+  step="$(install_next_step "$required_actions" "$handoff_current")"
+
+  section "next step"
+  echo "installCheckNextStep=$step"
+  case "$step" in
+  none)
+    echo "installCheckNextCommand=none"
+    ;;
+  apply-current-handoff)
+    echo "installCheckNextCommand=cd $root_quoted && INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh"
+    ;;
+  run-install-handoff)
+    echo "installCheckNextCommand=cd $root_quoted && ./install-handoff.sh"
+    ;;
+  run-install-system)
+    echo "installCheckNextCommand=cd $root_quoted && ./install-system.sh"
+    ;;
+  open-keyboard-settings)
+    echo "installCheckNextCommand=open 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension'"
+    ;;
+  *)
+    echo "installCheckNextCommand=cd $root_quoted && ./install-check.sh"
+    ;;
+  esac
 }
 
 install_handoff_block_reasons() {
@@ -436,6 +495,21 @@ run_install_required_commands_self_check_case() {
   fi
 }
 
+run_install_next_step_self_check_case() {
+  local label="$1"
+  local required_actions="$2"
+  local handoff_current="$3"
+  local expected_step="$4"
+  local actual_step
+
+  actual_step="$(install_next_step "$required_actions" "$handoff_current")"
+  echo "installNextStepSelfCheck case=$label step=$actual_step"
+  if [[ "$actual_step" != "$expected_step" ]]; then
+    echo "installNextStepSelfCheck=false case=$label reason=step-mismatch expected=$expected_step actual=$actual_step"
+    exit 1
+  fi
+}
+
 if [[ "${INPUTIA_INSTALL_CHECK_SELF_CHECK:-0}" == "1" ]]; then
   run_install_check_self_check_case \
     ready true true true true false true true true false \
@@ -530,8 +604,21 @@ if [[ "${INPUTIA_INSTALL_CHECK_SELF_CHECK:-0}" == "1" ]]; then
   run_install_required_commands_self_check_case \
     settings-and-restart select-or-readd-inputia-in-system-settings,restart-inputia-host-after-install \
     openKeyboardSettings,awaitSystemInstall,verify
+  run_install_next_step_self_check_case \
+    ready none true none
+  run_install_next_step_self_check_case \
+    stale-handoff run-install-handoff-and-admin-install false run-install-handoff
+  run_install_next_step_self_check_case \
+    current-admin-handoff admin-install-current-handoff,run-repair-tis-duplicates,restart-inputia-host-after-install true apply-current-handoff
+  run_install_next_step_self_check_case \
+    current-repair-only run-repair-tis-duplicates,restart-inputia-host-after-install true apply-current-handoff
+  run_install_next_step_self_check_case \
+    system-install run-install-system true run-install-system
+  run_install_next_step_self_check_case \
+    settings-manual select-or-readd-inputia-in-system-settings true open-keyboard-settings
   echo "installHandoffFreshnessSelfCheck=true"
   echo "installRequiredCommandsSelfCheck=true"
+  echo "installNextStepSelfCheck=true"
   echo "installCheckSelfCheck=true"
   exit 0
 fi
@@ -703,6 +790,7 @@ else
   echo "installCheckRequiredActions=$required_actions"
 fi
 print_install_required_commands "$required_actions" "$handoff_package_path"
+print_install_next_step "$required_actions" "$handoff_current"
 if [[ "$system_matches_build" == "true" &&
   "$settings_matches_build" == "true" &&
   "$tis_ready" == "true" &&
