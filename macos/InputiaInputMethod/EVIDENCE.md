@@ -26678,6 +26678,13 @@ no-op 验证：
   Packaging/scripts/postinstall.no_clear-input-source-preferences=true
 ```
 
+手动添加入口：
+
+```text
+open 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension'
+  已执行；只打开 Keyboard 设置入口，不做 System Settings UI 探测或自动点击。
+```
+
 结论：
 
 - 当前用户级安装和 `TISRegisterInputSource` 已成功，bundle 与 build CDHash 匹配，Gatekeeper 本地开发模式为 `assessments disabled` / `override=security disabled`。
@@ -26826,3 +26833,142 @@ INPUTIA_VERIFY_ALLOW_USER_HOST_BASELINE=1 INPUTIA_PROCESS_WAIT_TICKS=120 ./macos
 - 当前用户级 app 和 build 已匹配，显示名为 `Inputia`，不是 `Inputia 简体`；但系统级 app 仍不存在。
 - 系统安装、HIToolbox 用户域、TextInputMenuAgent、GUI bootstrap 和 Git SSH push 都受同一个环境问题影响：当前 UID 501 缺失 passwd/DirectoryServices 用户记录。
 - 在 `repair-current-user-directory-service` 解决前，不应继续跑真实 TextEdit/Safari/Clipboard GUI smoke；此时真实 smoke 只会证明环境坏，不会证明输入法行为。
+
+## v69 Mac mini：覆盖旧 verifier 尾部结论，当前 blocker 是未通过系统输入源 UI 添加/选中 Inputia
+
+时间：2026-07-08 17:32:48 +0800
+
+说明：
+
+- v68 之后尾部出现了一段旧 verifier 追加的“UID 501 缺失 passwd/DirectoryServices 用户记录”结论。该结论与当前实时终端复核冲突，不能作为最新判断。
+- 本条目只做实时纠偏，不删除历史记录；后续判断以 v69 的当前状态为准。
+
+实时复核：
+
+```text
+python3 pwd/getpwuid
+  uid=501
+  pwdRecord=true name=lizhelang home=/Users/minizl
+
+./macos/InputiaInputMethod/status.sh | awk ...
+  statusCurrentUserName=lizhelang
+  statusUserDirectoryReady=true
+  statusHIToolboxDefaultsReadable=true
+  statusLegacyHIToolboxInputiaEnabled=true
+  statusStaleHIToolboxEnabledStateSuspected=true
+  statusTISCurrentID=com.tencent.inputmethod.wetype.pinyin
+  statusTISCurrentMatchesTarget=false
+  statusMenuReadiness=false
+  statusMenuBlockReason=inputia-menu-item-missing
+  statusGuiSmokeReady=false reason=tis-not-ready,menu-inputia-menu-item-missing
+
+pgrep -fl "InputiaInputMethod/(verify|post-install|smoke|status|tis-readiness|gui-smoke|verify-pkg)"
+  no residual verifier/smoke/status process after status command finished
+```
+
+最新结论：
+
+- 当前不是 DirectoryServices/passwd blocker：`statusUserDirectoryReady=true`。
+- 当前 blocker 是 Inputia 仍未通过 System Settings → Keyboard → Text Input → Edit → Add Inputia 被用户手动添加/选中：菜单栏 `menuInputiaCount=0`，当前输入源仍为 `com.tencent.inputmethod.wetype.pinyin`。
+- 旧 HIToolbox enabled 残留仍存在：`statusLegacyHIToolboxInputiaEnabled=true` / `statusStaleHIToolboxEnabledStateSuspected=true`。它只能说明历史脚本污染，不能作为可用证据。
+- 继续禁止真实 TextEdit/Safari/Clipboard GUI smoke，直到 `menuInputiaCount>0`、`statusTISCurrentMatchesTarget=true` 且 `tisReadiness=true`。
+
+## v70 Mac mini：Gatekeeper disabled 已确认，当前终端会话再次被 DirectoryServices/passwd 阻塞
+
+时间：2026-07-08 17:33:46 +0800
+
+用户已在 System Settings / 隐私与安全性里把 Gatekeeper 改为“允许任何来源”。本轮停止 UI 探测，只做终端验证与安装流程复核。
+
+Gatekeeper：
+
+```text
+spctl --status
+  assessments disabled
+  rc=1
+
+spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  systemAppExists=false
+```
+
+系统安装入口：
+
+```text
+./macos/InputiaInputMethod/install-system.sh
+  systemInstallNeedsAdmin=true
+  systemInstallCurrentUID=501
+  systemInstallCurrentUserName=unknown
+  systemInstallUserDirectoryReady=false
+  systemInstallUserDirectoryBlockReason=missing-passwd-record
+  systemInstallAdminChannelReady=false reason=user-directory-unavailable
+  systemInstallReady=false reason=user-directory-unavailable
+  systemInstallBlockReason=missing-passwd-record
+  systemInstallRequiredAction=repair-current-user-directory-service
+  rc=13
+```
+
+当前用户解析：
+
+```text
+whoami
+  501
+
+dscl . -read /Users/minizl UniqueID NFSHomeDirectory UserShell
+  Operation failed with error: eServerError
+
+sudo -n true
+  sudo: you do not exist in the passwd database
+
+python3 pwd.getpwuid(os.getuid())
+  uid=501
+  pwdRecord=false
+```
+
+`status.sh` 摘要：
+
+```text
+statusCurrentUserName=unknown
+statusUserDirectoryReady=false
+statusUserDirectoryBlockReason=missing-passwd-record
+statusUserDirectoryRequiredAction=repair-current-user-directory-service
+statusTargetPath=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+statusTargetExists=true
+statusTargetMatchesBuild=true
+statusTISEnabledMatches=0
+statusTISInstalledMatches=2
+statusTISCurrentID=com.apple.keylayout.ABC
+statusTISCurrentMatchesTarget=false
+statusSignatureAccepted=true
+statusEnvironmentRequiredAction=repair-current-user-directory-service
+statusGuiSmokeReady=false reason=tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,gui-bootstrap-unavailable
+```
+
+用户路径 readiness：
+
+```text
+./macos/InputiaInputMethod/tis-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  appExists=true
+  buildCDHash=1ab460dae4a4f0a4d2aa21a4c84f515bc215b2a2
+  appCDHash=1ab460dae4a4f0a4d2aa21a4c84f515bc215b2a2
+  appAssessment=/Users/minizl/Library/Input Methods/InputiaInputMethod.app: accepted
+  appSignatureAccepted=true
+  appMatchesBuild=true
+  tis.targetInstalledMatches=1
+  tis.hansIconMatchesApp=true
+  tis.hansEnabled=true
+  tis.hansSelectable=true
+  tis.hansSelected=false
+  tis.currentID=com.apple.keylayout.ABC
+  tis.currentMatchesTarget=false
+  tis.userDirectoryReady=false
+  tis.hitoolboxDefaultsReadable=false
+  tis.readinessBlockReason=missing-enabled-source
+  tis.requiredAction=repair-current-user-directory-service
+  tisReadiness=false
+```
+
+结论：
+
+- MacBook 对照确认的本地开发路径已经在 Mac mini 上复刻到 Gatekeeper 层：`assessments disabled`，用户目录 app 的 ad-hoc 构建被 `spctl` 放行。
+- 当前 blocker 不是 Developer ID/notarization，也不是 TIS 刷新；是本机当前目录服务状态不稳定，终端会话内 UID 501 无法解析 passwd 记录，导致 sudo 管理员通道和 HIToolbox 用户域都不可用。
+- `/Library/Input Methods/InputiaInputMethod.app` 当前仍不存在，系统级安装没有发生；用户级 app 与 build 匹配，但当前输入源仍是 ABC。
+- 在 `repair-current-user-directory-service` 恢复之前，不跑 TextEdit/Safari/Clipboard GUI smoke；此时 GUI smoke 只会测试坏环境，不会测试输入法功能。
