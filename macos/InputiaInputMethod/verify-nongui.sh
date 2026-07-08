@@ -68,7 +68,7 @@ run_expect_rc_or_gui_block() {
   fi
   require_output_regex \
     "$RUN_EXPECT_RC_OUTPUT" \
-    'guiSmokeReady=false reason=(no-console-user|login-not-complete|screen-locked|frontmost-unavailable|loginwindow-frontmost|process-list-unavailable)' \
+    'guiSmokeReady=false reason=(no-console-user|gui-bootstrap-unavailable|login-not-complete|screen-locked|frontmost-unavailable|loginwindow-frontmost|process-list-unavailable)' \
     "${label}-missing-gui-session-blocker"
   echo "${label}AcceptedBlockReason=gui-session-or-process-list"
 }
@@ -1569,7 +1569,7 @@ require(gui_session_call_index > user_host_echo_index, "await-system-missing-gui
 require(process_preflight_index > gui_session_call_index, "await-system-checks-process-before-gui-session")
 require(actual_cdhash_before_ui_index >= 0, "await-system-missing-actual-cdhash-before-ui-status")
 require(ui_status_call_index > actual_cdhash_before_ui_index, "await-system-ui-status-before-target-match")
-for reason in ("no-console-user", "login-not-complete", "screen-locked", "frontmost-unavailable", "loginwindow-frontmost"):
+for reason in ("no-console-user", "gui-bootstrap-unavailable", "login-not-complete", "screen-locked", "frontmost-unavailable", "loginwindow-frontmost"):
     require(f'echo "{reason}"' in await_system_text, f"await-system-missing-gui-session-reason-{reason}")
 require("INPUTIA_GUI_SESSION_BLOCK_REASON_FOR_TEST" in await_system_text, "await-system-missing-gui-session-test-override")
 require("INPUTIA_AWAIT_PROCESS_RUNNING_FOR_TEST" in await_system_text, "await-system-missing-process-running-test-override")
@@ -2204,7 +2204,7 @@ require_output "$await_ui_status_output" "awaitUiStatusSelfCheck=true" "await-ui
 require_output "$await_ui_status_output" "awaitUiStatusSelfCheck reason=target-and-tis uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=target-cdhash-mismatch uiSmokeBlockReasons=target-cdhash-mismatch,missing-enabled-source" "await-ui-status-missing-target-and-tis-block-reasons"
 require_output "$await_ui_status_output" "awaitUiStatusSelfCheck reason=target-tis-userhost uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=target-cdhash-mismatch uiSmokeBlockReasons=target-cdhash-mismatch,missing-enabled-source,user-host-conflict" "await-ui-status-missing-target-tis-userhost-block-reasons"
 require_output "$await_ui_status_output" "awaitUiStatusSelfCheck reason=signature-rejected uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=signature-rejected uiSmokeBlockReasons=signature-rejected" "await-ui-status-missing-signature-rejected-block-line"
-for await_gui_reason in no-console-user login-not-complete screen-locked frontmost-unavailable loginwindow-frontmost; do
+for await_gui_reason in no-console-user gui-bootstrap-unavailable login-not-complete screen-locked frontmost-unavailable loginwindow-frontmost; do
   require_output "$await_ui_status_output" "awaitUiStatusSelfCheck reason=$await_gui_reason uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=$await_gui_reason uiSmokeBlockReasons=$await_gui_reason" "await-ui-status-missing-block-line-$await_gui_reason"
 done
 require_output "$await_ui_status_output" "awaitUiStatusSelfCheck reason=textedit-already-running uiSmokeRequested=true uiTextEditPreflight=running uiSafariPreflight=not-running uiInputiaHostPreflight=not-running uiSmokeWouldStart=false uiSmokeBlockReason=textedit-already-running uiSmokeBlockReasons=textedit-already-running" "await-ui-status-missing-textedit-running-block-line"
@@ -2304,6 +2304,7 @@ require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCh
 require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck case=target expected=target-cdhash-mismatch actual=target-cdhash-mismatch" "gui-readiness-self-check-missing-target"
 require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck case=userhost expected=user-host-conflict actual=user-host-conflict" "gui-readiness-self-check-missing-user-host-conflict"
 require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck case=inputia expected=inputia-host-running actual=inputia-host-running" "gui-readiness-self-check-missing-inputia-host"
+require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck case=gui-bootstrap expected=gui-bootstrap-unavailable actual=gui-bootstrap-unavailable" "gui-readiness-self-check-missing-gui-bootstrap"
 require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck case=ready expected=none actual=none" "gui-readiness-self-check-missing-ready"
 require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck case=allow-textedit expected=none actual=none" "gui-readiness-self-check-missing-allow-textedit"
 require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck case=allow-safari expected=none actual=none" "gui-readiness-self-check-missing-allow-safari"
@@ -2462,7 +2463,7 @@ run_expect_rc 12 "guiSmokeSuiteCurrentBlockedGate" \
 require_output "$RUN_EXPECT_RC_OUTPUT" "guiSmokeSuiteReady=false reason=" "gui-suite-current-blocked-gate-missing-ready-line"
 require_output_regex \
   "$RUN_EXPECT_RC_OUTPUT" \
-  'guiSmokeSuiteBlockReasons=.*(signature-rejected|tis-not-ready|pkg-not-ready|admin-required|frontmost-unavailable|target-cdhash-mismatch)' \
+  'guiSmokeSuiteBlockReasons=.*(signature-rejected|tis-not-ready|pkg-not-ready|admin-required|gui-bootstrap-unavailable|frontmost-unavailable|target-cdhash-mismatch)' \
   "gui-suite-current-blocked-gate-missing-safe-blocker"
 require_output "$RUN_EXPECT_RC_OUTPUT" "guiSmokeSuiteWouldRun=false" "gui-suite-current-blocked-gate-missing-would-not-run"
 gui_smoke_suite_current_blocked_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
