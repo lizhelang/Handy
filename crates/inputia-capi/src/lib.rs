@@ -601,6 +601,7 @@ fn effective_rime_script_config(
         ("luna_pinyin_simp", inputia_settings::ChineseScript::Traditional) => (
             "luna_pinyin".to_string(),
             vec![
+                ("simplification".to_string(), false),
                 ("zh_hans".to_string(), false),
                 ("zh_hant".to_string(), true),
             ],
@@ -608,6 +609,7 @@ fn effective_rime_script_config(
         ("luna_pinyin", inputia_settings::ChineseScript::Simplified) => (
             "luna_pinyin".to_string(),
             vec![
+                ("simplification".to_string(), true),
                 ("zh_hant".to_string(), false),
                 ("zh_hans".to_string(), true),
             ],
@@ -615,6 +617,7 @@ fn effective_rime_script_config(
         ("luna_pinyin", inputia_settings::ChineseScript::Traditional) => (
             "luna_pinyin".to_string(),
             vec![
+                ("simplification".to_string(), false),
                 ("zh_hans".to_string(), false),
                 ("zh_hant".to_string(), true),
             ],
@@ -1721,6 +1724,54 @@ mod tests {
     }
 
     #[test]
+    fn capi_settings_guobiao_bispell_commits_standard_maile_sequence() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        let Some(shared_data_dir) = bundled_shared_data_dir() else {
+            eprintln!("skip: Inputia bundled RimeData is not available");
+            return;
+        };
+
+        let temp = tempfile::tempdir().unwrap();
+        let settings_path = temp.path().join("settings.json");
+        let rime_user_data_dir = temp.path().join("rime-user");
+        std::fs::create_dir_all(&rime_user_data_dir).unwrap();
+        let settings = InputiaSettings {
+            schema_id: "guobiao_bispell".to_string(),
+            rime_shared_data_dir: Some(shared_data_dir),
+            rime_user_data_dir: Some(rime_user_data_dir),
+            memory_enabled: false,
+            candidate_page_size: 7,
+            ..InputiaSettings::default()
+        };
+        settings.save(&settings_path).unwrap();
+        let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
+        let session = inputia_session_new_from_settings(settings_path.as_ptr());
+        if session.is_null() {
+            eprintln!("skip: Squirrel librime runtime is not available");
+            return;
+        }
+
+        assert_eq!(
+            handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
+            "Chinese"
+        );
+
+        let mut latest = Value::Null;
+        for ch in "mkle".chars() {
+            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+        }
+        assert_eq!(latest["composing"], "mkle");
+        assert_eq!(latest["visible_candidates"][0]["text"], "买了");
+        assert_ne!(latest["visible_candidates"][0]["text"], "mkle");
+
+        let commit = handle_json(inputia_session_handle_special(session, KEY_SPACE));
+        assert_eq!(commit["commit"], "买了");
+        assert_eq!(commit["composing"], "");
+
+        inputia_session_free(session);
+    }
+
+    #[test]
     fn capi_loads_full_width_setting_from_settings_file() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
@@ -1808,6 +1859,7 @@ mod tests {
             (
                 "luna_pinyin".to_string(),
                 vec![
+                    ("simplification".to_string(), false),
                     ("zh_hans".to_string(), false),
                     ("zh_hant".to_string(), true)
                 ]
@@ -1821,6 +1873,34 @@ mod tests {
             (
                 "luna_pinyin_simp".to_string(),
                 vec![("simplification".to_string(), true)]
+            )
+        );
+        assert_eq!(
+            effective_rime_script_config(
+                "luna_pinyin",
+                &inputia_settings::ChineseScript::Simplified
+            ),
+            (
+                "luna_pinyin".to_string(),
+                vec![
+                    ("simplification".to_string(), true),
+                    ("zh_hant".to_string(), false),
+                    ("zh_hans".to_string(), true)
+                ]
+            )
+        );
+        assert_eq!(
+            effective_rime_script_config(
+                "luna_pinyin",
+                &inputia_settings::ChineseScript::Traditional
+            ),
+            (
+                "luna_pinyin".to_string(),
+                vec![
+                    ("simplification".to_string(), false),
+                    ("zh_hans".to_string(), false),
+                    ("zh_hant".to_string(), true)
+                ]
             )
         );
         assert_eq!(
