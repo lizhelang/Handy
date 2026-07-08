@@ -98,6 +98,8 @@ Host 和设置启动器的 build 产物会写入 `InputiaSourceCommit`、`Inputi
 
 `release/full-check.sh` 在进入公证 readiness、菜单栏 AXPress 和 GUI smoke 前，会先运行 `install-check.sh` 并要求 `installCheckPassed=true`。如果系统目录、设置启动器、TIS duplicate 或 running host 还没有对齐当前 build，它会输出 `releaseFullCheckPassed=false reason=install-check-not-ready` 并停在只读诊断阶段，不会继续触碰菜单栏或 GUI。
 
+`release/full-check.sh` 只有在 `install-check.sh` 和 `notarization-readiness.sh` 都通过后，才会导出 `INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1`、`INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK=1` 和 `INPUTIA_RUN_UI_SMOKE=1`。因此即使运行了 release/full-check，只要安装态或公证 readiness 没过，也不会把重型 opt-in 泄漏给前置检查。
+
 `menu-readiness.sh` 和 `gui-smoke-readiness.sh` 本身也带硬门禁：直接运行时默认只输出 opt-in-required，不会打开菜单栏或读取 GUI readiness。只有 `release/full-check.sh` 或显式设置 `INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1` / `INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK=1` 的诊断才允许进入这些检查。
 
 查看当前 build、系统安装、运行进程、设置启动器和最新安装包是否同版本：

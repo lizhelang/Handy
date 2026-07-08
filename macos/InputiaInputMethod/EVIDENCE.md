@@ -27490,3 +27490,50 @@ zsh -n macos/InputiaInputMethod/validation-policy-self-check.sh macos/InputiaInp
 
 - 当前系统安装没对齐时，`release/full-check.sh` 会停在只读安装态诊断，不会继续触碰菜单栏、TextInputMenuAgent、TextEdit、Safari 或剪贴板 GUI smoke。
 - 完整 release/full-check 仍需在管理员安装当前 build、修复 TIS duplicate、running host 切到当前 CDHash 后再跑。
+
+## 2026-07-09 04:49 CST - release/full-check 重型 opt-in 延后导出
+
+背景：
+
+- `release/full-check.sh` 本身是显式重型入口，但脚本开头提前导出 `INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1`、`INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK=1` 和 `INPUTIA_RUN_UI_SMOKE=1` 会让前置 build/pkg/install-check/notarization 阶段继承重型权限。
+- 安装态未就绪时，full-check 应停在只读安装诊断，不能因为环境变量提前打开而触发菜单栏或 GUI readiness。
+
+实现：
+
+- 将 full-check 的 AXPress、GUI readiness、status/TIS menu include 和 UI smoke opt-in 统一移到 `install-check.sh` 和 `notarization-readiness.sh` 都通过之后。
+- `validation-policy-self-check.sh` 新增顺序断言，锁住 heavy opt-in 必须晚于 install-check 和 notarization readiness。
+- README 明确 release/full-check 即使被调用，也只有 gate 通过后才会导出重型 opt-in。
+
+验证：
+
+```text
+bash -n macos/InputiaInputMethod/release/full-check.sh
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+
+INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/dev-fast.sh
+  validationTier=dev-fast
+  touchesMenuBar=false
+  opensGUI=false
+  changesSystemInputSource=false
+  checksNotarization=false
+  candidate[0]=你来
+  page_size=7
+  rimeLatencyIncrementalMs=40.976
+  rimeLatencySelfCheck=true
+  devFastPassed=true
+
+INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/release/full-check.sh
+  validationTier=release/full-check
+  pkgVerificationPassed=true
+  installCheckPassed=false
+  releaseFullCheckPassed=false reason=install-check-not-ready
+  fullCheckExitCode=12
+  fullCheckMenuSectionReached=false
+  fullCheckGuiSectionReached=false
+```
+
+结论：
+
+- 当前旧安装态下 full-check 会在 install-check gate 停住，且不会进入 `== menu readiness ==` 或 `== postinstall and GUI smoke ==`。
+- 菜单栏 AXPress 和 GUI smoke 的 opt-in 现在只在安装态、公证 readiness 均通过后才会出现在子进程环境里。
