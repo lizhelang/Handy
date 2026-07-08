@@ -24969,3 +24969,359 @@ spctl --status
 - AppleScript 管理员提权入口也不可用，不能用 `do shell script ... with administrator privileges` 绕开当前 sudo 问题。
 - `spctl --add` 的更窄本地 allow 规则在当前系统上已不支持，不能作为替代路径。
 - 因为 Gatekeeper disabled 前置仍未满足，本轮没有运行 TextEdit/Safari/Clipboard GUI smoke。
+
+## v60 Mac mini：Gatekeeper-disabled 本地开发路径已放行，剩余阻塞收窄到用户目录服务 / CFPreferences
+
+时间：2026-07-08 15:46:31 +0800
+
+背景：
+
+- 用户已在 Mac mini 的 System Settings / 隐私与安全性里把 Gatekeeper 改成“允许任何来源”。
+- 这复刻了 MacBook 对照确认过的本地开发路径：不是 Developer ID / notarization 正式分发路径，而是 `Gatekeeper assessments disabled` 的本机 MVP 验证路径。
+
+验证：
+
+```text
+spctl --status
+  assessments disabled
+  spctlStatusRc=1
+
+spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  /Library/Input Methods/InputiaInputMethod.app: accepted
+  override=security disabled
+  spctlAssessRc=0
+
+./macos/InputiaInputMethod/status.sh
+  buildCDHash=35043eaf9039f9379f524d9856cf9b3f29ea1989
+  systemMatchesBuild=true
+  statusTISEnabledMatches=0
+  statusTISInstalledMatches=2
+  statusSignatureAccepted=true
+  statusMenuReadiness=false
+  statusMenuBlockReason=menu-agent-unavailable
+  statusTextEditPreflight=not-running
+  statusSafariPreflight=not-running
+  statusInputiaHostPreflight=not-running
+  statusGuiSmokeBlockReasons=tis-not-ready,menu-menu-agent-unavailable,frontmost-unavailable
+  statusGuiSmokeReady=false reason=tis-not-ready,menu-menu-agent-unavailable,frontmost-unavailable
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  appSignatureAccepted=true
+  appMatchesBuild=true
+  tis.enabledMatches=0
+  tis.installedMatches=2
+  tis.targetEnabledMatches=0
+  tis.targetInstalledMatches=1
+  tis.hansEnabled=true
+  tis.hansSelectable=true
+  tis.hansSelected=false
+  tis.currentID=com.apple.keylayout.ABC
+  tis.readinessBlockReason=missing-enabled-source
+  tisReadiness=false
+```
+
+安装/注册尝试：
+
+```text
+./macos/InputiaInputMethod/install-system.sh
+  sourceVersion=44
+  sourceCDHash=c6b99a52f9b9046ce98b7148e6c92fdb50651440
+  systemInstallNeedsAdmin=true
+  sudo: you do not exist in the passwd database
+  installRc=1
+```
+
+之后系统目录 app 已与当前 build 对齐，说明 Gatekeeper 和 CDHash mismatch 已不再是当前 blocker；但 `sudo` 仍因当前 UID 缺失 passwd 记录不可用。
+
+TIS 诊断：
+
+```text
+/Library/Input Methods/InputiaInputMethod.app/Contents/MacOS/InputiaInputMethod --register-input-source
+  registerStatus=0
+
+--enable-input-source
+  enabledSourceAlreadyPresent=true
+  id=com.inputia.inputmethod.Inputia.Main
+  enabled=true
+  selectable=true
+  selected=false
+
+--normalize-hitoolbox
+  hitoolboxNormalizeEnabledBefore=3
+  hitoolboxNormalizeEnabledAfter=3
+  hitoolboxNormalizeSelectedBefore=1
+  hitoolboxNormalizeSelectedAfter=1
+  hitoolboxNormalizePlistWrite=true
+  hitoolboxNormalize=true
+
+--select-input-source
+  inputSourceFoundInEnabledList=true
+  selectStatus=-50
+  selectExpectedID=com.inputia.inputmethod.Inputia.Main
+  selectCurrentID=com.apple.keylayout.ABC
+  selectCurrentMatchesTarget=false
+```
+
+偏好/目录服务证据：
+
+```text
+~/Library/Preferences/com.apple.HIToolbox.plist
+  AppleEnabledInputSources 包含：
+    com.apple.CharacterPaletteIM
+    com.inputia.inputmethod.Inputia
+    com.inputia.inputmethod.Inputia.Main
+
+plutil -lint ~/Library/Preferences/com.apple.HIToolbox.plist
+  OK
+
+defaults read com.apple.HIToolbox
+  Domain com.apple.HIToolbox does not exist
+  defaultsRc=1
+
+id
+  uid=501 gid=20(staff) groups=20(staff),...,80(admin),...
+
+whoami
+  501
+
+python3 pwd.getpwuid(os.getuid())
+  uid 501
+  pwdError 'getpwuid(): uid not found: 501'
+```
+
+非 GUI 验证：
+
+```text
+./macos/InputiaInputMethod/verify-nongui.sh
+  pkgVerificationPassed=true
+  postInstallUiTisGateNoLaunchPassed=true
+  installNoPrompt.rc=12
+  residue=false
+  tmpResidue=false
+  nonGuiVerificationPassed=true
+```
+
+本轮修正：
+
+- `status.sh` / `gui-smoke-readiness.sh` / `smoke-common.sh` 等进程检测在 `pgrep` 不可用时使用 `ps` fallback；同时修正 macOS awk 对换行 `||` 的解析问题，避免 status 输出被 awk 语法错误污染。
+- `main.swift` 的 HIToolbox 偏好读取改成兼容 `NSArray` / `NSDictionary` / `[AnyHashable: Any]`，并保留磁盘 plist 里的非 Inputia 条目。验证中 `hitoolboxNormalizeEnabledBefore=3` 到 `After=3`，没有再把已有输入源数组清空。
+- `select()` 改为先 `enable()`，再按成熟 TIS 工具做法从 installed source 列表选择目标 source，同时输出 enabled/installed/current 诊断。
+
+结论：
+
+- Gatekeeper blocker 已解决：`spctl` 通过 `override=security disabled` 放行。
+- 系统安装版本已与 build 对齐：`systemMatchesBuild=true`。
+- 当前不能切换到 Inputia 的剩余 blocker 不是安装包、不是签名、不是 CDHash，而是当前 Mac mini 用户目录服务异常：UID 501 没有 passwd 记录，`sudo` 不可用，`defaults`/CFPreferences 也读不到 `com.apple.HIToolbox` 用户域；TIS 因此仍报告 `missing-enabled-source`，`TISSelectInputSource` 返回 `-50`。
+- 因为 `tisReadiness=false`，本轮没有运行真实 TextEdit/Safari/Clipboard GUI smoke。
+
+## v60 Mac mini：复刻 MacBook 本地开发 Gatekeeper disabled 路径后，签名 blocker 已消失，当前阻塞转为 TIS enabled/session
+
+时间：2026-07-08 15:53:39 +0800
+
+背景：
+
+- 用户已给出 MacBook 只读对照结论：MacBook 当前可用版本不是 Developer ID / notarization 路径，而是本地开发模式下 Gatekeeper assessments disabled，`spctl` 通过 `override=security disabled` 放行 ad-hoc/local 签名 app。
+- 本轮按该结论纠偏：不把 Developer ID / notarization 当作当前 MVP 阻塞路径；正式分发以后再走 Developer ID + notarization。
+- 同时按 IMK/TIS 证据规则复核官方/成熟实现：
+  - Apple InputMethodKit 文档：IMK 管理输入法与 client app、candidate window、input method modes 的通信。
+  - Apple Support 输入源设置说明：系统设置里的 Text Input 列表代表“enabled for use”的输入源，菜单栏输入菜单从已启用输入源切换。
+  - Text Input Source Services 头文件说明：input mode 只有在自身和 parent input method 都 enabled 时才能被选择；`TISSelectInputSource` 否则返回 `paramErr`。
+  - `ensan-hcl/macOS_IMKitSample_2021` 与 `eagleoflqj/toyimk` 均把 `.inputmethod.` bundle id、安装到系统输入法目录、首次安装后在 System Settings 添加/必要时重新登录列为正常开发流程。
+
+参考：
+
+```text
+https://developer.apple.com/documentation/inputmethodkit
+https://support.apple.com/guide/mac-help/change-input-sources-settings-mchl84525d76/mac
+https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/TextInputSources.h
+https://github.com/ensan-hcl/macOS_IMKitSample_2021
+https://github.com/eagleoflqj/toyimk
+```
+
+当前只读验证：
+
+```text
+spctl --status
+  assessments disabled
+
+spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  /Library/Input Methods/InputiaInputMethod.app: accepted
+  override=security disabled
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  appCDHash=35043eaf9039f9379f524d9856cf9b3f29ea1989
+  appSignatureAccepted=true
+  appMatchesBuild=true
+  tis.enabledMatches=0
+  tis.installedMatches=2
+  tis.targetEnabledMatches=0
+  tis.targetInstalledMatches=1
+  tis.hansIconMatchesApp=true
+  tis.hansEnabled=true
+  tis.hansSelectable=true
+  tis.hansSelected=false
+  tis.currentID=com.apple.keylayout.ABC
+  tis.currentMatchesTarget=false
+  tis.readinessBlockReason=missing-enabled-source
+  tisReadiness=false
+
+./macos/InputiaInputMethod/status.sh
+  systemMatchesBuild=true
+  statusAdminInstallReady=false
+  statusSignatureAccepted=true
+  statusTISEnabledMatches=0
+  statusTISInstalledMatches=2
+  statusTextEditPreflight=not-running
+  statusSafariPreflight=not-running
+  statusInputiaHostPreflight=not-running
+  statusGuiSmokeBlockReasons=tis-not-ready,menu-menu-agent-unavailable,frontmost-unavailable
+  statusGuiSmokeReady=false reason=tis-not-ready,menu-menu-agent-unavailable,frontmost-unavailable
+```
+
+TIS 诊断：
+
+```text
+InputiaInputMethod --register-input-source
+  registerStatus=0
+
+InputiaInputMethod --dump-input-source
+  includeAllInstalled=true
+  matches=2
+  id=com.inputia.inputmethod.Inputia
+  enabled=false
+  selectable=false
+  selected=false
+  id=com.inputia.inputmethod.Inputia.Main
+  enabled=true
+  selectable=true
+  selected=false
+
+InputiaInputMethod --enable-input-source
+  enabledSourceAlreadyPresent=true
+
+InputiaInputMethod --dump-enabled-input-source
+  inputSourceFound=false
+
+InputiaInputMethod --select-input-source
+  selectStatus=-50
+  tis.currentID=com.apple.keylayout.ABC
+```
+
+本轮代码处理：
+
+- `main.swift` 的 `--normalize-hitoolbox` 增加 `CFPreferencesSetValue` / `CFPreferencesSynchronize` 写入，并在当前 UID/session 偏好服务异常时 fallback 到 `~/Library/Preferences/com.apple.HIToolbox.plist`。
+- 修正 fallback 的读源：CFPreferences 读不到现有 HIToolbox 数组时会回读磁盘 plist，避免把 ABC / 系统拼音 / CharacterPalette 等已有输入源覆盖掉。
+- 已修复一次中间 fallback 写坏风险，并用 PlistBuddy 手动恢复：
+  - 备份：`/tmp/com.apple.HIToolbox.inputia-restore-quoted-20260708-153901.plist`
+  - `AppleEnabledInputSources` 包含 ABC、系统简体拼音、CharacterPalette、Inputia parent、Inputia Main。
+  - `AppleSelectedInputSources` 包含 Inputia Main。
+  - `AppleInputSourceHistory` 包含 Inputia Main、微信输入法拼音、ABC。
+- `smoke-common.sh` / `status.sh` / `gui-smoke-readiness.sh` / `post-install-regression.sh` / `await-system-install.sh` / `verify-nongui.sh` 增加或修正 `pgrep` 失败时的 `ps` fallback；当前系统上 `pgrep` 可因 `sysmond service not found` 失效。
+- `ps` fallback 修复了 `awk exit` + `pipefail` 导致的 SIGPIPE 误判，并过滤 `/bin/zsh`、`/bin/bash`、`/usr/bin/sudo` 等 launcher，避免把命令行里包含 app 路径的脚本误判为 host 进程。
+- `verify-nongui.sh` 放宽签名 blocker 断言：Gatekeeper disabled 后真实阻塞应允许从 `signature-rejected` 转成 `tis-not-ready`；这避免 verifier 把已经解决的签名状态误报为失败。
+- `build-pkg.sh` 的 `INPUTIA_PKG_SIGN_IDENTITY` 保护仍是分发包路径的 preflight，只在显式要求签 pkg 时生效；当前本地开发安装仍生成 unsigned/local pkg，不代表 MVP 需要先走 notarization。
+
+验证：
+
+```text
+./macos/InputiaInputMethod/build.sh
+  build ok
+
+./macos/InputiaInputMethod/build-pkg.sh
+  buildPkgSigned=false reason=unsigned-local-package
+  dist/InputiaInputMethod-latest.pkg refreshed
+
+bash /tmp/inputia-verify-nongui-20260708-154858-after-pkg.log 对应的 verify-nongui 结果：
+  guiSmokeSuiteCurrentBlockedGate: guiSmokeSuiteBlockReasons=tis-not-ready,frontmost-unavailable
+  buildPreflightUiTisGate: smokePreflightReady=false reason=tis-not-ready
+  buildPreflightInputiaHostGate: smokePreflightReady=false reason=inputia-host-running
+  postInstallNonGuiNoMutationPassed=true
+  postInstallUiTisGate: postInstallUiSmokeReady=false reason=tis-not-ready
+  residue=false
+  tmpResidue=false
+  nonGuiVerificationPassed=true
+
+TextEdit / Safari / InputiaInputMethod residue check
+  TextEdit=not-running
+  Safari=not-running
+  InputiaInputMethod=not-running
+```
+
+结论：
+
+- Mac mini 已复刻 MacBook 的本地开发 Gatekeeper disabled 路径：`spctl` 对系统安装版返回 accepted，原因是 `override=security disabled`。
+- 当前 blocker 已不再是签名、notarization、pkg 或简单安装目录问题；现在的 blocker 是 TIS enabled/session：系统 all-installed 能看到 Inputia Main，图标和 app CDHash 都正确，但 enabled input sources 里没有目标源，`TISSelectInputSource` 因此返回 `-50`。
+- 这与 Text Input Source Services 的选择条件吻合：input mode 和 parent 必须都 enabled 才能被选择。
+- 当前会话仍有系统层异常：`statusAdminInstallReady=false`，此前复核过 UID 501 没有 passwd 记录，`sudo` / Git push / 目录服务相关操作可能继续失败。
+- 因 `tisReadiness=false`，本轮没有运行真实 TextEdit/Safari/Clipboard GUI smoke；测试纪律保持：readiness 未过前不抢用户光标，不留下 TextEdit/Safari/Inputia host 残留。
+
+## v61 Mac mini：提交前非 GUI verifier 通过，系统安装版/build/pkg 保持同一 CDHash
+
+时间：2026-07-08 15:59:00 +0800
+
+背景：
+
+- v60 后提交前重跑 verifier 时先遇到 `pkgVerificationPassed=false reason=archive-app-cdhash-mismatch`，原因是 ad-hoc/local build 会刷新 app CDHash，而当时 `dist/InputiaInputMethod-latest.pkg` 还是旧 archive。
+- 已重新运行 `./macos/InputiaInputMethod/build-pkg.sh` 刷新 latest pkg；随后非 GUI verifier 通过。
+- 中间还修正了 `verify-nongui.sh` 的 `await UI status self-check`：该自检会刻意生成 UI smoke 不应启动的非零场景，必须用 `run_allow_rc` 捕获输出，否则 `set -e` 会在断言前退出。
+
+验证：
+
+```text
+./macos/InputiaInputMethod/build-pkg.sh
+  buildPkgSignIdentityRequested=false
+  buildPkgSigned=false reason=unsigned-local-package
+  archiveAppCDHash=3623ad086abd01db2c60fb05d7b03229cb060c41
+  buildAppCDHash=3623ad086abd01db2c60fb05d7b03229cb060c41
+  pkgVerificationPassed=true
+  dist/InputiaInputMethod-v44-3623ad086abd.pkg
+
+/tmp/inputia-verify-nongui-20260708-155753-final3.log
+  awaitUiNotReady.rc=2
+  awaitUiNotReadyNoLaunchPassed=true
+  residue=false
+  tmpResidue=false
+  nonGuiVerificationPassed=true
+
+spctl --status
+  assessments disabled
+
+spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  /Library/Input Methods/InputiaInputMethod.app: accepted
+  override=security disabled
+
+./macos/InputiaInputMethod/status.sh
+  buildCDHash=3623ad086abd01db2c60fb05d7b03229cb060c41
+  system host cdhash=3623ad086abd01db2c60fb05d7b03229cb060c41
+  systemMatchesBuild=true
+  statusAdminInstallReady=false
+  statusSignatureAccepted=true
+  statusTISEnabledMatches=0
+  statusTISInstalledMatches=2
+  statusTextEditPreflight=not-running
+  statusSafariPreflight=not-running
+  statusInputiaHostPreflight=not-running
+  statusGuiSmokeReady=false reason=tis-not-ready,menu-menu-agent-unavailable,frontmost-unavailable
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  buildCDHash=3623ad086abd01db2c60fb05d7b03229cb060c41
+  appCDHash=3623ad086abd01db2c60fb05d7b03229cb060c41
+  appSignatureAccepted=true
+  appMatchesBuild=true
+  tis.enabledMatches=0
+  tis.installedMatches=2
+  tis.targetEnabledMatches=0
+  tis.targetInstalledMatches=1
+  tis.hansEnabled=true
+  tis.hansSelectable=true
+  tis.hansSelected=false
+  tis.currentID=com.apple.keylayout.ABC
+  tis.readinessBlockReason=missing-enabled-source
+  tisReadiness=false
+```
+
+结论：
+
+- 当前本地开发签名/Gatekeeper 路径已达成：系统安装版 accepted，且 build/system/pkg 三者 CDHash 一致。
+- 非 GUI verifier 通过，且确认 UI smoke 在 `tis-not-ready` 时不会启动，不会抢用户光标。
+- 真实 GUI smoke 仍未运行，因为 readiness 仍是 `missing-enabled-source`，不是签名或 pkg blocker。

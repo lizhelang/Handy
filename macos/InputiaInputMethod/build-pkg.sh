@@ -41,6 +41,34 @@ require_no_verification_processes() {
   fi
 }
 
+require_pkg_sign_identity_if_requested() {
+  if [[ -z "${INPUTIA_PKG_SIGN_IDENTITY:-}" ]]; then
+    echo "buildPkgSignIdentityRequested=false"
+    return 0
+  fi
+
+  echo "buildPkgSignIdentityRequested=true"
+  echo "buildPkgSignIdentity=$INPUTIA_PKG_SIGN_IDENTITY"
+
+  if [[ "$INPUTIA_PKG_SIGN_IDENTITY" != Developer\ ID\ Installer:* ]]; then
+    echo "buildPkgSignIdentityValid=false reason=not-developer-id-installer"
+    echo "buildPkgReady=false reason=pkg-sign-identity-not-developer-id-installer"
+    echo "buildPkgRequiredAction=set-INPUTIA_PKG_SIGN_IDENTITY-to-developer-id-installer"
+    exit 22
+  fi
+
+  local identities
+  identities="$(/usr/bin/security find-identity -v 2>/dev/null || true)"
+  if ! /usr/bin/grep -F "$INPUTIA_PKG_SIGN_IDENTITY" <<<"$identities" >/dev/null; then
+    echo "buildPkgSignIdentityValid=false reason=missing-developer-id-installer-identity"
+    echo "buildPkgReady=false reason=missing-pkg-sign-identity"
+    echo "buildPkgRequiredAction=import-developer-id-installer-identity"
+    exit 21
+  fi
+
+  echo "buildPkgSignIdentityValid=true"
+}
+
 if [[ "${INPUTIA_BUILD_PKG_PREFLIGHT_SELF_CHECK:-0}" == "1" ]]; then
   original_process_list="${INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST:-}"
   INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST="123 /usr/bin/true"
@@ -59,6 +87,7 @@ if [[ "${INPUTIA_BUILD_PKG_PREFLIGHT_SELF_CHECK:-0}" == "1" ]]; then
 fi
 
 require_no_verification_processes
+require_pkg_sign_identity_if_requested
 
 /bin/zsh "$ROOT_DIR/build.sh" >/dev/null
 
@@ -89,8 +118,19 @@ COPYFILE_DISABLE=1 /usr/bin/tar -czf "$PKG_SCRIPTS_DIR/InputiaSettings.app.tar.g
 
 if [[ -n "${INPUTIA_PKG_SIGN_IDENTITY:-}" ]]; then
   signed_pkg="$DIST_DIR/InputiaInputMethod-v${VERSION}-${APP_CDHASH_SHORT}-signed.pkg"
-  /usr/bin/productsign --sign "$INPUTIA_PKG_SIGN_IDENTITY" "$PKG_PATH" "$signed_pkg"
+  if ! /usr/bin/productsign --sign "$INPUTIA_PKG_SIGN_IDENTITY" "$PKG_PATH" "$signed_pkg"; then
+    echo "buildPkgSigned=false reason=productsign-failed"
+    exit 23
+  fi
   mv "$signed_pkg" "$PKG_PATH"
+  if /usr/sbin/pkgutil --check-signature "$PKG_PATH" 2>&1 | /usr/bin/grep -F "Developer ID Installer:" >/dev/null; then
+    echo "buildPkgSigned=true"
+  else
+    echo "buildPkgSigned=false reason=signature-verification-failed"
+    exit 24
+  fi
+else
+  echo "buildPkgSigned=false reason=unsigned-local-package"
 fi
 
 /bin/cp "$PKG_PATH" "$LATEST_PKG_PATH"

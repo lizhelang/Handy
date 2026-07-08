@@ -56,27 +56,71 @@ acquire_regression_lock() {
   trap release_regression_lock EXIT
 }
 
+process_match_by_ps() {
+  local process_name="$1"
+  /bin/ps -axo pid=,comm=,command= 2>/dev/null |
+    /usr/bin/awk -v process_name="$process_name" '
+      {
+        command = (NF >= 3) ? substr($0, index($0, $3)) : ""
+        launcher = (command ~ "^/bin/(zsh|bash|sh)( |$)" || command ~ "^/usr/bin/(sudo|awk|grep|sed)( |$)")
+      }
+      !launcher {
+        if ($2 == process_name ||
+          $3 == process_name ||
+          $3 ~ ("/" process_name "$") ||
+          command ~ ("^" process_name "([ ]|$)") ||
+          command ~ ("/" process_name "([ ]|$)") ||
+          command ~ (process_name "\\.app/Contents/MacOS/" process_name "([ ]|$)")) {
+          found = 1
+        }
+      }
+      END { exit found ? 0 : 1 }
+    '
+}
+
+process_running() {
+  local process_name="$1"
+  local process_check_output process_check_rc
+  POST_INSTALL_LAST_PROCESS_CHECK_OUTPUT=""
+  set +e
+  process_check_output="$(/usr/bin/pgrep -x "$process_name" 2>&1 >/dev/null)"
+  process_check_rc=$?
+  set -e
+  if [[ "$process_check_rc" -eq 0 ]]; then
+    return 0
+  fi
+  if process_match_by_ps "$process_name"; then
+    return 0
+  fi
+  if /bin/ps -axo pid=,comm=,command= >/dev/null 2>&1; then
+    return 1
+  fi
+  if [[ -n "$process_check_output" ]]; then
+    POST_INSTALL_LAST_PROCESS_CHECK_OUTPUT="$process_check_output"
+    return 2
+  fi
+  return 1
+}
+
 require_ui_process_idle() {
   local process_name="$1"
   local allow_value="$2"
   local reason="$3"
 
   local process_state="not-running"
-  local process_check_output=""
   local process_check_rc
   if [[ ",${INPUTIA_UI_PROCESS_RUNNING_FOR_TEST:-}," == *",$process_name,"* ]]; then
     process_state="running"
   elif [[ "${INPUTIA_UI_PROCESS_IGNORE_REAL_FOR_TEST:-0}" != "1" ]]; then
-    set +e
-    process_check_output="$(/usr/bin/pgrep -x "$process_name" 2>&1 >/dev/null)"
-    process_check_rc=$?
-    set -e
-    if [[ "$process_check_rc" -eq 0 ]]; then
+    if process_running "$process_name"; then
       process_state="running"
-    elif [[ -n "$process_check_output" ]]; then
+    else
+      process_check_rc=$?
+    fi
+    if [[ "${process_check_rc:-1}" -eq 2 ]]; then
       echo "${process_name}Preflight=unknown"
       echo "processListAvailable=false reason=process-list-unavailable"
-      printf '%s\n' "$process_check_output" | /usr/bin/sed 's/^/processListOutput: /'
+      printf '%s\n' "$POST_INSTALL_LAST_PROCESS_CHECK_OUTPUT" | /usr/bin/sed 's/^/processListOutput: /'
       echo "guiSmokeReady=false reason=process-list-unavailable"
       echo "postInstallUiSmokeReady=false reason=process-list-unavailable"
       exit 4

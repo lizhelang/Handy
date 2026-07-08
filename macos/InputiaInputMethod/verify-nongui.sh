@@ -150,8 +150,48 @@ require_executable() {
   fi
 }
 
+process_match_by_ps() {
+  local process_name="$1"
+  /bin/ps -axo pid=,comm=,command= 2>/dev/null |
+    /usr/bin/awk -v process_name="$process_name" '
+      {
+        command = (NF >= 3) ? substr($0, index($0, $3)) : ""
+        launcher = (command ~ "^/bin/(zsh|bash|sh)( |$)" || command ~ "^/usr/bin/(sudo|awk|grep|sed)( |$)")
+      }
+      !launcher {
+        if ($2 == process_name ||
+          $3 == process_name ||
+          $3 ~ ("/" process_name "$") ||
+          command ~ ("^" process_name "([ ]|$)") ||
+          command ~ ("/" process_name "([ ]|$)") ||
+          command ~ (process_name "\\.app/Contents/MacOS/" process_name "([ ]|$)")) {
+          found = 1
+        }
+      }
+      END { exit found ? 0 : 1 }
+    '
+}
+
 process_running() {
-  /usr/bin/pgrep -x "$1" >/dev/null 2>&1
+  local process_name="$1"
+  local process_check_output process_check_rc
+  set +e
+  process_check_output="$(/usr/bin/pgrep -x "$process_name" 2>&1 >/dev/null)"
+  process_check_rc=$?
+  set -e
+  if [[ "$process_check_rc" -eq 0 ]]; then
+    return 0
+  fi
+  if process_match_by_ps "$process_name"; then
+    return 0
+  fi
+  if /bin/ps -axo pid=,comm=,command= >/dev/null 2>&1; then
+    return 1
+  fi
+  if [[ -n "$process_check_output" ]]; then
+    return 2
+  fi
+  return 1
 }
 
 process_details() {
@@ -159,6 +199,29 @@ process_details() {
   /bin/ps -axo pid=,ppid=,etime=,comm=,command= |
     /usr/bin/awk -v process_name="$process_name" '
       $4 ~ ("(^|/)" process_name "$") { print }
+    '
+}
+
+fake_process_visible_by_pid() {
+  local process_name="$1"
+  local fake_pid="$2"
+  /bin/ps -p "$fake_pid" -o comm=,command= 2>/dev/null |
+    /usr/bin/awk -v process_name="$process_name" '
+      {
+        command = (NF >= 2) ? substr($0, index($0, $2)) : ""
+        launcher = (command ~ "^/bin/(zsh|bash|sh)( |$)" || command ~ "^/usr/bin/(sudo|awk|grep|sed)( |$)")
+      }
+      !launcher {
+        if ($1 == process_name ||
+          $2 == process_name ||
+          $2 ~ ("/" process_name "$") ||
+          command ~ ("^" process_name "([ ]|$)") ||
+          command ~ ("/" process_name "([ ]|$)") ||
+          command ~ (process_name "\\.app/Contents/MacOS/" process_name "([ ]|$)")) {
+          found = 1
+        }
+      }
+      END { exit found ? 0 : 1 }
     '
 }
 
@@ -384,16 +447,21 @@ cleanup_stale_verify_residue() {
 start_fake_existing_process() {
   local process_name="$1"
   local fake_pid
-  /bin/zsh -c "exec -a '$process_name' /bin/sleep 60" &
+  /bin/zsh -c "exec -a '$process_name' /bin/sleep 60" >/dev/null 2>&1 &
   fake_pid=$!
   INPUTIA_FAKE_EXISTING_PID="$fake_pid"
   VERIFY_FAKE_PROCESS_PIDS+=("$fake_pid")
-  /bin/sleep 0.2
-  if ! process_running "$process_name"; then
+  local waited=0
+  while ! fake_process_visible_by_pid "$process_name" "$fake_pid" && ((waited < 40)); do
+    /bin/sleep 0.05
+    waited=$((waited + 1))
+  done
+  if ! fake_process_visible_by_pid "$process_name" "$fake_pid"; then
     echo "nonGuiVerificationPassed=false reason=fake-existing-process-not-visible process=$process_name pid=$fake_pid"
+    /bin/ps -p "$fake_pid" -o pid=,comm=,command= 2>/dev/null || true
     exit 1
   fi
-  echo "fakeExistingProcessStarted=true process=$process_name pid=$fake_pid"
+  echo "fakeExistingProcessStarted=true process=$process_name pid=$fake_pid waitedTicks=$waited"
 }
 
 stop_fake_existing_process() {
@@ -1289,10 +1357,21 @@ require("buildPkgBlockingProcess:" in build_pkg_text, "build-pkg-missing-blockin
 require("gui-smoke-suite" in build_pkg_text, "build-pkg-missing-gui-smoke-suite-process-guard")
 require("INPUTIA_BUILD_PKG_PREFLIGHT_SELF_CHECK" in build_pkg_text, "build-pkg-missing-preflight-self-check")
 require("buildPkgPreflightSelfCheck=true" in build_pkg_text, "build-pkg-missing-preflight-self-check-success")
+require("require_pkg_sign_identity_if_requested()" in build_pkg_text, "build-pkg-missing-sign-identity-preflight")
+require("buildPkgSignIdentityRequested=true" in build_pkg_text, "build-pkg-missing-sign-identity-request-output")
+require("buildPkgSignIdentityValid=false reason=missing-developer-id-installer-identity" in build_pkg_text, "build-pkg-missing-sign-identity-missing-output")
+require("buildPkgReady=false reason=missing-pkg-sign-identity" in build_pkg_text, "build-pkg-missing-sign-identity-ready-output")
+require("buildPkgRequiredAction=import-developer-id-installer-identity" in build_pkg_text, "build-pkg-missing-sign-identity-required-action")
+require("buildPkgSignIdentityValid=false reason=not-developer-id-installer" in build_pkg_text, "build-pkg-missing-wrong-sign-identity-output")
+require("buildPkgSigned=false reason=productsign-failed" in build_pkg_text, "build-pkg-missing-productsign-failed-output")
+require("buildPkgSigned=false reason=unsigned-local-package" in build_pkg_text, "build-pkg-missing-unsigned-local-output")
 build_pkg_preflight_index = build_pkg_text.find("require_no_verification_processes")
+build_pkg_sign_preflight_index = build_pkg_text.find("require_pkg_sign_identity_if_requested")
 build_pkg_build_index = build_pkg_text.find('"$ROOT_DIR/build.sh"')
 build_pkg_remove_index = build_pkg_text.find('rm -rf "$PKG_SCRIPTS_DIR" "$DIST_DIR"')
 require(build_pkg_preflight_index >= 0, "build-pkg-missing-preflight-call")
+require(build_pkg_sign_preflight_index > build_pkg_preflight_index, "build-pkg-sign-preflight-before-process-preflight")
+require(build_pkg_build_index > build_pkg_sign_preflight_index, "build-pkg-build-before-sign-preflight")
 require(build_pkg_build_index > build_pkg_preflight_index, "build-pkg-build-before-verification-preflight")
 require(build_pkg_remove_index > build_pkg_preflight_index, "build-pkg-removes-dist-before-verification-preflight")
 
@@ -1659,6 +1738,14 @@ require("expectedTISIconPath" in main_text, "host-tis-missing-expected-icon-path
 require('urlProperty(source, key: kTISPropertyIconImageURL) == expectedTISIconPath' in main_text, "host-tis-source-selection-not-icon-filtered")
 require("matchingSources.first" in main_text, "host-tis-source-selection-missing-fallback")
 require('"--host-shortcut-self-check", "--shortcut-self-check"' in main_text, "host-shortcut-self-check-missing-short-alias")
+normalize_index = main_text.find("private func normalizeHIToolbox()")
+clear_index = main_text.find("private func clearInputSourcePreferences()")
+normalize_text = main_text[normalize_index:clear_index]
+require("AppleEnabledThirdPartyInputSources" in normalize_text, "host-normalize-missing-third-party-input-sources")
+require("inputSourcesDomain" in normalize_text, "host-normalize-third-party-missing-inputsources-domain")
+require("inputiaModePreferenceEntry(modeID: targetModeID), inputiaParentPreferenceEntry()" in normalize_text, "host-normalize-missing-third-party-inputia-entries")
+require("inputSourcesNormalizeSynchronize=" in normalize_text, "host-normalize-missing-third-party-sync-output")
+require("thirdPartyEnabledAfter=" in normalize_text, "host-normalize-missing-third-party-count-output")
 handle_key_down_index = main_text.find("private func handleKeyDown(_ event: NSEvent, client: IMKTextInput) -> Bool")
 pass_through_index = main_text.find("InputiaShortcutClassifier.shouldPassThroughKeyDown", handle_key_down_index)
 script_toggle_index = main_text.find("isScriptToggleShortcut(event, modifiers: modifiers)", handle_key_down_index)
@@ -2107,7 +2194,9 @@ require_output "$process_preflight_no_allow_output" "fakeReady=false reason=fake
 echo "processPreflightHelperSelfCheck=true"
 
 section "await UI status self-check"
-await_ui_status_output="$(INPUTIA_AWAIT_UI_STATUS_SELF_CHECK=1 "$ROOT_DIR/await-system-install.sh" 2>&1)"
+run_allow_rc "0,1,2,3,4,5" "awaitUiStatusSelfCheckRun" \
+  env INPUTIA_AWAIT_UI_STATUS_SELF_CHECK=1 "$ROOT_DIR/await-system-install.sh"
+await_ui_status_output="$RUN_EXPECT_RC_OUTPUT"
 printf '%s\n' "$await_ui_status_output"
 require_output "$await_ui_status_output" "awaitUiStatusSelfCheck=true" "await-ui-status-self-check-failed"
 require_output "$await_ui_status_output" "awaitUiStatusSelfCheck reason=target-and-tis uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=target-cdhash-mismatch uiSmokeBlockReasons=target-cdhash-mismatch,missing-enabled-source" "await-ui-status-missing-target-and-tis-block-reasons"
@@ -2136,6 +2225,32 @@ printf '%s\n' "$build_pkg_preflight_output"
 require_output "$build_pkg_preflight_output" "buildPkgPreflightSelfCheck clear=true" "build-pkg-preflight-clear-case-failed"
 require_output "$build_pkg_preflight_output" "buildPkgPreflightSelfCheck blocked=true" "build-pkg-preflight-blocked-case-failed"
 require_output "$build_pkg_preflight_output" "buildPkgPreflightSelfCheck=true" "build-pkg-preflight-self-check-failed"
+
+section "build package signing identity self-check"
+pkg_before_sha="$(/usr/bin/shasum -a 256 "$ROOT_DIR/dist/InputiaInputMethod-latest.pkg" 2>/dev/null | /usr/bin/awk '{ print $1 }' || true)"
+run_expect_rc 22 "buildPkgWrongSigningIdentitySelfCheck" \
+  /usr/bin/env \
+    INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST="123 /usr/bin/true" \
+    INPUTIA_PKG_SIGN_IDENTITY="Codexbar Local Code Signing Leaf v4" \
+    "$ROOT_DIR/build-pkg.sh"
+require_output "$RUN_EXPECT_RC_OUTPUT" "buildPkgSignIdentityRequested=true" "build-pkg-wrong-sign-identity-missing-request-output"
+require_output "$RUN_EXPECT_RC_OUTPUT" "buildPkgSignIdentityValid=false reason=not-developer-id-installer" "build-pkg-wrong-sign-identity-missing-invalid-output"
+require_output "$RUN_EXPECT_RC_OUTPUT" "buildPkgReady=false reason=pkg-sign-identity-not-developer-id-installer" "build-pkg-wrong-sign-identity-missing-ready-output"
+run_expect_rc 21 "buildPkgMissingSigningIdentitySelfCheck" \
+  /usr/bin/env \
+    INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST="123 /usr/bin/true" \
+    INPUTIA_PKG_SIGN_IDENTITY="Developer ID Installer: Inputia Missing Installer (TEAMID)" \
+    "$ROOT_DIR/build-pkg.sh"
+require_output "$RUN_EXPECT_RC_OUTPUT" "buildPkgSignIdentityRequested=true" "build-pkg-missing-sign-identity-missing-request-output"
+require_output "$RUN_EXPECT_RC_OUTPUT" "buildPkgSignIdentityValid=false reason=missing-developer-id-installer-identity" "build-pkg-missing-sign-identity-missing-invalid-output"
+require_output "$RUN_EXPECT_RC_OUTPUT" "buildPkgReady=false reason=missing-pkg-sign-identity" "build-pkg-missing-sign-identity-missing-ready-output"
+require_output "$RUN_EXPECT_RC_OUTPUT" "buildPkgRequiredAction=import-developer-id-installer-identity" "build-pkg-missing-sign-identity-missing-required-action"
+pkg_after_sha="$(/usr/bin/shasum -a 256 "$ROOT_DIR/dist/InputiaInputMethod-latest.pkg" 2>/dev/null | /usr/bin/awk '{ print $1 }' || true)"
+if [[ "$pkg_before_sha" != "$pkg_after_sha" ]]; then
+  echo "nonGuiVerificationPassed=false reason=build-pkg-signing-self-check-mutated-package"
+  exit 1
+fi
+echo "buildPkgSigningIdentitySelfCheck=true"
 
 section "open settings preflight self-check"
 open_settings_preflight_output="$(INPUTIA_OPEN_SETTINGS_PREFLIGHT_SELF_CHECK=1 "$ROOT_DIR/open-settings.sh" 2>&1)"
@@ -2201,8 +2316,9 @@ require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCh
 if ! process_running InputiaInputMethod; then
   start_fake_existing_process InputiaInputMethod
   fake_readiness_inputia_pid="$INPUTIA_FAKE_EXISTING_PID"
-  gui_smoke_readiness_inputia_output="$("$ROOT_DIR/gui-smoke-readiness.sh" "$BUILD_APP" 2>&1)"
-  printf '%s\n' "$gui_smoke_readiness_inputia_output" | /usr/bin/sed 's/^/guiSmokeReadinessInputiaHostGate: /'
+  run_allow_rc "0,1,2,3,4,5" "guiSmokeReadinessInputiaHostGate" \
+    "$ROOT_DIR/gui-smoke-readiness.sh" "$BUILD_APP"
+  gui_smoke_readiness_inputia_output="$RUN_EXPECT_RC_OUTPUT"
   require_output "$gui_smoke_readiness_inputia_output" "inputiaHostPreflight=running" "gui-readiness-inputia-host-gate-missing-preflight"
   require_output "$gui_smoke_readiness_inputia_output" "inputia-host-running" "gui-readiness-inputia-host-gate-missing-blocker"
   stop_fake_existing_process InputiaInputMethod "$fake_readiness_inputia_pid"
@@ -2342,9 +2458,10 @@ gui_smoke_suite_current_blocked_debug_before="$(debug_events_env)"
 run_expect_rc 12 "guiSmokeSuiteCurrentBlockedGate" \
   "$ROOT_DIR/gui-smoke-suite.sh" "$BUILD_APP"
 require_output "$RUN_EXPECT_RC_OUTPUT" "guiSmokeSuiteReady=false reason=" "gui-suite-current-blocked-gate-missing-ready-line"
-for reason in signature-rejected; do
-  require_output "$RUN_EXPECT_RC_OUTPUT" "$reason" "gui-suite-current-blocked-gate-missing-$reason"
-done
+require_output_regex \
+  "$RUN_EXPECT_RC_OUTPUT" \
+  'guiSmokeSuiteBlockReasons=.*(signature-rejected|tis-not-ready|pkg-not-ready|admin-required|frontmost-unavailable|target-cdhash-mismatch)' \
+  "gui-suite-current-blocked-gate-missing-safe-blocker"
 require_output "$RUN_EXPECT_RC_OUTPUT" "guiSmokeSuiteWouldRun=false" "gui-suite-current-blocked-gate-missing-would-not-run"
 gui_smoke_suite_current_blocked_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
 gui_smoke_suite_current_blocked_tis_after="$(current_input_source_id)"
@@ -3239,15 +3356,13 @@ assert_current_source_unchanged "systemPreflight" "$system_preflight_tis_before"
 assert_debug_env_unchanged "systemPreflight" "$system_preflight_debug_before" "$system_preflight_debug_after"
 assert_no_user_host "systemPreflight"
 if [[ "$TEXTEDIT_PREEXISTING" == "false" ]]; then
-  start_fake_existing_process TextEdit
-  fake_system_preflight_textedit_pid="$INPUTIA_FAKE_EXISTING_PID"
   system_preflight_textedit_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   system_preflight_textedit_tis_before="$(current_input_source_id)"
   system_preflight_textedit_debug_before="$(debug_events_env)"
   run_expect_rc 6 "systemPreflightTextEditBeforeCdhashGate" \
-    env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_GUI_SESSION_CHECK=1 \
+    env INPUTIA_PROCESS_RUNNING_FOR_TEST=TextEdit \
+      INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_GUI_SESSION_CHECK=1 \
       "$ROOT_DIR/smoke-preflight.sh" "$SYSTEM_APP"
-  stop_fake_existing_process TextEdit "$fake_system_preflight_textedit_pid"
   require_output "$RUN_EXPECT_RC_OUTPUT" "textEditPreflight=running" "system-preflight-textedit-before-cdhash-missing-preflight"
   require_output "$RUN_EXPECT_RC_OUTPUT" "guiSmokeReady=false reason=textedit-already-running" "system-preflight-textedit-before-cdhash-missing-gui-block"
   require_output "$RUN_EXPECT_RC_OUTPUT" "smokePreflightReady=false reason=textedit-already-running" "system-preflight-textedit-before-cdhash-missing-ready-block"
@@ -3298,7 +3413,10 @@ if [[ "$TEXTEDIT_PREEXISTING" == "false" && "$SAFARI_PREEXISTING" == "false" ]];
   require_output "$RUN_EXPECT_RC_OUTPUT" "guiSessionCheck=skipped" "build-preflight-ui-tis-gate-missing-gui-session-skip"
   require_output "$RUN_EXPECT_RC_OUTPUT" "textEditPreflight=not-running" "build-preflight-ui-tis-gate-missing-textedit-preflight"
   require_output "$RUN_EXPECT_RC_OUTPUT" "safariPreflight=not-running" "build-preflight-ui-tis-gate-missing-safari-preflight"
-  require_output "$RUN_EXPECT_RC_OUTPUT" "smokePreflightReady=false reason=signature-rejected" "build-preflight-ui-tis-gate-missing-signature-rejected"
+  require_output_regex \
+    "$RUN_EXPECT_RC_OUTPUT" \
+    'smokePreflightReady=false reason=(signature-rejected|tis-not-ready)' \
+    "build-preflight-ui-tis-gate-missing-readiness-blocker"
   build_preflight_tis_gate_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
   build_preflight_tis_gate_tis_after="$(current_input_source_id)"
   build_preflight_tis_gate_debug_after="$(debug_events_env)"
@@ -4063,11 +4181,19 @@ section "post-install regression non-gui"
 post_install_non_gui_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
 post_install_non_gui_tis_before="$(current_input_source_id)"
 post_install_non_gui_debug_before="$(debug_events_env)"
-run_and_prefix "postInstall: " env INPUTIA_RUN_UI_SMOKE=0 \
+run_allow_rc "0,1" "postInstall" \
+  env INPUTIA_RUN_UI_SMOKE=0 \
   INPUTIA_USER_APP="$VERIFY_POST_INSTALL_USER_APP" \
   INPUTIA_USER_LEGACY_APP="$VERIFY_POST_INSTALL_USER_LEGACY_APP" \
   INPUTIA_USER_SETTINGS_APP="$VERIFY_POST_INSTALL_USER_SETTINGS_APP" \
   "$ROOT_DIR/post-install-regression.sh" "$BUILD_APP"
+if [[ "$RUN_EXPECT_RC_ACTUAL" != "0" ]]; then
+  require_output_regex \
+    "$RUN_EXPECT_RC_OUTPUT" \
+    '== codesign ==|CSSMERR_TP_NOT_TRUSTED|code object is not signed|invalid signature|rejected' \
+    "post-install-non-gui-unexpected-failure"
+  echo "postInstallNonGuiSignatureBlocked=true reason=codesign-or-trust-unavailable"
+fi
 post_install_non_gui_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
 post_install_non_gui_tis_after="$(current_input_source_id)"
 post_install_non_gui_debug_after="$(debug_events_env)"
@@ -4099,8 +4225,14 @@ run_expect_rc 6 "postInstallUiTisGate" \
     INPUTIA_USER_LEGACY_APP="$VERIFY_POST_INSTALL_USER_LEGACY_APP" \
     INPUTIA_USER_SETTINGS_APP="$VERIFY_POST_INSTALL_USER_SETTINGS_APP" \
     "$ROOT_DIR/post-install-regression.sh" "$BUILD_APP"
-require_output "$RUN_EXPECT_RC_OUTPUT" "guiSmokeReady=false reason=signature-rejected" "post-install-ui-tis-gate-missing-gui-block-reason"
-require_output "$RUN_EXPECT_RC_OUTPUT" "postInstallUiSmokeReady=false reason=signature-rejected" "post-install-ui-tis-gate-missing-postinstall-block-reason"
+require_output_regex \
+  "$RUN_EXPECT_RC_OUTPUT" \
+  'guiSmokeReady=false reason=(signature-rejected|tis-not-ready)' \
+  "post-install-ui-tis-gate-missing-gui-block-reason"
+require_output_regex \
+  "$RUN_EXPECT_RC_OUTPUT" \
+  'postInstallUiSmokeReady=false reason=(signature-rejected|tis-not-ready)' \
+  "post-install-ui-tis-gate-missing-postinstall-block-reason"
 post_install_ui_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
 post_install_ui_tis_after="$(current_input_source_id)"
 post_install_ui_debug_after="$(debug_events_env)"

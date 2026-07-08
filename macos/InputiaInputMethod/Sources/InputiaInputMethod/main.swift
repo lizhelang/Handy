@@ -1823,11 +1823,15 @@ final class InputiaInputMethodDiagnostics {
   }
 
   private func select() {
-    if primaryInputModeSource(includeAllInstalled: false) == nil {
-      enable()
-    }
-    guard let source = primaryInputModeSource(includeAllInstalled: false) else {
+    enable()
+    if let enabledSource = primaryInputModeSource(includeAllInstalled: false) {
+      print("inputSourceFoundInEnabledList=true")
+      printSource(enabledSource)
+    } else {
       print("inputSourceFoundInEnabledList=false")
+    }
+    guard let source = primaryInputModeSource(includeAllInstalled: true) else {
+      print("inputSourceFoundInInstalledList=false")
       return
     }
 
@@ -1847,17 +1851,26 @@ final class InputiaInputMethodDiagnostics {
     let enabledBefore = preferenceArray(forKey: "AppleEnabledInputSources")
     let selectedBefore = preferenceArray(forKey: "AppleSelectedInputSources")
     let historyBefore = preferenceArray(forKey: "AppleInputSourceHistory")
+    let thirdPartyBefore = preferenceArray(
+      forKey: "AppleEnabledThirdPartyInputSources",
+      domain: inputSourcesDomain
+    )
 
     let enabled = deduplicatedPreferenceEntries(enabledBefore.filter { !isInputiaPreferenceEntry($0) })
       + [inputiaParentPreferenceEntry(), inputiaModePreferenceEntry(modeID: targetModeID)]
     let history = [inputiaModePreferenceEntry(modeID: targetModeID)]
       + deduplicatedPreferenceEntries(historyBefore.filter { !isInputiaPreferenceEntry($0) })
     let selected = [inputiaModePreferenceEntry(modeID: targetModeID)]
+    let thirdParty = deduplicatedPreferenceEntries(thirdPartyBefore.filter { !isInputiaPreferenceEntry($0) })
+      + [inputiaModePreferenceEntry(modeID: targetModeID), inputiaParentPreferenceEntry()]
 
     setPreferenceArray(enabled, forKey: "AppleEnabledInputSources")
     setPreferenceArray(selected, forKey: "AppleSelectedInputSources")
     setPreferenceArray(history, forKey: "AppleInputSourceHistory")
-    CFPreferencesAppSynchronize(hitoolboxDomain)
+    setPreferenceArray(thirdParty, forKey: "AppleEnabledThirdPartyInputSources", domain: inputSourcesDomain)
+    let synchronized = synchronizePreferences(domain: hitoolboxDomain)
+    let inputSourcesSynchronized = synchronizePreferences(domain: inputSourcesDomain)
+    let plistWriteResult = writeHIToolboxPreferencePlist(enabled: enabled, selected: selected, history: history)
 
     print("hitoolboxNormalizeTargetModeID=\(targetModeID)")
     print("hitoolboxNormalizeEnabledBefore=\(enabledBefore.count)")
@@ -1866,6 +1879,14 @@ final class InputiaInputMethodDiagnostics {
     print("hitoolboxNormalizeSelectedAfter=\(selected.count)")
     print("hitoolboxNormalizeHistoryBefore=\(historyBefore.count)")
     print("hitoolboxNormalizeHistoryAfter=\(history.count)")
+    print("thirdPartyEnabledBefore=\(thirdPartyBefore.count)")
+    print("thirdPartyEnabledAfter=\(thirdParty.count)")
+    print("hitoolboxNormalizeSynchronize=\(synchronized)")
+    print("inputSourcesNormalizeSynchronize=\(inputSourcesSynchronized)")
+    print("hitoolboxNormalizePlistWrite=\(plistWriteResult.ok)")
+    if let error = plistWriteResult.error {
+      print("hitoolboxNormalizePlistWriteError=\(error)")
+    }
     print("hitoolboxNormalize=true")
   }
 
@@ -1895,8 +1916,8 @@ final class InputiaInputMethodDiagnostics {
     setPreferenceArray(hitoolboxSelected, forKey: "AppleSelectedInputSources", domain: hitoolboxDomain)
     setPreferenceArray(hitoolboxHistory, forKey: "AppleInputSourceHistory", domain: hitoolboxDomain)
     setPreferenceArray(thirdParty, forKey: "AppleEnabledThirdPartyInputSources", domain: inputSourcesDomain)
-    CFPreferencesAppSynchronize(hitoolboxDomain)
-    CFPreferencesAppSynchronize(inputSourcesDomain)
+    _ = synchronizePreferences(domain: hitoolboxDomain)
+    _ = synchronizePreferences(domain: inputSourcesDomain)
 
     print("inputSourcePreferencesClear=true")
     print("hitoolboxEnabledBefore=\(hitoolboxEnabledBefore.count)")
@@ -2051,10 +2072,82 @@ final class InputiaInputMethodDiagnostics {
   }
 
   private func preferenceArray(forKey key: String, domain: CFString) -> [[String: Any]] {
-    guard let value = CFPreferencesCopyAppValue(key as CFString, domain) else {
+    if let value = CFPreferencesCopyValue(
+      key as CFString,
+      domain,
+      kCFPreferencesCurrentUser,
+      kCFPreferencesAnyHost
+    ) {
+      let entries = preferenceEntries(from: value)
+      if !entries.isEmpty {
+        return entries
+      }
+    }
+    if
+      CFEqual(domain, hitoolboxDomain),
+      let diskEntries = hitoolboxPreferenceArrayFromPlist(forKey: key),
+      !diskEntries.isEmpty
+    {
+      return diskEntries
+    }
+    if let value = CFPreferencesCopyValue(
+      key as CFString,
+      domain,
+      kCFPreferencesCurrentUser,
+      kCFPreferencesAnyHost
+    ) {
+      return preferenceEntries(from: value)
+    }
+    guard let appValue = CFPreferencesCopyAppValue(key as CFString, domain) else {
       return []
     }
-    return value as? [[String: Any]] ?? []
+    return preferenceEntries(from: appValue)
+  }
+
+  private func hitoolboxPreferenceArrayFromPlist(forKey key: String) -> [[String: Any]]? {
+    guard let preferences = readHIToolboxPreferencePlist() else {
+      return nil
+    }
+    let entries = preferenceEntries(from: preferences[key])
+    return entries.isEmpty ? nil : entries
+  }
+
+  private func preferenceEntries(from value: Any?) -> [[String: Any]] {
+    guard let value else {
+      return []
+    }
+    if let entries = value as? [[String: Any]] {
+      return entries
+    }
+    if let array = value as? [Any] {
+      return array.compactMap { preferenceEntry(from: $0) }
+    }
+    if let array = value as? NSArray {
+      return array.compactMap { preferenceEntry(from: $0) }
+    }
+    return []
+  }
+
+  private func preferenceEntry(from value: Any) -> [String: Any]? {
+    if let entry = value as? [String: Any] {
+      return entry
+    }
+    if let entry = value as? [AnyHashable: Any] {
+      var normalized: [String: Any] = [:]
+      for (key, value) in entry {
+        normalized[String(describing: key)] = value
+      }
+      return normalized
+    }
+    guard let entry = value as? NSDictionary else {
+      return nil
+    }
+
+    var normalized: [String: Any] = [:]
+    for (key, value) in entry {
+      normalized[String(describing: key)] = value
+    }
+    return normalized
   }
 
   private func setPreferenceArray(_ entries: [[String: Any]], forKey key: String) {
@@ -2062,7 +2155,91 @@ final class InputiaInputMethodDiagnostics {
   }
 
   private func setPreferenceArray(_ entries: [[String: Any]], forKey key: String, domain: CFString) {
+    CFPreferencesSetValue(
+      key as CFString,
+      entries as CFArray,
+      domain,
+      kCFPreferencesCurrentUser,
+      kCFPreferencesAnyHost
+    )
     CFPreferencesSetAppValue(key as CFString, entries as CFArray, domain)
+  }
+
+  private func synchronizePreferences(domain: CFString) -> Bool {
+    let userHostSync = CFPreferencesSynchronize(domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+    let appSync = CFPreferencesAppSynchronize(domain)
+    return userHostSync || appSync
+  }
+
+  private func writeHIToolboxPreferencePlist(
+    enabled: [[String: Any]],
+    selected: [[String: Any]],
+    history: [[String: Any]]
+  ) -> (ok: Bool, error: String?) {
+    guard let preferencesURL = hitoolboxPreferenceURL() else {
+      return (false, "missing-home")
+    }
+    var preferences = readHIToolboxPreferencePlist() ?? [:]
+
+    preferences["AppleEnabledInputSources"] = enabled
+    preferences["AppleSelectedInputSources"] = selected
+    preferences["AppleInputSourceHistory"] = history
+    do {
+      let data = try PropertyListSerialization.data(fromPropertyList: preferences, format: .xml, options: 0)
+      try FileManager.default.createDirectory(
+        at: preferencesURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+      )
+      try data.write(to: preferencesURL, options: .atomic)
+      return (true, nil)
+    } catch {
+      return (false, String(describing: error))
+    }
+  }
+
+  private func readHIToolboxPreferencePlist() -> [String: Any]? {
+    guard let preferencesURL = hitoolboxPreferenceURL() else {
+      return nil
+    }
+    guard
+      FileManager.default.fileExists(atPath: preferencesURL.path),
+      let data = try? Data(contentsOf: preferencesURL),
+      let existing = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+    else {
+      return nil
+    }
+    return stringKeyedDictionary(from: existing)
+  }
+
+  private func stringKeyedDictionary(from value: Any) -> [String: Any]? {
+    if let dictionary = value as? [String: Any] {
+      return dictionary
+    }
+    if let dictionary = value as? [AnyHashable: Any] {
+      var normalized: [String: Any] = [:]
+      for (key, value) in dictionary {
+        normalized[String(describing: key)] = value
+      }
+      return normalized
+    }
+    guard let dictionary = value as? NSDictionary else {
+      return nil
+    }
+
+    var normalized: [String: Any] = [:]
+    for (key, value) in dictionary {
+      normalized[String(describing: key)] = value
+    }
+    return normalized
+  }
+
+  private func hitoolboxPreferenceURL() -> URL? {
+    let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
+    guard !home.isEmpty else {
+      return nil
+    }
+    return URL(fileURLWithPath: home)
+      .appendingPathComponent("Library/Preferences/com.apple.HIToolbox.plist")
   }
 
   private func inputiaParentPreferenceEntry() -> [String: Any] {

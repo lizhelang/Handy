@@ -46,6 +46,52 @@ inputia_require_gui_session() {
   fi
 }
 
+inputia_process_match_by_ps() {
+  local process_name="$1"
+  /bin/ps -axo pid=,comm=,command= 2>/dev/null |
+    /usr/bin/awk -v process_name="$process_name" '
+      {
+        command = (NF >= 3) ? substr($0, index($0, $3)) : ""
+        launcher = command ~ "^/bin/(zsh|bash|sh)( |$)"
+        launcher = launcher || command ~ "^/usr/bin/(sudo|awk|grep|sed)( |$)"
+        matched = $2 == process_name
+        matched = matched || $3 == process_name
+        matched = matched || $3 ~ ("/" process_name "$")
+        matched = matched || command ~ ("^" process_name "([ ]|$)")
+        matched = matched || command ~ ("/" process_name "([ ]|$)")
+        matched = matched || command ~ (process_name "\\.app/Contents/MacOS/" process_name "([ ]|$)")
+        if (!launcher && matched) {
+          found = 1
+        }
+      }
+      END { exit found ? 0 : 1 }
+    '
+}
+
+inputia_process_running() {
+  local process_name="$1"
+  local process_check_output process_check_rc
+  INPUTIA_LAST_PROCESS_CHECK_OUTPUT=""
+  set +e
+  process_check_output="$(/usr/bin/pgrep -x "$process_name" 2>&1 >/dev/null)"
+  process_check_rc=$?
+  set -e
+  if [[ "$process_check_rc" -eq 0 ]]; then
+    return 0
+  fi
+  if inputia_process_match_by_ps "$process_name"; then
+    return 0
+  fi
+  if /bin/ps -axo pid=,comm=,command= >/dev/null 2>&1; then
+    return 1
+  fi
+  if [[ -n "$process_check_output" ]]; then
+    INPUTIA_LAST_PROCESS_CHECK_OUTPUT="$process_check_output"
+    return 2
+  fi
+  return 1
+}
+
 inputia_require_process_not_running() {
   local process_name="$1"
   local ready_var="$2"
@@ -58,21 +104,19 @@ inputia_require_process_not_running() {
   fi
 
   local process_state="not-running"
-  local process_check_output=""
   local process_check_rc
   if [[ ",${INPUTIA_PROCESS_RUNNING_FOR_TEST:-}," == *",$process_name,"* ]]; then
     process_state="running"
   elif [[ "${INPUTIA_PROCESS_IGNORE_REAL_FOR_TEST:-0}" != "1" ]]; then
-    set +e
-    process_check_output="$(/usr/bin/pgrep -x "$process_name" 2>&1 >/dev/null)"
-    process_check_rc=$?
-    set -e
-    if [[ "$process_check_rc" -eq 0 ]]; then
+    if inputia_process_running "$process_name"; then
       process_state="running"
-    elif [[ -n "$process_check_output" ]]; then
+    else
+      process_check_rc=$?
+    fi
+    if [[ "${process_check_rc:-1}" -eq 2 ]]; then
       echo "${process_name}Preflight=unknown"
       echo "processListAvailable=false reason=process-list-unavailable"
-      printf '%s\n' "$process_check_output" | /usr/bin/sed 's/^/processListOutput: /'
+      printf '%s\n' "$INPUTIA_LAST_PROCESS_CHECK_OUTPUT" | /usr/bin/sed 's/^/processListOutput: /'
       echo "guiSmokeReady=false reason=process-list-unavailable"
       echo "$ready_var=false reason=process-list-unavailable"
       exit "$exit_code"
@@ -134,26 +178,27 @@ inputia_require_textedit_idle() {
   if [[ "${INPUTIA_PROCESS_IGNORE_REAL_FOR_TEST:-0}" == "1" ]]; then
     INPUTIA_TEXTEDIT_PREFLIGHT="not-running"
     INPUTIA_TEXTEDIT_DOCS_BEFORE="0"
+  elif [[ ",${INPUTIA_PROCESS_RUNNING_FOR_TEST:-}," == *,TextEdit,* ]]; then
+    INPUTIA_TEXTEDIT_PREFLIGHT="running"
+    INPUTIA_TEXTEDIT_DOCS_BEFORE="0"
   else
-    set +e
-    process_check_output="$(/usr/bin/pgrep -x TextEdit 2>&1 >/dev/null)"
-    process_check_rc=$?
-    set -e
-    if [[ "$process_check_rc" -eq 0 ]]; then
+    INPUTIA_TEXTEDIT_PREFLIGHT="not-running"
+    INPUTIA_TEXTEDIT_DOCS_BEFORE="0"
+    if inputia_process_running TextEdit; then
       INPUTIA_TEXTEDIT_PREFLIGHT="running"
       INPUTIA_TEXTEDIT_DOCS_BEFORE="$(inputia_textedit_document_count)"
-    elif [[ -n "$process_check_output" ]]; then
+    else
+      process_check_rc=$?
+    fi
+    if [[ "${process_check_rc:-1}" -eq 2 ]]; then
       INPUTIA_TEXTEDIT_PREFLIGHT="unknown"
       INPUTIA_TEXTEDIT_DOCS_BEFORE="unknown"
       echo "textEditPreflight=unknown docs=unknown"
       echo "processListAvailable=false reason=process-list-unavailable"
-      printf '%s\n' "$process_check_output" | /usr/bin/sed 's/^/processListOutput: /'
+      printf '%s\n' "$INPUTIA_LAST_PROCESS_CHECK_OUTPUT" | /usr/bin/sed 's/^/processListOutput: /'
       echo "guiSmokeReady=false reason=process-list-unavailable"
       echo "$ready_var=false reason=process-list-unavailable"
       exit "$exit_code"
-    else
-      INPUTIA_TEXTEDIT_PREFLIGHT="not-running"
-      INPUTIA_TEXTEDIT_DOCS_BEFORE="0"
     fi
   fi
 
@@ -171,15 +216,14 @@ inputia_wait_process_exit() {
   local waited=0
 
   while ((waited < max_ticks)); do
-    local process_check_output process_check_rc
-    set +e
-    process_check_output="$(/usr/bin/pgrep -x "$process_name" 2>&1 >/dev/null)"
-    process_check_rc=$?
-    set -e
-    if [[ "$process_check_rc" -ne 0 ]]; then
-      if [[ -n "$process_check_output" ]]; then
+    local process_check_rc
+    if inputia_process_running "$process_name"; then
+      :
+    else
+      process_check_rc=$?
+      if [[ "$process_check_rc" -eq 2 ]]; then
         echo "${process_name}ProcessListAvailable=false reason=process-list-unavailable"
-        printf '%s\n' "$process_check_output" | /usr/bin/sed 's/^/processListOutput: /'
+        printf '%s\n' "$INPUTIA_LAST_PROCESS_CHECK_OUTPUT" | /usr/bin/sed 's/^/processListOutput: /'
         return 2
       fi
       return 0
@@ -272,7 +316,7 @@ APPLESCRIPT
       echo "textEditCleanupFailed=process-list-or-timeout"
       return 1
     fi
-    if /usr/bin/pgrep -x TextEdit >/dev/null 2>&1; then
+    if inputia_process_running TextEdit; then
       echo "textEditCleanupFailed=process-still-running"
       return 1
     fi
@@ -287,23 +331,23 @@ inputia_require_safari_idle() {
   local process_check_output process_check_rc
   if [[ "${INPUTIA_PROCESS_IGNORE_REAL_FOR_TEST:-0}" == "1" ]]; then
     INPUTIA_SAFARI_PREFLIGHT="not-running"
+  elif [[ ",${INPUTIA_PROCESS_RUNNING_FOR_TEST:-}," == *,Safari,* ]]; then
+    INPUTIA_SAFARI_PREFLIGHT="running"
   else
-    set +e
-    process_check_output="$(/usr/bin/pgrep -x Safari 2>&1 >/dev/null)"
-    process_check_rc=$?
-    set -e
-    if [[ "$process_check_rc" -eq 0 ]]; then
+    INPUTIA_SAFARI_PREFLIGHT="not-running"
+    if inputia_process_running Safari; then
       INPUTIA_SAFARI_PREFLIGHT="running"
-    elif [[ -n "$process_check_output" ]]; then
+    else
+      process_check_rc=$?
+    fi
+    if [[ "${process_check_rc:-1}" -eq 2 ]]; then
       INPUTIA_SAFARI_PREFLIGHT="unknown"
       echo "safariPreflight=unknown"
       echo "processListAvailable=false reason=process-list-unavailable"
-      printf '%s\n' "$process_check_output" | /usr/bin/sed 's/^/processListOutput: /'
+      printf '%s\n' "$INPUTIA_LAST_PROCESS_CHECK_OUTPUT" | /usr/bin/sed 's/^/processListOutput: /'
       echo "guiSmokeReady=false reason=process-list-unavailable"
       echo "$ready_var=false reason=process-list-unavailable"
       exit "$exit_code"
-    else
-      INPUTIA_SAFARI_PREFLIGHT="not-running"
     fi
   fi
 
@@ -326,7 +370,7 @@ APPLESCRIPT
       echo "safariCleanupFailed=process-list-or-timeout"
       return 1
     fi
-    if /usr/bin/pgrep -x Safari >/dev/null 2>&1; then
+    if inputia_process_running Safari; then
       echo "safariCleanupFailed=process-still-running"
       return 1
     fi

@@ -71,19 +71,72 @@ app_status_line() {
   echo "$label.exists=$([[ -d "$path" ]] && echo true || echo false) $label.validBundle=$([[ -f "$path/Contents/Info.plist" ]] && echo true || echo false) $label.version=$actual_version $label.cdhash=$actual_cdhash $label.matchesBuild=$matches"
 }
 
-running_status() {
-  local pids pid command running_app running_cdhash running_version matches
-  local pgrep_output pgrep_rc
+process_pids_by_ps() {
+  local process_name="$1"
+  local ps_output
+  ps_output="$(/bin/ps -axo pid=,comm=,command= 2>/dev/null |
+    /usr/bin/awk -v process_name="$process_name" '
+      {
+        command = (NF >= 3) ? substr($0, index($0, $3)) : ""
+        launcher = (command ~ "^/bin/(zsh|bash|sh)( |$)" || command ~ "^/usr/bin/(sudo|awk|grep|sed)( |$)")
+      }
+      !launcher {
+        if ($2 == process_name ||
+          $3 == process_name ||
+          $3 ~ ("/" process_name "$") ||
+          command ~ ("^" process_name "([ ]|$)") ||
+          command ~ ("/" process_name "([ ]|$)") ||
+          command ~ (process_name "\\.app/Contents/MacOS/" process_name "([ ]|$)")) {
+          print $1
+        }
+      }
+    ')"
+  if [[ -n "$ps_output" ]]; then
+    printf '%s\n' "$ps_output"
+    return 0
+  fi
+  /bin/ps -axo pid=,comm=,command= >/dev/null 2>&1 || return 2
+  return 1
+}
+
+process_pids() {
+  local process_name="$1"
+  local pgrep_output pgrep_rc ps_rc
   set +e
-  pgrep_output="$(/usr/bin/pgrep -x InputiaInputMethod 2>&1)"
+  pgrep_output="$(/usr/bin/pgrep -x "$process_name" 2>&1)"
   pgrep_rc=$?
   set -e
   if [[ "$pgrep_rc" -eq 0 ]]; then
-    pids="$pgrep_output"
-  elif [[ -n "$pgrep_output" ]]; then
+    printf '%s\n' "$pgrep_output"
+    return 0
+  fi
+  set +e
+  process_pids_by_ps "$process_name"
+  ps_rc=$?
+  set -e
+  if [[ "$ps_rc" -eq 0 || "$ps_rc" -eq 1 ]]; then
+    return "$ps_rc"
+  fi
+  if [[ -n "$pgrep_output" ]]; then
+    printf '%s\n' "$pgrep_output"
+    return 2
+  fi
+  return 1
+}
+
+running_status() {
+  local pids pid command running_app running_cdhash running_version matches
+  local pids_output pids_rc
+  set +e
+  pids_output="$(process_pids InputiaInputMethod 2>&1)"
+  pids_rc=$?
+  set -e
+  if [[ "$pids_rc" -eq 0 ]]; then
+    pids="$pids_output"
+  elif [[ "$pids_rc" -eq 2 ]]; then
     echo "running.exists=unknown"
     echo "processListAvailable=false reason=process-list-unavailable"
-    printf '%s\n' "$pgrep_output" | /usr/bin/sed 's/^/processListOutput: /'
+    printf '%s\n' "$pids_output" | /usr/bin/sed 's/^/processListOutput: /'
     return
   else
     pids=""
@@ -240,7 +293,7 @@ user_host_conflict() {
 
 process_preflight() {
   local process_name="$1"
-  local process_check_output process_check_rc
+  local process_rc
   if [[ ",${INPUTIA_AWAIT_PROCESS_RUNNING_FOR_TEST:-}," == *",$process_name,"* ]]; then
     echo "running"
     return
@@ -249,16 +302,15 @@ process_preflight() {
     echo "not-running"
     return
   fi
-  set +e
-  process_check_output="$(/usr/bin/pgrep -x "$process_name" 2>&1 >/dev/null)"
-  process_check_rc=$?
-  set -e
-  if [[ "$process_check_rc" -eq 0 ]]; then
+  if process_pids "$process_name" >/dev/null; then
     echo "running"
-  elif [[ -n "$process_check_output" ]]; then
-    echo "unknown"
   else
-    echo "not-running"
+    process_rc=$?
+    if [[ "$process_rc" -eq 2 ]]; then
+      echo "unknown"
+    else
+      echo "not-running"
+    fi
   fi
 }
 
