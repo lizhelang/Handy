@@ -35,6 +35,14 @@ section "pkg"
 "$ROOT_DIR/build-pkg.sh"
 "$ROOT_DIR/verify-pkg.sh"
 
+section "install readiness"
+install_output="$("$ROOT_DIR/install-check.sh" 2>&1 || true)"
+printf '%s\n' "$install_output"
+if ! /usr/bin/grep -q '^installCheckPassed=true$' <<<"$install_output"; then
+  echo "releaseFullCheckPassed=false reason=install-check-not-ready"
+  exit 12
+fi
+
 section "notarization readiness"
 notarization_output="$("$ROOT_DIR/notarization-readiness.sh" "$ROOT_DIR/build/InputiaInputMethod.app" 2>&1)"
 printf '%s\n' "$notarization_output"

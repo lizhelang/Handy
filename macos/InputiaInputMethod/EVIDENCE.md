@@ -27453,3 +27453,40 @@ INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=1 ./macos/InputiaInputMethod/apply-curr
 
 - 默认开发验证现在由 `dev-fast.sh` 收口，且策略自检会阻止重型 menu/gui/pkg/notarization 检查重新混入默认路径。
 - 菜单栏 AXPress 只允许在显式 release/full 或手动 opt-in 诊断中进入，并通过 `INPUTIA_MENU_READINESS_CACHE_FILE` 在一次验证周期内复用结果。
+
+## 2026-07-09 04:36 CST - release/full-check 安装态前置门禁
+
+背景：
+
+- `release/full-check.sh` 是显式重型入口，但如果系统安装版还不是当前 build，继续进入菜单栏 AXPress 或真实 GUI smoke 会把旧 Host 的状态误当成当前源码证据。
+- 当前机器仍是旧系统安装态：`systemMatchesBuild=false`、`settingsMatchesBuild=false`、`runningMatchesBuild=false`，且 `tis.targetDuplicateMatches=true`。
+
+实现：
+
+- `release/full-check.sh` 在 `build-pkg.sh` / `verify-pkg.sh` 后新增 `install-check.sh` gate。
+- 只有 `installCheckPassed=true` 时才继续公证 readiness、菜单栏 AXPress 和 `post-install-regression.sh`。
+- `validation-policy-self-check.sh` 锁住顺序：`verify-pkg` 先于 `install-check`，`install-check` 先于 notarization、menu readiness 和 postinstall GUI smoke。
+
+验证：
+
+```text
+zsh -n macos/InputiaInputMethod/validation-policy-self-check.sh macos/InputiaInputMethod/release/full-check.sh
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+
+./macos/InputiaInputMethod/release/full-check.sh
+  validationTier=release/full-check
+  touchesMenuBar=true
+  opensGUI=true
+  checksNotarization=true
+  pkgVerificationPassed=true
+  installCheckPassed=false
+  installCheckBlockReasons=system-cdhash-mismatch,settings-version-mismatch,tis-duplicate-matches,running-cdhash-mismatch,admin-required
+  installCheckNextStep=run-install-handoff
+  releaseFullCheckPassed=false reason=install-check-not-ready
+```
+
+结论：
+
+- 当前系统安装没对齐时，`release/full-check.sh` 会停在只读安装态诊断，不会继续触碰菜单栏、TextInputMenuAgent、TextEdit、Safari 或剪贴板 GUI smoke。
+- 完整 release/full-check 仍需在管理员安装当前 build、修复 TIS duplicate、running host 切到当前 CDHash 后再跑。
