@@ -1,0 +1,16 @@
+[package]
+name = "inputia-rime"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[lib]
+name = "inputia_rime"
+path = "src/lib.rs"
+
+[dependencies]
+inputia-core = { path = "../inputia-core" }
+libloading = "0.8"
+
+[dev-dependencies]
+tempfile = "3"

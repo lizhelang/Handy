@@ -1,0 +1,16 @@
+[package]
+name = "inputia-handy-runtime"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[lib]
+name = "inputia_handy_runtime"
+path = "src/lib.rs"
+
+[dependencies]
+inputia-core = { path = "../inputia-core", features = ["sqlite-memory"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3"
