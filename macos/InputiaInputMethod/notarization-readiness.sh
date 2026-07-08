@@ -5,6 +5,8 @@ set -o pipefail
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP="${1:-/Library/Input Methods/InputiaInputMethod.app}"
 NOTARY_PROFILE="${INPUTIA_NOTARY_PROFILE:-Inputia}"
+SPCTL_TIMEOUT_SECONDS="${INPUTIA_SPCTL_TIMEOUT_SECONDS:-15}"
+SYSPOLICY_TIMEOUT_SECONDS="${INPUTIA_SYSPOLICY_TIMEOUT_SECONDS:-15}"
 
 append_reason() {
   local existing="$1"
@@ -41,8 +43,82 @@ count_identities() {
     /usr/bin/awk -v pattern="$pattern" 'index($0, pattern) { count += 1 } END { print count + 0 }'
 }
 
+run_with_timeout_capture() {
+  local label="$1"
+  local timeout_seconds="$2"
+  shift 2
+
+  if [[ -z "$timeout_seconds" || "$timeout_seconds" != <-> ]]; then
+    timeout_seconds=15
+  fi
+
+  local output_file
+  local rc_file
+  output_file="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/inputia-${label}.out.XXXXXX")"
+  rc_file="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/inputia-${label}.rc.XXXXXX")"
+
+  (
+    set +e
+    "$@" >"$output_file" 2>&1
+    printf '%s\n' "$?" >"$rc_file"
+  ) &
+  local pid="$!"
+  local elapsed=0
+
+  while kill -0 "$pid" 2>/dev/null; do
+    if (( elapsed >= timeout_seconds )); then
+      kill "$pid" 2>/dev/null || true
+      /bin/sleep 1
+      kill -9 "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      /bin/cat "$output_file" 2>/dev/null || true
+      /bin/rm -f "$output_file" "$rc_file"
+      return 124
+    fi
+    /bin/sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  wait "$pid" 2>/dev/null || true
+
+  local command_rc=1
+  if [[ -s "$rc_file" ]]; then
+    command_rc="$(/bin/cat "$rc_file" 2>/dev/null || echo 1)"
+  fi
+  /bin/cat "$output_file" 2>/dev/null || true
+  /bin/rm -f "$output_file" "$rc_file"
+  return "$command_rc"
+}
+
 echo "notarizationReadinessTool=true"
 echo "app=$APP"
+
+current_uid="$(/usr/bin/id -u 2>/dev/null || true)"
+current_user="$(/usr/bin/id -un 2>/dev/null || true)"
+set +e
+dscache_user_output="$(/usr/bin/dscacheutil -q user -a uid "$current_uid" 2>&1)"
+dscache_user_rc=$?
+set -e
+
+account_lookup_ready=true
+account_lookup_reason="none"
+dscache_user_present=false
+if [[ "$dscache_user_rc" -eq 0 && -n "$dscache_user_output" ]]; then
+  dscache_user_present=true
+fi
+if [[ -z "$current_user" || "$current_user" == "$current_uid" || "$dscache_user_present" != "true" ]]; then
+  account_lookup_ready=false
+  account_lookup_reason="getpwuid-missing"
+fi
+
+echo "accountLookupUID=${current_uid:-unknown}"
+echo "accountLookupUser=${current_user:-unknown}"
+echo "accountLookupDscacheutilUserPresent=$dscache_user_present"
+echo "accountLookupReady=$account_lookup_ready"
+if [[ "$account_lookup_ready" != "true" ]]; then
+  echo "accountLookupBlockReason=$account_lookup_reason"
+  echo "accountLookupImpacts=ssh,security,spctl,syspolicy,log"
+fi
 
 if [[ ! -d "$APP" ]]; then
   echo "appExists=false"
@@ -77,28 +153,51 @@ fi
 printf '%s\n' "$codesign_dump" |
   /usr/bin/awk -F= '$1 == "Authority" { print "codesignAuthority="$2 }'
 
+spctl_timed_out=false
 set +e
-spctl_output="$(/usr/sbin/spctl --assess --type execute --verbose=4 "$APP" 2>&1)"
+spctl_output="$(run_with_timeout_capture spctl "$SPCTL_TIMEOUT_SECONDS" /usr/sbin/spctl --assess --type execute --verbose=4 "$APP" 2>&1)"
 spctl_rc=$?
 set -e
+if [[ "$spctl_rc" -eq 124 ]]; then
+  spctl_timed_out=true
+fi
 if [[ "$spctl_rc" -eq 0 && "$spctl_output" == *": accepted"* ]]; then
   spctl_accepted=true
 else
   spctl_accepted=false
 fi
+spctl_internal_error=false
+if [[ "$spctl_output" == *"internal error in Code Signing subsystem"* ]]; then
+  spctl_internal_error=true
+fi
 echo "spctlAccepted=$spctl_accepted"
+echo "spctlTimedOut=$spctl_timed_out"
+echo "spctlInternalError=$spctl_internal_error"
 printf '%s\n' "$spctl_output" | /usr/bin/sed 's/^/spctlAssessment: /'
 
 syspolicy_available=false
 syspolicy_notary_ticket_missing=false
+syspolicy_timed_out=false
+syspolicy_rc="unknown"
 if /usr/bin/command -v syspolicy_check >/dev/null 2>&1; then
   syspolicy_available=true
-  syspolicy_output="$(syspolicy_check distribution "$APP" 2>&1 || true)"
+  set +e
+  syspolicy_output="$(run_with_timeout_capture syspolicy-check "$SYSPOLICY_TIMEOUT_SECONDS" syspolicy_check distribution "$APP" 2>&1)"
+  syspolicy_rc=$?
+  set -e
+  if [[ "$syspolicy_rc" -eq 124 ]]; then
+    syspolicy_timed_out=true
+  fi
   if [[ "$syspolicy_output" == *"Notary Ticket Missing"* ]]; then
     syspolicy_notary_ticket_missing=true
   fi
+  if [[ -n "$syspolicy_output" ]]; then
+    printf '%s\n' "$syspolicy_output" | /usr/bin/sed 's/^/syspolicyCheckOutput: /'
+  fi
 fi
 echo "syspolicyCheckAvailable=$syspolicy_available"
+echo "syspolicyCheckRc=$syspolicy_rc"
+echo "syspolicyCheckTimedOut=$syspolicy_timed_out"
 echo "syspolicyNotaryTicketMissing=$syspolicy_notary_ticket_missing"
 
 developer_id_application_count="$(count_identities "Developer ID Application:")"
@@ -138,17 +237,32 @@ fi
 echo "notaryProfileAvailable=$notary_profile_available"
 
 gatekeeper_reasons=""
+if [[ "$account_lookup_ready" != "true" ]]; then
+  gatekeeper_reasons="$(append_reason "$gatekeeper_reasons" account-lookup-broken)"
+fi
 if [[ "$codesign_verify_rc" -ne 0 ]]; then
   gatekeeper_reasons="$(append_reason "$gatekeeper_reasons" codesign-invalid)"
 fi
 if [[ "$spctl_accepted" != "true" ]]; then
   gatekeeper_reasons="$(append_reason "$gatekeeper_reasons" spctl-rejected)"
 fi
+if [[ "$spctl_timed_out" == "true" ]]; then
+  gatekeeper_reasons="$(append_reason "$gatekeeper_reasons" spctl-timeout)"
+fi
+if [[ "$spctl_internal_error" == "true" ]]; then
+  gatekeeper_reasons="$(append_reason "$gatekeeper_reasons" spctl-internal-error)"
+fi
+if [[ "$syspolicy_timed_out" == "true" ]]; then
+  gatekeeper_reasons="$(append_reason "$gatekeeper_reasons" syspolicy-timeout)"
+fi
 if [[ "$syspolicy_notary_ticket_missing" == "true" ]]; then
   gatekeeper_reasons="$(append_reason "$gatekeeper_reasons" notary-ticket-missing)"
 fi
 
 submission_reasons=""
+if [[ "$account_lookup_ready" != "true" ]]; then
+  submission_reasons="$(append_reason "$submission_reasons" account-lookup-broken)"
+fi
 if [[ "$developer_id_application_count" -eq 0 ]]; then
   submission_reasons="$(append_reason "$submission_reasons" missing-developer-id-application)"
 fi
@@ -187,7 +301,9 @@ if [[ -n "$combined_reasons" ]]; then
   echo "notarizationReadinessBlockReasons=$combined_reasons"
 fi
 
-if [[ "$spctl_accepted" == "true" ]]; then
+if [[ "$account_lookup_ready" != "true" ]]; then
+  echo "notarizationRequiredAction=restore-macos-account-directory-service"
+elif [[ "$spctl_accepted" == "true" ]]; then
   echo "notarizationRequiredAction=none"
 elif [[ "$developer_id_application_count" -eq 0 ]]; then
   echo "notarizationRequiredAction=import-developer-id-application-identity"

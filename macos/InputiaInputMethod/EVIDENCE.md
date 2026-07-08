@@ -24080,3 +24080,87 @@ CARGO_BUILD_JOBS=1 cargo test --lib ...
 - 用户信任 root 后，签名链和 private key ACL 已推进到 `codesign` 可用：build app 由 `Codexbar Local Code Signing Leaf v4` 签名，并带 hardened runtime。
 - 但 Gatekeeper/TIS blocker 没有消失：`spctlAccepted=false`，`syspolicy_check` 明确 fatal 为 `Notary Ticket Missing`，且没有 `Developer ID Application` identity / notarytool profile。继续系统级可用安装需要 Developer ID 签名 + notarize/staple，或者接受本地开发 override 仍不能作为 GUI smoke 前提。
 - 本轮没有运行 TextEdit/Safari/Clipboard GUI smoke。
+
+## v51 Mac mini：系统账号目录服务异常导致 signing/Gatekeeper 诊断失真
+
+背景：
+
+- 用户要求按功能小步提交并同步 GitHub，避免最后工作区过脏。
+- 在准备继续签名/安装验证时，Mac mini 出现新的基础环境异常：当前进程 UID 501 无法解析为真实用户名，影响 SSH、Keychain、`security`、`spctl`、`syspolicy_check` 和统一日志读取。
+- 参考 Apple Developer ID/Gatekeeper 文档和 Squirrel/ToyIMK/IMKitSample/vChewing 等成熟输入法项目后，当前结论不变：系统级 IMK 输入法必须先让签名/信任链稳定，不能在 Gatekeeper/TIS readiness 未通过前继续跑 TextEdit/Safari/Clipboard GUI smoke。
+
+事实：
+
+```text
+id -u
+  501
+
+id -un
+  501
+
+dscacheutil -q user -a uid 501
+  no user record returned
+
+security find-identity -v -p codesigning
+  0 valid identities found
+
+codesign -dv --verbose=4 --entitlements :- "/Library/Input Methods/InputiaInputMethod.app"
+  CDHash=c478b1efda1d34607d3429c3aa953ae147a0dd29
+  Authority=(unavailable)
+  TeamIdentifier=not set
+  Runtime Version=26.0.0
+  warning: binary contains an invalid entitlements blob. The OS will ignore these entitlements.
+
+spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  /Library/Input Methods/InputiaInputMethod.app: internal error in Code Signing subsystem
+
+sudo -n true
+  sudo: you do not exist in the passwd database
+
+dscl . -read /Users/minizl UniqueID RecordName NFSHomeDirectory
+  Operation failed with error: eServerError
+
+git push
+  No user exists for uid 501
+  fatal: Could not read from remote repository.
+```
+
+工具修正：
+
+- `notarization-readiness.sh` 增加 `accountLookupReady` / `accountLookupBlockReason` 输出，先把 UID 解析失败标为一等阻断。
+- `spctl` 和 `syspolicy_check` 改为带超时的捕获执行，避免系统策略子系统卡住整个验证流程。
+- 当账号目录服务不可用时，最终动作现在明确输出 `notarizationRequiredAction=restore-macos-account-directory-service`，而不是继续误导为单纯导入证书或跑 GUI smoke。
+
+验证：
+
+```text
+zsh -n macos/InputiaInputMethod/notarization-readiness.sh
+  passed
+
+INPUTIA_SYSPOLICY_TIMEOUT_SECONDS=5 INPUTIA_SPCTL_TIMEOUT_SECONDS=5 \
+./macos/InputiaInputMethod/notarization-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  accountLookupUID=501
+  accountLookupUser=501
+  accountLookupDscacheutilUserPresent=false
+  accountLookupReady=false
+  accountLookupBlockReason=getpwuid-missing
+  codesignVerify=false
+  codesignVerifyOutput: /Library/Input Methods/InputiaInputMethod.app: CSSMERR_TP_NOT_TRUSTED
+  spctlAccepted=false
+  spctlTimedOut=false
+  spctlInternalError=true
+  syspolicyCheckAvailable=true
+  syspolicyCheckRc=124
+  syspolicyCheckTimedOut=true
+  developerIDApplicationIdentityCount=0
+  notaryProfileCheckOutput: Error: An error occurred while accessing the keychain. One or more parameters passed to a function were not valid.
+  inputiaGatekeeperBlockReasons=account-lookup-broken,codesign-invalid,spctl-rejected,spctl-internal-error,syspolicy-timeout
+  inputiaNotarySubmissionBlockReasons=account-lookup-broken,missing-developer-id-application,missing-notarytool-profile
+  notarizationRequiredAction=restore-macos-account-directory-service
+```
+
+结论：
+
+- 当前 Mac mini 的首要 blocker 不是安装包、不是 TIS 刷新、不是 smoke 脚本，也不是继续手动选择输入法；是系统账号目录服务/Keychain 信任环境异常导致签名身份消失、Gatekeeper 返回内部错误、`syspolicy_check` 卡住。
+- 在 `accountLookupReady=true`、`security find-identity` 重新能看到签名身份、`spctl` 不再内部错误前，不运行 TextEdit/Safari/Clipboard GUI smoke。
+- 本轮没有运行 GUI smoke。
