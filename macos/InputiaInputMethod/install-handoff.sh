@@ -3,6 +3,7 @@ set -eu
 set -o pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
 BUILD_APP="$ROOT_DIR/build/InputiaInputMethod.app"
 SYSTEM_APP="/Library/Input Methods/InputiaInputMethod.app"
 PKG_PATH="$ROOT_DIR/dist/InputiaInputMethod-latest.pkg"
@@ -43,6 +44,24 @@ sha256() {
   fi
 }
 
+git_value() {
+  local fallback="$1"
+  shift
+  /usr/bin/git -C "$REPO_ROOT" "$@" 2>/dev/null || echo "$fallback"
+}
+
+git_dirty_state() {
+  if ! /usr/bin/git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo unknown
+    return
+  fi
+  if [[ -n "$(/usr/bin/git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" ]]; then
+    echo true
+  else
+    echo false
+  fi
+}
+
 admin_ready=false
 admin_reason=admin-required
 if [[ -w "/Library/Input Methods" && -w "/Applications" ]]; then
@@ -55,6 +74,10 @@ fi
 
 /bin/zsh "$ROOT_DIR/build-pkg.sh" >"$BUILD_LOG" 2>&1
 
+source_branch="$(git_value unknown rev-parse --abbrev-ref HEAD)"
+source_commit="$(git_value unknown rev-parse --short=12 HEAD)"
+source_upstream="$(git_value none rev-parse --abbrev-ref --symbolic-full-name '@{u}')"
+source_dirty="$(git_dirty_state)"
 build_version="$(app_version "$BUILD_APP")"
 build_cdhash="$(app_cdhash "$BUILD_APP")"
 system_version="$(app_version "$SYSTEM_APP")"
@@ -79,6 +102,7 @@ install_check_passed="$(/usr/bin/awk -F= '$1 == "installCheckPassed" { print $2;
 install_check_block_reasons="$(/usr/bin/awk -F= '$1 == "installCheckBlockReasons" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
 install_check_required_action="$(/usr/bin/awk -F= '$1 == "installCheckRequiredAction" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
 install_check_required_actions="$(/usr/bin/awk -F= '$1 == "installCheckRequiredActions" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+pkg_verification_passed="$(/usr/bin/awk -F= '$1 == "pkgVerificationPassed" { print $2; found = 1; exit } END { if (!found) print "unknown" }' "$BUILD_LOG")"
 repair_tis_duplicates_command="cd $repo_quoted && INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh"
 if [[ ",$install_check_block_reasons," == *,tis-duplicate-matches,* ]]; then
   repair_tis_duplicates_required=true
@@ -90,8 +114,13 @@ fi
 /bin/cat >"$HANDOFF_PATH" <<EOF
 Inputia 安装交接清单
 
+sourceBranch=$source_branch
+sourceCommit=$source_commit
+sourceUpstream=$source_upstream
+sourceDirty=$source_dirty
 packagePath=$PKG_PATH
 packageSHA256=$pkg_sha256
+pkgVerificationPassed=$pkg_verification_passed
 buildVersion=$build_version
 buildCDHash=$build_cdhash
 systemVersion=${system_version:-unknown}
@@ -138,8 +167,13 @@ echo "installHandoffPath=$HANDOFF_PATH"
 echo "handoffOpensGUI=false"
 echo "handoffChangesSystemInputSource=false"
 echo "buildLog=$BUILD_LOG"
+echo "sourceBranch=$source_branch"
+echo "sourceCommit=$source_commit"
+echo "sourceUpstream=$source_upstream"
+echo "sourceDirty=$source_dirty"
 echo "packagePath=$PKG_PATH"
 echo "packageSHA256=$pkg_sha256"
+echo "pkgVerificationPassed=$pkg_verification_passed"
 echo "buildVersion=$build_version"
 echo "buildCDHash=$build_cdhash"
 echo "systemVersion=${system_version:-unknown}"
