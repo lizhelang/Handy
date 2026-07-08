@@ -1782,7 +1782,8 @@ final class InputiaInputMethodDiagnostics {
     if let enabledSource = primaryInputModeSource(includeAllInstalled: false) {
       print("enabledSourceAlreadyPresent=true")
       printSource(enabledSource)
-      return
+    } else {
+      print("enabledSourceAlreadyPresent=false")
     }
 
     if let parentSource = inputSource(inputSourceID: bundleIdentifier, includeAllInstalled: true) {
@@ -1819,6 +1820,12 @@ final class InputiaInputMethodDiagnostics {
       let status = TISDisableInputSource(source)
       print("disableStatus=\(status)")
       printSource(source)
+    }
+
+    if let parentSource = inputSource(inputSourceID: bundleIdentifier, includeAllInstalled: true) {
+      let status = TISDisableInputSource(parentSource)
+      print("disableParentStatus=\(status)")
+      printSource(parentSource)
     }
   }
 

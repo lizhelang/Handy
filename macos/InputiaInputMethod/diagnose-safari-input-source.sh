@@ -3,7 +3,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$ROOT_DIR/smoke-common.sh"
-APP="${1:-/Library/Input Methods/InputiaInputMethod.app}"
+USER_DEFAULT_APP="$HOME/Library/Input Methods/InputiaInputMethod.app"
+DEFAULT_APP="/Library/Input Methods/InputiaInputMethod.app"
+if [[ -d "$USER_DEFAULT_APP" ]]; then
+  DEFAULT_APP="$USER_DEFAULT_APP"
+fi
+APP="${1:-$DEFAULT_APP}"
 EXECUTABLE="$APP/Contents/MacOS/InputiaInputMethod"
 TIS_TOOL="$ROOT_DIR/build/inputia-tis-tool"
 TEST_URL_FILE="/tmp/inputia-safari-input-source-test.$$.url"

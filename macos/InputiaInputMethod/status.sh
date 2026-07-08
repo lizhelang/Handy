@@ -129,6 +129,66 @@ append_reason() {
   fi
 }
 
+menu_source_block_reason() {
+  local reason="$1"
+  case "$reason" in
+  none)
+    echo none
+    ;;
+  inputia-menu-item-missing)
+    echo menu-source-missing
+    ;;
+  inputia-menu-item-duplicate)
+    echo menu-source-duplicate
+    ;;
+  menu-agent-unavailable)
+    echo text-input-menu-agent-unavailable
+    ;;
+  menu-bar-unavailable)
+    echo text-input-menu-bar-unavailable
+    ;;
+  skipped)
+    echo menu-readiness-skipped
+    ;;
+  missing-menu-readiness-script)
+    echo missing-menu-readiness-script
+    ;;
+  *)
+    echo menu-readiness-unknown
+    ;;
+  esac
+}
+
+menu_presentation_block_reason() {
+  local reason="$1"
+  case "$reason" in
+  inputia-menu-item-missing)
+    echo text-input-menu-agent-not-presenting-source
+    ;;
+  inputia-menu-item-duplicate)
+    echo text-input-menu-agent-presenting-duplicate-source
+    ;;
+  menu-agent-unavailable)
+    echo text-input-menu-agent-unavailable
+    ;;
+  menu-bar-unavailable)
+    echo text-input-menu-bar-unavailable
+    ;;
+  skipped)
+    echo menu-readiness-skipped
+    ;;
+  missing-menu-readiness-script)
+    echo missing-menu-readiness-script
+    ;;
+  none)
+    echo none
+    ;;
+  *)
+    echo menu-readiness-unknown
+    ;;
+  esac
+}
+
 admin_install_ready() {
   if [[ -w "/Library/Input Methods" && -w "/Applications" ]]; then
     echo true
@@ -481,7 +541,12 @@ fi
 section "menu readiness"
 menu_readiness=unknown
 menu_block_reason=unknown
-if [[ -x "$ROOT_DIR/menu-readiness.sh" ]]; then
+if [[ "${INPUTIA_STATUS_SKIP_MENU_READINESS:-0}" == "1" ]]; then
+  echo "menuReadiness=unknown"
+  echo "menuReadinessBlockReason=skipped"
+  menu_readiness=unknown
+  menu_block_reason=skipped
+elif [[ -x "$ROOT_DIR/menu-readiness.sh" ]]; then
   menu_output="$("$ROOT_DIR/menu-readiness.sh" 2>&1 || true)"
   printf '%s\n' "$menu_output"
   menu_readiness="$(/usr/bin/awk -F= '$1 == "menuReadiness" { print $2; exit }' <<<"$menu_output")"
@@ -494,6 +559,8 @@ else
   menu_readiness=false
   menu_block_reason=missing-menu-readiness-script
 fi
+menu_source_reason="$(menu_source_block_reason "$menu_block_reason")"
+menu_presentation_reason="$(menu_presentation_block_reason "$menu_block_reason")"
 
 section "running host"
 set +e
@@ -583,6 +650,14 @@ echo "statusLegacyHIToolboxInputiaEnabled=$legacy_hitoolbox_enabled"
 echo "statusLegacyHIToolboxInputiaSelected=$legacy_hitoolbox_selected"
 echo "statusStaleHIToolboxEnabledStateSuspected=$stale_hitoolbox_enabled"
 
+section "directory service"
+if [[ -x "$ROOT_DIR/directory-service-readiness.sh" ]]; then
+  "$ROOT_DIR/directory-service-readiness.sh" || true
+else
+  echo "directoryServiceReady=unknown"
+  echo "directoryServiceBlockReason=missing-diagnostic-script"
+fi
+
 section "gui smoke summary"
 admin_ready="$(admin_install_ready)"
 gui_block_reason="$(gui_session_block_reason)"
@@ -625,7 +700,7 @@ if [[ "$target_exists" == "true" && "$target_signature_accepted" != "true" ]]; t
   block_reasons="$(append_reason "$block_reasons" signature-rejected)"
 fi
 if [[ "$menu_readiness" != "true" ]]; then
-  block_reasons="$(append_reason "$block_reasons" "menu-$menu_block_reason")"
+  block_reasons="$(append_reason "$block_reasons" "$menu_source_reason")"
 fi
 if [[ "$user_host_conflict" == "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" user-host-conflict)"
@@ -665,6 +740,13 @@ if [[ "$user_directory_ready" != "true" ]]; then
 fi
 echo "statusMenuReadiness=$menu_readiness"
 echo "statusMenuBlockReason=$menu_block_reason"
+if [[ "$menu_readiness" == "true" ]]; then
+  echo "statusInputSourceVisible=true"
+else
+  echo "statusInputSourceVisible=false"
+fi
+echo "statusInputSourceVisibilityBlockReason=$menu_source_reason"
+echo "statusMenuPresentationBlockReason=$menu_presentation_reason"
 echo "statusUserHostConflict=$user_host_conflict"
 echo "statusGuiSessionBlockReason=$gui_block_reason"
 echo "statusTextEditPreflight=$textedit_state"

@@ -3,7 +3,12 @@ set -eu
 set -o pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP="${1:-/Library/Input Methods/InputiaInputMethod.app}"
+USER_DEFAULT_APP="$HOME/Library/Input Methods/InputiaInputMethod.app"
+DEFAULT_APP="/Library/Input Methods/InputiaInputMethod.app"
+if [[ -d "$USER_DEFAULT_APP" ]]; then
+  DEFAULT_APP="$USER_DEFAULT_APP"
+fi
+APP="${1:-$DEFAULT_APP}"
 READINESS_SCRIPT="$ROOT_DIR/gui-smoke-readiness.sh"
 POST_INSTALL_REGRESSION="$ROOT_DIR/post-install-regression.sh"
 

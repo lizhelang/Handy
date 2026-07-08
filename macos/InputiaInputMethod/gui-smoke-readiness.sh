@@ -204,6 +204,8 @@ readiness_reason() {
   local inputia_state="$9"
   local user_host_conflict="${10}"
   local tis_block_reason="${11:-}"
+  local tis_user_directory_ready="${12:-true}"
+  local tis_hitoolbox_defaults_readable="${13:-true}"
 
   if [[ "$pkg_ready" != "true" ]]; then
     echo pkg-not-ready
@@ -223,6 +225,15 @@ readiness_reason() {
     fi
   elif [[ "$tis_ready" != "true" && "$tis_block_reason" == "signature-rejected" ]]; then
     echo signature-rejected
+  elif [[ "$tis_ready" != "true" && "$tis_user_directory_ready" != "true" ]]; then
+    echo user-directory-unavailable
+  elif [[ "$tis_ready" != "true" && "$tis_hitoolbox_defaults_readable" != "true" ]]; then
+    echo hitoolbox-preferences-unavailable
+  elif [[ "$tis_ready" != "true" &&
+    -n "$tis_block_reason" &&
+    "$tis_block_reason" != "none" &&
+    "$tis_block_reason" != "missing-enabled-source" ]]; then
+    echo "$tis_block_reason"
   elif [[ "$tis_ready" != "true" ]]; then
     echo tis-not-ready
   elif [[ "$user_host_conflict" == "true" ]]; then
@@ -254,6 +265,8 @@ readiness_block_reasons() {
   local inputia_state="$9"
   local user_host_conflict="${10}"
   local tis_block_reason="${11:-}"
+  local tis_user_directory_ready="${12:-true}"
+  local tis_hitoolbox_defaults_readable="${13:-true}"
   local reasons=""
 
   append_reason() {
@@ -286,6 +299,17 @@ readiness_block_reasons() {
     append_reason signature-rejected
   elif [[ "$tis_ready" != "true" ]]; then
     append_reason tis-not-ready
+    if [[ -n "$tis_block_reason" &&
+      "$tis_block_reason" != "none" &&
+      "$tis_block_reason" != "missing-enabled-source" ]]; then
+      append_reason "$tis_block_reason"
+    fi
+  fi
+  if [[ "$tis_user_directory_ready" != "true" ]]; then
+    append_reason user-directory-unavailable
+  fi
+  if [[ "$tis_hitoolbox_defaults_readable" != "true" ]]; then
+    append_reason hitoolbox-preferences-unavailable
   fi
   if [[ "$user_host_conflict" == "true" ]]; then
     append_reason user-host-conflict
@@ -361,6 +385,24 @@ if [[ "${INPUTIA_GUI_SMOKE_READINESS_SELF_CHECK:-0}" == "1" ]]; then
     echo "guiSmokeReadinessSelfCheck=false case=appmissing"
     exit 1
   fi
+  menu_source_reason="$(readiness_reason true true true false none not-running not-running true not-running false menu-source-missing)"
+  echo "guiSmokeReadinessSelfCheck case=menu-source expected=menu-source-missing actual=$menu_source_reason"
+  if [[ "$menu_source_reason" != "menu-source-missing" ]]; then
+    echo "guiSmokeReadinessSelfCheck=false case=menu-source"
+    exit 1
+  fi
+  user_directory_reason="$(readiness_reason true true true false none not-running not-running true not-running false missing-enabled-source false true)"
+  echo "guiSmokeReadinessSelfCheck case=user-directory expected=user-directory-unavailable actual=$user_directory_reason"
+  if [[ "$user_directory_reason" != "user-directory-unavailable" ]]; then
+    echo "guiSmokeReadinessSelfCheck=false case=user-directory"
+    exit 1
+  fi
+  hitoolbox_reason="$(readiness_reason true true true false none not-running not-running true not-running false missing-enabled-source true false)"
+  echo "guiSmokeReadinessSelfCheck case=hitoolbox expected=hitoolbox-preferences-unavailable actual=$hitoolbox_reason"
+  if [[ "$hitoolbox_reason" != "hitoolbox-preferences-unavailable" ]]; then
+    echo "guiSmokeReadinessSelfCheck=false case=hitoolbox"
+    exit 1
+  fi
   multi_reasons="$(readiness_block_reasons true true false false none not-running not-running false not-running false)"
   echo "guiSmokeReadinessSelfCheck blockReasons=settings-version-mismatch,admin-required,tis-not-ready actual=$multi_reasons"
   if [[ "$multi_reasons" != *"settings-version-mismatch"* ||
@@ -393,6 +435,20 @@ if [[ "${INPUTIA_GUI_SMOKE_READINESS_SELF_CHECK:-0}" == "1" ]]; then
     echo "guiSmokeReadinessSelfCheck=false case=app-missing-block-reasons"
     exit 1
   fi
+  menu_source_reasons="$(readiness_block_reasons true true true false none not-running not-running true not-running false menu-source-missing)"
+  echo "guiSmokeReadinessSelfCheck menuSourceBlockReasons=tis-not-ready,menu-source-missing actual=$menu_source_reasons"
+  if [[ "$menu_source_reasons" != *"tis-not-ready"* || "$menu_source_reasons" != *"menu-source-missing"* ]]; then
+    echo "guiSmokeReadinessSelfCheck=false case=menu-source-block-reasons"
+    exit 1
+  fi
+  env_reasons="$(readiness_block_reasons true true true false none not-running not-running true not-running false missing-enabled-source false false)"
+  echo "guiSmokeReadinessSelfCheck environmentBlockReasons=tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable actual=$env_reasons"
+  for required_reason in tis-not-ready user-directory-unavailable hitoolbox-preferences-unavailable; do
+    if [[ "$env_reasons" != *"$required_reason"* ]]; then
+      echo "guiSmokeReadinessSelfCheck=false case=environment-block-reasons missing=$required_reason"
+      exit 1
+    fi
+  done
   echo "guiSmokeReadinessSelfCheck=true"
   exit 0
 fi
@@ -446,8 +502,12 @@ else
   tis_ready=false
 fi
 tis_block_reason="$(/usr/bin/awk -F= '$1 == "tis.readinessBlockReason" { print $2; found = 1; exit } END { if (!found) print "none" }' <<<"$tis_output")"
+tis_user_directory_ready="$(/usr/bin/awk -F= '$1 == "tis.userDirectoryReady" { print $2; found = 1; exit } END { if (!found) print "true" }' <<<"$tis_output")"
+tis_hitoolbox_defaults_readable="$(/usr/bin/awk -F= '$1 == "tis.hitoolboxDefaultsReadable" { print $2; found = 1; exit } END { if (!found) print "true" }' <<<"$tis_output")"
 echo "tis.ready=$tis_ready"
 echo "tis.blockReason=$tis_block_reason"
+echo "tis.userDirectoryReady=$tis_user_directory_ready"
+echo "tis.hitoolboxDefaultsReadable=$tis_hitoolbox_defaults_readable"
 
 admin_line="$(admin_status)"
 echo "$admin_line"
@@ -472,8 +532,8 @@ else
 fi
 echo "userHostConflict=$user_host_conflict"
 
-reason="$(readiness_reason "$pkg_ready" "$target_matches" "$settings_matches" "$tis_ready" "$gui_block" "$textedit_state" "$safari_state" "$admin_ready" "$inputia_state" "$user_host_conflict" "$tis_block_reason")"
-block_reasons="$(readiness_block_reasons "$pkg_ready" "$target_matches" "$settings_matches" "$tis_ready" "$gui_block" "$textedit_state" "$safari_state" "$admin_ready" "$inputia_state" "$user_host_conflict" "$tis_block_reason")"
+reason="$(readiness_reason "$pkg_ready" "$target_matches" "$settings_matches" "$tis_ready" "$gui_block" "$textedit_state" "$safari_state" "$admin_ready" "$inputia_state" "$user_host_conflict" "$tis_block_reason" "$tis_user_directory_ready" "$tis_hitoolbox_defaults_readable")"
+block_reasons="$(readiness_block_reasons "$pkg_ready" "$target_matches" "$settings_matches" "$tis_ready" "$gui_block" "$textedit_state" "$safari_state" "$admin_ready" "$inputia_state" "$user_host_conflict" "$tis_block_reason" "$tis_user_directory_ready" "$tis_hitoolbox_defaults_readable")"
 echo "guiSmokeReadinessBlockReasons=$block_reasons"
 if [[ "$reason" == "none" ]]; then
   echo "guiSmokeReadinessReady=true reason=none"

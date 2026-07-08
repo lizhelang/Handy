@@ -6,7 +6,12 @@ if [[ -n "${BASH_SOURCE:-}" ]]; then
   SCRIPT_PATH="${BASH_SOURCE[0]}"
 fi
 ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
-APP="${1:-/Library/Input Methods/InputiaInputMethod.app}"
+USER_DEFAULT_APP="$HOME/Library/Input Methods/InputiaInputMethod.app"
+DEFAULT_APP="/Library/Input Methods/InputiaInputMethod.app"
+if [[ -d "$USER_DEFAULT_APP" ]]; then
+  DEFAULT_APP="$USER_DEFAULT_APP"
+fi
+APP="${1:-$DEFAULT_APP}"
 LEGACY_APP="${INPUTIA_LEGACY_APP:-/Library/Input Methods/IputiaInputMethod.app}"
 USER_APP="${INPUTIA_USER_APP:-$HOME/Library/Input Methods/InputiaInputMethod.app}"
 USER_LEGACY_APP="${INPUTIA_USER_LEGACY_APP:-$HOME/Library/Input Methods/IputiaInputMethod.app}"
@@ -299,11 +304,18 @@ fi
 echo "legacyIputiaPresent=false"
 
 section "user host conflict"
-if [[ -e "$USER_APP" || -e "$USER_LEGACY_APP" || -e "$USER_SETTINGS_APP" ]]; then
+if [[ "$APP" == "$USER_APP" ]]; then
+  if [[ -e "$USER_LEGACY_APP" ]]; then
+    echo "userHostConflict=true path=$USER_APP legacyPath=$USER_LEGACY_APP settingsPath=$USER_SETTINGS_APP"
+    exit 3
+  fi
+  echo "userHostConflict=false"
+elif [[ -e "$USER_APP" || -e "$USER_LEGACY_APP" || -e "$USER_SETTINGS_APP" ]]; then
   echo "userHostConflict=true path=$USER_APP legacyPath=$USER_LEGACY_APP settingsPath=$USER_SETTINGS_APP"
   exit 3
+else
+  echo "userHostConflict=false"
 fi
-echo "userHostConflict=false"
 
 if [[ "${INPUTIA_RUN_UI_SMOKE:-0}" == "1" ]]; then
   section "TIS readiness for GUI smoke"

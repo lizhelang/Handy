@@ -2,7 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP="${1:-/Library/Input Methods/InputiaInputMethod.app}"
+USER_DEFAULT_APP="$HOME/Library/Input Methods/InputiaInputMethod.app"
+DEFAULT_APP="/Library/Input Methods/InputiaInputMethod.app"
+if [[ -d "$USER_DEFAULT_APP" ]]; then
+  DEFAULT_APP="$USER_DEFAULT_APP"
+fi
+APP="${1:-$DEFAULT_APP}"
 BUILD_APP="$ROOT_DIR/build/InputiaInputMethod.app"
 TIS_TOOL="$ROOT_DIR/build/inputia-tis-tool"
 TARGET_MODE_ID="${INPUTIA_TIS_MODE_ID:-com.inputia.inputmethod.Inputia.Main}"
@@ -182,6 +187,66 @@ hitoolbox_key_contains_inputia() {
   fi
 }
 
+menu_source_block_reason() {
+  local reason="$1"
+  case "$reason" in
+  none)
+    echo none
+    ;;
+  inputia-menu-item-missing)
+    echo menu-source-missing
+    ;;
+  inputia-menu-item-duplicate)
+    echo menu-source-duplicate
+    ;;
+  menu-agent-unavailable)
+    echo text-input-menu-agent-unavailable
+    ;;
+  menu-bar-unavailable)
+    echo text-input-menu-bar-unavailable
+    ;;
+  skipped)
+    echo menu-readiness-skipped
+    ;;
+  missing-menu-readiness-script)
+    echo missing-menu-readiness-script
+    ;;
+  *)
+    echo menu-readiness-unknown
+    ;;
+  esac
+}
+
+menu_presentation_block_reason() {
+  local reason="$1"
+  case "$reason" in
+  inputia-menu-item-missing)
+    echo text-input-menu-agent-not-presenting-source
+    ;;
+  inputia-menu-item-duplicate)
+    echo text-input-menu-agent-presenting-duplicate-source
+    ;;
+  menu-agent-unavailable)
+    echo text-input-menu-agent-unavailable
+    ;;
+  menu-bar-unavailable)
+    echo text-input-menu-bar-unavailable
+    ;;
+  skipped)
+    echo menu-readiness-skipped
+    ;;
+  missing-menu-readiness-script)
+    echo missing-menu-readiness-script
+    ;;
+  none)
+    echo none
+    ;;
+  *)
+    echo menu-readiness-unknown
+    ;;
+  esac
+}
+
 echo "app=$APP"
 echo "buildApp=$BUILD_APP"
 if [[ -d "$APP" ]]; then
@@ -251,6 +316,29 @@ if [[ "$legacy_hitoolbox_enabled" == "true" && "$current_matches" != "true" ]]; 
 else
   stale_hitoolbox_enabled=false
 fi
+menu_readiness=unknown
+menu_block_reason=unknown
+menu_inputia_count=unknown
+menu_selected_count=unknown
+if [[ "${INPUTIA_TIS_SKIP_MENU_READINESS:-0}" == "1" ]]; then
+  menu_readiness=unknown
+  menu_block_reason=skipped
+elif [[ -x "$ROOT_DIR/menu-readiness.sh" ]]; then
+  menu_output="$("$ROOT_DIR/menu-readiness.sh" 2>&1 || true)"
+  menu_readiness="$(/usr/bin/awk -F= '$1 == "menuReadiness" { print $2; exit }' <<<"$menu_output")"
+  menu_block_reason="$(/usr/bin/awk -F= '$1 == "menuReadinessBlockReason" { print $2; exit }' <<<"$menu_output")"
+  menu_inputia_count="$(/usr/bin/awk -F= '$1 == "menuInputiaCount" { print $2; exit }' <<<"$menu_output")"
+  menu_selected_count="$(/usr/bin/awk -F= '$1 == "menuInputiaSelectedCount" { print $2; exit }' <<<"$menu_output")"
+  menu_readiness="${menu_readiness:-unknown}"
+  menu_block_reason="${menu_block_reason:-unknown}"
+  menu_inputia_count="${menu_inputia_count:-unknown}"
+  menu_selected_count="${menu_selected_count:-unknown}"
+else
+  menu_readiness=false
+  menu_block_reason=missing-menu-readiness-script
+fi
+menu_source_reason="$(menu_source_block_reason "$menu_block_reason")"
+menu_presentation_reason="$(menu_presentation_block_reason "$menu_block_reason")"
 
 echo "tis.enabledMatches=${enabled_matches:-unknown}"
 echo "tis.installedMatches=${installed_matches:-unknown}"
@@ -268,6 +356,12 @@ echo "tis.hitoolboxDefaultsReadable=$hitoolbox_defaults_ok"
 echo "tis.legacyHIToolboxInputiaEnabled=$legacy_hitoolbox_enabled"
 echo "tis.legacyHIToolboxInputiaSelected=$legacy_hitoolbox_selected"
 echo "tis.staleHIToolboxEnabledStateSuspected=$stale_hitoolbox_enabled"
+echo "tis.menuReadiness=$menu_readiness"
+echo "tis.menuInputiaCount=$menu_inputia_count"
+echo "tis.menuInputiaSelectedCount=$menu_selected_count"
+echo "tis.menuBlockReason=$menu_block_reason"
+echo "tis.menuSourceBlockReason=$menu_source_reason"
+echo "tis.menuPresentationBlockReason=$menu_presentation_reason"
 
 if [[ "$app_exists" != "true" ]]; then
   echo "tis.readinessBlockReason=app-missing"
@@ -280,13 +374,6 @@ elif [[ "$signature_accepted" != "true" ]]; then
   echo "tis.readinessBlockReason=signature-rejected"
   echo "tis.requiredAction=sign-with-accepted-identity"
   echo "tisReadiness=false"
-elif [[ "${target_enabled_matches:-0}" != "0" &&
-  -n "${target_enabled_matches:-}" &&
-  "$icon_matches" == "true" &&
-  "${hans_enabled:-false}" == "true" &&
-  "$current_matches" == "true" ]]; then
-  echo "tis.readinessBlockReason=none"
-  echo "tisReadiness=true"
 else
   if [[ "${target_installed_matches:-0}" == "0" || -z "${target_installed_matches:-}" ]]; then
     echo "tis.readinessBlockReason=target-source-not-installed"
@@ -299,11 +386,19 @@ else
     echo "tis.readinessBlockReason=icon-mismatch"
   elif [[ "${hans_enabled:-false}" != "true" ]]; then
     echo "tis.readinessBlockReason=hans-disabled"
+  elif [[ "$menu_source_reason" != "none" ]]; then
+    echo "tis.readinessBlockReason=$menu_source_reason"
+    echo "tis.requiredAction=fix-input-source-metadata-or-registration-cache"
+    if [[ "$menu_presentation_reason" != "none" ]]; then
+      echo "tis.presentationRequiredAction=$menu_presentation_reason"
+    fi
   elif [[ "$current_matches" != "true" ]]; then
     echo "tis.readinessBlockReason=target-not-selected"
-    echo "tis.requiredAction=select-inputia-after-manual-add"
+    echo "tis.requiredAction=select-visible-inputia-source"
   else
-    echo "tis.readinessBlockReason=unknown"
+    echo "tis.readinessBlockReason=none"
+    echo "tisReadiness=true"
+    exit 0
   fi
   echo "tisReadiness=false"
 fi

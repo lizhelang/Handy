@@ -3,7 +3,12 @@ set -eu
 set -o pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP="${1:-/Library/Input Methods/InputiaInputMethod.app}"
+USER_DEFAULT_APP="$HOME/Library/Input Methods/InputiaInputMethod.app"
+DEFAULT_APP="/Library/Input Methods/InputiaInputMethod.app"
+if [[ -d "$USER_DEFAULT_APP" ]]; then
+  DEFAULT_APP="$USER_DEFAULT_APP"
+fi
+APP="${1:-$DEFAULT_APP}"
 BUILD_APP="$ROOT_DIR/build/InputiaInputMethod.app"
 SYSTEM_APP="/Library/Input Methods/InputiaInputMethod.app"
 USER_APP="$HOME/Library/Input Methods/InputiaInputMethod.app"
@@ -242,7 +247,8 @@ tis_status_line() {
   elif [[ "${enabled_matches:-0}" != "0" &&
     -n "${enabled_matches:-}" &&
     "$icon_matches" == "true" &&
-    "${hans_enabled:-false}" == "true" ]]; then
+    "${hans_enabled:-false}" == "true" &&
+    "$current_matches" == "true" ]]; then
     block_reason=none
   elif [[ "${enabled_matches:-0}" == "0" || -z "${enabled_matches:-}" ]]; then
     block_reason=missing-enabled-source
@@ -250,6 +256,8 @@ tis_status_line() {
     block_reason=icon-mismatch
   elif [[ "${hans_enabled:-false}" != "true" ]]; then
     block_reason=hans-disabled
+  elif [[ "$current_matches" != "true" ]]; then
+    block_reason=user-visible-source-not-confirmed
   fi
   echo "tis.tool=true tis.appExists=$app_exists tis.appSignatureAccepted=$signature_accepted tis.enabledMatches=${enabled_matches:-unknown} tis.installedMatches=${installed_matches:-unknown} tis.hansIconMatchesApp=$icon_matches tis.hansEnabled=${hans_enabled:-unknown} tis.hansSelected=${hans_selected:-unknown} tis.currentID=${current_id:-unknown} tis.currentMatchesTarget=$current_matches tis.readinessBlockReason=$block_reason"
 }
@@ -260,7 +268,8 @@ tis_ready() {
     "$status_line" != *"tis.enabledMatches=0"* &&
     "$status_line" != *"tis.enabledMatches=unknown"* &&
     "$status_line" == *"tis.hansIconMatchesApp=true"* &&
-    "$status_line" == *"tis.hansEnabled=true"* ]]
+    "$status_line" == *"tis.hansEnabled=true"* &&
+    "$status_line" == *"tis.currentMatchesTarget=true"* ]]
 }
 
 tis_block_reason_from_status() {
@@ -289,6 +298,14 @@ append_block_reason() {
 user_host_conflict() {
   if [[ -n "${INPUTIA_AWAIT_USER_HOST_CONFLICT_FOR_TEST:-}" ]]; then
     echo "$INPUTIA_AWAIT_USER_HOST_CONFLICT_FOR_TEST"
+    return
+  fi
+  if [[ "$APP" == "$USER_APP" ]]; then
+    if [[ -e "$USER_LEGACY_APP" ]]; then
+      echo true
+    else
+      echo false
+    fi
     return
   fi
   if [[ -e "$USER_APP" || -e "$USER_LEGACY_APP" || -e "$USER_SETTINGS_APP" ]]; then
@@ -521,5 +538,5 @@ if [[ "$last_target_matches_build" != "true" ]]; then
 else
   echo "systemInstallTISReady=false reason=$last_tis_block_reason"
 fi
-"$ROOT_DIR/status.sh"
+INPUTIA_STATUS_SKIP_MENU_READINESS=1 "$ROOT_DIR/status.sh"
 exit 2

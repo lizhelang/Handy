@@ -72,7 +72,7 @@
 				<key>tsInputModePrimaryInScriptKey</key>
 				<true/>
 				<key>tsInputModeScriptKey</key>
-				<string>smUnicodeScript</string>
+				<string>smSimpChinese</string>
 			</dict>
 		</dict>
 		<key>tsVisibleInputModeOrderedArrayKey</key>

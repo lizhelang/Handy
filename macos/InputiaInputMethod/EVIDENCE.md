@@ -1284,7 +1284,7 @@ Inputia.Hans enabled=true selectable=true selected=true
 ```text
 defaultChineseResult=你
 enterRawResult=ni
-shiftEnglishResult=ni 
+shiftEnglishResult=ni
 shiftChineseResult=你
 textEditSmokePassed=true
 
@@ -2329,7 +2329,7 @@ macos/InputiaInputMethod/dist/InputiaInputMethod-v22-95fb72a0ca84.pkg
   - 且 `hasCandidates == false`
   - 且无 Command/Control/Option
   - 且字符和忽略修饰键字符都为 `1`
-  时才命中。
+    时才命中。
 - `main.swift` 在普通字符分发前检查该状态，命中后调用 `bridge.enter()`，走同一条原文上屏和 marked range 替换路径。
 - 独立 `inputia-shortcut-self-check` 和 app 内 `--host-shortcut-self-check` 同步覆盖该判断，避免 Host 逻辑和诊断工具漂移。
 
@@ -2685,6 +2685,7 @@ sudo -n installer -pkg macos/InputiaInputMethod/dist/InputiaInputMethod-v25-598c
 ```text
 macos/InputiaInputMethod/dist/InputiaInputMethod-v25-598c392c8902.pkg
 ```
+
 ## 2026-07-07 v26：Host marked text 策略与设置按钮防挤压
 
 用户反馈：
@@ -18588,7 +18589,7 @@ smoke/verifier script residue: none
 
 验证：
 
-```text
+````text
 zsh -n macos/InputiaInputMethod/gui-smoke-suite.sh
   syntaxRc=0
 
@@ -18638,7 +18639,7 @@ osascript=not-running
 sleep=not-running
 smoke/verifier script residue: none
 /tmp/inputia-* residue: none
-```
+````
 
 当前结论：
 
@@ -19220,6 +19221,7 @@ bash macos/InputiaInputMethod/verify-nongui.sh > /tmp/inputia-verify-nongui-read
 - readiness 主 gate 和 status summary 现在都覆盖 TextEdit/Safari allow override。
 - allow override 不会绕过其它 blocker；当前系统仍被 system host/settings v40、TIS matches 0 和 admin 权限阻塞。
 - 真实 GUI smoke 仍未运行；系统安装版/settings 更新到 v41 且 TIS readiness 通过后，再通过 `gui-smoke-suite.sh` 执行真实 TextEdit/Safari/Clipboard smoke。
+
 ## v41 Mac mini 复验：常用电脑快捷键不由输入法接管
 
 背景：用户反馈 `Command-C` / `Command-V` 在 Inputia 下不能用，并要求按常用电脑快捷键举一反三处理，不能逐个等用户手测。
@@ -23284,8 +23286,8 @@ syspolicy_check distribution "/Library/Input Methods/InputiaInputMethod.app"
 codesign --force --sign "$IDENTITY" --options runtime --timestamp=none <temp-executable>
 ```
 
-  - 成功才输出 `signingIdentityCodesignProbe=true` 和 `signingIdentityImportVerified=true`。
-  - 失败输出 `signingIdentityCodesignProbe=false`、`signingIdentityImportVerified=false reason=codesign-probe-failed`，并以 rc=17 退出。
+- 成功才输出 `signingIdentityCodesignProbe=true` 和 `signingIdentityImportVerified=true`。
+- 失败输出 `signingIdentityCodesignProbe=false`、`signingIdentityImportVerified=false reason=codesign-probe-failed`，并以 rc=17 退出。
 - `verify-nongui.sh` 静态契约新增：
   - 必须存在 `codesign_probe()`。
   - 必须输出 probe 成功/失败标记。
@@ -26934,6 +26936,116 @@ statusGuiSmokeReady=false reason=tis-not-ready,user-directory-unavailable,hitool
 - `/Library/Input Methods/InputiaInputMethod.app` 当前仍不存在，系统级安装没有发生；用户级 app 与 build 匹配，但当前输入源仍是 ABC。
 - 在 `repair-current-user-directory-service` 恢复之前，不跑 TextEdit/Safari/Clipboard GUI smoke；此时 GUI smoke 只会测试坏环境，不会测试输入法功能。
 
+## v71 Mac mini：增加目录服务 readiness 诊断，并参考成熟 IMK 项目确认手动添加路径
+
+时间：2026-07-08 17:44:10 +0800
+
+外部参考：
+
+- Apple InputMethodKit 文档：InputMethodKit 是输入法 server 与 client 应用通信、候选窗和输入模式管理的系统框架。
+- `eagleoflqj/toyimk`：首次安装后要求 logout/login，然后在 System Settings → Keyboard → Input Sources 里添加 Toyimk；后续安装先切换到其他输入法、kill host、再切回。
+- `ensan-hcl/macOS_IMKitSample_2021`：样例使用步骤也是先安装/运行，再到 Settings → Keyboard → Input Sources 添加样例输入源并选择。
+- `rime/squirrel`：成熟 Rime macOS 前端把签名作为可选开发变量，用户启用仍是系统输入源路径；不是通过脚本直接伪造 HIToolbox enabled 状态。
+- vChewing/InputMethodKit 讨论记录也指出用户级 `~/Library/Input Methods` 可作为输入法安装位置；这支持我们保留用户级开发安装，但不把它等同于菜单栏已启用。
+
+本轮代码调整：
+
+- 新增 `directory-service-readiness.sh`，只做只读诊断，不写偏好、不杀进程、不调用 GUI。
+- `status.sh` 增加 `directory service` 段，随状态报告输出 passwd、dscache、opendirectoryd、odutil、sudo 非交互状态。
+- `verify-nongui.sh` 增加静态契约，要求保留目录服务诊断输出和 `repair-current-user-directory-service` 动作。
+
+当前目录服务诊断：
+
+```text
+./macos/InputiaInputMethod/directory-service-readiness.sh
+  directoryServiceCurrentUID=501
+  directoryServiceCurrentUserName=501
+  directoryServiceConsoleUID=501
+  directoryServiceConsoleUser=(501)
+  directoryServicePwdRecord=false
+  directoryServicePwdName=unknown
+  directoryServicePwdHome=unknown
+  directoryServiceDscacheRecord=false
+  directoryServiceOpendirectorydProcess=true
+  directoryServiceOdutilAvailable=false
+  directoryServiceSudoNonInteractive=false
+  directoryServiceSudoBlockReason=missing-passwd-record
+  directoryServiceReady=false
+  directoryServiceBlockReason=missing-passwd-record,opendirectoryd-unavailable
+  directoryServiceRequiredAction=repair-current-user-directory-service
+```
+
+`status.sh` 新增段：
+
+```text
+== directory service ==
+directoryServiceCurrentUID=501
+directoryServiceCurrentUserName=501
+directoryServiceConsoleUID=501
+directoryServiceConsoleUser=(501)
+directoryServicePwdRecord=false
+directoryServiceDscacheRecord=false
+directoryServiceOpendirectorydProcess=true
+directoryServiceOdutilAvailable=false
+directoryServiceSudoNonInteractive=false
+directoryServiceSudoBlockReason=missing-passwd-record
+directoryServiceReady=false
+directoryServiceBlockReason=missing-passwd-record,opendirectoryd-unavailable
+directoryServiceRequiredAction=repair-current-user-directory-service
+```
+
+安装/readiness 验证：
+
+```text
+INPUTIA_INSTALL_NO_ADMIN_PROMPT=1 ./macos/InputiaInputMethod/install-system.sh
+  systemInstallNeedsAdmin=true
+  systemInstallCurrentUID=501
+  systemInstallCurrentUserName=unknown
+  systemInstallUserDirectoryReady=false
+  systemInstallUserDirectoryBlockReason=missing-passwd-record
+  systemInstallAdminChannelReady=false reason=user-directory-unavailable
+  systemInstallReady=false reason=user-directory-unavailable
+  systemInstallBlockReason=missing-passwd-record
+  systemInstallRequiredAction=repair-current-user-directory-service
+  rc=13
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  appExists=true
+  appSignatureAccepted=true
+  appMatchesBuild=true
+  tis.userDirectoryReady=false
+  tis.hitoolboxDefaultsReadable=false
+  tis.readinessBlockReason=missing-enabled-source
+  tis.requiredAction=repair-current-user-directory-service
+  tisReadiness=false
+
+./macos/InputiaInputMethod/gui-smoke-readiness.sh
+  tis.blockReason=missing-enabled-source
+  tis.userDirectoryReady=false
+  tis.hitoolboxDefaultsReadable=false
+  guiSmokeReadinessBlockReasons=tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,gui-bootstrap-unavailable
+  guiSmokeReadinessReady=false reason=user-directory-unavailable
+```
+
+验证：
+
+```text
+zsh -n macos/InputiaInputMethod/directory-service-readiness.sh macos/InputiaInputMethod/status.sh
+  ok
+
+bash -n macos/InputiaInputMethod/verify-nongui.sh
+  ok
+
+git diff --check -- macos/InputiaInputMethod/directory-service-readiness.sh macos/InputiaInputMethod/status.sh macos/InputiaInputMethod/verify-nongui.sh
+  ok
+```
+
+结论：
+
+- GitHub/成熟 IMK 项目参考支持当前策略：安装后通过系统输入源列表添加/选择；不要再脚本写 HIToolbox 假装 enabled。
+- Mac mini 当前仍不能进入真实系统级安装和 GUI smoke：`directoryServiceReady=false`，`tisReadiness=false`。
+- 下一步仍是先恢复当前登录用户的 DirectoryServices/passwd 状态，再重跑 `install-system.sh`、`status.sh`、`tis-readiness.sh`；只有 readiness 过了才跑 TextEdit/Safari/Clipboard smoke。
+
 ## v71 Mac mini：覆盖 v70 旧 verifier 快照，当前用户目录正常但 Inputia 仍未在菜单中可选
 
 时间：2026-07-08 17:35:42 +0800
@@ -27007,3 +27119,144 @@ InputiaInputMethod=not-running
 - 用户级 app 已安装并注册，且与 build 匹配。
 - 当前 blocker 仍是未通过 System Settings → Keyboard → Text Input → Edit → Add Inputia 手动添加/选中；菜单栏没有 Inputia，当前输入源仍是微信输入法。
 - 因 `statusGuiSmokeReady=false`，继续不运行 TextEdit/Safari/Clipboard GUI smoke。
+
+## v72 Mac mini：纠正用户可见输入源 blocker，菜单缺失不是 target-not-selected
+
+时间：2026-07-08 18:29:05 +0800
+
+背景：
+
+- 用户截图显示菜单栏和系统设置添加输入源列表都看不到 Inputia。
+- 因此 v71 的“让用户手动添加/选中”结论不成立：用户可见层没有 Inputia 时，不能继续归因为 `target-not-selected`。
+- 本轮不手写 HIToolbox `AppleEnabledInputSources` / `AppleSelectedInputSources`，只修正状态脚本和 readiness 门禁，让 blocker 以用户可见事实为准。
+
+对照依据：
+
+- Apple 本机 SDK header：
+  - `TextInputSources.h` 定义 `TISRegisterInputSource()`，并明确 app input method bundle 可放在 `/Library/Input Methods/` 或 `~/Library/Input Methods/`。
+  - 同一 header 说明 input method / input mode metadata 通过 `TISInputSourceID`、`TISIntendedLanguage` 和 `ComponentInputModeDict` 暴露。
+  - `TextServices.h` 定义 `ComponentInputModeDict`、`tsInputModeScriptKey`、`tsVisibleInputModeOrderedArrayKey`、`ComponentInvisibleInSystemUI`。
+- 本机成熟输入法 WeType `/Library/Input Methods/WeType.app/Contents/Info.plist`：
+  - `CFBundlePackageType=APPL`
+  - `LSUIElement=true`
+  - `LSBackgroundOnly=false`
+  - `InputMethodConnectionName=WeType_Connection`
+  - `ComponentInputModeDict.tsInputModeListKey.com.tencent.inputmethod.wetype.pinyin.TISInputSourceID=com.tencent.inputmethod.wetype.pinyin`
+  - `tsInputModeScriptKey=smSimpChinese`
+  - `tsInputModeIsVisibleKey=true`
+  - `tsVisibleInputModeOrderedArrayKey=[com.tencent.inputmethod.wetype.pinyin]`
+- 当前用户级 Inputia `/Users/minizl/Library/Input Methods/InputiaInputMethod.app/Contents/Info.plist`：
+  - `CFBundlePackageType=APPL`
+  - `LSUIElement=true`
+  - `LSBackgroundOnly=false`
+  - `InputMethodConnectionName=com.inputia.inputmethod.Inputia_Connection`
+  - `ComponentInputModeDict.tsInputModeListKey.com.inputia.inputmethod.Inputia.Main.TISInputSourceID=com.inputia.inputmethod.Inputia.Main`
+  - `TISIntendedLanguage=zh-Hans`
+  - `tsInputModeScriptKey=smUnicodeScript`
+  - `tsInputModeIsVisibleKey=true`
+  - `tsVisibleInputModeOrderedArrayKey=[com.inputia.inputmethod.Inputia.Main]`
+  - `topLevelTISInputSourceID=absent`
+
+实现调整：
+
+- `tis-readiness.sh`：
+  - 默认读取 `menu-readiness.sh` 的用户可见菜单证据。
+  - 当 TIS 内部 enabled/selectable 但菜单没有 Inputia 时，输出：
+    - `tis.menuSourceBlockReason=menu-source-missing`
+    - `tis.menuPresentationBlockReason=text-input-menu-agent-not-presenting-source`
+    - `tis.readinessBlockReason=menu-source-missing`
+    - `tis.requiredAction=fix-input-source-metadata-or-registration-cache`
+  - 只有菜单可见后，才允许进入 `target-not-selected`。
+- `status.sh`：
+  - 新增 `statusInputSourceVisible=false`
+  - 新增 `statusInputSourceVisibilityBlockReason=menu-source-missing`
+  - 新增 `statusMenuPresentationBlockReason=text-input-menu-agent-not-presenting-source`
+  - `statusGuiSmokeBlockReasons` 现在包含 `menu-source-missing`，不再把菜单缺失说成旧的 `menu-inputia-menu-item-missing` 用户操作问题。
+- `gui-smoke-readiness.sh` / `gui-smoke-suite.sh`：
+  - readiness 失败时保留具体 blocker，当前为 `menu-source-missing`。
+  - GUI suite 在此 blocker 下只报告不会运行，不启动 TextEdit/Safari/Clipboard smoke。
+- `await-system-install.sh`：
+  - 在没有菜单 probe 的短等待路径里，不再输出 `target-not-selected`，改为保守的 `user-visible-source-not-confirmed`。
+
+当前验证：
+
+```text
+./macos/InputiaInputMethod/tis-readiness.sh "$HOME/Library/Input Methods/InputiaInputMethod.app"
+  appExists=true
+  appSignatureAccepted=true
+  appMatchesBuild=true
+  tis.enabledMatches=2
+  tis.installedMatches=2
+  tis.targetEnabledMatches=1
+  tis.targetInstalledMatches=1
+  tis.hansEnabled=true
+  tis.hansSelectable=true
+  tis.currentID=com.tencent.inputmethod.wetype.pinyin
+  tis.currentMatchesTarget=false
+  tis.menuReadiness=false
+  tis.menuInputiaCount=0
+  tis.menuInputiaSelectedCount=0
+  tis.menuBlockReason=inputia-menu-item-missing
+  tis.menuSourceBlockReason=menu-source-missing
+  tis.menuPresentationBlockReason=text-input-menu-agent-not-presenting-source
+  tis.readinessBlockReason=menu-source-missing
+  tis.requiredAction=fix-input-source-metadata-or-registration-cache
+  tis.presentationRequiredAction=text-input-menu-agent-not-presenting-source
+  tisReadiness=false
+
+./macos/InputiaInputMethod/status.sh
+  targetPath=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  targetScope=user
+  targetExists=true
+  targetMatchesBuild=true
+  statusTISEnabledMatches=2
+  statusTISInstalledMatches=2
+  statusTISCurrentID=com.tencent.inputmethod.wetype.pinyin
+  statusTISCurrentMatchesTarget=false
+  statusSignatureAccepted=true
+  statusMenuReadiness=false
+  statusMenuBlockReason=inputia-menu-item-missing
+  statusInputSourceVisible=false
+  statusInputSourceVisibilityBlockReason=menu-source-missing
+  statusMenuPresentationBlockReason=text-input-menu-agent-not-presenting-source
+  statusGuiSmokeBlockReasons=tis-not-ready,menu-source-missing
+  statusGuiSmokeReady=false reason=tis-not-ready,menu-source-missing
+
+./macos/InputiaInputMethod/gui-smoke-suite.sh
+  guiSmokeSuiteReady=false reason=menu-source-missing
+  guiSmokeSuiteBlockReasons=tis-not-ready,menu-source-missing
+  guiSmokeSuiteWouldRun=false
+```
+
+非 GUI 验证：
+
+```text
+bash -n macos/InputiaInputMethod/tis-readiness.sh macos/InputiaInputMethod/menu-readiness.sh
+zsh -n macos/InputiaInputMethod/status.sh macos/InputiaInputMethod/await-system-install.sh macos/InputiaInputMethod/gui-smoke-readiness.sh macos/InputiaInputMethod/verify-nongui.sh
+  passed
+
+INPUTIA_GUI_SMOKE_READINESS_SELF_CHECK=1 ./macos/InputiaInputMethod/gui-smoke-readiness.sh
+  guiSmokeReadinessSelfCheck case=menu-source expected=menu-source-missing actual=menu-source-missing
+  guiSmokeReadinessSelfCheck=true
+
+INPUTIA_GUI_SMOKE_SUITE_SELF_CHECK=1 ./macos/InputiaInputMethod/gui-smoke-suite.sh
+  guiSmokeSuiteSelfCheck=true
+
+./macos/InputiaInputMethod/verify-nongui.sh
+  commandCPassThrough=true
+  commandVPassThrough=true
+  commonAppleCommandShortcutSetPassesThrough=true
+  officialAppleCommandKeyDownSetPassesThrough=true
+  anyCommandModifiedKeyPassesThrough=true
+  allCommandModifierVariantsPassThrough=true
+  guiSmokeSuiteCurrentBlockedGateNoMutationPassed=true
+  postInstallNonGuiNoMutationPassed=true
+  nonGuiVerificationPassed=true
+```
+
+结论：
+
+- 当前 blocker 是 `menu-source-missing` / `text-input-menu-agent-not-presenting-source`。
+- 内部 TIS dump 能看到并启用 Inputia，不等于 TextInputMenuAgent / System Settings 用户可见层能展示 Inputia。
+- 下一步应继续查 plist metadata / 注册缓存刷新方向，重点包括 `tsInputModeScriptKey=smUnicodeScript` 与 WeType `smSimpChinese` 的差异、mode/parent source 暴露形态、TextInputMenuAgent 缓存刷新。
+- 未运行真实 TextEdit/Safari/Clipboard GUI smoke；当前门禁会阻止这些 smoke，因为用户可见菜单仍没有 Inputia。
