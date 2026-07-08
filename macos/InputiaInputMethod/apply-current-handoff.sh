@@ -97,8 +97,26 @@ admin_install_command() {
   echo "sudo /usr/sbin/installer -pkg $(quote "$pkg_path") -target /"
 }
 
+run_admin_installer_with_osascript() {
+  local pkg_path="$1"
+  local install_command
+  install_command="/usr/sbin/installer -pkg $(quote "$pkg_path") -target /"
+  echo "applyCurrentHandoffAdminPromptMode=osascript"
+  if [[ "${INPUTIA_APPLY_ADMIN_OSASCRIPT_FOR_TEST:-0}" == "1" ]]; then
+    echo "applyCurrentHandoffAdminInstallForTest=osascript"
+    return 0
+  fi
+
+  /usr/bin/osascript - "$install_command" <<'APPLESCRIPT'
+on run argv
+  do shell script (item 1 of argv) with administrator privileges
+end run
+APPLESCRIPT
+}
+
 run_admin_installer() {
   local pkg_path="$1"
+  local prompt_mode="${INPUTIA_ADMIN_PROMPT_MODE:-auto}"
 
   if [[ ! -f "$pkg_path" ]]; then
     echo "applyCurrentHandoffReady=false reason=missing-pkg path=$pkg_path"
@@ -120,9 +138,31 @@ run_admin_installer() {
     /usr/bin/printf '%s\n' "$INPUTIA_SUDO_PASSWORD" |
       /usr/bin/sudo -S -p '' /usr/sbin/installer -pkg "$pkg_path" -target /
   elif /usr/bin/sudo -n true >/dev/null 2>&1; then
+    echo "applyCurrentHandoffAdminPromptMode=sudo-noninteractive"
     /usr/bin/sudo -n /usr/sbin/installer -pkg "$pkg_path" -target /
   elif [[ "${INPUTIA_ALLOW_ADMIN_PROMPT:-0}" == "1" ]]; then
-    /usr/bin/sudo /usr/sbin/installer -pkg "$pkg_path" -target /
+    case "$prompt_mode" in
+    sudo)
+      echo "applyCurrentHandoffAdminPromptMode=sudo"
+      /usr/bin/sudo /usr/sbin/installer -pkg "$pkg_path" -target /
+      ;;
+    osascript)
+      run_admin_installer_with_osascript "$pkg_path"
+      ;;
+    auto)
+      if [[ -t 0 ]]; then
+        echo "applyCurrentHandoffAdminPromptMode=sudo"
+        /usr/bin/sudo /usr/sbin/installer -pkg "$pkg_path" -target /
+      else
+        run_admin_installer_with_osascript "$pkg_path"
+      fi
+      ;;
+    *)
+      echo "applyCurrentHandoffReady=false reason=unknown-admin-prompt-mode mode=$prompt_mode"
+      echo "applyCurrentHandoffRequiredAction=rerun-with-admin-prompt"
+      exit 15
+      ;;
+    esac
   else
     echo "applyCurrentHandoffReady=false reason=admin-required"
     echo "applyCurrentHandoffRequiredAction=rerun-with-admin-prompt"
@@ -211,6 +251,30 @@ if [[ "${INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK:-0}" == "1" ]]; then
     echo "applyCurrentHandoffSelfCheckOrder=admin:$admin_line repair:$repair_line await:$await_line final:$final_line passed:$passed_line"
     exit 1
   fi
+  osascript_admin_output="$(
+    INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=0 \
+      INPUTIA_INSTALL_HANDOFF_PATH="$success_handoff" \
+      INPUTIA_ALLOW_ADMIN_PROMPT=1 \
+      INPUTIA_ADMIN_PROMPT_MODE=osascript \
+      INPUTIA_APPLY_ADMIN_OSASCRIPT_FOR_TEST=1 \
+      INPUTIA_APPLY_REPAIR_TIS_FOR_TEST=1 \
+      INPUTIA_APPLY_AWAIT_INSTALL_FOR_TEST=1 \
+      INPUTIA_APPLY_INSTALL_CHECK_FOR_TEST=$'installHandoffCurrent=true\ninstallHandoffBlockReasons=none\ninstallHandoffPackagePath='"$success_pkg"$'\ninstallCheckBlockReasons=system-cdhash-mismatch,tis-duplicate-matches,running-cdhash-mismatch,admin-required\ninstallCheckRequiredAction=admin-install-current-handoff\ninstallCheckRequiredActions=admin-install-current-handoff,run-repair-tis-duplicates,restart-inputia-host-after-install\ninstallCheckPassed=false\n' \
+      INPUTIA_APPLY_AFTER_INSTALL_CHECK_FOR_TEST=$'installHandoffCurrent=true\ninstallHandoffBlockReasons=none\ninstallHandoffPackagePath='"$success_pkg"$'\ninstallCheckBlockReasons=tis-duplicate-matches,running-cdhash-mismatch\ninstallCheckRequiredAction=remove-duplicate-inputia-and-readd-once\ninstallCheckRequiredActions=run-repair-tis-duplicates,restart-inputia-host-after-install\ninstallCheckPassed=false\n' \
+      INPUTIA_APPLY_FINAL_INSTALL_CHECK_FOR_TEST=$'installCheckPassed=true\ninstallCheckRequiredAction=none\ninstallCheckRequiredActions=none\ninstallCheckNextStep=none\n' \
+      INPUTIA_APPLY_FINAL_INSTALL_CHECK_RC_FOR_TEST=0 \
+      "$0" 2>&1
+  )"
+  for marker in \
+    applyCurrentHandoffAdminPromptMode=osascript \
+    applyCurrentHandoffAdminInstallForTest=osascript \
+    applyCurrentHandoffAdminInstallPassed=true \
+    applyCurrentHandoffPassed=true; do
+    if ! /usr/bin/grep -q "^$marker$" <<<"$osascript_admin_output"; then
+      echo "applyCurrentHandoffSelfCheck=false reason=missing-osascript-admin-marker marker=$marker"
+      exit 1
+    fi
+  done
   admin_still_required_output="$(
     INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=0 \
       INPUTIA_INSTALL_HANDOFF_PATH="$success_handoff" \

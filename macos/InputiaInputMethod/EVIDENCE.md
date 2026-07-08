@@ -27976,3 +27976,48 @@ INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/dev-fast.sh
 - 当前源码、build、pkg、handoff 已经对齐到 `a7801f68`。
 - 本机实际系统安装仍是旧 CDHash `ef587ead37d7fc3febad02e950b469b228a531a0`，running host 也是旧 CDHash。
 - 下一步若要切换本机实际运行版，需要显式运行 `INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh`，随后按动作链修复 TIS duplicate 并重启/等待 Host；这一步会触发管理员安装和系统输入源变更，不能混入普通 `dev-fast`。
+
+## 2026-07-09 06:18 CST - apply-current-handoff 非交互管理员授权路径
+
+背景：
+
+- 当前 `install-check.sh` 的下一步是 `apply-current-handoff`，但真实管理员安装仍需要授权。
+- 旧脚本在 `INPUTIA_ALLOW_ADMIN_PROMPT=1` 时直接运行 `sudo /usr/sbin/installer ...`。在 Codex/脚本这类非交互终端里，这可能卡在不可见的 `Password:` 提示上。
+
+实现：
+
+- `apply-current-handoff.sh` 新增 `INPUTIA_ADMIN_PROMPT_MODE=sudo|osascript|auto`。
+- `auto` 模式下：
+  - 交互 TTY 继续使用 `sudo`。
+  - 非交互环境改用 `osascript` 的 `do shell script ... with administrator privileges`，让 macOS 弹出管理员授权窗口。
+- 新增 `INPUTIA_APPLY_ADMIN_OSASCRIPT_FOR_TEST=1` test-only 分支，覆盖非交互管理员弹窗路径，不做真实安装。
+- `validation-policy-self-check.sh` 锁住 `INPUTIA_ADMIN_PROMPT_MODE`、osascript 授权语句和 test-only marker。
+
+验证：
+
+```text
+zsh -n macos/InputiaInputMethod/apply-current-handoff.sh
+  rc=0
+
+INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=1 ./macos/InputiaInputMethod/apply-current-handoff.sh
+  applyCurrentHandoffSelfCheck=true
+
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+
+INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/dev-fast.sh
+  validationTier=dev-fast
+  touchesMenuBar=false
+  opensGUI=false
+  changesSystemInputSource=false
+  checksNotarization=false
+  devFastPassed=true
+
+git diff --check
+  rc=0
+```
+
+结论：
+
+- 真实安装仍必须显式进入 `install-apply` 层；普通 `dev-fast` 不会运行该路径。
+- 当显式允许管理员提示且当前没有交互 TTY 时，脚本有 GUI 授权路径，不再默认把 Codex 终端挂在 sudo 密码输入上。
