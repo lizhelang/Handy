@@ -74,5 +74,8 @@ INPUTIA_RIME_SHARED_DATA_DIR="$HOST_APP/Contents/Resources/RimeData" \
   run_rust cargo run --manifest-path "$REPO_ROOT/crates/inputia-rime/Cargo.toml" \
     --example rime_probe -- double_pinyin nillem
 
+section "rime latency self-check"
+"$ROOT_DIR/rime-latency-self-check.sh"
+
 section "result"
 echo "devFastPassed=true"

@@ -22,6 +22,7 @@ def require(condition: bool, reason: str) -> None:
 
 
 dev_fast = read("dev-fast.sh")
+rime_latency = read("rime-latency-self-check.sh")
 verify_nongui = read("verify-nongui.sh")
 install_check = read("install-check.sh")
 full_check = read("release/full-check.sh")
@@ -38,6 +39,7 @@ require('opensGUI=false' in dev_fast, "dev-fast-missing-gui-policy")
 require('changesSystemInputSource=false' in dev_fast, "dev-fast-missing-input-source-policy")
 require('checksNotarization=false' in dev_fast, "dev-fast-missing-notarization-policy")
 require('"$ROOT_DIR/validation-policy-self-check.sh"' in dev_fast, "dev-fast-missing-policy-self-check")
+require('"$ROOT_DIR/rime-latency-self-check.sh"' in dev_fast, "dev-fast-missing-rime-latency-self-check")
 for forbidden in [
     "menu-readiness.sh",
     "gui-smoke-readiness.sh",
@@ -96,6 +98,15 @@ require('INPUTIA_TIS_INCLUDE_MENU_READINESS:-0' in tis, "tis-missing-menu-includ
 
 require('INPUTIA_RUN_UI_SMOKE:-0' in post_install, "post-install-missing-ui-smoke-gate")
 require('uiSmokeSkipped=true reason=disabled' in post_install, "post-install-missing-default-skip-marker")
+
+require('rimeLatencyTouchesMenuBar=false' in rime_latency, "rime-latency-missing-menu-policy")
+require('rimeLatencyOpensGUI=false' in rime_latency, "rime-latency-missing-gui-policy")
+require('rimeLatencyChangesSystemInputSource=false' in rime_latency, "rime-latency-missing-input-source-policy")
+require('rimeLatencyChecksNotarization=false' in rime_latency, "rime-latency-missing-notarization-policy")
+require('persistent_session_probe' in rime_latency, "rime-latency-missing-persistent-probe")
+require('rimeLatencySelfCheck=true' in rime_latency, "rime-latency-missing-pass-marker")
+require('INPUTIA_RIME_LATENCY_MAX_INCREMENTAL_MS' in rime_latency, "rime-latency-missing-threshold-override")
+require('INPUTIA_RIME_LATENCY_MIN_SPEEDUP' in rime_latency, "rime-latency-missing-speedup-override")
 
 require('INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK:-0' in gui_readiness, "gui-readiness-missing-opt-in")
 require('guiSmokeReadinessOptInRequired=true' in gui_readiness, "gui-readiness-missing-opt-in-marker")
