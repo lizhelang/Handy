@@ -248,6 +248,9 @@ echo "tis.hitoolboxDefaultsReadable=$hitoolbox_defaults_ok"
 if [[ "$app_exists" != "true" ]]; then
   echo "tis.readinessBlockReason=app-missing"
   echo "tis.requiredAction=install-inputia-app"
+  if [[ "$user_dir_ready" != "true" || "$hitoolbox_defaults_ok" != "true" ]]; then
+    echo "tis.environmentRequiredAction=repair-current-user-directory-service"
+  fi
   echo "tisReadiness=false"
 elif [[ "$signature_accepted" != "true" ]]; then
   echo "tis.readinessBlockReason=signature-rejected"

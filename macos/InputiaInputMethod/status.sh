@@ -152,10 +152,12 @@ except KeyError:
     print("statusCurrentUserName=unknown")
     print("statusUserDirectoryReady=false")
     print("statusUserDirectoryBlockReason=missing-passwd-record")
+    print("statusUserDirectoryRequiredAction=repair-current-user-directory-service")
 else:
     print(f"statusCurrentUserName={record.pw_name}")
     print("statusUserDirectoryReady=true")
     print("statusUserDirectoryBlockReason=none")
+    print("statusUserDirectoryRequiredAction=none")
 PY
 }
 
@@ -610,6 +612,9 @@ echo "statusTISCurrentMatchesTarget=$tis_current_matches_target"
 echo "statusSignatureAccepted=$target_signature_accepted"
 if [[ "$target_exists" == "true" && "$target_signature_accepted" != "true" ]]; then
   echo "statusSigningRequiredAction=sign-with-accepted-identity"
+fi
+if [[ "$user_directory_ready" != "true" ]]; then
+  echo "statusEnvironmentRequiredAction=repair-current-user-directory-service"
 fi
 echo "statusMenuReadiness=$menu_readiness"
 echo "statusMenuBlockReason=$menu_block_reason"

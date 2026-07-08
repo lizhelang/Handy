@@ -26032,3 +26032,212 @@ INPUTIA_GUI_SMOKE_READINESS_SELF_CHECK=1 ./macos/InputiaInputMethod/gui-smoke-re
 - Mac mini 已进入 MacBook 对照确认的本地开发 Gatekeeper-disabled 路径；`spctl` 签名 blocker 已不是当前 blocker。
 - 当前不能声称安装成功：系统目标 app 不存在，用户级残留也不存在；标准系统安装入口被当前 UID 501 缺少 passwd 记录挡住。
 - 下一步不是运行 GUI smoke，也不是继续 notarization；应先修复当前登录会话/目录服务，让 `whoami`、`pwd.getpwuid(501)`、`sudo`、`launchctl print gui/501` 恢复正常，然后再重新跑 `install-system.sh`、`status.sh`、`tis-readiness.sh`。
+
+## v66 Mac mini：用户级安装恢复稳定，等待系统设置手动添加/选中 Inputia
+
+时间：2026-07-08 17:08:00 +0800
+
+背景：
+
+- 复核发现后台 `verify-nongui.sh` 残留会执行安装/卸载自检并清理用户级 app，导致上一轮一度看到用户级 bundle 消失。
+- 已停止后台 verifier/smoke/build 进程后，重新走用户级安装主路径。
+- 本轮只做终端验证和只读 readiness，不运行 TextEdit/Safari/Clipboard GUI smoke。
+
+安装与注册：
+
+```text
+./macos/InputiaInputMethod/install-user.sh
+  installRc=0
+  watchSecond=0..5 userApp=present
+  userInstallBuild=true
+  registerStatus=0
+  userInstallVerified=true
+  userInstallTISReady=false
+  userInstallRequiredAction=add-input-source-in-system-settings
+  userInstallPath=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  userInstallRegistered=true
+  userInstallSystemResiduePresent=false
+  settingsLauncherInstalled=/Users/minizl/Applications/Inputia 设置.app
+```
+
+当前终端状态：
+
+```text
+./macos/InputiaInputMethod/status.sh
+  system host exists=false
+  user host exists=true
+  userMatchesBuild=true
+  userHostConflict=false
+  targetPath=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  targetScope=user
+  targetExists=true
+  targetMatchesBuild=true
+  targetSettingsMatchesBuildVersion=true
+  statusTISCurrentID=com.tencent.inputmethod.wetype.pinyin
+  statusTISCurrentMatchesTarget=false
+  statusMenuReadiness=false
+  statusMenuBlockReason=inputia-menu-item-missing
+  statusTextEditPreflight=not-running
+  statusSafariPreflight=not-running
+  statusInputiaHostPreflight=not-running
+  statusGuiSmokeReady=false reason=tis-not-ready,menu-inputia-menu-item-missing
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  appExists=true
+  appMatchesBuild=true
+  appSignatureAccepted=true
+  tis.targetEnabledMatches=2
+  tis.hansIconMatchesApp=true
+  tis.currentID=com.tencent.inputmethod.wetype.pinyin
+  tis.currentMatchesTarget=false
+  tis.readinessBlockReason=target-not-selected
+  tis.requiredAction=select-inputia-after-manual-add
+  tisReadiness=false
+
+./macos/InputiaInputMethod/gui-smoke-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  target.exists=true
+  target.matchesBuild=true
+  settings.matchesBuild=true
+  tis.blockReason=target-not-selected
+  textEditPreflight=not-running
+  safariPreflight=not-running
+  inputiaHostPreflight=not-running
+  guiSmokeReadinessReady=false reason=tis-not-ready
+```
+
+结论：
+
+- 用户级 Inputia bundle 当前稳定存在并匹配 build；系统级重复安装不存在。
+- 当前输入源仍是微信输入法，菜单栏还没有 Inputia；这符合“尚未通过系统设置手动 Add/Select Inputia”的状态。
+- 在用户通过 System Settings → Keyboard → Text Input → Edit → Add Inputia 并选中 Inputia 之前，不运行真实 GUI smoke。
+
+## v67 Mac mini：目录服务阻塞继续存在，readiness 增加环境修复动作
+
+时间：2026-07-08 17:08:30 +0800
+
+本轮只读复核：
+
+```text
+whoami
+  501
+
+id
+  uid=501 gid=20(staff) groups=20(staff),...,80(admin),...
+
+python pwd/getpass
+  uid=501
+  home=/Users/minizl
+  getpass=lizhelang
+  pwd.getpwuid(501)=KeyError: uid not found
+  pwd.getpwnam(minizl)=KeyError
+  pwd.getpwnam(lizhelang)=KeyError
+
+dscacheutil -q user -a uid 501
+  no user record
+
+sudo -n true
+  sudo: you do not exist in the passwd database
+  sudo_rc=1
+
+launchctl managername
+  Could not get manager name.
+  manager_rc=153
+
+launchctl print gui/501
+  Could not print domain: 141: Reentrancy avoided
+
+pgrep -fl verify-nongui
+  sysmon request failed with error: sysmond service not found
+  pgrep: Cannot get process list
+```
+
+当前安装/readiness：
+
+```text
+存在性检查
+  exists=false path=/Library/Input Methods/InputiaInputMethod.app
+  exists=true path=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  exists=true path=/Users/minizl/Applications/Inputia 设置.app
+
+./macos/InputiaInputMethod/status.sh
+  statusCurrentUID=501
+  statusCurrentUserName=unknown
+  statusUserDirectoryReady=false
+  statusUserDirectoryBlockReason=missing-passwd-record
+  statusUserDirectoryRequiredAction=repair-current-user-directory-service
+  statusTargetPath=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  statusTargetExists=true
+  statusTargetMatchesBuild=true
+  statusEnvironmentRequiredAction=repair-current-user-directory-service
+  statusGuiSmokeBlockReasons=tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,gui-bootstrap-unavailable
+  statusGuiSmokeReady=false reason=tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,gui-bootstrap-unavailable
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  appExists=true
+  appSignatureAccepted=true
+  appMatchesBuild=true
+  tis.targetEnabledMatches=0
+  tis.currentID=com.apple.keylayout.ABC
+  tis.currentMatchesTarget=false
+  tis.userDirectoryReady=false
+  tis.hitoolboxDefaultsReadable=false
+  tis.readinessBlockReason=missing-enabled-source
+  tis.requiredAction=repair-current-user-directory-service
+  tisReadiness=false
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  appExists=false
+  appSignatureAccepted=false
+  appMatchesBuild=false
+  tis.userDirectoryReady=false
+  tis.hitoolboxDefaultsReadable=false
+  tis.readinessBlockReason=app-missing
+  tis.requiredAction=install-inputia-app
+  tis.environmentRequiredAction=repair-current-user-directory-service
+  tisReadiness=false
+
+./macos/InputiaInputMethod/gui-smoke-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  target.exists=true
+  target.matchesBuild=true
+  tis.blockReason=missing-enabled-source
+  textEditPreflight=not-running
+  safariPreflight=not-running
+  inputiaHostPreflight=not-running
+  guiSmokeReadinessBlockReasons=tis-not-ready,gui-bootstrap-unavailable
+  guiSmokeReadinessReady=false reason=tis-not-ready
+```
+
+脚本修正：
+
+- `status.sh` 增加：
+  - `statusUserDirectoryRequiredAction=repair-current-user-directory-service`
+  - `statusEnvironmentRequiredAction=repair-current-user-directory-service`
+- `tis-readiness.sh` 在目标 app 缺失但当前用户目录/HIToolbox 不可用时额外输出：
+  - `tis.environmentRequiredAction=repair-current-user-directory-service`
+- `verify-nongui.sh` 增加这些字段的防回退静态断言。
+
+验证：
+
+```text
+bash -n macos/InputiaInputMethod/tis-readiness.sh macos/InputiaInputMethod/verify-nongui.sh
+  ok
+
+zsh -n macos/InputiaInputMethod/status.sh
+  ok
+
+INPUTIA_VERIFY_ALLOW_USER_HOST_BASELINE=1 INPUTIA_PROCESS_WAIT_TICKS=100 ./macos/InputiaInputMethod/verify-nongui.sh
+  /tmp/inputia-verify-nongui-20260708-170552-user-baseline.log
+  awaitUiNotReadyNoLaunchPassed=true
+  installNoPrompt.rc=13
+  installNoPrompt: systemInstallRequiredAction=repair-current-user-directory-service
+  installNoPrompt: systemInstallBlockReason=missing-passwd-record
+  residue=false
+  tmpResidue=false
+  nonGuiVerificationPassed=true
+```
+
+结论：
+
+- 用户级 Inputia app 当前存在且匹配 build，但 TIS 仍未启用/选中，菜单 readiness 仍不可用。
+- 系统级安装仍被当前 UID 501 缺失 passwd 记录阻断；这也解释了 `sudo`、Git SSH push、HIToolbox 用户域和 GUI bootstrap 同时异常。
+- 真实 TextEdit/Safari/Clipboard GUI smoke 仍不得运行；下一步先修复 Mac mini 登录会话/目录服务，再重新安装/注册/选择 Inputia。
