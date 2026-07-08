@@ -63,9 +63,10 @@ impl InputiaSettings {
     }
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
         let content = std::fs::read_to_string(path)?;
         let mut settings: Self = serde_json::from_str(&content)?;
-        settings.sanitize();
+        settings.sanitize_for_settings_path(path);
         Ok(settings)
     }
 
@@ -101,6 +102,17 @@ impl InputiaSettings {
         self.candidate_page_size = self.candidate_page_size.clamp(1, 9);
         if self.sensitive_bundle_ids.is_empty() {
             self.sensitive_bundle_ids = default_sensitive_bundle_ids();
+        }
+    }
+
+    pub fn sanitize_for_settings_path(&mut self, path: &Path) {
+        self.sanitize();
+        let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
+        if self.rime_user_data_dir.is_none() {
+            self.rime_user_data_dir = Some(base_dir.join("rime"));
+        }
+        if self.memory_db_path.is_none() {
+            self.memory_db_path = Some(base_dir.join("inputia_memory.db"));
         }
     }
 }
@@ -260,6 +272,34 @@ mod tests {
             .sensitive_bundle_ids
             .iter()
             .any(|bundle_id| bundle_id == "com.1password.1password"));
+        assert_eq!(settings.rime_user_data_dir, Some(temp.path().join("rime")));
+        assert_eq!(
+            settings.memory_db_path,
+            Some(temp.path().join("inputia_memory.db"))
+        );
+    }
+
+    #[test]
+    fn load_backfills_local_default_paths_for_legacy_settings() {
+        let temp = tempfile::tempdir().unwrap();
+        let settings_path = temp.path().join("settings.json");
+        std::fs::write(
+            &settings_path,
+            r#"{
+              "schema_id": "double_pinyin",
+              "memory_enabled": false
+            }"#,
+        )
+        .unwrap();
+
+        let settings = InputiaSettings::load(&settings_path).unwrap();
+
+        assert_eq!(settings.schema_id, "double_pinyin");
+        assert_eq!(settings.rime_user_data_dir, Some(temp.path().join("rime")));
+        assert_eq!(
+            settings.memory_db_path,
+            Some(temp.path().join("inputia_memory.db"))
+        );
     }
 
     #[test]

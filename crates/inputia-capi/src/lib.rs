@@ -1668,6 +1668,59 @@ mod tests {
     }
 
     #[test]
+    fn capi_backfills_legacy_settings_paths_and_shared_data_fallback() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        if bundled_shared_data_dir().is_none() {
+            eprintln!("skip: Inputia bundled RimeData is not available");
+            return;
+        }
+
+        let legacy_root = std::env::temp_dir().join(format!(
+            "inputia-capi-legacy-settings-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let settings_path = legacy_root.join("settings.json");
+        std::fs::create_dir_all(&legacy_root).unwrap();
+        std::fs::write(
+            &settings_path,
+            format!(
+                r#"{{
+                  "schema_id": "double_pinyin",
+                  "candidate_page_size": 7,
+                  "memory_enabled": false,
+                  "rime_shared_data_dir": "{}"
+                }}"#,
+                legacy_root.join("missing-rime-data").display()
+            ),
+        )
+        .unwrap();
+        let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
+        let session = inputia_session_new_from_settings(settings_path.as_ptr());
+        if session.is_null() {
+            eprintln!("skip: Squirrel librime runtime is not available");
+            return;
+        }
+
+        assert_eq!(
+            handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
+            "Chinese"
+        );
+
+        let mut latest = serde_json::Value::Null;
+        for ch in "nillem".chars() {
+            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+        }
+        assert_eq!(latest["visible_candidates"][0]["text"], "你来");
+        assert_eq!(latest["visible_candidates"].as_array().unwrap().len(), 7);
+
+        inputia_session_free(session);
+    }
+
+    #[test]
     fn capi_loads_full_width_setting_from_settings_file() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
