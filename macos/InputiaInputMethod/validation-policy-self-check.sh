@@ -33,6 +33,7 @@ settings_launcher_self_check = read("settings-launcher-build-self-check.sh")
 full_check = read("release/full-check.sh")
 candidate_panel = read("Sources/InputiaInputMethod/InputiaCandidatePanel.swift")
 candidate_panel_self_check = read("Tools/InputiaCandidatePanelSelfCheck.swift")
+settings_window_self_check = read("Tools/InputiaSettingsWindowSelfCheck.swift")
 menu_readiness = read("menu-readiness.sh")
 gui_readiness = read("gui-smoke-readiness.sh")
 gui_suite = read("gui-smoke-suite.sh")
@@ -49,6 +50,13 @@ require('"$ROOT_DIR/validation-policy-self-check.sh"' in dev_fast, "dev-fast-mis
 require('"$ROOT_DIR/rime-latency-self-check.sh"' in dev_fast, "dev-fast-missing-rime-latency-self-check")
 require('"$ROOT_DIR/settings-launcher-build-self-check.sh"' in dev_fast, "dev-fast-missing-settings-launcher-build-self-check")
 require('"$ROOT_DIR/build/inputia-candidate-panel-self-check"' in dev_fast, "dev-fast-missing-candidate-panel-self-check")
+require('"$ROOT_DIR/build/inputia-settings-window-self-check"' in dev_fast, "dev-fast-missing-settings-window-self-check")
+require('settingsWindowSelfCheck=\\(ok)' in settings_window_self_check, "settings-window-self-check-missing-pass-marker")
+require('settingsWindowSchemaCount=\\(inputiaSchemaOptions.count)' in settings_window_self_check, "settings-window-self-check-missing-schema-count")
+require('settingsWindowDefaultCandidateCount=\\(inputiaSettingsDefaultCandidatePageSize)' in settings_window_self_check, "settings-window-self-check-missing-candidate-count-output")
+require('settingsWindowHasGuobiaoBispell' in settings_window_self_check, "settings-window-self-check-missing-guobiao-assertion")
+require('settingsWindowHasSogouDoublePinyin' in settings_window_self_check, "settings-window-self-check-missing-sogou-assertion")
+require('settingsWindowTitleHasNoSimplifiedSuffix' in settings_window_self_check, "settings-window-self-check-missing-title-assertion")
 for forbidden in [
     "menu-readiness.sh",
     "gui-smoke-readiness.sh",

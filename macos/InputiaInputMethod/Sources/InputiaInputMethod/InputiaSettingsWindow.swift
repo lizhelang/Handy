@@ -1,16 +1,22 @@
 import AppKit
 
-private struct InputiaSchemaOption {
+struct InputiaSchemaOption {
   let title: String
   let schemaId: String
 }
 
-private struct InputiaShortcutOption {
+struct InputiaShortcutOption {
   let title: String
   let value: String
 }
 
-private let inputiaSchemaOptions = [
+let inputiaSettingsProductTitle = "Inputia"
+let inputiaSettingsWindowTitle = "Inputia 设置"
+let inputiaSettingsDefaultCandidatePageSize = 7
+let inputiaSettingsMinCandidatePageSize = 1
+let inputiaSettingsMaxCandidatePageSize = 9
+
+let inputiaSchemaOptions = [
   InputiaSchemaOption(title: "中文全拼", schemaId: "luna_pinyin_simp"),
   InputiaSchemaOption(title: "自然码双拼", schemaId: "double_pinyin"),
   InputiaSchemaOption(title: "小鹤双拼", schemaId: "double_pinyin_flypy"),
@@ -22,18 +28,28 @@ private let inputiaSchemaOptions = [
   InputiaSchemaOption(title: "四通双拼", schemaId: "double_pinyin_st"),
 ]
 
-private let inputiaInputModeShortcutOptions = [
+let inputiaInputModeShortcutOptions = [
   InputiaShortcutOption(title: "Shift", value: "shift"),
   InputiaShortcutOption(title: "Control + Space", value: "control_space"),
   InputiaShortcutOption(title: "关闭", value: "none"),
 ]
 
-private let inputiaScriptShortcutOptions = [
+let inputiaScriptShortcutOptions = [
   InputiaShortcutOption(title: "Control + Shift + S", value: "control_shift_s"),
   InputiaShortcutOption(title: "关闭", value: "none"),
 ]
 
-private func inputiaSchemaSupportsSpellingCorrection(_ schemaId: String) -> Bool {
+let inputiaDefaultSensitiveBundleIds = [
+  "com.1password.1password",
+  "com.agilebits.onepassword7",
+  "com.apple.Safari.PrivateBrowsing",
+  "com.apple.SecurityAgent",
+  "com.bitwarden.desktop",
+  "com.lastpass.LastPass",
+  "com.protonmail.protonmail",
+]
+
+func inputiaSchemaSupportsSpellingCorrection(_ schemaId: String) -> Bool {
   [
     "luna_pinyin",
     "luna_pinyin_simp",
@@ -43,7 +59,7 @@ private func inputiaSchemaSupportsSpellingCorrection(_ schemaId: String) -> Bool
   ].contains(schemaId)
 }
 
-private struct InputiaSettingsDocument: Codable {
+struct InputiaSettingsDocument: Codable {
   var schemaId: String
   var candidatePageSize: Int
   var shiftToggleEnabled: Bool
@@ -84,7 +100,7 @@ private struct InputiaSettingsDocument: Codable {
     let baseURL = settingsURL.deletingLastPathComponent()
     return InputiaSettingsDocument(
       schemaId: "luna_pinyin_simp",
-      candidatePageSize: 7,
+      candidatePageSize: inputiaSettingsDefaultCandidatePageSize,
       shiftToggleEnabled: true,
       inputModeToggleShortcut: "shift",
       chineseScript: "simplified",
@@ -94,15 +110,7 @@ private struct InputiaSettingsDocument: Codable {
       spellingCorrectionEnabled: true,
       memoryEnabled: true,
       privacyLearningEnabled: true,
-      sensitiveBundleIds: [
-        "com.1password.1password",
-        "com.agilebits.onepassword7",
-        "com.apple.Safari.PrivateBrowsing",
-        "com.apple.SecurityAgent",
-        "com.bitwarden.desktop",
-        "com.lastpass.LastPass",
-        "com.protonmail.protonmail",
-      ],
+      sensitiveBundleIds: inputiaDefaultSensitiveBundleIds,
       rimeDylibPath: nil,
       rimeSharedDataDir: Self.bundledRimeDataPath(),
       rimeUserDataDir: baseURL.appendingPathComponent("rime", isDirectory: true).path,
@@ -114,7 +122,10 @@ private struct InputiaSettingsDocument: Codable {
     if schemaId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
       schemaId = "luna_pinyin_simp"
     }
-    candidatePageSize = max(1, min(candidatePageSize, 9))
+    candidatePageSize = max(
+      inputiaSettingsMinCandidatePageSize,
+      min(candidatePageSize, inputiaSettingsMaxCandidatePageSize)
+    )
     if inputModeToggleShortcut == nil {
       inputModeToggleShortcut = shiftToggleEnabled ? "shift" : "none"
     }
@@ -196,7 +207,7 @@ final class InputiaSettingsWindowController: NSWindowController {
       backing: .buffered,
       defer: false
     )
-    window.title = "Inputia 设置"
+    window.title = inputiaSettingsWindowTitle
     window.minSize = NSSize(width: 620, height: 700)
     window.center()
     super.init(window: window)
@@ -252,7 +263,7 @@ final class InputiaSettingsWindowController: NSWindowController {
     let contentView = NSView()
     contentView.translatesAutoresizingMaskIntoConstraints = false
 
-    let title = NSTextField(labelWithString: "Inputia")
+    let title = NSTextField(labelWithString: inputiaSettingsProductTitle)
     title.font = .systemFont(ofSize: 24, weight: .semibold)
 
     let subtitle = NSTextField(labelWithString: "输入、语音、剪贴板")
@@ -343,8 +354,8 @@ final class InputiaSettingsWindowController: NSWindowController {
   }
 
   private func makeCandidateRow() -> NSView {
-    candidateStepper.minValue = 1
-    candidateStepper.maxValue = 9
+    candidateStepper.minValue = Double(inputiaSettingsMinCandidatePageSize)
+    candidateStepper.maxValue = Double(inputiaSettingsMaxCandidatePageSize)
     candidateStepper.increment = 1
     candidateStepper.target = self
     candidateStepper.action = #selector(candidateStepperChanged)

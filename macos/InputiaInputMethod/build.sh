@@ -200,6 +200,16 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   -o "$BUILD_DIR/inputia-candidate-panel-self-check"
 
 /usr/bin/swiftc \
+  "$ROOT_DIR/Tools/InputiaSettingsWindowSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsWindow.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
+  "$CAPI_LIB" \
+  -target "$TARGET_TRIPLE" \
+  -framework AppKit \
+  -o "$BUILD_DIR/inputia-settings-window-self-check"
+
+/usr/bin/swiftc \
   "$ROOT_DIR/Tools/InputiaBridgePrivacySelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "$CAPI_LIB" \
