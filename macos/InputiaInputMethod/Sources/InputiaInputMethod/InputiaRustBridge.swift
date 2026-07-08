@@ -177,6 +177,12 @@ struct InputiaSettingsReloadSelfCheckResult {
   let changedReloaded: Bool
 }
 
+struct InputiaSegmentedPhraseSelfCheckResult {
+  let beforeSelection: InputiaBridgeOutcome
+  let selectedSingle: InputiaBridgeOutcome
+  let singleCandidateIndex: Int?
+}
+
 final class InputiaRustBridge {
   static let shared = InputiaRustBridge(settingsPath: defaultSettingsPath())
 
@@ -252,6 +258,22 @@ final class InputiaRustBridge {
       punctuationPreference: "english_in_chinese",
       candidatePageSize: defaultCandidatePageSize,
       chineseScript: safeScript,
+      rimeUserDataDir: root.appendingPathComponent("rime", isDirectory: true).path,
+      to: settingsPath
+    )
+    return InputiaRustBridge(settingsPath: settingsPath)
+  }
+
+  static func temporarySettingsForDiagnostics(schemaId: String) -> InputiaRustBridge {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("InputiaSettingsSelfCheck-\(ProcessInfo.processInfo.processIdentifier)-\(schemaId)", isDirectory: true)
+    let settingsPath = root.appendingPathComponent("settings-\(schemaId).json").path
+    writeSettings(
+      shiftToggleEnabled: true,
+      punctuationPreference: "english_in_chinese",
+      candidatePageSize: defaultCandidatePageSize,
+      schemaId: schemaId,
+      spellingCorrectionEnabled: false,
       rimeUserDataDir: root.appendingPathComponent("rime", isDirectory: true).path,
       to: settingsPath
     )
@@ -479,6 +501,21 @@ final class InputiaRustBridge {
       outcome = handle(character: character)
     }
     return outcome
+  }
+
+  func debugSegmentedPhraseSelfCheck() -> InputiaSegmentedPhraseSelfCheckResult {
+    _ = setChineseMode()
+    var outcome = latestOutcome
+    for character in "nillem" {
+      outcome = handle(character: character)
+    }
+    let singleIndex = outcome.candidates.firstIndex(of: "你")
+    let selected = singleIndex.map { chooseCandidate(atZeroBasedIndex: $0) } ?? .error
+    return InputiaSegmentedPhraseSelfCheckResult(
+      beforeSelection: outcome,
+      selectedSingle: selected,
+      singleCandidateIndex: singleIndex
+    )
   }
 
   func debugMemorySelfCheck() -> [InputiaBridgeOutcome] {
@@ -991,6 +1028,8 @@ final class InputiaRustBridge {
     candidatePageSize: Int,
     characterWidthPreference: String = "half_width",
     chineseScript: String = "simplified",
+    schemaId: String = "luna_pinyin_simp",
+    spellingCorrectionEnabled: Bool = true,
     rimeUserDataDir: String? = nil,
     to path: String
   ) {
@@ -1011,11 +1050,11 @@ final class InputiaRustBridge {
       "punctuation_preference": punctuationPreference,
       "rime_user_data_dir": rimeUserDataDir
         ?? url.deletingLastPathComponent().appendingPathComponent("rime").path,
-      "schema_id": "luna_pinyin_simp",
+      "schema_id": schemaId,
       "script_toggle_shortcut": "control_shift_s",
       "sensitive_bundle_ids": Self.defaultSensitiveBundleIds,
       "shift_toggle_enabled": shortcut == "shift",
-      "spelling_correction_enabled": true,
+      "spelling_correction_enabled": spellingCorrectionEnabled,
     ]
     if let bundledRimeDataPath {
       dictionary["rime_shared_data_dir"] = bundledRimeDataPath

@@ -68,6 +68,8 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 
 其中 `inputia-candidate-panel-self-check` 会在不打开候选窗的情况下验证候选窗格式化：默认横向单行，展开态按候选换行，第 7 个候选可见，并且最多显示 9 个候选。
 
+其中 `--bridge-direct-session-self-check` 会额外用临时 `double_pinyin` settings session 验证长串双拼组合的短语候选排在单字前面，并验证选择单字后剩余 composition 和候选继续保留，避免把这类问题误归到 GUI 候选窗。
+
 `dev-fast.sh` 还会运行 `rime-latency-self-check.sh`，用 `persistent_session_probe` 比较冷 evaluate 和持久增量 session 的同一输入前缀。默认只做非 GUI、非系统输入源的宽松性能防回退；阈值可用 `INPUTIA_RIME_LATENCY_MAX_INCREMENTAL_MS` 和 `INPUTIA_RIME_LATENCY_MIN_SPEEDUP` 覆盖。
 
 `dev-fast.sh` 也会跑安装链路纯逻辑自检：`INPUTIA_INSTALL_CHECK_SELF_CHECK=1 install-check.sh`、`INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=1 apply-current-handoff.sh`、`INPUTIA_REPAIR_TIS_DUPLICATES_SELF_CHECK=1 repair-tis-duplicates.sh`。这些模式不读取 `/Library`、不查 TIS、不找 running host，也不会改系统输入源；只覆盖 `installCheckBlockReasons` / `installCheckRequiredAction`、安装交接清单 freshness、`installCheckRequiredActions` 到命令提示映射，以及管理员安装/修复 TIS duplicate 的动作链门禁。

@@ -27260,3 +27260,50 @@ INPUTIA_GUI_SMOKE_SUITE_SELF_CHECK=1 ./macos/InputiaInputMethod/gui-smoke-suite.
 - 内部 TIS dump 能看到并启用 Inputia，不等于 TextInputMenuAgent / System Settings 用户可见层能展示 Inputia。
 - 下一步应继续查 plist metadata / 注册缓存刷新方向，重点包括 `tsInputModeScriptKey=smUnicodeScript` 与 WeType `smSimpChinese` 的差异、mode/parent source 暴露形态、TextInputMenuAgent 缓存刷新。
 - 未运行真实 TextEdit/Safari/Clipboard GUI smoke；当前门禁会阻止这些 smoke，因为用户可见菜单仍没有 Inputia。
+
+## 2026-07-09 04:03 CST - Swift bridge 锁住双拼长串候选与部分选词续组词
+
+背景：
+
+- 用户此前反馈长串中文输入时，候选不应被单字压到第一位；如果先选择一个单字，剩余输入也应该继续留在 composition 中继续选词，不能整串消失。
+- Core / CAPI / Rime 层已有相关测试，但 Host 真实走的是 Swift `InputiaRustBridge`，需要在非 GUI 层直接证明 bridge 也拿到同样语义。
+- 当前系统安装态仍未切到最新 build；本轮只做 build 产物级自检，不打开菜单栏、不打开 GUI、不改系统输入源。
+
+实现：
+
+- `--bridge-direct-session-self-check` 保留原来的候选数量检查。
+- 新增一个临时 `double_pinyin` settings session，输入 `nillem` 后检查：
+  - 首候选是短语而不是单字；
+  - 单字 `你` 不在第 1 位；
+  - 选择 `你` 后没有最终 commit；
+  - composition 仍保留为 `你laiem`；
+  - 剩余候选继续给出 `来`。
+- `validation-policy-self-check.sh` 增加静态约束，防止以后删除这些 bridge 诊断输出。
+
+验证：
+
+```text
+rustup run 1.96.0 ./macos/InputiaInputMethod/build.sh
+  build succeeded
+
+./macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInputMethod --bridge-direct-session-self-check
+  bridgeDirectSessionSelfCheck=true
+  candidateCount=7
+  firstCandidate=你
+  segmentedPhraseFirstCandidate=你来
+  segmentedPhraseCandidateCount=7
+  segmentedSingleCandidateIndex=1
+  segmentedSingleSelectionComposing=你laiem
+  segmentedSingleSelectionFirstCandidate=来
+  segmentedPhrasePreferred=true
+  segmentedSingleSelectionKeepsRemaining=true
+
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+```
+
+结论：
+
+- 对 `double_pinyin + nillem`，Inputia bridge 现在明确证明“短语候选先于单字候选”。
+- 选择单字候选后，bridge 不会把整串输入清掉，而是保留剩余 composition 并继续返回候选。
+- 这仍不替代真实系统安装/GUI smoke；系统态仍需后续 admin 安装链路解决。

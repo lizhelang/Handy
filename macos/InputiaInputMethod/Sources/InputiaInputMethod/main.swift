@@ -1332,9 +1332,28 @@ final class InputiaInputMethodDiagnostics {
   private func bridgeDirectSessionSelfCheck() {
     let bridge = InputiaRustBridge.temporaryDirectForDiagnostics()
     let outcome = bridge.debugCandidatePageSizeSelfCheck()
-    print("bridgeDirectSessionSelfCheck=\(outcome.ok && outcome.candidates.count == 7)")
+    let segmentedBridge = InputiaRustBridge.temporarySettingsForDiagnostics(schemaId: "double_pinyin")
+    let segmented = segmentedBridge.debugSegmentedPhraseSelfCheck()
+    let segmentedFirst = segmented.beforeSelection.candidates.first ?? ""
+    let segmentedPhrasePreferred = segmented.beforeSelection.ok
+      && segmentedFirst.count > 1
+      && segmentedFirst != "你"
+    let singleSelectionKeepsRemaining = segmented.selectedSingle.ok
+      && segmented.selectedSingle.commit == nil
+      && !segmented.selectedSingle.composing.isEmpty
+      && !(segmented.selectedSingle.candidates.first ?? "").isEmpty
+    print(
+      "bridgeDirectSessionSelfCheck=\(outcome.ok && outcome.candidates.count == 7 && segmentedPhrasePreferred && singleSelectionKeepsRemaining)"
+    )
     print("candidateCount=\(outcome.candidates.count)")
     print("firstCandidate=\(outcome.candidates.first ?? "")")
+    print("segmentedPhraseFirstCandidate=\(segmentedFirst)")
+    print("segmentedPhraseCandidateCount=\(segmented.beforeSelection.candidates.count)")
+    print("segmentedSingleCandidateIndex=\(segmented.singleCandidateIndex.map { String($0) } ?? "missing")")
+    print("segmentedSingleSelectionComposing=\(segmented.selectedSingle.composing)")
+    print("segmentedSingleSelectionFirstCandidate=\(segmented.selectedSingle.candidates.first ?? "")")
+    print("segmentedPhrasePreferred=\(segmentedPhrasePreferred)")
+    print("segmentedSingleSelectionKeepsRemaining=\(singleSelectionKeepsRemaining)")
   }
 
   private func hostShortcutSelfCheck() {
