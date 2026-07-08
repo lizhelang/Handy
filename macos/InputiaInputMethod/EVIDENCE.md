@@ -26834,45 +26834,6 @@ INPUTIA_VERIFY_ALLOW_USER_HOST_BASELINE=1 INPUTIA_PROCESS_WAIT_TICKS=120 ./macos
 - 系统安装、HIToolbox 用户域、TextInputMenuAgent、GUI bootstrap 和 Git SSH push 都受同一个环境问题影响：当前 UID 501 缺失 passwd/DirectoryServices 用户记录。
 - 在 `repair-current-user-directory-service` 解决前，不应继续跑真实 TextEdit/Safari/Clipboard GUI smoke；此时真实 smoke 只会证明环境坏，不会证明输入法行为。
 
-## v69 Mac mini：覆盖旧 verifier 尾部结论，当前 blocker 是未通过系统输入源 UI 添加/选中 Inputia
-
-时间：2026-07-08 17:32:48 +0800
-
-说明：
-
-- v68 之后尾部出现了一段旧 verifier 追加的“UID 501 缺失 passwd/DirectoryServices 用户记录”结论。该结论与当前实时终端复核冲突，不能作为最新判断。
-- 本条目只做实时纠偏，不删除历史记录；后续判断以 v69 的当前状态为准。
-
-实时复核：
-
-```text
-python3 pwd/getpwuid
-  uid=501
-  pwdRecord=true name=lizhelang home=/Users/minizl
-
-./macos/InputiaInputMethod/status.sh | awk ...
-  statusCurrentUserName=lizhelang
-  statusUserDirectoryReady=true
-  statusHIToolboxDefaultsReadable=true
-  statusLegacyHIToolboxInputiaEnabled=true
-  statusStaleHIToolboxEnabledStateSuspected=true
-  statusTISCurrentID=com.tencent.inputmethod.wetype.pinyin
-  statusTISCurrentMatchesTarget=false
-  statusMenuReadiness=false
-  statusMenuBlockReason=inputia-menu-item-missing
-  statusGuiSmokeReady=false reason=tis-not-ready,menu-inputia-menu-item-missing
-
-pgrep -fl "InputiaInputMethod/(verify|post-install|smoke|status|tis-readiness|gui-smoke|verify-pkg)"
-  no residual verifier/smoke/status process after status command finished
-```
-
-最新结论：
-
-- 当前不是 DirectoryServices/passwd blocker：`statusUserDirectoryReady=true`。
-- 当前 blocker 是 Inputia 仍未通过 System Settings → Keyboard → Text Input → Edit → Add Inputia 被用户手动添加/选中：菜单栏 `menuInputiaCount=0`，当前输入源仍为 `com.tencent.inputmethod.wetype.pinyin`。
-- 旧 HIToolbox enabled 残留仍存在：`statusLegacyHIToolboxInputiaEnabled=true` / `statusStaleHIToolboxEnabledStateSuspected=true`。它只能说明历史脚本污染，不能作为可用证据。
-- 继续禁止真实 TextEdit/Safari/Clipboard GUI smoke，直到 `menuInputiaCount>0`、`statusTISCurrentMatchesTarget=true` 且 `tisReadiness=true`。
-
 ## v70 Mac mini：Gatekeeper disabled 已确认，当前终端会话再次被 DirectoryServices/passwd 阻塞
 
 时间：2026-07-08 17:33:46 +0800
@@ -26972,3 +26933,77 @@ statusGuiSmokeReady=false reason=tis-not-ready,user-directory-unavailable,hitool
 - 当前 blocker 不是 Developer ID/notarization，也不是 TIS 刷新；是本机当前目录服务状态不稳定，终端会话内 UID 501 无法解析 passwd 记录，导致 sudo 管理员通道和 HIToolbox 用户域都不可用。
 - `/Library/Input Methods/InputiaInputMethod.app` 当前仍不存在，系统级安装没有发生；用户级 app 与 build 匹配，但当前输入源仍是 ABC。
 - 在 `repair-current-user-directory-service` 恢复之前，不跑 TextEdit/Safari/Clipboard GUI smoke；此时 GUI smoke 只会测试坏环境，不会测试输入法功能。
+
+## v71 Mac mini：覆盖 v70 旧 verifier 快照，当前用户目录正常但 Inputia 仍未在菜单中可选
+
+时间：2026-07-08 17:35:42 +0800
+
+说明：
+
+- v70 是旧验证流追加的过时环境快照，和随后实时终端复核冲突。
+- 当前没有 `verify-nongui` / `status` / `tis-readiness` / smoke 残留进程；本条作为最新有效状态。
+
+当前终端复核：
+
+```text
+git status --porcelain=v1 -- macos/InputiaInputMethod/EVIDENCE.md
+  M macos/InputiaInputMethod/EVIDENCE.md
+
+pgrep -fl "InputiaInputMethod/(verify|post-install|smoke|status|tis-readiness|gui-smoke|verify-pkg|install-system|install-user)"
+  no residual process
+
+./macos/InputiaInputMethod/status.sh | awk ...
+  targetPath=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  targetScope=user
+  targetExists=true
+  targetMatchesBuild=true
+  includeAllInstalled=false
+  matches=3
+  id=com.inputia.inputmethod.Inputia.Main
+  name=Inputia
+  enabled=true
+  selectable=true
+  selected=false
+  currentID=com.tencent.inputmethod.wetype.pinyin
+  currentMatchesTarget=false
+  menuInputiaCount=0
+  menuInputiaSelectedCount=0
+  menuReadiness=false
+  menuReadinessBlockReason=inputia-menu-item-missing
+  statusCurrentUserName=lizhelang
+  statusUserDirectoryReady=true
+  statusHIToolboxDefaultsReadable=true
+  statusLegacyHIToolboxInputiaEnabled=true
+  statusStaleHIToolboxEnabledStateSuspected=true
+  statusTISCurrentID=com.tencent.inputmethod.wetype.pinyin
+  statusTISCurrentMatchesTarget=false
+  statusGuiSmokeReady=false reason=tis-not-ready,menu-inputia-menu-item-missing
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  appExists=true
+  appSignatureAccepted=true
+  appMatchesBuild=true
+  tis.targetEnabledMatches=2
+  tis.targetInstalledMatches=2
+  tis.currentID=com.tencent.inputmethod.wetype.pinyin
+  tis.currentMatchesTarget=false
+  tis.userDirectoryReady=true
+  tis.hitoolboxDefaultsReadable=true
+  tis.legacyHIToolboxInputiaEnabled=true
+  tis.legacyHIToolboxInputiaSelected=false
+  tis.staleHIToolboxEnabledStateSuspected=true
+  tis.readinessBlockReason=target-not-selected
+  tis.requiredAction=select-inputia-after-manual-add
+  tisReadiness=false
+
+TextEdit=not-running
+Safari=not-running
+InputiaInputMethod=not-running
+```
+
+最新结论：
+
+- 当前不是 DirectoryServices/passwd blocker：`statusUserDirectoryReady=true`。
+- 用户级 app 已安装并注册，且与 build 匹配。
+- 当前 blocker 仍是未通过 System Settings → Keyboard → Text Input → Edit → Add Inputia 手动添加/选中；菜单栏没有 Inputia，当前输入源仍是微信输入法。
+- 因 `statusGuiSmokeReady=false`，继续不运行 TextEdit/Safari/Clipboard GUI smoke。
