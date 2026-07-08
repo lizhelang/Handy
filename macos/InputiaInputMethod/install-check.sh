@@ -2,11 +2,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
 BUILD_APP="$ROOT_DIR/build/InputiaInputMethod.app"
 SYSTEM_APP="${INPUTIA_SYSTEM_APP_FOR_TEST:-/Library/Input Methods/InputiaInputMethod.app}"
 BUILD_SETTINGS_APP="$ROOT_DIR/build/Inputia 设置.app"
 SYSTEM_SETTINGS_APP="${INPUTIA_SYSTEM_SETTINGS_APP_FOR_TEST:-/Applications/Inputia 设置.app}"
 TARGET_MODE_ID="${INPUTIA_TIS_MODE_ID:-com.inputia.inputmethod.Inputia.Hans}"
+HANDOFF_PATH="${INPUTIA_INSTALL_HANDOFF_PATH:-$ROOT_DIR/build/install-handoff.txt}"
 export INPUTIA_VERIFICATION_OWNER_PID="${INPUTIA_VERIFICATION_OWNER_PID:-$$}"
 
 section() {
@@ -30,6 +32,39 @@ app_cdhash() {
     /usr/bin/codesign -dv --verbose=4 "$1" 2>&1 |
       /usr/bin/awk -F= '/^CDHash=/{print $2}'
   fi
+}
+
+sha256() {
+  if [[ -f "$1" ]]; then
+    /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'
+  fi
+}
+
+git_value() {
+  local fallback="$1"
+  shift
+  /usr/bin/git -C "$REPO_ROOT" "$@" 2>/dev/null || echo "$fallback"
+}
+
+git_dirty_state() {
+  if ! /usr/bin/git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo unknown
+    return
+  fi
+  if [[ -n "$(/usr/bin/git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" ]]; then
+    echo true
+  else
+    echo false
+  fi
+}
+
+handoff_value() {
+  local key="$1"
+  if [[ ! -f "$HANDOFF_PATH" ]]; then
+    echo ""
+    return
+  fi
+  /usr/bin/awk -F= -v key="$key" '$1 == key { print $2; found = 1; exit } END { if (!found) print "" }' "$HANDOFF_PATH"
 }
 
 process_pids() {
@@ -291,6 +326,63 @@ else
   settings_matches_build=false
 fi
 echo "settingsMatchesBuild=$settings_matches_build"
+
+section "install handoff"
+current_source_commit="$(git_value unknown rev-parse --short=12 HEAD)"
+current_source_dirty="$(git_dirty_state)"
+handoff_source_commit="$(handoff_value sourceCommit)"
+handoff_source_dirty="$(handoff_value sourceDirty)"
+handoff_build_cdhash="$(handoff_value buildCDHash)"
+handoff_package_path="$(handoff_value packagePath)"
+handoff_package_sha256="$(handoff_value packageSHA256)"
+handoff_pkg_verification="$(handoff_value pkgVerificationPassed)"
+handoff_block_reasons=""
+echo "installHandoffPath=$HANDOFF_PATH"
+echo "installHandoffExists=$([[ -f "$HANDOFF_PATH" ]] && echo true || echo false)"
+echo "installHandoffSourceCommit=${handoff_source_commit:-unknown}"
+echo "installHandoffCurrentSourceCommit=$current_source_commit"
+echo "installHandoffSourceDirty=${handoff_source_dirty:-unknown}"
+echo "installHandoffCurrentSourceDirty=$current_source_dirty"
+echo "installHandoffBuildCDHash=${handoff_build_cdhash:-unknown}"
+echo "installHandoffPackagePath=${handoff_package_path:-unknown}"
+echo "installHandoffPackageSHA256=${handoff_package_sha256:-unknown}"
+echo "installHandoffPkgVerificationPassed=${handoff_pkg_verification:-unknown}"
+if [[ ! -f "$HANDOFF_PATH" ]]; then
+  handoff_block_reasons="$(append_reason "$handoff_block_reasons" "missing-handoff")"
+fi
+if [[ "$handoff_source_commit" != "$current_source_commit" ]]; then
+  handoff_block_reasons="$(append_reason "$handoff_block_reasons" "source-commit-mismatch")"
+fi
+if [[ "$current_source_dirty" != "false" ]]; then
+  handoff_block_reasons="$(append_reason "$handoff_block_reasons" "worktree-dirty")"
+fi
+if [[ "$handoff_source_dirty" != "false" ]]; then
+  handoff_block_reasons="$(append_reason "$handoff_block_reasons" "handoff-source-dirty")"
+fi
+if [[ -n "${build_cdhash:-}" && "$handoff_build_cdhash" != "$build_cdhash" ]]; then
+  handoff_block_reasons="$(append_reason "$handoff_block_reasons" "build-cdhash-mismatch")"
+fi
+if [[ "$handoff_pkg_verification" != "true" ]]; then
+  handoff_block_reasons="$(append_reason "$handoff_block_reasons" "pkg-verification-missing")"
+fi
+if [[ -z "$handoff_package_path" || ! -f "$handoff_package_path" ]]; then
+  handoff_block_reasons="$(append_reason "$handoff_block_reasons" "package-missing")"
+else
+  actual_package_sha256="$(sha256 "$handoff_package_path")"
+  echo "installHandoffActualPackageSHA256=${actual_package_sha256:-unknown}"
+  if [[ -n "$handoff_package_sha256" && "$actual_package_sha256" != "$handoff_package_sha256" ]]; then
+    handoff_block_reasons="$(append_reason "$handoff_block_reasons" "package-sha-mismatch")"
+  fi
+fi
+if [[ -z "$handoff_block_reasons" ]]; then
+  handoff_block_reasons=none
+  echo "installHandoffCurrent=true"
+  echo "installHandoffRequiredAction=none"
+else
+  echo "installHandoffCurrent=false"
+  echo "installHandoffRequiredAction=run-install-handoff"
+fi
+echo "installHandoffBlockReasons=$handoff_block_reasons"
 
 section "tis"
 tis_output="$(INPUTIA_TIS_INCLUDE_MENU_READINESS=0 "$ROOT_DIR/tis-readiness.sh" "$SYSTEM_APP" 2>&1 || true)"
