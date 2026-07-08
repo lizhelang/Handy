@@ -26111,6 +26111,115 @@ INPUTIA_GUI_SMOKE_READINESS_SELF_CHECK=1 ./macos/InputiaInputMethod/gui-smoke-re
 - 当前输入源仍是微信输入法，菜单栏还没有 Inputia；这符合“尚未通过系统设置手动 Add/Select Inputia”的状态。
 - 在用户通过 System Settings → Keyboard → Text Input → Edit → Add Inputia 并选中 Inputia 之前，不运行真实 GUI smoke。
 
+## v68 Mac mini：TISSelect 只在命令进程内生效，不能作为全局切换证据
+
+时间：2026-07-08 17:16:00 +0800
+
+背景：
+
+- 继续终端验证用户是否已经 Add/Select Inputia。
+- 本轮没有运行 TextEdit/Safari/Clipboard GUI smoke。
+- 后台 verifier/smoke/build 进程检查：无 `verify-nongui`、`post-install-regression`、`smoke-*`、`TextEdit`、`InputiaInputMethod` 残留；仅有 Safari 系统 helper/agent。
+
+安装状态：
+
+```text
+./macos/InputiaInputMethod/install-user.sh
+  installRc=0
+  userAppExistsAfterInstall=true
+  userSettingsExistsAfterInstall=true
+  userInstallBuild=true
+  registerStatus=0
+  userInstallVerified=true
+  userInstallTISReady=false
+  userInstallRequiredAction=add-input-source-in-system-settings
+  userInstallPath=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  userInstallRegistered=true
+  userInstallSystemResiduePresent=false
+  settingsLauncherInstalled=/Users/minizl/Applications/Inputia 设置.app
+
+30 秒保留性轮询
+  watchSecond=0 userApp=present userSettings=present
+  watchSecond=5 userApp=present userSettings=present
+  watchSecond=10 userApp=present userSettings=present
+  watchSecond=15 userApp=present userSettings=present
+  watchSecond=20 userApp=present userSettings=present
+  watchSecond=25 userApp=present userSettings=present
+  watchSecond=30 userApp=present userSettings=present
+```
+
+TISSelect spike：
+
+```text
+INPUTIA_APP="/Users/minizl/Library/Input Methods/InputiaInputMethod.app" \
+  ./macos/InputiaInputMethod/build/inputia-tis-tool --select-source-id com.inputia.inputmethod.Inputia.Main
+  selectStatus=0
+  selected=true
+  selectCurrentID=com.inputia.inputmethod.Inputia.Main
+  selectCurrentMatchesTarget=true
+
+随后新进程复核：
+  ./macos/InputiaInputMethod/tis-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+    appExists=true
+    appMatchesBuild=true
+    appSignatureAccepted=true
+    tis.targetEnabledMatches=2
+    tis.hansIconMatchesApp=true
+    tis.currentID=com.tencent.inputmethod.wetype.pinyin
+    tis.currentMatchesTarget=false
+    tis.readinessBlockReason=target-not-selected
+    tis.requiredAction=select-inputia-after-manual-add
+    tisReadiness=false
+
+launchctl asuser 501 ... inputia-tis-tool --select-source-id ...
+  Could not switch to audit session ... Operation not permitted
+  复核 currentID 仍为 com.tencent.inputmethod.wetype.pinyin
+```
+
+当前终端状态：
+
+```text
+./macos/InputiaInputMethod/status.sh
+  user host exists=true
+  userMatchesBuild=true
+  userHostConflict=false
+  targetPath=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  targetScope=user
+  targetExists=true
+  targetMatchesBuild=true
+  targetSettingsMatchesBuildVersion=true
+  includeAllInstalled=false matches=3
+  statusTISCurrentID=com.tencent.inputmethod.wetype.pinyin
+  statusTISCurrentMatchesTarget=false
+  statusMenuReadiness=false
+  statusMenuBlockReason=inputia-menu-item-missing
+  statusGuiSmokeReady=false reason=tis-not-ready,menu-inputia-menu-item-missing
+
+./macos/InputiaInputMethod/gui-smoke-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  target.exists=true
+  target.matchesBuild=true
+  settings.matchesBuild=true
+  tis.blockReason=target-not-selected
+  guiSmokeReadinessReady=false reason=tis-not-ready
+```
+
+旧 fake state 诊断：
+
+```text
+defaults read com.apple.HIToolbox AppleEnabledInputSources
+  仍包含 com.inputia.inputmethod.Inputia parent 和 com.inputia.inputmethod.Inputia.Main
+
+defaults read com.apple.HIToolbox AppleSelectedInputSources
+  当前为 com.tencent.inputmethod.wetype.pinyin
+```
+
+结论：
+
+- 用户级 bundle 安装/注册稳定，系统级残留不存在。
+- 旧脚本写入的 HIToolbox enabled 状态仍可能让 TIS enabled list 出现 Inputia；这不能作为菜单可用或全局 current 的证据。
+- `TISSelectInputSource` 在命令工具进程内返回 0，但新进程和菜单栏仍保持微信输入法；因此不能把这次 select 当作通过 GUI smoke gate。
+- 当前仍需用户通过系统输入源 UI 添加并选中 Inputia；在 `tis.currentMatchesTarget=true` 且 `menuReadiness=true` 前继续禁止真实 GUI smoke。
+
 ## v67 Mac mini：目录服务阻塞继续存在，readiness 增加环境修复动作
 
 时间：2026-07-08 17:08:30 +0800
