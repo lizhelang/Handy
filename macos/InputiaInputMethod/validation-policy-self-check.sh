@@ -25,6 +25,7 @@ dev_fast = read("dev-fast.sh")
 rime_latency = read("rime-latency-self-check.sh")
 verify_nongui = read("verify-nongui.sh")
 install_check = read("install-check.sh")
+install_handoff = read("install-handoff.sh")
 full_check = read("release/full-check.sh")
 menu_readiness = read("menu-readiness.sh")
 gui_readiness = read("gui-smoke-readiness.sh")
@@ -67,6 +68,12 @@ require('run-install-handoff-and-admin-install' in install_check, "install-check
 require('restart-inputia-host-after-install' in install_check, "install-check-missing-running-host-action")
 require('"$ROOT_DIR/install-check.sh"' in dev_fast, "dev-fast-missing-install-check-self-check")
 require('INPUTIA_INSTALL_CHECK_SELF_CHECK=1 "$ROOT_DIR/install-check.sh"' in dev_fast, "dev-fast-install-check-not-self-check-only")
+require('installCheckBlockReasons=' in install_handoff, "install-handoff-missing-block-reasons")
+require('installCheckRequiredAction=' in install_handoff, "install-handoff-missing-required-action")
+require('installCheckPassed=' in install_handoff, "install-handoff-missing-install-check-pass")
+require('handoffOpensGUI=false' in install_handoff, "install-handoff-missing-no-gui-marker")
+require('handoffChangesSystemInputSource=false' in install_handoff, "install-handoff-missing-no-input-source-marker")
+require('installCheckBlockReasons=none' in install_handoff, "install-handoff-missing-success-criteria")
 for forbidden in [
     "menu-readiness.sh",
     "gui-smoke-readiness.sh",

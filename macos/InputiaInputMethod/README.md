@@ -306,7 +306,7 @@ INPUTIA_CODESIGN_IDENTITY="Codexbar Local Code Signing Leaf v4" \
 ./macos/InputiaInputMethod/install-handoff.sh
 ```
 
-`install-handoff.sh` 不会打开 Installer，也不会改系统输入源；它会重建并验证最新 pkg，然后在 `build/install-handoff.txt` 里写入 pkg 路径、SHA256、当前 build CDHash、系统已安装 CDHash、管理员终端安装命令，以及安装后的 `await-system-install.sh` / `install-check.sh` 验证命令。
+`install-handoff.sh` 不会打开 Installer，也不会改系统输入源；它会重建并验证最新 pkg，然后在 `build/install-handoff.txt` 里写入 pkg 路径、SHA256、当前 build CDHash、系统已安装 CDHash、当前 `install-check` 的 block reasons / required action、管理员终端安装命令，以及安装后的 `await-system-install.sh` / `install-check.sh` 验证命令。交接清单里的通过标准必须到 `installCheckBlockReasons=none`、`runningMatchesBuild=true`、`installCheckPassed=true` 才算当前 build 真正进入系统运行态。
 
 `postinstall` 会打印 `inputiaInstalledVersion` / `inputiaInstalledCDHash`，并按 Squirrel 的路线 kill 旧 Host、register、以登录用户 enable/select，然后刷新 Text Input 菜单服务。
 
