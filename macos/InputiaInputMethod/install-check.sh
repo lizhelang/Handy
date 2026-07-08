@@ -224,6 +224,11 @@ print_install_required_commands() {
   if [[ ",$command_keys," == *,verify,* ]]; then
     echo "installCheckCommand.verify=cd $root_quoted && ./install-check.sh"
   fi
+  if [[ ",$command_keys," == *,adminInstall,* ||
+    ",$command_keys," == *,repairTISDuplicates,* ||
+    ",$command_keys," == *,awaitSystemInstall,* ]]; then
+    echo "installCheckCommand.applyCurrentHandoff=cd $root_quoted && INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh"
+  fi
 }
 
 install_required_command_keys() {

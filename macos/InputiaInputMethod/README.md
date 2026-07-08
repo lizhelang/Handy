@@ -312,6 +312,15 @@ INPUTIA_CODESIGN_IDENTITY="Codexbar Local Code Signing Leaf v4" \
 
 `install-handoff.sh` 不会打开 Installer，也不会改系统输入源；它会重建并验证最新 pkg，然后在 `build/install-handoff.txt` 里写入 source branch/commit/upstream/dirty、pkg 路径、SHA256、`pkgVerificationPassed`、当前 build CDHash、系统已安装 CDHash、设置启动器的 `InputiaExpectedHostCDHash` 匹配状态、当前 `install-check` 的 block reasons / primary required action / ordered required actions、管理员终端安装命令，以及安装后的 `await-system-install.sh` / `install-check.sh` 验证命令。若当前状态含 `tis-duplicate-matches`，交接清单会额外写入显式 opt-in 的 `INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh`。这个 repair 脚本要求 `/Library/Input Methods/InputiaInputMethod.app` 已经等于当前 build；如果 `systemMatchesBuild=false`，它会拒绝修复并要求先完成管理员安装。交接清单里的通过标准必须到 `systemMatchesBuild=true`、`settingsMatchesBuild=true`、`installCheckBlockReasons=none`、`installCheckRequiredActions=none`、`installCheckTISDuplicateMatches=false`、`runningMatchesBuild=true`、`installCheckPassed=true` 才算当前 build 真正进入系统运行态。
 
+如果要从当前交接清单继续完整安装链路，可在终端显式运行：
+
+```bash
+cd macos/InputiaInputMethod
+INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh
+```
+
+`apply-current-handoff.sh` 会先确认 `install-handoff.txt` 属于当前 commit/pkg，然后按 `install-check` 的动作链执行：管理员安装当前 pkg、必要时显式修复 TIS duplicate、等待系统安装生效、最后重跑 `install-check.sh`。默认不打开 GUI、不触碰菜单栏；若没有非交互 sudo 且未设置 `INPUTIA_ALLOW_ADMIN_PROMPT=1`，它会退出并打印继续命令，而不是卡住。
+
 `postinstall` 会打印 `inputiaInstalledVersion` / `inputiaInstalledCDHash`，kill 旧 Host、清理旧用户级 Host、register 当前系统 Host，并 dump enabled/current TIS 状态。它默认不 enable/select，也不刷新菜单栏代理；重复输入源或手动添加问题用 `repair-tis-duplicates.sh` 或 System Settings 显式处理，避免安装脚本继续制造 HIToolbox 重复项。
 
 用户级安装诊断：
