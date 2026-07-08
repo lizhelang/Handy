@@ -177,37 +177,114 @@ install_required_actions() {
 print_install_required_commands() {
   local required_actions="$1"
   local pkg_path="$2"
-  local root_quoted pkg_quoted
+  local root_quoted pkg_quoted command_keys
 
   root_quoted="$(quote "$ROOT_DIR")"
   if [[ -z "$pkg_path" ]]; then
     pkg_path="$ROOT_DIR/dist/InputiaInputMethod-latest.pkg"
   fi
   pkg_quoted="$(quote "$pkg_path")"
+  command_keys="$(install_required_command_keys "$required_actions")"
 
   section "required commands"
-  if [[ "$required_actions" == "none" ]]; then
+  if [[ "$command_keys" == "none" ]]; then
     echo "installCheckRequiredCommands=none"
     return
   fi
 
   echo "installCheckRequiredCommands=present"
-  if [[ ",$required_actions," == *,run-install-handoff-and-admin-install,* ]]; then
+  if [[ ",$command_keys," == *,runInstallHandoff,* ]]; then
     echo "installCheckCommand.runInstallHandoff=cd $root_quoted && ./install-handoff.sh"
+  fi
+  if [[ ",$command_keys," == *,adminInstall,* ]]; then
     echo "installCheckCommand.adminInstall=sudo /usr/sbin/installer -pkg $pkg_quoted -target /"
-  elif [[ ",$required_actions," == *,run-install-system,* ]]; then
+  fi
+  if [[ ",$command_keys," == *,runInstallSystem,* ]]; then
     echo "installCheckCommand.runInstallSystem=cd $root_quoted && ./install-system.sh"
   fi
-  if [[ ",$required_actions," == *,run-repair-tis-duplicates,* ]]; then
+  if [[ ",$command_keys," == *,repairTISDuplicates,* ]]; then
     echo "installCheckCommand.repairTISDuplicates=cd $root_quoted && INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh"
   fi
-  if [[ ",$required_actions," == *,select-or-readd-inputia-in-system-settings,* ]]; then
+  if [[ ",$command_keys," == *,openKeyboardSettings,* ]]; then
     echo "installCheckCommand.openKeyboardSettings=open 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension'"
   fi
-  if [[ ",$required_actions," == *,restart-inputia-host-after-install,* ]]; then
+  if [[ ",$command_keys," == *,awaitSystemInstall,* ]]; then
     echo "installCheckCommand.awaitSystemInstall=cd $root_quoted && ./await-system-install.sh"
   fi
-  echo "installCheckCommand.verify=cd $root_quoted && ./install-check.sh"
+  if [[ ",$command_keys," == *,verify,* ]]; then
+    echo "installCheckCommand.verify=cd $root_quoted && ./install-check.sh"
+  fi
+}
+
+install_required_command_keys() {
+  local required_actions="$1"
+  local command_keys=""
+
+  if [[ "$required_actions" == "none" ]]; then
+    echo "none"
+    return
+  fi
+
+  if [[ ",$required_actions," == *,run-install-handoff-and-admin-install,* ]]; then
+    command_keys="$(append_action "$command_keys" "runInstallHandoff")"
+    command_keys="$(append_action "$command_keys" "adminInstall")"
+  elif [[ ",$required_actions," == *,run-install-system,* ]]; then
+    command_keys="$(append_action "$command_keys" "runInstallSystem")"
+  fi
+  if [[ ",$required_actions," == *,run-repair-tis-duplicates,* ]]; then
+    command_keys="$(append_action "$command_keys" "repairTISDuplicates")"
+  fi
+  if [[ ",$required_actions," == *,select-or-readd-inputia-in-system-settings,* ]]; then
+    command_keys="$(append_action "$command_keys" "openKeyboardSettings")"
+  fi
+  if [[ ",$required_actions," == *,restart-inputia-host-after-install,* ]]; then
+    command_keys="$(append_action "$command_keys" "awaitSystemInstall")"
+  fi
+  command_keys="$(append_action "$command_keys" "verify")"
+
+  echo "$command_keys"
+}
+
+install_handoff_block_reasons() {
+  local handoff_exists="$1"
+  local current_source_commit="$2"
+  local current_source_dirty="$3"
+  local handoff_source_commit="$4"
+  local handoff_source_dirty="$5"
+  local build_cdhash="$6"
+  local handoff_build_cdhash="$7"
+  local handoff_pkg_verification="$8"
+  local handoff_package_exists="$9"
+  local handoff_package_sha_matches="${10}"
+  local block_reasons=""
+
+  if [[ "$handoff_exists" != "true" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "missing-handoff")"
+  fi
+  if [[ "$handoff_source_commit" != "$current_source_commit" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "source-commit-mismatch")"
+  fi
+  if [[ "$current_source_dirty" != "false" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "worktree-dirty")"
+  fi
+  if [[ "$handoff_source_dirty" != "false" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "handoff-source-dirty")"
+  fi
+  if [[ -n "$build_cdhash" && "$handoff_build_cdhash" != "$build_cdhash" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "build-cdhash-mismatch")"
+  fi
+  if [[ "$handoff_pkg_verification" != "true" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "pkg-verification-missing")"
+  fi
+  if [[ "$handoff_package_exists" != "true" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "package-missing")"
+  elif [[ "$handoff_package_sha_matches" != "true" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "package-sha-mismatch")"
+  fi
+  if [[ -z "$block_reasons" ]]; then
+    block_reasons=none
+  fi
+  echo "$block_reasons"
 }
 
 install_check_block_reasons() {
@@ -292,6 +369,55 @@ run_install_check_self_check_case() {
   fi
 }
 
+run_install_handoff_self_check_case() {
+  local label="$1"
+  local handoff_exists="$2"
+  local current_source_commit="$3"
+  local current_source_dirty="$4"
+  local handoff_source_commit="$5"
+  local handoff_source_dirty="$6"
+  local build_cdhash="$7"
+  local handoff_build_cdhash="$8"
+  local handoff_pkg_verification="$9"
+  local handoff_package_exists="${10}"
+  local handoff_package_sha_matches="${11}"
+  local expected_reasons="${12}"
+  local actual_reasons
+
+  actual_reasons="$(
+    install_handoff_block_reasons \
+      "$handoff_exists" \
+      "$current_source_commit" \
+      "$current_source_dirty" \
+      "$handoff_source_commit" \
+      "$handoff_source_dirty" \
+      "$build_cdhash" \
+      "$handoff_build_cdhash" \
+      "$handoff_pkg_verification" \
+      "$handoff_package_exists" \
+      "$handoff_package_sha_matches"
+  )"
+  echo "installHandoffFreshnessSelfCheck case=$label reasons=$actual_reasons"
+  if [[ "$actual_reasons" != "$expected_reasons" ]]; then
+    echo "installHandoffFreshnessSelfCheck=false case=$label reason=reasons-mismatch expected=$expected_reasons actual=$actual_reasons"
+    exit 1
+  fi
+}
+
+run_install_required_commands_self_check_case() {
+  local label="$1"
+  local required_actions="$2"
+  local expected_command_keys="$3"
+  local actual_command_keys
+
+  actual_command_keys="$(install_required_command_keys "$required_actions")"
+  echo "installRequiredCommandsSelfCheck case=$label commandKeys=$actual_command_keys"
+  if [[ "$actual_command_keys" != "$expected_command_keys" ]]; then
+    echo "installRequiredCommandsSelfCheck=false case=$label reason=command-keys-mismatch expected=$expected_command_keys actual=$actual_command_keys"
+    exit 1
+  fi
+}
+
 if [[ "${INPUTIA_INSTALL_CHECK_SELF_CHECK:-0}" == "1" ]]; then
   run_install_check_self_check_case \
     ready true true true true false true true true \
@@ -326,6 +452,52 @@ if [[ "${INPUTIA_INSTALL_CHECK_SELF_CHECK:-0}" == "1" ]]; then
     system-app-missing,tis-not-ready,running-host-missing,admin-required \
     run-install-handoff-and-admin-install \
     run-install-handoff-and-admin-install,select-or-readd-inputia-in-system-settings,restart-inputia-host-after-install
+  run_install_handoff_self_check_case \
+    handoff-ready true source123 false source123 false cdhash123 cdhash123 true true true \
+    none
+  run_install_handoff_self_check_case \
+    handoff-missing false source123 false source123 false cdhash123 cdhash123 true false true \
+    missing-handoff,package-missing
+  run_install_handoff_self_check_case \
+    handoff-source-commit-stale true source123 false source122 false cdhash123 cdhash123 true true true \
+    source-commit-mismatch
+  run_install_handoff_self_check_case \
+    handoff-worktree-dirty true source123 true source123 false cdhash123 cdhash123 true true true \
+    worktree-dirty
+  run_install_handoff_self_check_case \
+    handoff-source-dirty true source123 false source123 true cdhash123 cdhash123 true true true \
+    handoff-source-dirty
+  run_install_handoff_self_check_case \
+    handoff-build-stale true source123 false source123 false cdhash123 cdhash122 true true true \
+    build-cdhash-mismatch
+  run_install_handoff_self_check_case \
+    handoff-pkg-verification-missing true source123 false source123 false cdhash123 cdhash123 false true true \
+    pkg-verification-missing
+  run_install_handoff_self_check_case \
+    handoff-package-missing true source123 false source123 false cdhash123 cdhash123 true false true \
+    package-missing
+  run_install_handoff_self_check_case \
+    handoff-package-sha-mismatch true source123 false source123 false cdhash123 cdhash123 true true false \
+    package-sha-mismatch
+  run_install_required_commands_self_check_case \
+    no-commands none none
+  run_install_required_commands_self_check_case \
+    admin-install run-install-handoff-and-admin-install \
+    runInstallHandoff,adminInstall,verify
+  run_install_required_commands_self_check_case \
+    admin-repair-restart run-install-handoff-and-admin-install,run-repair-tis-duplicates,restart-inputia-host-after-install \
+    runInstallHandoff,adminInstall,repairTISDuplicates,awaitSystemInstall,verify
+  run_install_required_commands_self_check_case \
+    system-install run-install-system \
+    runInstallSystem,verify
+  run_install_required_commands_self_check_case \
+    repair-and-restart run-repair-tis-duplicates,restart-inputia-host-after-install \
+    repairTISDuplicates,awaitSystemInstall,verify
+  run_install_required_commands_self_check_case \
+    settings-and-restart select-or-readd-inputia-in-system-settings,restart-inputia-host-after-install \
+    openKeyboardSettings,awaitSystemInstall,verify
+  echo "installHandoffFreshnessSelfCheck=true"
+  echo "installRequiredCommandsSelfCheck=true"
   echo "installCheckSelfCheck=true"
   exit 0
 fi
@@ -381,9 +553,11 @@ handoff_build_cdhash="$(handoff_value buildCDHash)"
 handoff_package_path="$(handoff_value packagePath)"
 handoff_package_sha256="$(handoff_value packageSHA256)"
 handoff_pkg_verification="$(handoff_value pkgVerificationPassed)"
-handoff_block_reasons=""
+handoff_exists="$([[ -f "$HANDOFF_PATH" ]] && echo true || echo false)"
+handoff_package_exists=false
+handoff_package_sha_matches=true
 echo "installHandoffPath=$HANDOFF_PATH"
-echo "installHandoffExists=$([[ -f "$HANDOFF_PATH" ]] && echo true || echo false)"
+echo "installHandoffExists=$handoff_exists"
 echo "installHandoffSourceCommit=${handoff_source_commit:-unknown}"
 echo "installHandoffCurrentSourceCommit=$current_source_commit"
 echo "installHandoffSourceDirty=${handoff_source_dirty:-unknown}"
@@ -392,35 +566,28 @@ echo "installHandoffBuildCDHash=${handoff_build_cdhash:-unknown}"
 echo "installHandoffPackagePath=${handoff_package_path:-unknown}"
 echo "installHandoffPackageSHA256=${handoff_package_sha256:-unknown}"
 echo "installHandoffPkgVerificationPassed=${handoff_pkg_verification:-unknown}"
-if [[ ! -f "$HANDOFF_PATH" ]]; then
-  handoff_block_reasons="$(append_reason "$handoff_block_reasons" "missing-handoff")"
-fi
-if [[ "$handoff_source_commit" != "$current_source_commit" ]]; then
-  handoff_block_reasons="$(append_reason "$handoff_block_reasons" "source-commit-mismatch")"
-fi
-if [[ "$current_source_dirty" != "false" ]]; then
-  handoff_block_reasons="$(append_reason "$handoff_block_reasons" "worktree-dirty")"
-fi
-if [[ "$handoff_source_dirty" != "false" ]]; then
-  handoff_block_reasons="$(append_reason "$handoff_block_reasons" "handoff-source-dirty")"
-fi
-if [[ -n "${build_cdhash:-}" && "$handoff_build_cdhash" != "$build_cdhash" ]]; then
-  handoff_block_reasons="$(append_reason "$handoff_block_reasons" "build-cdhash-mismatch")"
-fi
-if [[ "$handoff_pkg_verification" != "true" ]]; then
-  handoff_block_reasons="$(append_reason "$handoff_block_reasons" "pkg-verification-missing")"
-fi
-if [[ -z "$handoff_package_path" || ! -f "$handoff_package_path" ]]; then
-  handoff_block_reasons="$(append_reason "$handoff_block_reasons" "package-missing")"
-else
+if [[ -n "$handoff_package_path" && -f "$handoff_package_path" ]]; then
+  handoff_package_exists=true
   actual_package_sha256="$(sha256 "$handoff_package_path")"
   echo "installHandoffActualPackageSHA256=${actual_package_sha256:-unknown}"
   if [[ -n "$handoff_package_sha256" && "$actual_package_sha256" != "$handoff_package_sha256" ]]; then
-    handoff_block_reasons="$(append_reason "$handoff_block_reasons" "package-sha-mismatch")"
+    handoff_package_sha_matches=false
   fi
 fi
-if [[ -z "$handoff_block_reasons" ]]; then
-  handoff_block_reasons=none
+handoff_block_reasons="$(
+  install_handoff_block_reasons \
+    "$handoff_exists" \
+    "$current_source_commit" \
+    "$current_source_dirty" \
+    "$handoff_source_commit" \
+    "$handoff_source_dirty" \
+    "${build_cdhash:-}" \
+    "$handoff_build_cdhash" \
+    "$handoff_pkg_verification" \
+    "$handoff_package_exists" \
+    "$handoff_package_sha_matches"
+)"
+if [[ "$handoff_block_reasons" == "none" ]]; then
   echo "installHandoffCurrent=true"
   echo "installHandoffRequiredAction=none"
 else
