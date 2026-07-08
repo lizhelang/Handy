@@ -25558,6 +25558,79 @@ hash check
 - 新 build/package CDHash 是 `0ec2f7d06f720212e3e6039eb19fc84b984d06da`；系统目录仍是上一版 `3623ad086abd01db2c60fb05d7b03229cb060c41`，因为当前 Mac mini `sudo` / 管理员安装仍被 UID/passwd 问题阻塞。
 - 真实 TextEdit/Safari/Clipboard GUI smoke 仍未运行；readiness 未过时 verifier 明确证明 UI smoke 不会启动。
 
+## v63 Mac mini：补齐 GUI bootstrap 不可用门禁，避免 TextEdit/Safari smoke 误启动
+
+时间：2026-07-08 16:18:35 +0800
+
+背景：
+
+- 当前系统 app 仍落后于 build：build CDHash `0ec2f7d06f720212e3e6039eb19fc84b984d06da`，系统 app CDHash `3623ad086abd01db2c60fb05d7b03229cb060c41`。
+- `sudo` 不可用，原因仍是当前 UID 501 没有 passwd 记录。
+- 本轮继续寻找非 `sudo` 管理员路径，但 AppleScript/GUI bootstrap 也不可用。
+
+管理员/GUI 通道复核：
+
+```text
+osascript -e 'return "hello"'
+  hello
+
+osascript -e 'do shell script "echo hello"'
+  0:8: syntax error: A identifier can’t go after this identifier. (-2740)
+
+osascript -e 'use scripting additions' -e 'do shell script "echo hello"'
+  27:32: syntax error: Expected end of line, etc. but found identifier. (-2741)
+
+osascript -e 'tell application "System Events" to return name of processes'
+  43:47: execution error: An error of type -10827 has occurred. (-10827)
+
+launchctl print gui/501
+  Could not print domain: 141: Reentrancy avoided
+
+odutil show nodenames
+  odutil: opendirectoryd not available: Connection invalid
+```
+
+代码处理：
+
+- `smoke-common.sh`、`post-install-regression.sh`、`gui-smoke-readiness.sh`、`await-system-install.sh`、`status.sh` 增加 GUI bootstrap 检查：
+  - 读取 `/dev/console` UID；
+  - `launchctl print gui/$uid` 失败时输出 `gui-bootstrap-unavailable`；
+  - GUI smoke 直接阻断，不打开 TextEdit/Safari。
+- `gui-smoke-readiness.sh` / `await-system-install.sh` 的 self-check 增加 `gui-bootstrap-unavailable` case。
+
+验证：
+
+```text
+bash -n smoke-common.sh gui-smoke-readiness.sh post-install-regression.sh await-system-install.sh status.sh verify-nongui.sh
+  ok
+
+INPUTIA_GUI_SMOKE_READINESS_SELF_CHECK=1 ./macos/InputiaInputMethod/gui-smoke-readiness.sh
+  guiSmokeReadinessSelfCheck case=gui-bootstrap expected=gui-bootstrap-unavailable actual=gui-bootstrap-unavailable
+  guiSmokeReadinessSelfCheck=true
+
+./macos/InputiaInputMethod/gui-smoke-readiness.sh macos/InputiaInputMethod/build/InputiaInputMethod.app
+  guiSessionBlockReason=gui-bootstrap-unavailable
+  textEditPreflight=not-running
+  safariPreflight=not-running
+  inputiaHostPreflight=not-running
+  guiSmokeReadinessBlockReasons=tis-not-ready,gui-bootstrap-unavailable
+  guiSmokeReadinessReady=false reason=tis-not-ready
+
+/tmp/inputia-verify-nongui-20260708-161732-gui-bootstrap-guard.log
+  statusGuiSessionBlockReason=gui-bootstrap-unavailable
+  statusGuiSmokeBlockReasons=target-cdhash-mismatch,admin-required,tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,gui-bootstrap-unavailable
+  awaitUiNotReadyNoLaunchPassed=true
+  residue=false
+  tmpResidue=false
+  nonGuiVerificationPassed=true
+```
+
+结论：
+
+- 当前 Mac mini 同时缺少可用用户目录服务、管理员命令通道和 GUI bootstrap；不能安全运行真实 TextEdit/Safari/Clipboard smoke。
+- 新门禁让 GUI smoke 在 `launchctl print gui/$uid` 不可用时提前退出，避免抢光标或残留窗口。
+- 这不是完成输入法可用性的修复，只是把 GUI smoke 清理纪律推进到当前环境也能正确阻断。
+
 ## v62 Mac mini：停止系统设置 UI 探测，回到终端验证 Gatekeeper/TIS/menu 状态
 
 时间：2026-07-08 16:14:00 +0800

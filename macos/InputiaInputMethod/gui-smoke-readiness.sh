@@ -127,6 +127,12 @@ gui_session_block_reason() {
     echo no-console-user
     return
   fi
+  local console_uid
+  console_uid="$(/usr/bin/stat -f '%u' /dev/console 2>/dev/null || true)"
+  if [[ -z "$console_uid" ]] || ! /bin/launchctl print "gui/$console_uid" >/dev/null 2>&1; then
+    echo gui-bootstrap-unavailable
+    return
+  fi
 
   local session_state
   session_state="$(/usr/sbin/ioreg -n Root -d1 2>/dev/null || true)"
@@ -276,6 +282,7 @@ if [[ "${INPUTIA_GUI_SMOKE_READINESS_SELF_CHECK:-0}" == "1" ]]; then
     "tis true true true false none not-running not-running true not-running false tis-not-ready" \
     "userhost true true true true none not-running not-running true not-running true user-host-conflict" \
     "inputia true true true true none not-running not-running true running false inputia-host-running" \
+    "gui-bootstrap true true true true gui-bootstrap-unavailable not-running not-running true not-running false gui-bootstrap-unavailable" \
     "gui true true true true screen-locked not-running not-running true not-running false screen-locked" \
     "textedit true true true true none running not-running true not-running false textedit-already-running" \
     "safari true true true true none not-running running true not-running false safari-already-running" \

@@ -252,6 +252,12 @@ gui_session_block_reason() {
     echo no-console-user
     return
   fi
+  local console_uid
+  console_uid="$(/usr/bin/stat -f '%u' /dev/console 2>/dev/null || true)"
+  if [[ -z "$console_uid" ]] || ! /bin/launchctl print "gui/$console_uid" >/dev/null 2>&1; then
+    echo gui-bootstrap-unavailable
+    return
+  fi
 
   local session_state
   session_state="$(/usr/sbin/ioreg -n Root -d1 2>/dev/null || true)"

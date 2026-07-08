@@ -331,6 +331,12 @@ gui_session_block_reason() {
     echo "no-console-user"
     return
   fi
+  local console_uid
+  console_uid="$(/usr/bin/stat -f '%u' /dev/console 2>/dev/null || true)"
+  if [[ -z "$console_uid" ]] || ! /bin/launchctl print "gui/$console_uid" >/dev/null 2>&1; then
+    echo "gui-bootstrap-unavailable"
+    return
+  fi
 
   local session_state
   session_state="$(/usr/sbin/ioreg -n Root -d1 2>/dev/null || true)"
@@ -434,7 +440,7 @@ if [[ "${INPUTIA_AWAIT_UI_STATUS_SELF_CHECK:-0}" == "1" ]]; then
     /usr/bin/sed "s/^/awaitUiStatusSelfCheck reason=target-tis-userhost /"
   INPUTIA_RUN_UI_SMOKE=1 ui_smoke_status_line true "$rejected_tis_status" |
     /usr/bin/sed "s/^/awaitUiStatusSelfCheck reason=signature-rejected /"
-  for reason in no-console-user login-not-complete screen-locked frontmost-unavailable loginwindow-frontmost; do
+  for reason in no-console-user gui-bootstrap-unavailable login-not-complete screen-locked frontmost-unavailable loginwindow-frontmost; do
     INPUTIA_RUN_UI_SMOKE=1 INPUTIA_GUI_SESSION_BLOCK_REASON_FOR_TEST="$reason" ui_smoke_status_line true "$ready_tis_status" |
       /usr/bin/sed "s/^/awaitUiStatusSelfCheck reason=$reason /"
   done

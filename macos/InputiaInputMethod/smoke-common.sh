@@ -17,6 +17,14 @@ inputia_require_gui_session() {
     echo "$ready_var=false reason=no-console-user"
     exit "$exit_code"
   fi
+  local console_uid
+  console_uid="$(/usr/bin/stat -f '%u' /dev/console 2>/dev/null || true)"
+  echo "guiConsoleUID=${console_uid:-unknown}"
+  if [[ -z "$console_uid" ]] || ! /bin/launchctl print "gui/$console_uid" >/dev/null 2>&1; then
+    echo "guiSmokeReady=false reason=gui-bootstrap-unavailable"
+    echo "$ready_var=false reason=gui-bootstrap-unavailable"
+    exit "$exit_code"
+  fi
 
   local session_state
   session_state="$(/usr/sbin/ioreg -n Root -d1 2>/dev/null || true)"
