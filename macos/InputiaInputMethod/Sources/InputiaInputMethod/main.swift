@@ -1856,37 +1856,17 @@ final class InputiaInputMethodDiagnostics {
       domain: inputSourcesDomain
     )
 
-    let enabled = deduplicatedPreferenceEntries(enabledBefore.filter { !isInputiaPreferenceEntry($0) })
-      + [inputiaParentPreferenceEntry(), inputiaModePreferenceEntry(modeID: targetModeID)]
-    let history = [inputiaModePreferenceEntry(modeID: targetModeID)]
-      + deduplicatedPreferenceEntries(historyBefore.filter { !isInputiaPreferenceEntry($0) })
-    let selected = [inputiaModePreferenceEntry(modeID: targetModeID)]
-    let thirdParty = deduplicatedPreferenceEntries(thirdPartyBefore.filter { !isInputiaPreferenceEntry($0) })
-      + [inputiaModePreferenceEntry(modeID: targetModeID), inputiaParentPreferenceEntry()]
-
-    setPreferenceArray(enabled, forKey: "AppleEnabledInputSources")
-    setPreferenceArray(selected, forKey: "AppleSelectedInputSources")
-    setPreferenceArray(history, forKey: "AppleInputSourceHistory")
-    setPreferenceArray(thirdParty, forKey: "AppleEnabledThirdPartyInputSources", domain: inputSourcesDomain)
-    let synchronized = synchronizePreferences(domain: hitoolboxDomain)
-    let inputSourcesSynchronized = synchronizePreferences(domain: inputSourcesDomain)
-    let plistWriteResult = writeHIToolboxPreferencePlist(enabled: enabled, selected: selected, history: history)
-
     print("hitoolboxNormalizeTargetModeID=\(targetModeID)")
     print("hitoolboxNormalizeEnabledBefore=\(enabledBefore.count)")
-    print("hitoolboxNormalizeEnabledAfter=\(enabled.count)")
+    print("hitoolboxNormalizeEnabledAfter=\(enabledBefore.count)")
     print("hitoolboxNormalizeSelectedBefore=\(selectedBefore.count)")
-    print("hitoolboxNormalizeSelectedAfter=\(selected.count)")
+    print("hitoolboxNormalizeSelectedAfter=\(selectedBefore.count)")
     print("hitoolboxNormalizeHistoryBefore=\(historyBefore.count)")
-    print("hitoolboxNormalizeHistoryAfter=\(history.count)")
+    print("hitoolboxNormalizeHistoryAfter=\(historyBefore.count)")
     print("thirdPartyEnabledBefore=\(thirdPartyBefore.count)")
-    print("thirdPartyEnabledAfter=\(thirdParty.count)")
-    print("hitoolboxNormalizeSynchronize=\(synchronized)")
-    print("inputSourcesNormalizeSynchronize=\(inputSourcesSynchronized)")
-    print("hitoolboxNormalizePlistWrite=\(plistWriteResult.ok)")
-    if let error = plistWriteResult.error {
-      print("hitoolboxNormalizePlistWriteError=\(error)")
-    }
+    print("thirdPartyEnabledAfter=\(thirdPartyBefore.count)")
+    print("hitoolboxNormalizeSkipped=true reason=manual-hitoolbox-write-disabled")
+    print("hitoolboxNormalizeRequiredAction=enable-via-system-settings-or-fix-user-preference-service")
     print("hitoolboxNormalize=true")
   }
 

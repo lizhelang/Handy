@@ -25183,6 +25183,81 @@ python3 pwd.getpwuid(os.getuid())
 - readiness 输出现在能直接指出当前 Mac mini 需要先修复“当前用户目录服务 / CFPreferences 用户域”，不是继续重装、重签名或跑 GUI smoke。
 - 因为 `tisReadiness=false` 且 `statusGuiSmokeReady=false`，本轮仍没有运行真实 TextEdit/Safari/Clipboard GUI smoke。
 
+## v62 Mac mini：禁用手写 HIToolbox 偏好，避免在用户目录异常时继续污染输入源状态
+
+时间：2026-07-08 16:10:55 +0800
+
+背景：
+
+- v60/v61 已经证明当前 Mac mini 的 TIS 问题和用户目录服务 / CFPreferences 用户域异常相关。
+- 在这个状态下继续从 Inputia 诊断入口手写 `~/Library/Preferences/com.apple.HIToolbox.plist` 风险过高：TIS/CFPreferences 读不到同一个用户域，手写 plist 不能让 TIS ready，反而可能污染用户输入源状态。
+
+实现：
+
+- `normalizeHIToolbox()` 改为只读取并输出计数，不再调用 `setPreferenceArray(...)` 或 `writeHIToolboxPreferencePlist(...)`。
+- 新输出：
+
+```text
+hitoolboxNormalizeSkipped=true reason=manual-hitoolbox-write-disabled
+hitoolboxNormalizeRequiredAction=enable-via-system-settings-or-fix-user-preference-service
+```
+
+- `verify-nongui.sh` 增加静态检查，要求 normalize 块不再写 HIToolbox / inputsources 偏好。
+
+验证：
+
+```text
+./macos/InputiaInputMethod/build.sh
+  build ok
+
+macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInputMethod --normalize-hitoolbox
+  hitoolboxNormalizeTargetModeID=com.inputia.inputmethod.Inputia.Main
+  hitoolboxNormalizeEnabledBefore=3
+  hitoolboxNormalizeEnabledAfter=3
+  hitoolboxNormalizeSelectedBefore=1
+  hitoolboxNormalizeSelectedAfter=1
+  hitoolboxNormalizeHistoryBefore=1
+  hitoolboxNormalizeHistoryAfter=1
+  thirdPartyEnabledBefore=0
+  thirdPartyEnabledAfter=0
+  hitoolboxNormalizeSkipped=true reason=manual-hitoolbox-write-disabled
+  hitoolboxNormalizeRequiredAction=enable-via-system-settings-or-fix-user-preference-service
+  hitoolboxNormalize=true
+
+./macos/InputiaInputMethod/verify-nongui.sh
+  awaitUiNotReadyNoLaunchPassed=true
+  installNoPrompt.rc=12
+  residue=false
+  tmpResidue=false
+  nonGuiVerificationPassed=true
+```
+
+当前系统安装状态：
+
+```text
+./macos/InputiaInputMethod/status.sh
+  buildCDHash=0ec2f7d06f720212e3e6039eb19fc84b984d06da
+  systemMatchesBuild=false
+  statusUserDirectoryReady=false
+  statusHIToolboxDefaultsReadable=false
+  statusAdminInstallReady=false
+  statusSignatureAccepted=true
+  statusGuiSmokeBlockReasons=target-cdhash-mismatch,admin-required,tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,frontmost-unavailable
+  statusGuiSmokeReady=false reason=target-cdhash-mismatch,admin-required,tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,frontmost-unavailable
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  appSignatureAccepted=true
+  appMatchesBuild=false
+  tis.readinessBlockReason=missing-enabled-source
+  tis.requiredAction=repair-current-user-directory-service
+  tisReadiness=false
+```
+
+结论：
+
+- 新 build 不再手写 HIToolbox 偏好。
+- 当前系统目录仍是旧 host，安装新 build 仍被同一个用户目录 / admin chain 问题阻塞；在 `systemMatchesBuild=false` 和 `tisReadiness=false` 前继续禁止真实 GUI smoke。
+
 ## v60 Mac mini：复刻 MacBook 本地开发 Gatekeeper disabled 路径后，签名 blocker 已消失，当前阻塞转为 TIS enabled/session
 
 时间：2026-07-08 15:53:39 +0800
