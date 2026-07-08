@@ -173,6 +173,22 @@ INPUTIA_CODESIGN_IDENTITY="Codexbar Local Code Signing Leaf v4" \
 
 这个脚本会同时检查 `codesign --verify`、Authority 链、hardened runtime、`spctl`、`syspolicy_check`、Developer ID identity、`notarytool`/`stapler` 和 notarytool keychain profile。若输出 `notary-ticket-missing`、`missing-developer-id-application` 或 `missing-notarytool-profile`，下一步不是继续注册/启用 TIS，也不是跑 GUI smoke，而是导入可被 Gatekeeper 接受的 Developer ID Application identity 并完成 notarization/staple。
 
+Developer ID identity 和 notarytool profile 都齐全后，用公证脚本处理已由 Developer ID Application 签名的 app：
+
+```bash
+INPUTIA_NOTARY_PROFILE="Inputia" \
+  ./macos/InputiaInputMethod/notarize-app.sh \
+  macos/InputiaInputMethod/build/InputiaInputMethod.app
+```
+
+`notarize-app.sh` 会先确认 app 已用 `Developer ID Application:` 签名、带 hardened runtime、`notarytool` profile 可用，然后才会 zip、`notarytool submit --wait`、`stapler staple`、`stapler validate` 和重新跑 `spctl --assess --type execute`。只想验证前置条件但不上传时使用：
+
+```bash
+INPUTIA_NOTARIZE_APP_PREFLIGHT_ONLY=1 \
+  ./macos/InputiaInputMethod/notarize-app.sh \
+  macos/InputiaInputMethod/build/InputiaInputMethod.app
+```
+
 注意：菜单栏实际输入链会按 macOS Text Input 的已安装 source 记录连接 `/Library/Input Methods` 里的 app。手动 `open macos/InputiaInputMethod/build/InputiaInputMethod.app` 只能做进程级诊断，不能代替系统目录安装；如果系统目录仍是旧 CDHash，TextEdit 仍会表现为旧 Host 行为。
 
 安装脚本会打印 `sourceCDHash` / `destCDHash` 并要求二者相同，成功时输出 `systemInstallVerified=true`。安装后脚本会刷新 `TextInputMenuAgent` 和 `SystemUIServer`，再用 `verify-system.sh "/Library/Input Methods/InputiaInputMethod.app"` 做系统目录验证。

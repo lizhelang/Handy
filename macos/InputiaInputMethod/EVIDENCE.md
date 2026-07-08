@@ -24299,6 +24299,142 @@ bash -n smoke-common.sh smoke-textedit-command-shortcuts.sh smoke-clipboard-reca
 - 继续修这个闭环的最小路径不是再手动点“允许”，也不是继续重装本地 Root 签名包；而是导入可公证的 Developer ID Application 证书，配置 `notarytool` profile，使用 Developer ID + hardened runtime 构建，提交 notarization，staple 票据，然后再安装并复测 `spctl accepted` / `tisReadiness=true`。
 - 本轮没有运行 TextEdit/Safari/Clipboard GUI smoke，未抢用户焦点。
 
+## v53 Mac mini：新增受控 notarize 入口并修正非 GUI verifier 的 preflight 契约
+
+背景：
+
+- v52 已证明当前系统 app 安装和 CDHash 一致，Root/Leaf 签名链可 `codesign --verify`，但 Gatekeeper 仍因 `Notary Ticket Missing` 拒绝。
+- 为避免下一轮继续在“手动允许 / 重装 / TIS 刷新 / GUI smoke”之间绕圈，本轮补一个独立公证入口，并把它纳入非 GUI verifier 的安全前置检查。
+
+新增脚本：
+
+```text
+macos/InputiaInputMethod/notarize-app.sh
+```
+
+行为：
+
+- 默认目标：`macos/InputiaInputMethod/build/InputiaInputMethod.app`。
+- 读取 `INPUTIA_NOTARY_PROFILE`，默认 `Inputia`。
+- 上传前必须满足：
+  - `notarytool` 可用；
+  - `stapler` 可用；
+  - notarytool keychain profile 可用；
+  - `codesign --verify --deep --strict` 通过；
+  - app 的 Authority 包含 `Developer ID Application:`；
+  - app 带 hardened runtime。
+- 满足前置后才会 `ditto --keepParent` 打 zip、`notarytool submit --wait`、`stapler staple`、`stapler validate`、再跑 `spctl --assess --type execute`。
+- `INPUTIA_NOTARIZE_APP_PREFLIGHT_ONLY=1` 只做前置检查，不打 zip、不提交、不 staple。
+
+当前 Mac mini 运行结果：
+
+```text
+INPUTIA_NOTARIZE_APP_PREFLIGHT_ONLY=1 \
+./macos/InputiaInputMethod/notarize-app.sh macos/InputiaInputMethod/build/InputiaInputMethod.app
+
+  inputiaNotarizeAppTool=true
+  notaryProfile=Inputia
+  notarytoolAvailable=true
+  staplerAvailable=true
+  notaryProfileCheckOutput: Error: No Keychain password item found for profile: Inputia
+  notarizeAppReady=false reason=missing-notarytool-profile
+  notarizeAppPassed=false reason=missing-notarytool-profile
+  rc=12
+
+find macos/InputiaInputMethod/dist -maxdepth 1 -name '*-notary.zip' -print
+  no output
+```
+
+非 GUI verifier 修正：
+
+- `verify-nongui.sh` 现在检查 `notarize-app.sh` 的关键行为契约：
+  - preflight-only 模式；
+  - Developer ID Application 签名检查；
+  - notarytool profile 检查；
+  - `notarytool submit --wait`；
+  - `stapler staple` / `stapler validate`；
+  - staple 后再次 `spctl --assess --type execute`。
+- `verify-nongui.sh` 运行时调用：
+
+```text
+INPUTIA_NOTARIZE_APP_PREFLIGHT_ONLY=1 notarize-app.sh build/InputiaInputMethod.app
+  notarizeAppPreflightOnly.rc=12
+  notarizeAppPreflightNoSubmit=true
+```
+
+- 同时修正 `smoke-preflight.sh` 静态契约：`InputiaInputMethodPreflight=` 是 `smoke-common.sh` helper 的运行时输出，源码里应检查 `inputia_require_process_not_running "InputiaInputMethod" ... "inputia-host-running"` 调用，而不是要求源码直接包含运行时输出字面量。
+
+验证：
+
+```text
+zsh -n notarize-app.sh notarization-readiness.sh build-pkg.sh install-system.sh
+  passed
+
+bash -n smoke-preflight.sh verify-nongui.sh
+  passed
+
+git diff --check -- notarize-app.sh smoke-preflight.sh verify-nongui.sh README.md EVIDENCE.md ...
+  passed
+
+./macos/InputiaInputMethod/verify-nongui.sh
+  cleanupPermissionContract=true
+  notarizeAppPreflightOnly.rc=12
+  notarizeAppPreflightNoSubmit=true
+  commandCPassThrough=true
+  commandVPassThrough=true
+  commonAppleCommandShortcutSetPassesThrough=true
+  appCommandcopyPassesThrough=true
+  appCommandpastePassesThrough=true
+  systemPreflight:
+    textEditPreflight=not-running docs=0
+    safariPreflight=not-running
+    InputiaInputMethodPreflight=not-running
+    smokePreflightReady=false reason=ui-smoke-disabled
+  buildPreflightInputiaHostGate:
+    InputiaInputMethodPreflight=running
+    smokePreflightReady=false reason=inputia-host-running
+  residue=false
+  tmpResidue=false
+  nonGuiVerificationPassed=true
+```
+
+当前系统 blocker 复核：
+
+```text
+./macos/InputiaInputMethod/notarization-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  accountLookupReady=true
+  codesignVerify=true
+  appCDHash=1a4632993a5c63ccccbf19a78b1b3c11e1b6331d
+  teamIdentifier=not set
+  hardenedRuntime=true
+  codesignAuthority=Codexbar Local Code Signing Leaf v4
+  codesignAuthority=Codexbar Local Code Signing Root v4
+  spctlAccepted=false
+  syspolicyNotaryTicketMissing=true
+  developerIDApplicationIdentityPresent=false
+  developerIDInstallerIdentityPresent=false
+  notaryProfileAvailable=false
+  inputiaGatekeeperBlockReasons=spctl-rejected,notary-ticket-missing
+  inputiaNotarySubmissionBlockReasons=missing-developer-id-application,missing-notarytool-profile
+  notarizationRequiredAction=import-developer-id-application-identity
+
+./macos/InputiaInputMethod/status.sh
+  statusTextEditPreflight=not-running
+  statusSafariPreflight=not-running
+  statusInputiaHostPreflight=not-running
+  statusGuiSessionBlockReason=screen-locked
+  statusGuiSmokeReady=false reason=tis-not-ready,signature-rejected,menu-inputia-menu-item-missing,screen-locked
+
+pgrep -x TextEdit / Safari / osascript / InputiaInputMethod
+  no output
+```
+
+结论：
+
+- 当前没有运行真实 TextEdit/Safari/Clipboard GUI smoke，也没有留下 TextEdit/Safari/osascript/Inputia host 进程。
+- 公证执行路径已具备可重复脚本入口，但当前机器仍缺 `Developer ID Application` identity 和 `Inputia` notarytool profile；因此脚本会在上传前失败，不会制造半提交状态。
+- 下一步仍是导入/配置真正 Developer ID + notarytool profile，然后使用 Developer ID Application + hardened runtime 重建、`notarize-app.sh` 公证并 staple，再系统安装和复测 `spctlAccepted=true` / `tisReadiness=true`。
+
 ## v53 Mac mini：GUI smoke 在系统进程列表/launchctl 异常时硬阻断
 
 背景：
@@ -24427,3 +24563,45 @@ env INPUTIA_POST_INSTALL_UI_PREFLIGHT_SELF_CHECK=1 ./macos/InputiaInputMethod/po
 
 - 单脚本和聚合入口现在都不会在进程列表不可用时把 TextEdit/Safari/InputiaHost 当作 not-running。
 - 本轮仍没有运行真实 TextEdit/Safari/Clipboard GUI smoke。
+
+## v55 Mac mini：Developer ID 公证脚本前置检查
+
+背景：
+
+- v52 已确认当前 Gatekeeper blocker 是 `spctl rejected` / `Notary Ticket Missing`，继续系统级可用安装需要 Developer ID Application 签名、notarytool 提交和 stapler 票据。
+- 为避免继续手工拼命令，本轮补一个只处理已签名 app 的公证脚本；它不会替代构建签名，也不会在前置条件不足时上传。
+
+实现：
+
+- 新增 `notarize-app.sh`：检查 `notarytool`、`stapler`、`codesign --verify`、`Developer ID Application:` authority、hardened runtime、notarytool keychain profile。
+- `INPUTIA_NOTARIZE_APP_PREFLIGHT_ONLY=1` 只跑前置检查，不创建 `*-notary.zip`，不上传 Apple notary service。
+- README 增加 Developer ID + notarytool profile 就绪后的命令。
+- `verify-nongui.sh` 增加静态合同和 preflight-only 检查；同时补齐上一轮 `smoke-preflight.sh` 改用公共 process preflight helper 后的静态合同。
+
+验证：
+
+```text
+zsh -n macos/InputiaInputMethod/notarize-app.sh macos/InputiaInputMethod/verify-nongui.sh
+  passed
+
+INPUTIA_NOTARIZE_APP_PREFLIGHT_ONLY=1 \
+./macos/InputiaInputMethod/notarize-app.sh macos/InputiaInputMethod/build/InputiaInputMethod.app
+  inputiaNotarizeAppTool=true
+  notarytoolAvailable=true
+  staplerAvailable=true
+  codesignVerify=false
+  codesignVerifyOutput: macos/InputiaInputMethod/build/InputiaInputMethod.app: CSSMERR_TP_NOT_TRUSTED
+  notarizeAppRequiredAction=rebuild-with-developer-id-application
+  notarizeAppReady=false reason=codesign-invalid
+  notarizeAppPassed=false reason=codesign-invalid
+  rc=14
+  notaryArchiveUnchanged=true
+
+git diff --check -- notarize-app.sh README.md verify-nongui.sh
+  passed
+```
+
+结论：
+
+- 公证脚本能在当前不满足前置条件时安全早退，并给出下一步：用 Developer ID Application 重新构建签名。
+- 本轮没有提交 notarization，也没有运行真实 TextEdit/Safari/Clipboard GUI smoke。

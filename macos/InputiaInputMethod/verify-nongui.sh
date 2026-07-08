@@ -1296,6 +1296,18 @@ require(build_pkg_preflight_index >= 0, "build-pkg-missing-preflight-call")
 require(build_pkg_build_index > build_pkg_preflight_index, "build-pkg-build-before-verification-preflight")
 require(build_pkg_remove_index > build_pkg_preflight_index, "build-pkg-removes-dist-before-verification-preflight")
 
+notarize_app_text = (root / "notarize-app.sh").read_text()
+require("INPUTIA_NOTARIZE_APP_PREFLIGHT_ONLY" in notarize_app_text, "notarize-app-missing-preflight-only-mode")
+require("Developer ID Application:" in notarize_app_text, "notarize-app-missing-developer-id-signature-check")
+require("notarizeAppRequiredAction=rebuild-with-developer-id-application" in notarize_app_text, "notarize-app-missing-developer-id-required-action")
+require("xcrun notarytool history --keychain-profile" in notarize_app_text, "notarize-app-missing-notary-profile-check")
+require("xcrun notarytool submit" in notarize_app_text, "notarize-app-missing-notary-submit")
+require("--keychain-profile" in notarize_app_text, "notarize-app-missing-keychain-profile-submit")
+require("--wait" in notarize_app_text, "notarize-app-missing-submit-wait")
+require("xcrun stapler staple" in notarize_app_text, "notarize-app-missing-staple")
+require("xcrun stapler validate" in notarize_app_text, "notarize-app-missing-staple-validate")
+require("spctl --assess --type execute" in notarize_app_text, "notarize-app-missing-post-staple-spctl")
+
 open_settings_text = (root / "open-settings.sh").read_text()
 require("detect_verification_processes()" in open_settings_text, "open-settings-missing-verification-process-detection")
 require("require_no_verification_processes" in open_settings_text, "open-settings-missing-verification-process-preflight")
@@ -1502,9 +1514,9 @@ for case_name in ("ready", "missing", "id-mismatch", "not-enabled", "not-selecta
     require(f'assert_tis_ready_case "{case_name}"' in postinstall_text, f"postinstall-missing-self-check-case-{case_name}")
 
 smoke_preflight_text = (root / "smoke-preflight.sh").read_text()
-require("InputiaInputMethodPreflight=" in smoke_preflight_text, "smoke-preflight-missing-inputia-host-preflight-output")
-require("inputia-host-running" in smoke_preflight_text, "smoke-preflight-missing-inputia-host-running-reason")
-require("smokePreflightReady=false reason=inputia-host-running" in smoke_preflight_text, "smoke-preflight-missing-inputia-host-ready-block")
+require("inputia_require_process_not_running" in smoke_preflight_text, "smoke-preflight-missing-inputia-host-preflight-helper")
+require('"InputiaInputMethod" "smokePreflightReady" 9' in smoke_preflight_text, "smoke-preflight-missing-inputia-host-preflight-args")
+require('"inputia-host-running" "-"' in smoke_preflight_text, "smoke-preflight-missing-inputia-host-ready-block")
 require("INPUTIA_TEXTEDIT_SMOKE_ALLOW_EXISTING=0 inputia_require_textedit_idle" in smoke_preflight_text, "smoke-preflight-textedit-preflight-allows-existing")
 require("INPUTIA_SAFARI_SMOKE_ALLOW_EXISTING=0 inputia_require_safari_idle" in smoke_preflight_text, "smoke-preflight-safari-preflight-allows-existing")
 require('"$ROOT_DIR/tis-readiness.sh" "$APP"' in smoke_preflight_text, "smoke-preflight-must-delegate-tis-readiness")
@@ -1513,7 +1525,7 @@ require("smokePreflightReady=false reason=$smoke_reason" in smoke_preflight_text
 smoke_preflight_cdhash_index = smoke_preflight_text.find('expected_cdhash="$(cdhash "$BUILD_APP")"')
 smoke_preflight_textedit_index = smoke_preflight_text.find("inputia_require_textedit_idle")
 smoke_preflight_safari_index = smoke_preflight_text.find("inputia_require_safari_idle")
-smoke_preflight_inputia_index = smoke_preflight_text.find("InputiaInputMethodPreflight=running")
+smoke_preflight_inputia_index = smoke_preflight_text.find("inputia_require_process_not_running")
 require(smoke_preflight_textedit_index >= 0 and smoke_preflight_textedit_index < smoke_preflight_cdhash_index, "smoke-preflight-textedit-after-cdhash")
 require(smoke_preflight_safari_index >= 0 and smoke_preflight_safari_index < smoke_preflight_cdhash_index, "smoke-preflight-safari-after-cdhash")
 require(smoke_preflight_inputia_index >= 0 and smoke_preflight_inputia_index < smoke_preflight_cdhash_index, "smoke-preflight-inputia-after-cdhash")
@@ -1746,6 +1758,7 @@ zsh -n \
 	  "$ROOT_DIR/install-user.sh" \
 	  "$ROOT_DIR/import-signing-identity.sh" \
 	  "$ROOT_DIR/notarization-readiness.sh" \
+	  "$ROOT_DIR/notarize-app.sh" \
 	  "$ROOT_DIR/uninstall-system.sh" \
 	  "$ROOT_DIR/uninstall-user.sh"
 echo "syntaxOK=true"
@@ -1772,6 +1785,26 @@ run_expect_rc 12 "signingImportMissingPasswordSelfCheck" \
 require_output "$RUN_EXPECT_RC_OUTPUT" "signingIdentityImportReady=false reason=missing-p12-password" "signing-import-self-check-missing-password-gate"
 require_output "$RUN_EXPECT_RC_OUTPUT" "signingIdentityRequiredAction=set-INPUTIA_P12_PASSWORD-or-INPUTIA_SIGNING_P12_PASSWORD" "signing-import-self-check-missing-required-action"
 echo "signingIdentityImportMissingPasswordSelfCheck=true"
+
+section "notarization app preflight"
+notarize_archive_before="$(/bin/ls "$ROOT_DIR"/dist/*-notary.zip 2>/dev/null || true)"
+run_allow_rc "0,12,13,14,15,16" "notarizeAppPreflightOnly" \
+  /usr/bin/env \
+    INPUTIA_NOTARIZE_APP_PREFLIGHT_ONLY=1 \
+    "$ROOT_DIR/notarize-app.sh" "$BUILD_APP"
+require_output "$RUN_EXPECT_RC_OUTPUT" "inputiaNotarizeAppTool=true" "notarize-app-preflight-missing-tool-marker"
+if [[ "$RUN_EXPECT_RC_ACTUAL" == "0" ]]; then
+  require_output "$RUN_EXPECT_RC_OUTPUT" "notarizeAppReady=true mode=preflight-only" "notarize-app-preflight-missing-preflight-only-success"
+  require_output "$RUN_EXPECT_RC_OUTPUT" "notarizeAppPassed=skipped reason=preflight-only" "notarize-app-preflight-missing-skip-marker"
+else
+  require_output "$RUN_EXPECT_RC_OUTPUT" "notarizeAppPassed=false" "notarize-app-preflight-missing-failure-marker"
+fi
+notarize_archive_after="$(/bin/ls "$ROOT_DIR"/dist/*-notary.zip 2>/dev/null || true)"
+if [[ "$notarize_archive_before" != "$notarize_archive_after" ]]; then
+  echo "nonGuiVerificationPassed=false reason=notarize-app-preflight-created-archive"
+  exit 1
+fi
+echo "notarizeAppPreflightNoSubmit=true"
 
 section "shortcut pass-through self-checks"
 require_executable "$ROOT_DIR/build/inputia-shortcut-self-check" "missing-shortcut-self-check"
