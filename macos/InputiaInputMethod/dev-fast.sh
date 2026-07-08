@@ -69,6 +69,7 @@ section "swift and bridge self-check"
 "$HOST_EXEC" --bridge-self-check
 "$HOST_EXEC" --bridge-memory-self-check
 "$HOST_EXEC" --bridge-settings-self-check
+"$HOST_EXEC" --bridge-settings-reload-self-check
 "$HOST_EXEC" --bridge-default-chinese-self-check
 "$HOST_EXEC" --bridge-direct-session-self-check
 "$HOST_EXEC" --host-shortcut-self-check

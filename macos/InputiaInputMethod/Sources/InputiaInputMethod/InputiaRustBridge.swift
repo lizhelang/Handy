@@ -169,12 +169,21 @@ struct InputiaBridgeOutcome {
   }
 }
 
+struct InputiaSettingsReloadSelfCheckResult {
+  let outcome: InputiaBridgeOutcome
+  let firstCandidate: String
+  let noOpReloaded: Bool
+  let noOpPreservedComposing: Bool
+  let changedReloaded: Bool
+}
+
 final class InputiaRustBridge {
   static let shared = InputiaRustBridge(settingsPath: defaultSettingsPath())
 
   private let settingsPath: String
   private var session: UnsafeMutableRawPointer?
   private var settingsModificationDate: Date?
+  private var settingsFingerprint: Data?
   private var cachedInputModeToggleShortcut = "shift"
   private var cachedScriptToggleShortcut = "control_shift_s"
   private(set) var latestOutcome = InputiaBridgeOutcome.error
@@ -183,6 +192,7 @@ final class InputiaRustBridge {
     self.settingsPath = settingsPath
     Self.ensureSettingsFile(at: settingsPath)
     settingsModificationDate = Self.modificationDate(for: settingsPath)
+    settingsFingerprint = Self.settingsFingerprint(for: settingsPath)
     cachedInputModeToggleShortcut = Self.inputModeToggleShortcut(in: settingsPath)
     cachedScriptToggleShortcut = Self.scriptToggleShortcut(in: settingsPath)
     session = Self.openSettingsSession(settingsPath: settingsPath)
@@ -309,7 +319,15 @@ final class InputiaRustBridge {
     guard currentModificationDate != settingsModificationDate else {
       return false
     }
-    return reloadSettings(newModificationDate: currentModificationDate)
+    let currentFingerprint = Self.settingsFingerprint(for: settingsPath)
+    guard currentFingerprint != settingsFingerprint else {
+      settingsModificationDate = currentModificationDate
+      return false
+    }
+    return reloadSettings(
+      newModificationDate: currentModificationDate,
+      newFingerprint: currentFingerprint
+    )
   }
 
   func inputModeToggleShortcut() -> String {
@@ -325,7 +343,10 @@ final class InputiaRustBridge {
     guard Self.toggleChineseScript(in: settingsPath) else {
       return false
     }
-    return reloadSettings(newModificationDate: Self.modificationDate(for: settingsPath))
+    return reloadSettings(
+      newModificationDate: Self.modificationDate(for: settingsPath),
+      newFingerprint: Self.settingsFingerprint(for: settingsPath)
+    )
   }
 
   func backspace() -> InputiaBridgeOutcome {
@@ -377,10 +398,24 @@ final class InputiaRustBridge {
     return ok
   }
 
-  static func debugSettingsReloadSelfCheck(settingsPath: String) -> [InputiaBridgeOutcome] {
+  static func debugSettingsReloadSelfCheck(settingsPath: String) -> InputiaSettingsReloadSelfCheckResult {
     let bridge = InputiaRustBridge(settingsPath: settingsPath, startInChineseMode: true)
-    var outcomes: [InputiaBridgeOutcome] = []
-    outcomes.append(bridge.toggleInputMode())
+    var firstCandidate = ""
+    for character in "ni" {
+      let outcome = bridge.handle(character: character)
+      if firstCandidate.isEmpty {
+        firstCandidate = outcome.candidates.first ?? ""
+      }
+    }
+    let composingBeforeNoOp = bridge.latestOutcome.composing
+    try? FileManager.default.setAttributes(
+      [.modificationDate: Date().addingTimeInterval(5)],
+      ofItemAtPath: settingsPath
+    )
+    let noOpReloaded = bridge.reloadSettingsIfNeeded()
+    let noOpPreservedComposing = !composingBeforeNoOp.isEmpty
+      && bridge.latestOutcome.composing == composingBeforeNoOp
+
     Self.writeSettings(
       shiftToggleEnabled: false,
       inputModeToggleShortcut: "none",
@@ -388,9 +423,15 @@ final class InputiaRustBridge {
       candidatePageSize: defaultCandidatePageSize,
       to: settingsPath
     )
-    bridge.reloadSettingsIfNeeded()
-    outcomes.append(bridge.handleSpecial(keyShift))
-    return outcomes
+    let changedReloaded = bridge.reloadSettingsIfNeeded()
+    let outcome = bridge.handleSpecial(keyShift)
+    return InputiaSettingsReloadSelfCheckResult(
+      outcome: outcome,
+      firstCandidate: firstCandidate,
+      noOpReloaded: noOpReloaded,
+      noOpPreservedComposing: noOpPreservedComposing,
+      changedReloaded: changedReloaded
+    )
   }
 
   static func debugClipboardPrivacySelfCheck(settingsPath: String) -> [String: Bool] {
@@ -622,7 +663,7 @@ final class InputiaRustBridge {
     return dictionary["imported"] as? Int
   }
 
-  private func reloadSettings(newModificationDate: Date?) -> Bool {
+  private func reloadSettings(newModificationDate: Date?, newFingerprint: Data? = nil) -> Bool {
     let previousMode = latestOutcome.mode
     let oldSession = session
     session = nil
@@ -636,6 +677,7 @@ final class InputiaRustBridge {
 
     session = newSession
     settingsModificationDate = newModificationDate
+    settingsFingerprint = newFingerprint ?? Self.settingsFingerprint(for: settingsPath)
     cachedInputModeToggleShortcut = Self.inputModeToggleShortcut(in: settingsPath)
     cachedScriptToggleShortcut = Self.scriptToggleShortcut(in: settingsPath)
 
@@ -699,6 +741,24 @@ final class InputiaRustBridge {
       return nil
     }
     return date
+  }
+
+  private static func settingsFingerprint(for path: String) -> Data? {
+    let url = URL(fileURLWithPath: path)
+    guard let data = try? Data(contentsOf: url) else {
+      return nil
+    }
+    guard
+      let object = try? JSONSerialization.jsonObject(with: data),
+      JSONSerialization.isValidJSONObject(object),
+      let canonical = try? JSONSerialization.data(
+        withJSONObject: object,
+        options: [.sortedKeys, .withoutEscapingSlashes]
+      )
+    else {
+      return data
+    }
+    return canonical
   }
 
   private static func openSettingsSession(settingsPath: String) -> UnsafeMutableRawPointer? {

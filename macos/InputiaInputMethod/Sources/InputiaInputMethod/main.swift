@@ -1306,10 +1306,22 @@ final class InputiaInputMethodDiagnostics {
   private func bridgeSettingsReloadSelfCheck() {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("InputiaSettingsReloadSelfCheck-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
-    let outcomes = InputiaRustBridge.debugSettingsReloadSelfCheck(
+    let result = InputiaRustBridge.debugSettingsReloadSelfCheck(
       settingsPath: root.appendingPathComponent("settings.json").path
     )
-    printBridgeSelfCheck(name: "bridgeSettingsReloadSelfCheck", outcomes: outcomes)
+    let passed = result.outcome.ok
+      && !result.noOpReloaded
+      && result.noOpPreservedComposing
+      && result.changedReloaded
+    print("bridgeSettingsReloadSelfCheck=\(passed)")
+    print("consumed=\(result.outcome.consumed)")
+    print("mode=\(result.outcome.mode)")
+    print("composing=\(result.outcome.composing)")
+    print("firstCandidate=\(result.firstCandidate)")
+    print("commit=\(result.outcome.commit ?? "")")
+    print("settingsReloadNoOpReloaded=\(result.noOpReloaded)")
+    print("settingsReloadNoOpPreservedComposing=\(result.noOpPreservedComposing)")
+    print("settingsReloadChangedReloaded=\(result.changedReloaded)")
   }
 
   private func bridgeDefaultChineseSelfCheck() {
