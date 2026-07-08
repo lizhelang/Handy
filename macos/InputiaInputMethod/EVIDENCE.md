@@ -22503,6 +22503,14 @@ codesign -dv --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
 
 spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
   /Library/Input Methods/InputiaInputMethod.app: rejected
+
+spctl 本地 allowlist 路线检查：
+  man spctl
+    As of MacOS 15.0, operations that modify the rule database or the global
+    state of the assessment subsystem will no longer be supported.
+
+  spctl --list --label "Inputia Dev"
+    error: The authorization was denied since no user interaction was possible.
 ```
 
 结论：
@@ -24164,3 +24172,202 @@ INPUTIA_SYSPOLICY_TIMEOUT_SECONDS=5 INPUTIA_SPCTL_TIMEOUT_SECONDS=5 \
 - 当前 Mac mini 的首要 blocker 不是安装包、不是 TIS 刷新、不是 smoke 脚本，也不是继续手动选择输入法；是系统账号目录服务/Keychain 信任环境异常导致签名身份消失、Gatekeeper 返回内部错误、`syspolicy_check` 卡住。
 - 在 `accountLookupReady=true`、`security find-identity` 重新能看到签名身份、`spctl` 不再内部错误前，不运行 TextEdit/Safari/Clipboard GUI smoke。
 - 本轮没有运行 GUI smoke。
+
+## v52 Mac mini：Root 已信任后 codesign 通过，但 Gatekeeper 仍因缺少 Developer ID/公证票据拒绝
+
+背景：
+
+- 用户已在 Mac mini 上信任 `Codexbar Local Code Signing Root v4`。
+- 继续按系统级输入法证据规则验证：先签名/安装/TIS readiness，不在 `spctl accepted` 前运行 TextEdit/Safari/Clipboard GUI smoke。
+- 参考 Apple Developer 的 Developer ID/Gatekeeper 说明：分发到 Mac App Store 外的 macOS 软件需要 Developer ID 签名，提交公证后软件会获得 Gatekeeper 可识别的票据；当前本地 Root/Leaf 签名只能推进 `codesign` 信任链，不能替代 Developer ID notarization。
+
+当前签名身份：
+
+```text
+security find-identity -v -p codesigning | grep -F "Codexbar Local Code Signing Leaf v4"
+  1) 12C73495BB5C15FD71C22E823A8A9CBD0CC5243C "Codexbar Local Code Signing Leaf v4"
+```
+
+系统安装状态：
+
+```text
+./macos/InputiaInputMethod/status.sh
+  buildVersion=44
+  buildCDHash=1a4632993a5c63ccccbf19a78b1b3c11e1b6331d
+  systemMatchesBuild=true
+  legacyIputiaPresent=false
+  systemSettingsMatchesBuildVersion=true
+  includeAllInstalled=true matches=2
+  id=com.inputia.inputmethod.Inputia       enabled=false selectable=false
+  id=com.inputia.inputmethod.Inputia.Main  enabled=true selectable=true selected=false
+  statusSignatureAccepted=false
+  statusGuiSmokeReady=false reason=tis-not-ready,signature-rejected,menu-menu-agent-unavailable,no-console-user
+```
+
+TIS readiness：
+
+```text
+./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  appMatchesBuild=true
+  appSignatureAccepted=false
+  expectedTISModeID=com.inputia.inputmethod.Inputia.Main
+  tis.installedMatches=2
+  tis.targetInstalledMatches=1
+  tis.targetEnabledMatches=0
+  tis.hansEnabled=true
+  tis.hansSelectable=true
+  tis.currentID=com.tencent.inputmethod.wetype.pinyin
+  tis.readinessBlockReason=signature-rejected
+  tis.requiredAction=sign-with-accepted-identity
+  tisReadiness=false
+```
+
+Gatekeeper / 公证诊断：
+
+```text
+./macos/InputiaInputMethod/notarization-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  accountLookupReady=true
+  codesignVerify=true
+  appCDHash=1a4632993a5c63ccccbf19a78b1b3c11e1b6331d
+  teamIdentifier=not set
+  hardenedRuntime=true
+  codesignAuthority=Codexbar Local Code Signing Leaf v4
+  codesignAuthority=Codexbar Local Code Signing Root v4
+  spctlAccepted=false
+  spctlInternalError=false
+  syspolicyCheckRc=70
+  syspolicyNotaryTicketMissing=true
+  developerIDApplicationIdentityPresent=false
+  developerIDInstallerIdentityPresent=false
+  notaryProfileAvailable=false
+  inputiaGatekeeperReady=false
+  inputiaGatekeeperBlockReasons=spctl-rejected,notary-ticket-missing
+  inputiaNotarySubmissionReady=false
+  inputiaNotarySubmissionBlockReasons=missing-developer-id-application,missing-notarytool-profile
+  notarizationRequiredAction=import-developer-id-application-identity
+
+syspolicy_check distribution "/Library/Input Methods/InputiaInputMethod.app"
+  App has failed one or more pre-distribution checks.
+  Notary Ticket Missing
+  Severity: Fatal
+  Full Error: A Notarization ticket is not stapled to this application.
+
+spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  /Library/Input Methods/InputiaInputMethod.app: rejected
+```
+
+打包状态：
+
+```text
+find macos/InputiaInputMethod/dist -maxdepth 1 -type f -print | sort
+  macos/InputiaInputMethod/dist/InputiaInputMethod-latest.pkg
+  macos/InputiaInputMethod/dist/InputiaInputMethod-v44-1a4632993a5c.pkg
+
+shasum -a 256 macos/InputiaInputMethod/dist/InputiaInputMethod-latest.pkg
+  1c926c1a53308af4c4e57ed2928adbc3c509f70d6671ebb5502dfa24a6ae795d
+```
+
+非 GUI verifier：
+
+```text
+bash -n smoke-common.sh smoke-textedit-command-shortcuts.sh smoke-clipboard-recall.sh smoke-safari-command-shortcuts.sh verify-nongui.sh
+  passed
+
+./macos/InputiaInputMethod/verify-nongui.sh
+  commandCPassThrough=true
+  commandVPassThrough=true
+  commonAppleCommandShortcutSetPassesThrough=true
+  officialAppleCommandKeyDownSetPassesThrough=true
+  anyCommandModifiedKeyPassesThrough=true
+  allCommandModifierVariantsPassThrough=true
+  appCommandcopyPassesThrough=true
+  appCommandpastePassesThrough=true
+  uiSmokeSkipped=true reason=disabled
+  awaitUiNotReadyNoLaunchPassed=true
+  postInstallUiTisGateNoLaunchPassed=true
+  residue=false
+  tmpResidue=false
+  nonGuiVerificationPassed=true
+```
+
+结论：
+
+- 用户信任 Root 后，上一轮 `accountLookupReady=false` / `spctlInternalError=true` 的环境问题已消失；当前 `codesignVerify=true`。
+- “安装了一堆旧输入法”的问题已被收敛：系统目录与 build CDHash 一致，旧拼写残留不存在，TIS 里当前只剩父项和 `com.inputia.inputmethod.Inputia.Main`，没有旧的 Hans/Hant 多模式堆积。
+- 仍然无法真正切换/启用的主 blocker 是 Gatekeeper：`spctlAccepted=false`，`syspolicy_check` 明确为 `Notary Ticket Missing`，并且本机没有 `Developer ID Application` identity 和 `notarytool` profile。
+- `spctl --add` 本地白名单不是当前系统上的可靠路径：本机 `spctl` 文档已标为 macOS 15 起不再支持规则库修改，且无交互授权下不能列出/修改 label 规则。
+- 继续修这个闭环的最小路径不是再手动点“允许”，也不是继续重装本地 Root 签名包；而是导入可公证的 Developer ID Application 证书，配置 `notarytool` profile，使用 Developer ID + hardened runtime 构建，提交 notarization，staple 票据，然后再安装并复测 `spctl accepted` / `tisReadiness=true`。
+- 本轮没有运行 TextEdit/Safari/Clipboard GUI smoke，未抢用户焦点。
+
+## v53 Mac mini：GUI smoke 在系统进程列表/launchctl 异常时硬阻断
+
+背景：
+
+- 当前目标仍是修复 TextEdit/Safari/Clipboard GUI smoke 清理纪律、IME 状态污染与证据记录。
+- 真实 GUI smoke 仍不能运行：Gatekeeper/TIS 未 ready，且本轮发现 Mac mini 的 launchctl 环境写入和进程列表服务也异常。
+- 为避免 smoke 在无法确认 TextEdit/Safari/InputiaHost 状态时误开 GUI，本轮把 `pgrep`/`sysmond` 异常提升为 GUI smoke 前置硬阻断。
+
+实现：
+
+- `smoke-common.sh` 增加 `process-list-unavailable` 阻断：`TextEdit`、`Safari`、`InputiaInputMethod` preflight 如果无法读取进程列表，会输出 `guiSmokeReady=false reason=process-list-unavailable` 并在打开 GUI 前退出。
+- `smoke-common.sh` 增加 `inputia_try_write_clipboard_text`，cleanup self-check 在 pasteboard 不可写时记录 `pasteboard-unavailable`，不再因为 `pbcopy` 失败中断 trap 验证。
+- `smoke-common.sh` 增加 `inputia_try_set_debug_events_env` / `inputia_set_debug_events_env_or_exit`，Clipboard recall / Safari Enter 的 debug event log 写入如果被 `launchctl` 拒绝，会在真实 smoke 前退出，cleanup self-check 则记录 `launchctl-env-unavailable`。
+- `verify-nongui.sh` 的静态合同同步覆盖上述 helper 和 marker；`debug env restore self-check` 在 `launchctl setenv` 不可用时输出 skip marker，而不是让 verifier 提前崩掉。
+
+验证：
+
+```text
+zsh -n smoke-common.sh smoke-textedit-command-shortcuts.sh smoke-safari-command-shortcuts.sh smoke-clipboard-recall.sh smoke-safari-enter.sh verify-nongui.sh
+  passed
+
+pgrep -x launchd
+  sysmon request failed with error: sysmond service not found
+  pgrep: Cannot get process list
+  rc=3
+
+env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_GUI_SESSION_CHECK=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
+  ./macos/InputiaInputMethod/smoke-clipboard-recall.sh ./macos/InputiaInputMethod/build/InputiaInputMethod.app
+  textEditPreflight=unknown docs=unknown
+  processListAvailable=false reason=process-list-unavailable
+  guiSmokeReady=false reason=process-list-unavailable
+  clipboardRecallSmokeReady=false reason=process-list-unavailable
+  rc=6
+
+env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_GUI_SESSION_CHECK=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
+  ./macos/InputiaInputMethod/smoke-safari-command-shortcuts.sh ./macos/InputiaInputMethod/build/InputiaInputMethod.app
+  safariPreflight=unknown
+  processListAvailable=false reason=process-list-unavailable
+  guiSmokeReady=false reason=process-list-unavailable
+  safariCommandShortcutSmokeReady=false reason=process-list-unavailable
+  rc=13
+
+env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_GUI_SESSION_CHECK=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
+  INPUTIA_PROCESS_IGNORE_REAL_FOR_TEST=1 INPUTIA_ENABLE_CLIPBOARD_INFO_OVERRIDE_FOR_TEST=1 \
+  INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST="Unicode text, 42" INPUTIA_CLIPBOARD_RECALL_CLEANUP_SELF_CHECK=1 \
+  ./macos/InputiaInputMethod/smoke-clipboard-recall.sh ./macos/InputiaInputMethod/build/InputiaInputMethod.app
+  clipboardWrite=false reason=pasteboard-unavailable
+  debugEnvSet=false reason=launchctl-env-unavailable
+  clipboardRecallCleanupSelfCheck=true phase=pasteboard-unavailable+launchctl-env-unavailable
+  rc=23
+  clipboardUnchanged=true
+
+env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_GUI_SESSION_CHECK=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
+  INPUTIA_PROCESS_IGNORE_REAL_FOR_TEST=1 INPUTIA_SAFARI_ENTER_CLEANUP_SELF_CHECK=1 \
+  ./macos/InputiaInputMethod/smoke-safari-enter.sh ./macos/InputiaInputMethod/build/InputiaInputMethod.app
+  debugEnvSet=false reason=launchctl-env-unavailable
+  safariEnterCleanupSelfCheck=true phase=after-temp-write+launchctl-env-unavailable
+  rc=26
+
+./macos/InputiaInputMethod/verify-nongui.sh
+  debugEnvRestoreSelfCheck=skipped reason=launchctl-env-unavailable
+  processPreflightHelperSelfCheck=true
+  guiSmokeReadinessSelfCheck=true
+  nonGuiVerificationPassed=false reason=fake-existing-process-not-visible process=InputiaInputMethod
+```
+
+结论：
+
+- 本轮没有运行真实 TextEdit/Safari/Clipboard GUI smoke，未抢用户焦点。
+- 当前 Mac mini 的 `pgrep`/`sysmond` 不可用时，smoke 已不会再误判 TextEdit/Safari/InputiaHost 为未运行；真实 GUI smoke 会被 `process-list-unavailable` 阻断。
+- Clipboard recall 与 Safari Enter cleanup self-check 在 pasteboard/launchctl 异常下仍能走到 trap 路径并保持剪贴板不变。
+- 完整 `verify-nongui.sh` 尚未全绿，原因是当前系统无法列进程，fake process 夹具不能被 `pgrep -x` 观察到；这是系统服务阻断，不是这轮脚本合同失败。

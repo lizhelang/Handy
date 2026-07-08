@@ -77,14 +77,22 @@ trap cleanup_smoke EXIT
 
 if [[ "${INPUTIA_CLIPBOARD_RECALL_CLEANUP_SELF_CHECK:-0}" == "1" ]]; then
   ORIGINAL_CLIPBOARD="$(/usr/bin/pbpaste 2>/dev/null || true)"
-  /usr/bin/printf 'inputia clipboard cleanup self-check' | /usr/bin/pbcopy
-  CLIPBOARD_CHANGED=1
+  self_check_phase="after-clipboard-write"
+  if inputia_try_write_clipboard_text 'inputia clipboard cleanup self-check'; then
+    CLIPBOARD_CHANGED=1
+  else
+    self_check_phase="pasteboard-unavailable"
+  fi
   /usr/bin/printf 'select-log' >"$SELECT_LOG"
   /usr/bin/printf 'restore-log' >"$RESTORE_LOG"
   /usr/bin/printf 'event-log' >"$EVENT_LOG"
   /usr/bin/printf 'osascript-log' >"$OSASCRIPT_FILE"
-  /bin/launchctl setenv INPUTIA_DEBUG_EVENTS "$EVENT_LOG"
-  echo "clipboardRecallCleanupSelfCheck=true phase=after-clipboard-write"
+  if inputia_try_set_debug_events_env "$EVENT_LOG"; then
+    self_check_phase="${self_check_phase}+debug-env-write"
+  else
+    self_check_phase="${self_check_phase}+launchctl-env-unavailable"
+  fi
+  echo "clipboardRecallCleanupSelfCheck=true phase=$self_check_phase"
   exit "${INPUTIA_CLIPBOARD_RECALL_CLEANUP_SELF_CHECK_RC:-23}"
 fi
 
@@ -94,7 +102,7 @@ inputia_select_input_source_or_exit \
   "$APP" "$EXECUTABLE" "$TIS_TOOL" "$SELECT_LOG" \
   "clipboardRecallSmokeReady" 8
 
-/bin/launchctl setenv INPUTIA_DEBUG_EVENTS "$EVENT_LOG"
+inputia_set_debug_events_env_or_exit "$EVENT_LOG" "clipboardRecallSmokeReady" 14
 if [[ "${INPUTIA_RESTART_HOST_FOR_DEBUG:-1}" == "1" ]]; then
   /usr/bin/killall InputiaInputMethod >/dev/null 2>&1 || true
   /bin/sleep 0.5

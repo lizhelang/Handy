@@ -69,8 +69,13 @@ if [[ "${INPUTIA_SAFARI_ENTER_CLEANUP_SELF_CHECK:-0}" == "1" ]]; then
   /usr/bin/printf 'select-log' >"$SELECT_LOG"
   /usr/bin/printf 'restore-log' >"$RESTORE_LOG"
   /usr/bin/printf 'osascript-log' >"$OSASCRIPT_FILE"
-  /bin/launchctl setenv INPUTIA_DEBUG_EVENTS "$EVENT_LOG"
-  echo "safariEnterCleanupSelfCheck=true phase=after-debug-env-write"
+  self_check_phase="after-temp-write"
+  if inputia_try_set_debug_events_env "$EVENT_LOG"; then
+    self_check_phase="${self_check_phase}+debug-env-write"
+  else
+    self_check_phase="${self_check_phase}+launchctl-env-unavailable"
+  fi
+  echo "safariEnterCleanupSelfCheck=true phase=$self_check_phase"
   exit "${INPUTIA_SAFARI_ENTER_CLEANUP_SELF_CHECK_RC:-26}"
 fi
 
@@ -80,7 +85,7 @@ inputia_select_input_source_or_exit \
   "$APP" "$EXECUTABLE" "$TIS_TOOL" "$SELECT_LOG" \
   "safariEnterSmokeReady" 6
 
-/bin/launchctl setenv INPUTIA_DEBUG_EVENTS "$EVENT_LOG"
+inputia_set_debug_events_env_or_exit "$EVENT_LOG" "safariEnterSmokeReady" 12
 if [[ "${INPUTIA_RESTART_HOST_FOR_DEBUG:-1}" == "1" ]]; then
   /usr/bin/killall InputiaInputMethod >/dev/null 2>&1 || true
   /bin/sleep 0.5

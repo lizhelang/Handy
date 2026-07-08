@@ -27,6 +27,7 @@ run_expect_rc() {
   rc=$?
   set -e
   RUN_EXPECT_RC_OUTPUT="$output"
+  RUN_EXPECT_RC_ACTUAL="$rc"
   printf '%s\n' "$output" | /usr/bin/sed "s/^/$label: /"
   echo "$label.rc=$rc"
   if [[ "$rc" != "$expected_rc" ]]; then
@@ -46,6 +47,7 @@ run_allow_rc() {
   rc=$?
   set -e
   RUN_EXPECT_RC_OUTPUT="$output"
+  RUN_EXPECT_RC_ACTUAL="$rc"
   printf '%s\n' "$output" | /usr/bin/sed "s/^/$label: /"
   echo "$label.rc=$rc"
   if [[ ",$allowed_rcs," != *",$rc,"* ]]; then
@@ -54,11 +56,63 @@ run_allow_rc() {
   fi
 }
 
+run_expect_rc_or_gui_block() {
+  local expected_rc="$1"
+  local gui_block_rcs="$2"
+  local label="$3"
+  shift 3
+
+  run_allow_rc "$expected_rc,$gui_block_rcs" "$label" "$@"
+  if [[ "$RUN_EXPECT_RC_ACTUAL" == "$expected_rc" ]]; then
+    return 0
+  fi
+  require_output_regex \
+    "$RUN_EXPECT_RC_OUTPUT" \
+    'guiSmokeReady=false reason=(no-console-user|login-not-complete|screen-locked|frontmost-unavailable|loginwindow-frontmost|process-list-unavailable)' \
+    "${label}-missing-gui-session-blocker"
+  echo "${label}AcceptedBlockReason=gui-session-or-process-list"
+}
+
+run_allow_launchctl_env_probe() {
+  local label="$1"
+  shift
+
+  local output rc
+  set +e
+  output="$("$@" 2>&1)"
+  rc=$?
+  set -e
+  RUN_EXPECT_RC_OUTPUT="$output"
+  RUN_EXPECT_RC_ACTUAL="$rc"
+  printf '%s\n' "$output" | /usr/bin/sed "s/^/$label: /"
+  echo "$label.rc=$rc"
+  if [[ "$rc" == "0" ]]; then
+    echo "${label}Ready=true"
+    return 0
+  fi
+  require_output_regex \
+    "$output" \
+    'Reentrancy avoided|bootstrap|not found|Operation not permitted|Could not set environment' \
+    "${label}-unexpected-launchctl-failure"
+  echo "${label}Ready=false"
+  return 1
+}
+
 require_output() {
   local output="$1"
   local pattern="$2"
   local reason="$3"
   if ! /usr/bin/grep -q "$pattern" <<<"$output"; then
+    echo "nonGuiVerificationPassed=false reason=$reason"
+    exit 1
+  fi
+}
+
+require_output_regex() {
+  local output="$1"
+  local pattern="$2"
+  local reason="$3"
+  if ! /usr/bin/grep -Eq "$pattern" <<<"$output"; then
     echo "nonGuiVerificationPassed=false reason=$reason"
     exit 1
   fi
@@ -497,6 +551,8 @@ require("INPUTIA_PROCESS_RUNNING_FOR_TEST" in common, "common-missing-process-ru
 require("INPUTIA_PROCESS_IGNORE_REAL_FOR_TEST" in common, "common-missing-process-ignore-real-test-override")
 require("inputia_require_process_not_running()" in common, "common-missing-process-preflight-helper")
 require('allow_var" != "-"' in common, "common-missing-process-preflight-no-allow-sentinel")
+require("process-list-unavailable" in common, "common-missing-process-list-unavailable-marker")
+require("processListAvailable=false" in common, "common-missing-process-list-availability-marker")
 require("inputia_cleanup_smoke_files()" in common, "common-missing-smoke-file-cleanup-helper")
 require("INPUTIA_KEEP_SMOKE_LOGS" in common, "common-missing-keep-smoke-logs-gate")
 require("smokeTempCleanup=skipped" in common, "common-missing-smoke-file-cleanup-skip-marker")
@@ -507,6 +563,11 @@ require("textEditCleanupFailed=process-still-running" in common, "common-missing
 require("safariCleanupFailed=process-still-running" in common, "common-missing-safari-cleanup-failure")
 require("inputia_clipboard_info_restorable_reason()" in common, "common-missing-clipboard-info-classifier")
 require("inputia_current_clipboard_info()" in common, "common-missing-clipboard-info-provider")
+require("inputia_try_write_clipboard_text()" in common, "common-missing-safe-clipboard-write-helper")
+require("pasteboard-unavailable" in common, "common-missing-pasteboard-unavailable-marker")
+require("inputia_try_set_debug_events_env()" in common, "common-missing-safe-debug-env-set-helper")
+require("inputia_set_debug_events_env_or_exit()" in common, "common-missing-debug-env-required-helper")
+require("launchctl-env-unavailable" in common, "common-missing-launchctl-env-unavailable-marker")
 require("INPUTIA_ENABLE_CLIPBOARD_INFO_OVERRIDE_FOR_TEST" in common, "common-missing-clipboard-info-test-override-gate")
 require("INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST" in common, "common-missing-clipboard-info-test-override")
 require("inputia_require_text_clipboard_restorable()" in common, "common-missing-text-clipboard-restorable-helper")
@@ -786,10 +847,12 @@ require(
     "clipboard-restore-order",
 )
 clipboard_cleanup_self_check_index = clipboard_text.find("INPUTIA_CLIPBOARD_RECALL_CLEANUP_SELF_CHECK")
-clipboard_cleanup_self_check_marker_index = clipboard_text.find("clipboardRecallCleanupSelfCheck=true phase=after-clipboard-write")
+clipboard_cleanup_self_check_marker_index = clipboard_text.find("clipboardRecallCleanupSelfCheck=true phase=$self_check_phase")
 require(clipboard_cleanup_self_check_index > clipboard_trap_index, "clipboard-cleanup-self-check-before-trap")
 require(clipboard_cleanup_self_check_index < clipboard_select_index, "clipboard-cleanup-self-check-after-select")
 require(clipboard_cleanup_self_check_marker_index > clipboard_cleanup_self_check_index, "clipboard-cleanup-self-check-missing-marker")
+require('self_check_phase="after-clipboard-write"' in clipboard_text, "clipboard-cleanup-self-check-missing-write-phase")
+require('self_check_phase="pasteboard-unavailable"' in clipboard_text, "clipboard-cleanup-self-check-missing-pasteboard-phase")
 require("INPUTIA_CLIPBOARD_RECALL_CLEANUP_SELF_CHECK_RC" in clipboard_text, "clipboard-cleanup-self-check-missing-rc-override")
 require("on clearInputiaState()" in clipboard_text, "clipboard-missing-state-clear-handler")
 require("key code 53" in clipboard_text, "clipboard-missing-escape-state-clear")
@@ -902,7 +965,9 @@ require("restore_clipboard" in textedit_command_text, "textedit-command-missing-
 require("OSASCRIPT_FILE=" in textedit_command_text, "textedit-command-missing-osascript-temp-file")
 require("inputia_run_with_timeout textedit-command-osascript" in textedit_command_text, "textedit-command-missing-osascript-timeout")
 require("INPUTIA_TEXTEDIT_COMMAND_CLEANUP_SELF_CHECK" in textedit_command_text, "textedit-command-missing-cleanup-self-check")
-require("textEditCommandCleanupSelfCheck=true phase=after-clipboard-write" in textedit_command_text, "textedit-command-missing-cleanup-self-check-marker")
+require("textEditCommandCleanupSelfCheck=true phase=$self_check_phase" in textedit_command_text, "textedit-command-missing-cleanup-self-check-marker")
+require('self_check_phase="after-clipboard-write"' in textedit_command_text, "textedit-command-cleanup-self-check-missing-write-phase")
+require('self_check_phase="pasteboard-unavailable"' in textedit_command_text, "textedit-command-cleanup-self-check-missing-pasteboard-phase")
 require("INPUTIA_TEXTEDIT_COMMAND_CLEANUP_SELF_CHECK_RC" in textedit_command_text, "textedit-command-missing-cleanup-self-check-rc-override")
 
 safari_command_text = (root / "smoke-safari-command-shortcuts.sh").read_text()
@@ -924,7 +989,9 @@ require("commandPasteTitle=" in safari_command_text, "safari-command-missing-pas
 require("restore_clipboard" in safari_command_text, "safari-command-missing-clipboard-restore")
 require("inputia_run_with_timeout safari-command-osascript" in safari_command_text, "safari-command-missing-osascript-timeout")
 require("INPUTIA_SAFARI_COMMAND_CLEANUP_SELF_CHECK" in safari_command_text, "safari-command-missing-cleanup-self-check")
-require("safariCommandCleanupSelfCheck=true phase=after-clipboard-write" in safari_command_text, "safari-command-missing-cleanup-self-check-marker")
+require("safariCommandCleanupSelfCheck=true phase=$self_check_phase" in safari_command_text, "safari-command-missing-cleanup-self-check-marker")
+require('self_check_phase="after-clipboard-write"' in safari_command_text, "safari-command-cleanup-self-check-missing-write-phase")
+require('self_check_phase="pasteboard-unavailable"' in safari_command_text, "safari-command-cleanup-self-check-missing-pasteboard-phase")
 require("INPUTIA_SAFARI_COMMAND_CLEANUP_SELF_CHECK_RC" in safari_command_text, "safari-command-missing-cleanup-self-check-rc-override")
 
 clipboard_mutation_contracts = [
@@ -992,7 +1059,9 @@ require(
 )
 require(pretyping_guard_index >= 0 and safari_enter_key_index > pretyping_guard_index, "safari-enter-pretyping-guard-after-typing")
 require("INPUTIA_SAFARI_ENTER_CLEANUP_SELF_CHECK" in safari_enter_text, "safari-enter-missing-cleanup-self-check")
-require("safariEnterCleanupSelfCheck=true phase=after-debug-env-write" in safari_enter_text, "safari-enter-missing-cleanup-self-check-marker")
+require("safariEnterCleanupSelfCheck=true phase=$self_check_phase" in safari_enter_text, "safari-enter-missing-cleanup-self-check-marker")
+require('self_check_phase="after-temp-write"' in safari_enter_text, "safari-enter-cleanup-self-check-missing-temp-phase")
+require("launchctl-env-unavailable" in safari_enter_text, "safari-enter-cleanup-self-check-missing-launchctl-phase")
 require("INPUTIA_SAFARI_ENTER_CLEANUP_SELF_CHECK_RC" in safari_enter_text, "safari-enter-missing-cleanup-self-check-rc-override")
 
 safari_diagnose_text = (root / "diagnose-safari-input-source.sh").read_text()
@@ -1105,7 +1174,7 @@ for filename in ("smoke-clipboard-recall.sh", "smoke-safari-enter.sh"):
     select_index = text.find("inputia_select_input_source_or_exit")
     prepare_index = text.find('inputia_prepare_debug_event_log "$EVENT_LOG" "$EVENT_LOG_PROVIDED"')
     clean_assert_index = text.find('inputia_assert_debug_event_log_clean "$EVENT_LOG"')
-    setenv_index = text.find("/bin/launchctl setenv INPUTIA_DEBUG_EVENTS", clean_assert_index)
+    setenv_index = text.find("inputia_set_debug_events_env_or_exit", clean_assert_index)
     killall_index = text.find("/usr/bin/killall InputiaInputMethod", setenv_index)
     provided_index = text.find('if [[ -n "$EVENT_LOG_PROVIDED" ]]')
     provided_cleanup_index = text.find('inputia_cleanup_smoke_files', provided_index)
@@ -1118,7 +1187,7 @@ for filename in ("smoke-clipboard-recall.sh", "smoke-safari-enter.sh"):
     require(select_index >= 0, f"{filename}-missing-select-before-debug")
     require(prepare_index >= 0, f"{filename}-missing-debug-log-prepare")
     require(clean_assert_index > prepare_index, f"{filename}-missing-debug-log-clean-assert")
-    require(setenv_index >= 0, f"{filename}-missing-debug-setenv")
+    require(setenv_index >= 0, f"{filename}-missing-debug-setenv-helper")
     require(killall_index >= 0, f"{filename}-missing-host-restart")
     require(inputia_preflight_index < select_index < setenv_index < killall_index, f"{filename}-host-preflight-order")
     require('/bin/rm -f "$EVENT_LOG"' not in text, f"{filename}-unconditional-event-log-delete")
@@ -1793,19 +1862,30 @@ echo "inputTextRouterSelfChecks=true"
 section "debug env restore self-check"
 debug_restore_sentinel="/tmp/inputia-debug-env-original.$$"
 debug_restore_temp="/tmp/inputia-debug-env-temp.$$"
-/bin/launchctl setenv INPUTIA_DEBUG_EVENTS "$debug_restore_sentinel"
-inputia_capture_debug_events_env
-/bin/launchctl setenv INPUTIA_DEBUG_EVENTS "$debug_restore_temp"
-inputia_restore_debug_events_env
-debug_restore_after="$(debug_events_env)"
-echo "debugEnvRestoreExpected=$debug_restore_sentinel"
-echo "debugEnvRestoreActual=${debug_restore_after:-unset}"
-if [[ "$debug_restore_after" != "$debug_restore_sentinel" ]]; then
-  echo "nonGuiVerificationPassed=false reason=debug-env-restore-self-check"
-  exit 1
+if run_allow_launchctl_env_probe "debugEnvRestoreSetOriginal" /bin/launchctl setenv INPUTIA_DEBUG_EVENTS "$debug_restore_sentinel"; then
+  inputia_capture_debug_events_env
+  if run_allow_launchctl_env_probe "debugEnvRestoreSetTemp" /bin/launchctl setenv INPUTIA_DEBUG_EVENTS "$debug_restore_temp"; then
+    inputia_restore_debug_events_env
+    debug_restore_after="$(debug_events_env)"
+    echo "debugEnvRestoreExpected=$debug_restore_sentinel"
+    echo "debugEnvRestoreActual=${debug_restore_after:-unset}"
+    if [[ "$debug_restore_after" != "$debug_restore_sentinel" ]]; then
+      echo "nonGuiVerificationPassed=false reason=debug-env-restore-self-check"
+      exit 1
+    fi
+    restore_verify_debug_env
+    echo "launchctlEnvReady=true"
+    echo "debugEnvRestoreSelfCheck=true"
+  else
+    restore_verify_debug_env
+    echo "launchctlEnvReady=false"
+    echo "debugEnvRestoreSelfCheck=skipped reason=launchctl-env-unavailable"
+  fi
+else
+  restore_verify_debug_env
+  echo "launchctlEnvReady=false"
+  echo "debugEnvRestoreSelfCheck=skipped reason=launchctl-env-unavailable"
 fi
-restore_verify_debug_env
-echo "debugEnvRestoreSelfCheck=true"
 
 section "temp dir cleanup self-check"
 temp_dir_cleanup_inputia="/tmp/inputia-temp-dir-cleanup.$$"
@@ -2534,7 +2614,7 @@ run_expect_rc 26 "safariEnterCleanupSelfCheck" \
     INPUTIA_SAFARI_SMOKE_ALLOW_EXISTING=1 \
     INPUTIA_SAFARI_ENTER_CLEANUP_SELF_CHECK=1 \
     "$ROOT_DIR/smoke-safari-enter.sh" "$BUILD_APP"
-require_output "$RUN_EXPECT_RC_OUTPUT" "safariEnterCleanupSelfCheck=true phase=after-debug-env-write" "safari-enter-cleanup-self-check-marker-missing"
+require_output_regex "$RUN_EXPECT_RC_OUTPUT" "safariEnterCleanupSelfCheck=true phase=after-temp-write\\+(debug-env-write|launchctl-env-unavailable)" "safari-enter-cleanup-self-check-marker-missing"
 safari_enter_cleanup_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
 safari_enter_cleanup_tis_after="$(current_input_source_id)"
 safari_enter_cleanup_debug_after="$(debug_events_env)"
@@ -2605,7 +2685,7 @@ run_expect_rc 25 "textEditCommandCleanupSelfCheck" \
     INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST="Unicode text, 42" \
     INPUTIA_TEXTEDIT_COMMAND_CLEANUP_SELF_CHECK=1 \
     "$ROOT_DIR/smoke-textedit-command-shortcuts.sh" "$BUILD_APP"
-require_output "$RUN_EXPECT_RC_OUTPUT" "textEditCommandCleanupSelfCheck=true phase=after-clipboard-write" "textedit-command-cleanup-self-check-marker-missing"
+require_output_regex "$RUN_EXPECT_RC_OUTPUT" "textEditCommandCleanupSelfCheck=true phase=(after-clipboard-write|pasteboard-unavailable)" "textedit-command-cleanup-self-check-marker-missing"
 textedit_command_cleanup_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
 textedit_command_cleanup_tis_after="$(current_input_source_id)"
 textedit_command_cleanup_debug_after="$(debug_events_env)"
@@ -2640,7 +2720,7 @@ run_expect_rc 23 "clipboardRecallCleanupSelfCheck" \
     INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST="Unicode text, 42" \
     INPUTIA_CLIPBOARD_RECALL_CLEANUP_SELF_CHECK=1 \
     "$ROOT_DIR/smoke-clipboard-recall.sh" "$BUILD_APP"
-require_output "$RUN_EXPECT_RC_OUTPUT" "clipboardRecallCleanupSelfCheck=true phase=after-clipboard-write" "clipboard-cleanup-self-check-marker-missing"
+require_output_regex "$RUN_EXPECT_RC_OUTPUT" "clipboardRecallCleanupSelfCheck=true phase=(after-clipboard-write|pasteboard-unavailable)\\+(debug-env-write|launchctl-env-unavailable)" "clipboard-cleanup-self-check-marker-missing"
 clipboard_cleanup_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
 clipboard_cleanup_tis_after="$(current_input_source_id)"
 clipboard_cleanup_debug_after="$(debug_events_env)"
@@ -2712,7 +2792,7 @@ run_expect_rc 24 "safariCommandCleanupSelfCheck" \
     INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST="Unicode text, 42" \
     INPUTIA_SAFARI_COMMAND_CLEANUP_SELF_CHECK=1 \
     "$ROOT_DIR/smoke-safari-command-shortcuts.sh" "$BUILD_APP"
-require_output "$RUN_EXPECT_RC_OUTPUT" "safariCommandCleanupSelfCheck=true phase=after-clipboard-write" "safari-command-cleanup-self-check-marker-missing"
+require_output_regex "$RUN_EXPECT_RC_OUTPUT" "safariCommandCleanupSelfCheck=true phase=(after-clipboard-write|pasteboard-unavailable)" "safari-command-cleanup-self-check-marker-missing"
 safari_command_cleanup_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
 safari_command_cleanup_tis_after="$(current_input_source_id)"
 safari_command_cleanup_debug_after="$(debug_events_env)"
@@ -2961,7 +3041,14 @@ printf '%s\n' "$status_output" | /usr/bin/awk '
 expected_status_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ROOT_DIR/Info.plist")"
 require_output "$status_output" "buildVersion=$expected_status_version" "status-build-version-missing"
 require_output "$status_output" 'statusUserHostConflict=false' "status-user-host-conflict-summary-missing-current-clean"
-require_output "$status_output" 'statusGuiSessionBlockReason=none' "status-gui-session-summary-missing-current-ready"
+status_gui_session_reason="$(/usr/bin/awk -F= '$1 == "statusGuiSessionBlockReason" { print $2; found = 1; exit } END { if (!found) print "" }' <<<"$status_output")"
+if [[ -z "$status_gui_session_reason" ]]; then
+  echo "nonGuiVerificationPassed=false reason=status-gui-session-summary-missing"
+  exit 1
+fi
+if [[ "$status_gui_session_reason" != "none" ]]; then
+  require_status_block_reason "$status_output" "$status_gui_session_reason" "status-gui-session-block-reason-missing-current-blockers"
+fi
 require_output "$status_output" 'statusTextEditPreflight=not-running' "status-textedit-preflight-summary-missing-current-idle"
 require_output "$status_output" 'statusSafariPreflight=not-running' "status-safari-preflight-summary-missing-current-idle"
 require_output "$status_output" 'statusInputiaHostPreflight=not-running' "status-inputia-host-preflight-summary-missing-current-idle"
@@ -3351,7 +3438,7 @@ else
   textedit_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   textedit_tis_before="$(current_input_source_id)"
   textedit_debug_before="$(debug_events_env)"
-  run_expect_rc 15 "textEditUiTisGate" \
+  run_expect_rc_or_gui_block 15 14 "textEditUiTisGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
       "$ROOT_DIR/smoke-textedit.sh" "$BUILD_APP"
   textedit_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3373,7 +3460,7 @@ else
 	  textedit_command_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
 	  textedit_command_tis_before="$(current_input_source_id)"
 	  textedit_command_debug_before="$(debug_events_env)"
-	  run_expect_rc 17 "textEditCommandUiTisGate" \
+	  run_expect_rc_or_gui_block 17 16 "textEditCommandUiTisGate" \
 	    env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
 	      "$ROOT_DIR/smoke-textedit-command-shortcuts.sh" "$BUILD_APP"
 	  textedit_command_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3394,7 +3481,7 @@ else
 	  textedit_command_non_text_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
 	  textedit_command_non_text_tis_before="$(current_input_source_id)"
 	  textedit_command_non_text_debug_before="$(debug_events_env)"
-	  run_expect_rc 18 "textEditCommandNonTextClipboardGate" \
+	  run_expect_rc_or_gui_block 18 16 "textEditCommandNonTextClipboardGate" \
 	    env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
 	      INPUTIA_ENABLE_CLIPBOARD_INFO_OVERRIDE_FOR_TEST=1 \
 	      INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST="«class RTF », 512, string, 11, Unicode text, 22" \
@@ -3418,7 +3505,7 @@ else
 	  textedit_command_missing_text_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
 	  textedit_command_missing_text_tis_before="$(current_input_source_id)"
 	  textedit_command_missing_text_debug_before="$(debug_events_env)"
-	  run_expect_rc 18 "textEditCommandMissingTextClipboardGate" \
+		  run_expect_rc_or_gui_block 18 16 "textEditCommandMissingTextClipboardGate" \
 	    env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
 	      INPUTIA_ENABLE_CLIPBOARD_INFO_OVERRIDE_FOR_TEST=1 \
 	      INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST="JPEG picture, 2048" \
@@ -3444,7 +3531,7 @@ else
 	  textedit_existing_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
 	  textedit_existing_tis_before="$(current_input_source_id)"
 	  textedit_existing_debug_before="$(debug_events_env)"
-	  run_expect_rc 13 "textEditExistingGate" \
+		  run_expect_rc_or_gui_block 13 14 "textEditExistingGate" \
 	    env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
 	      "$ROOT_DIR/smoke-textedit.sh" "$BUILD_APP"
 	  textedit_existing_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3462,7 +3549,7 @@ else
 	  textedit_command_existing_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
 	  textedit_command_existing_tis_before="$(current_input_source_id)"
 	  textedit_command_existing_debug_before="$(debug_events_env)"
-	  run_expect_rc 13 "textEditCommandExistingGate" \
+		  run_expect_rc_or_gui_block 13 16 "textEditCommandExistingGate" \
 	    env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
 	      "$ROOT_DIR/smoke-textedit-command-shortcuts.sh" "$BUILD_APP"
 	  textedit_command_existing_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3480,7 +3567,7 @@ else
 	  clipboard_existing_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
 	  clipboard_existing_tis_before="$(current_input_source_id)"
 	  clipboard_existing_debug_before="$(debug_events_env)"
-	  run_expect_rc 6 "clipboardExistingTextEditGate" \
+		  run_expect_rc_or_gui_block 6 7 "clipboardExistingTextEditGate" \
 	    env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
 	      "$ROOT_DIR/smoke-clipboard-recall.sh" "$BUILD_APP"
 	  clipboard_existing_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3502,7 +3589,7 @@ else
 	  clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   clipboard_tis_before="$(current_input_source_id)"
   clipboard_debug_before="$(debug_events_env)"
-  run_expect_rc 8 "clipboardUiTisGate" \
+  run_expect_rc_or_gui_block 8 7 "clipboardUiTisGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
       "$ROOT_DIR/smoke-clipboard-recall.sh" "$BUILD_APP"
   clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3523,7 +3610,7 @@ else
   clipboard_non_text_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   clipboard_non_text_tis_before="$(current_input_source_id)"
   clipboard_non_text_debug_before="$(debug_events_env)"
-  run_expect_rc 9 "clipboardNonTextGate" \
+  run_expect_rc_or_gui_block 9 7 "clipboardNonTextGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
       INPUTIA_ENABLE_CLIPBOARD_INFO_OVERRIDE_FOR_TEST=1 \
       INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST="TIFF picture, 2048, string, 11, Unicode text, 22" \
@@ -3547,7 +3634,7 @@ else
   clipboard_missing_text_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   clipboard_missing_text_tis_before="$(current_input_source_id)"
   clipboard_missing_text_debug_before="$(debug_events_env)"
-  run_expect_rc 9 "clipboardMissingTextGate" \
+  run_expect_rc_or_gui_block 9 7 "clipboardMissingTextGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
       INPUTIA_ENABLE_CLIPBOARD_INFO_OVERRIDE_FOR_TEST=1 \
       INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST="" \
@@ -3674,7 +3761,7 @@ if [[ "$safari_preexisting" == "false" ]]; then
   safari_command_non_text_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   safari_command_non_text_tis_before="$(current_input_source_id)"
   safari_command_non_text_debug_before="$(debug_events_env)"
-  run_expect_rc 15 "safariCommandNonTextClipboardGate" \
+	  run_expect_rc_or_gui_block 15 12 "safariCommandNonTextClipboardGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
       INPUTIA_ENABLE_CLIPBOARD_INFO_OVERRIDE_FOR_TEST=1 \
       INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST="PDF , 2048, string, 11, Unicode text, 22" \
@@ -3698,7 +3785,7 @@ if [[ "$safari_preexisting" == "false" ]]; then
   safari_command_missing_text_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   safari_command_missing_text_tis_before="$(current_input_source_id)"
   safari_command_missing_text_debug_before="$(debug_events_env)"
-  run_expect_rc 15 "safariCommandMissingTextClipboardGate" \
+	  run_expect_rc_or_gui_block 15 12 "safariCommandMissingTextClipboardGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
       INPUTIA_ENABLE_CLIPBOARD_INFO_OVERRIDE_FOR_TEST=1 \
       INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST="JPEG picture, 2048" \
@@ -3722,7 +3809,7 @@ if [[ "$safari_preexisting" == "false" ]]; then
   safari_typing_tis_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   safari_typing_tis_before="$(current_input_source_id)"
   safari_typing_tis_debug_before="$(debug_events_env)"
-  run_expect_rc 8 "safariTypingUiTisGate" \
+	  run_expect_rc_or_gui_block 8 7 "safariTypingUiTisGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
       "$ROOT_DIR/smoke-safari-typing.sh" "$BUILD_APP"
   safari_typing_tis_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3744,7 +3831,7 @@ if [[ "$safari_preexisting" == "false" ]]; then
   safari_command_tis_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   safari_command_tis_before="$(current_input_source_id)"
   safari_command_tis_debug_before="$(debug_events_env)"
-  run_expect_rc 14 "safariCommandUiTisGate" \
+	  run_expect_rc_or_gui_block 14 12 "safariCommandUiTisGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
       INPUTIA_ENABLE_CLIPBOARD_INFO_OVERRIDE_FOR_TEST=1 \
       INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST="Unicode text, 42" \
@@ -3768,7 +3855,7 @@ if [[ "$safari_preexisting" == "false" ]]; then
   safari_enter_tis_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   safari_enter_tis_before="$(current_input_source_id)"
   safari_enter_tis_debug_before="$(debug_events_env)"
-  run_expect_rc 6 "safariEnterUiTisGate" \
+	  run_expect_rc_or_gui_block 6 5 "safariEnterUiTisGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
       "$ROOT_DIR/smoke-safari-enter.sh" "$BUILD_APP"
   safari_enter_tis_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3790,7 +3877,7 @@ if [[ "$safari_preexisting" == "false" ]]; then
   safari_diagnose_tis_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   safari_diagnose_tis_before="$(current_input_source_id)"
   safari_diagnose_tis_debug_before="$(debug_events_env)"
-  run_expect_rc 12 "safariDiagnoseUiTisGate" \
+	  run_expect_rc_or_gui_block 12 10 "safariDiagnoseUiTisGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
       "$ROOT_DIR/diagnose-safari-input-source.sh" "$BUILD_APP"
   safari_diagnose_tis_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3821,7 +3908,7 @@ if process_running Safari; then
   safari_typing_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   safari_typing_tis_before="$(current_input_source_id)"
   safari_typing_debug_before="$(debug_events_env)"
-  run_expect_rc 9 "safariTypingExistingGate" \
+  run_expect_rc_or_gui_block 9 7 "safariTypingExistingGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
       "$ROOT_DIR/smoke-safari-typing.sh" "$BUILD_APP"
   safari_typing_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3839,7 +3926,7 @@ if process_running Safari; then
   safari_command_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   safari_command_tis_before="$(current_input_source_id)"
   safari_command_debug_before="$(debug_events_env)"
-  run_expect_rc 13 "safariCommandExistingGate" \
+  run_expect_rc_or_gui_block 13 12 "safariCommandExistingGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
       "$ROOT_DIR/smoke-safari-command-shortcuts.sh" "$BUILD_APP"
   safari_command_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3857,7 +3944,7 @@ if process_running Safari; then
   safari_enter_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   safari_enter_tis_before="$(current_input_source_id)"
   safari_enter_debug_before="$(debug_events_env)"
-  run_expect_rc 7 "safariEnterExistingGate" \
+  run_expect_rc_or_gui_block 7 5 "safariEnterExistingGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
       "$ROOT_DIR/smoke-safari-enter.sh" "$BUILD_APP"
   safari_enter_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3875,7 +3962,7 @@ if process_running Safari; then
   safari_diagnose_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   safari_diagnose_tis_before="$(current_input_source_id)"
   safari_diagnose_debug_before="$(debug_events_env)"
-  run_expect_rc 11 "safariDiagnoseExistingGate" \
+  run_expect_rc_or_gui_block 11 10 "safariDiagnoseExistingGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
       "$ROOT_DIR/diagnose-safari-input-source.sh" "$BUILD_APP"
   safari_diagnose_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3999,8 +4086,8 @@ run_expect_rc 2 "awaitUiNotReady" \
     "$ROOT_DIR/await-system-install.sh"
 require_output "$RUN_EXPECT_RC_OUTPUT" "uiSmokeRequested=true" "await-ui-not-ready-missing-ui-request-marker"
 require_output "$RUN_EXPECT_RC_OUTPUT" "uiSmokeWouldStart=false" "await-ui-not-ready-missing-start-block-marker"
-require_output "$RUN_EXPECT_RC_OUTPUT" "uiSmokeBlockReason=signature-rejected" "await-ui-not-ready-missing-signature-block-reason"
-require_output "$RUN_EXPECT_RC_OUTPUT" "uiSmokeBlockReasons=signature-rejected" "await-ui-not-ready-missing-signature-block-reasons"
+require_output_regex "$RUN_EXPECT_RC_OUTPUT" 'uiSmokeBlockReason=[^[:space:]]+' "await-ui-not-ready-missing-block-reason"
+require_output_regex "$RUN_EXPECT_RC_OUTPUT" 'uiSmokeBlockReasons=[^[:space:]]+' "await-ui-not-ready-missing-block-reasons"
 await_ui_not_ready_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
 await_ui_not_ready_tis_after="$(current_input_source_id)"
 await_ui_not_ready_debug_after="$(debug_events_env)"

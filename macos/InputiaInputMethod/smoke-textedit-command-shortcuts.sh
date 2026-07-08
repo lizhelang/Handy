@@ -68,12 +68,16 @@ trap cleanup_textedit_command_smoke EXIT
 
 if [[ "${INPUTIA_TEXTEDIT_COMMAND_CLEANUP_SELF_CHECK:-0}" == "1" ]]; then
   ORIGINAL_CLIPBOARD="$(/usr/bin/pbpaste 2>/dev/null || true)"
-  /usr/bin/printf 'inputia textedit command cleanup self-check' | /usr/bin/pbcopy
-  CLIPBOARD_CHANGED=1
+  self_check_phase="after-clipboard-write"
+  if inputia_try_write_clipboard_text 'inputia textedit command cleanup self-check'; then
+    CLIPBOARD_CHANGED=1
+  else
+    self_check_phase="pasteboard-unavailable"
+  fi
   /usr/bin/printf 'select-log' >"$SELECT_LOG"
   /usr/bin/printf 'restore-log' >"$RESTORE_LOG"
   /usr/bin/printf 'osascript-log' >"$OSASCRIPT_FILE"
-  echo "textEditCommandCleanupSelfCheck=true phase=after-clipboard-write"
+  echo "textEditCommandCleanupSelfCheck=true phase=$self_check_phase"
   exit "${INPUTIA_TEXTEDIT_COMMAND_CLEANUP_SELF_CHECK_RC:-25}"
 fi
 

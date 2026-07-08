@@ -57,8 +57,29 @@ inputia_require_process_not_running() {
     allow_value="${!allow_var:-0}"
   fi
 
-  if [[ ",${INPUTIA_PROCESS_RUNNING_FOR_TEST:-}," == *",$process_name,"* ]] ||
-    { [[ "${INPUTIA_PROCESS_IGNORE_REAL_FOR_TEST:-0}" != "1" ]] && /usr/bin/pgrep -x "$process_name" >/dev/null; }; then
+  local process_state="not-running"
+  local process_check_output=""
+  local process_check_rc
+  if [[ ",${INPUTIA_PROCESS_RUNNING_FOR_TEST:-}," == *",$process_name,"* ]]; then
+    process_state="running"
+  elif [[ "${INPUTIA_PROCESS_IGNORE_REAL_FOR_TEST:-0}" != "1" ]]; then
+    set +e
+    process_check_output="$(/usr/bin/pgrep -x "$process_name" 2>&1 >/dev/null)"
+    process_check_rc=$?
+    set -e
+    if [[ "$process_check_rc" -eq 0 ]]; then
+      process_state="running"
+    elif [[ -n "$process_check_output" ]]; then
+      echo "${process_name}Preflight=unknown"
+      echo "processListAvailable=false reason=process-list-unavailable"
+      printf '%s\n' "$process_check_output" | /usr/bin/sed 's/^/processListOutput: /'
+      echo "guiSmokeReady=false reason=process-list-unavailable"
+      echo "$ready_var=false reason=process-list-unavailable"
+      exit "$exit_code"
+    fi
+  fi
+
+  if [[ "$process_state" == "running" ]]; then
     echo "${process_name}Preflight=running"
     if [[ "$allow_value" != "1" ]]; then
       echo "guiSmokeReady=false reason=$reason"
@@ -109,12 +130,31 @@ inputia_require_textedit_idle() {
   local exit_code="$2"
   local allow_value="${INPUTIA_TEXTEDIT_SMOKE_ALLOW_EXISTING:-0}"
 
-  if /usr/bin/pgrep -x TextEdit >/dev/null; then
-    INPUTIA_TEXTEDIT_PREFLIGHT="running"
-    INPUTIA_TEXTEDIT_DOCS_BEFORE="$(inputia_textedit_document_count)"
-  else
+  local process_check_output process_check_rc
+  if [[ "${INPUTIA_PROCESS_IGNORE_REAL_FOR_TEST:-0}" == "1" ]]; then
     INPUTIA_TEXTEDIT_PREFLIGHT="not-running"
     INPUTIA_TEXTEDIT_DOCS_BEFORE="0"
+  else
+    set +e
+    process_check_output="$(/usr/bin/pgrep -x TextEdit 2>&1 >/dev/null)"
+    process_check_rc=$?
+    set -e
+    if [[ "$process_check_rc" -eq 0 ]]; then
+      INPUTIA_TEXTEDIT_PREFLIGHT="running"
+      INPUTIA_TEXTEDIT_DOCS_BEFORE="$(inputia_textedit_document_count)"
+    elif [[ -n "$process_check_output" ]]; then
+      INPUTIA_TEXTEDIT_PREFLIGHT="unknown"
+      INPUTIA_TEXTEDIT_DOCS_BEFORE="unknown"
+      echo "textEditPreflight=unknown docs=unknown"
+      echo "processListAvailable=false reason=process-list-unavailable"
+      printf '%s\n' "$process_check_output" | /usr/bin/sed 's/^/processListOutput: /'
+      echo "guiSmokeReady=false reason=process-list-unavailable"
+      echo "$ready_var=false reason=process-list-unavailable"
+      exit "$exit_code"
+    else
+      INPUTIA_TEXTEDIT_PREFLIGHT="not-running"
+      INPUTIA_TEXTEDIT_DOCS_BEFORE="0"
+    fi
   fi
 
   echo "textEditPreflight=$INPUTIA_TEXTEDIT_PREFLIGHT docs=$INPUTIA_TEXTEDIT_DOCS_BEFORE"
@@ -130,10 +170,24 @@ inputia_wait_process_exit() {
   local max_ticks="${2:-50}"
   local waited=0
 
-  while /usr/bin/pgrep -x "$process_name" >/dev/null 2>&1 && ((waited < max_ticks)); do
+  while ((waited < max_ticks)); do
+    local process_check_output process_check_rc
+    set +e
+    process_check_output="$(/usr/bin/pgrep -x "$process_name" 2>&1 >/dev/null)"
+    process_check_rc=$?
+    set -e
+    if [[ "$process_check_rc" -ne 0 ]]; then
+      if [[ -n "$process_check_output" ]]; then
+        echo "${process_name}ProcessListAvailable=false reason=process-list-unavailable"
+        printf '%s\n' "$process_check_output" | /usr/bin/sed 's/^/processListOutput: /'
+        return 2
+      fi
+      return 0
+    fi
     /bin/sleep 0.1
     waited=$((waited + 1))
   done
+  return 1
 }
 
 inputia_run_with_timeout() {
@@ -214,7 +268,10 @@ inputia_cleanup_textedit_if_started() {
 tell application "System Events" to set textEditRunning to exists application process "TextEdit"
 if textEditRunning then tell application "TextEdit" to quit saving no
 APPLESCRIPT
-    inputia_wait_process_exit TextEdit "${INPUTIA_CLEANUP_WAIT_TICKS:-50}"
+    if ! inputia_wait_process_exit TextEdit "${INPUTIA_CLEANUP_WAIT_TICKS:-50}"; then
+      echo "textEditCleanupFailed=process-list-or-timeout"
+      return 1
+    fi
     if /usr/bin/pgrep -x TextEdit >/dev/null 2>&1; then
       echo "textEditCleanupFailed=process-still-running"
       return 1
@@ -227,10 +284,27 @@ inputia_require_safari_idle() {
   local exit_code="$2"
   local allow_value="${INPUTIA_SAFARI_SMOKE_ALLOW_EXISTING:-0}"
 
-  if /usr/bin/pgrep -x Safari >/dev/null; then
-    INPUTIA_SAFARI_PREFLIGHT="running"
-  else
+  local process_check_output process_check_rc
+  if [[ "${INPUTIA_PROCESS_IGNORE_REAL_FOR_TEST:-0}" == "1" ]]; then
     INPUTIA_SAFARI_PREFLIGHT="not-running"
+  else
+    set +e
+    process_check_output="$(/usr/bin/pgrep -x Safari 2>&1 >/dev/null)"
+    process_check_rc=$?
+    set -e
+    if [[ "$process_check_rc" -eq 0 ]]; then
+      INPUTIA_SAFARI_PREFLIGHT="running"
+    elif [[ -n "$process_check_output" ]]; then
+      INPUTIA_SAFARI_PREFLIGHT="unknown"
+      echo "safariPreflight=unknown"
+      echo "processListAvailable=false reason=process-list-unavailable"
+      printf '%s\n' "$process_check_output" | /usr/bin/sed 's/^/processListOutput: /'
+      echo "guiSmokeReady=false reason=process-list-unavailable"
+      echo "$ready_var=false reason=process-list-unavailable"
+      exit "$exit_code"
+    else
+      INPUTIA_SAFARI_PREFLIGHT="not-running"
+    fi
   fi
 
   echo "safariPreflight=$INPUTIA_SAFARI_PREFLIGHT"
@@ -248,7 +322,10 @@ inputia_cleanup_safari_if_started() {
 tell application "System Events" to set safariRunning to exists application process "Safari"
 if safariRunning then tell application "Safari" to quit
 APPLESCRIPT
-    inputia_wait_process_exit Safari "${INPUTIA_CLEANUP_WAIT_TICKS:-50}"
+    if ! inputia_wait_process_exit Safari "${INPUTIA_CLEANUP_WAIT_TICKS:-50}"; then
+      echo "safariCleanupFailed=process-list-or-timeout"
+      return 1
+    fi
     if /usr/bin/pgrep -x Safari >/dev/null 2>&1; then
       echo "safariCleanupFailed=process-still-running"
       return 1
@@ -296,6 +373,15 @@ inputia_current_clipboard_info() {
   /usr/bin/osascript -e 'clipboard info' 2>/dev/null || true
 }
 
+inputia_try_write_clipboard_text() {
+  local text="$1"
+  if /usr/bin/printf '%s' "$text" | /usr/bin/pbcopy >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "clipboardWrite=false reason=pasteboard-unavailable"
+  return 1
+}
+
 inputia_require_text_clipboard_restorable() {
   local ready_var="$1"
   local exit_code="$2"
@@ -336,6 +422,31 @@ inputia_restore_debug_events_env() {
   else
     /bin/launchctl unsetenv INPUTIA_DEBUG_EVENTS >/dev/null 2>&1 || true
   fi
+}
+
+inputia_try_set_debug_events_env() {
+  local event_log="$1"
+  local setenv_output
+  if setenv_output="$(/bin/launchctl setenv INPUTIA_DEBUG_EVENTS "$event_log" 2>&1)"; then
+    return 0
+  fi
+  echo "debugEnvSet=false reason=launchctl-env-unavailable"
+  if [[ -n "$setenv_output" ]]; then
+    printf '%s\n' "$setenv_output" | /usr/bin/sed 's/^/debugEnvSetOutput: /'
+  fi
+  return 1
+}
+
+inputia_set_debug_events_env_or_exit() {
+  local event_log="$1"
+  local ready_var="$2"
+  local exit_code="$3"
+  if inputia_try_set_debug_events_env "$event_log"; then
+    return 0
+  fi
+  echo "guiSmokeReady=false reason=launchctl-env-unavailable"
+  echo "$ready_var=false reason=launchctl-env-unavailable"
+  exit "$exit_code"
 }
 
 inputia_prepare_debug_event_log() {
