@@ -130,6 +130,12 @@ else
 fi
 echo "userInstallPath=$DEST_APP"
 echo "userInstallRegistered=true"
+if [[ -d "/Library/Input Methods/InputiaInputMethod.app" || -d "/Library/Input Methods/IputiaInputMethod.app" ]]; then
+  echo "userInstallSystemResiduePresent=true"
+  echo "userInstallSystemResidueAction=remove-system-inputia-when-admin-available"
+else
+  echo "userInstallSystemResiduePresent=false"
+fi
 echo "userInstallNextStep=System Settings > Keyboard > Text Input > Edit > Add Inputia"
 echo "userInstallOpenSettingsCommand=open 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension'"
 echo "settingsLauncherInstalled=$DEST_SETTINGS_APP"
