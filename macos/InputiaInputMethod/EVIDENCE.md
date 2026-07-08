@@ -27359,3 +27359,51 @@ INPUTIA_TIS_INCLUDE_MENU_READINESS=0 ./macos/InputiaInputMethod/tis-readiness.sh
 
 - 当前 duplicate 不是 iconURL 指向错误路径；两条 enabled 目标 source 都指向同一个系统 app icon，且都 selected/selectable。
 - 后续修复应按 `apply-current-handoff.sh` 动作链：先管理员安装当前 pkg，让系统 app CDHash 等于 build，再运行显式 TIS duplicate repair，最后等待 running host 切到当前 build。
+
+## 2026-07-09 04:20 CST - TIS duplicate 明细增加 fingerprint 分组摘要
+
+背景：
+
+- `tis.targetSourceCount=4` 会同时包含 enabled list 和 installed list 两套 dump，单看总数仍可能误解为 4 个独立 source。
+- 需要直接输出 enabled/installed 各自的数量、unique fingerprint 数和重复 fingerprint，快速判断是否是同一 source 被重复登记。
+
+实现：
+
+- `tis-readiness.sh` 对目标 source 按 `id|type|iconURL|enabled|selectable|selected` 生成 fingerprint。
+- 输出 `tis.targetEnabledSourceCount`、`tis.targetEnabledUniqueFingerprintCount`、`tis.targetEnabledDuplicateFingerprintCount` 和对应 installed 字段。
+- `install-check.sh` 透出这些摘要；`validation-policy-self-check.sh` 锁住字段。
+
+验证：
+
+```text
+bash -n macos/InputiaInputMethod/tis-readiness.sh macos/InputiaInputMethod/install-check.sh
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+
+INPUTIA_TIS_INCLUDE_MENU_READINESS=0 ./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  tis.targetDuplicateMatches=true
+  tis.targetSourceCount=4
+  tis.targetEnabledSourceCount=2
+  tis.targetEnabledUniqueFingerprintCount=1
+  tis.targetEnabledDuplicateFingerprintCount=1
+  tis.targetEnabledDuplicateFingerprint=com.inputia.inputmethod.Inputia.Hans|TISTypeKeyboardInputMode|/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf|true|true|true
+  tis.targetInstalledSourceCount=2
+  tis.targetInstalledUniqueFingerprintCount=1
+  tis.targetInstalledDuplicateFingerprintCount=1
+  tis.targetInstalledDuplicateFingerprint=com.inputia.inputmethod.Inputia.Hans|TISTypeKeyboardInputMode|/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf|true|true|true
+  tis.readinessBlockReason=target-source-duplicate
+  tisReadiness=false
+
+./macos/InputiaInputMethod/install-check.sh
+  tis.targetEnabledSourceCount=2
+  tis.targetEnabledUniqueFingerprintCount=1
+  tis.targetInstalledSourceCount=2
+  tis.targetInstalledUniqueFingerprintCount=1
+  installCheckBlockReasons=system-cdhash-mismatch,settings-version-mismatch,tis-duplicate-matches,running-cdhash-mismatch,admin-required
+  installCheckPassed=false
+```
+
+结论：
+
+- 当前重复态是 enabled list 和 installed list 中各自都有同一 fingerprint 重复，不是两个不同路径或不同 icon 混入。
+- 修复顺序不变：先让系统 app 成为当前 build，再运行显式 duplicate repair，最后等待 host 重启并重跑 `install-check.sh`。

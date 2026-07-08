@@ -754,7 +754,7 @@ echo "installHandoffBlockReasons=$handoff_block_reasons"
 section "tis"
 tis_output="$(INPUTIA_TIS_INCLUDE_MENU_READINESS=0 "$ROOT_DIR/tis-readiness.sh" "$SYSTEM_APP" 2>&1 || true)"
 printf '%s\n' "$tis_output" | /usr/bin/awk '
-  /^app=|^appExists=|^buildCDHash=|^appCDHash=|^appMatchesBuild=|^expectedTISModeID=|^tis.targetEnabledMatches=|^tis.targetInstalledMatches=|^tis.targetDuplicateMatches=|^tis.targetSourceCount=|^tis.targetSource\.[0-9]+\.|^tis.hansIconMatchesApp=|^tis.hansEnabled=|^tis.hansSelectable=|^tis.hansSelected=|^tis.currentID=|^tis.currentMatchesTarget=|^tis.menuReadiness=|^tis.menuBlockReason=|^tis.readinessBlockReason=|^tis.requiredAction=|^tisReadiness=/ { print }
+  /^app=|^appExists=|^buildCDHash=|^appCDHash=|^appMatchesBuild=|^expectedTISModeID=|^tis.targetEnabledMatches=|^tis.targetInstalledMatches=|^tis.targetDuplicateMatches=|^tis.targetSourceCount=|^tis.targetEnabledSourceCount=|^tis.targetEnabledUniqueFingerprintCount=|^tis.targetEnabledDuplicateFingerprintCount=|^tis.targetEnabledDuplicateFingerprint=|^tis.targetInstalledSourceCount=|^tis.targetInstalledUniqueFingerprintCount=|^tis.targetInstalledDuplicateFingerprintCount=|^tis.targetInstalledDuplicateFingerprint=|^tis.targetSource\.[0-9]+\.|^tis.hansIconMatchesApp=|^tis.hansEnabled=|^tis.hansSelectable=|^tis.hansSelected=|^tis.currentID=|^tis.currentMatchesTarget=|^tis.menuReadiness=|^tis.menuBlockReason=|^tis.readinessBlockReason=|^tis.requiredAction=|^tisReadiness=/ { print }
 '
 tis_ready=false
 if /usr/bin/grep -q '^tisReadiness=true$' <<<"$tis_output"; then

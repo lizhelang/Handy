@@ -170,7 +170,37 @@ if current:
     sources.append(current)
 
 matches = [source for source in sources if source.get("id") == source_id]
+enabled_matches = [source for source in matches if source.get("includeAllInstalled") == "false"]
+installed_matches = [source for source in matches if source.get("includeAllInstalled") == "true"]
+
+
+def fingerprint(source):
+    return "|".join(
+        [
+            source.get("id", "unknown"),
+            source.get("type", "unknown"),
+            source.get("iconURL", "unknown"),
+            source.get("enabled", "unknown"),
+            source.get("selectable", "unknown"),
+            source.get("selected", "unknown"),
+        ]
+    )
+
+
+def print_group_summary(label, group):
+    fingerprints = [fingerprint(source) for source in group]
+    unique = sorted(set(fingerprints))
+    duplicates = sorted({value for value in fingerprints if fingerprints.count(value) > 1})
+    print(f"tis.target{label}SourceCount={len(group)}")
+    print(f"tis.target{label}UniqueFingerprintCount={len(unique)}")
+    print(f"tis.target{label}DuplicateFingerprintCount={len(duplicates)}")
+    if duplicates:
+        print(f"tis.target{label}DuplicateFingerprint={duplicates[0]}")
+
+
 print(f"tis.targetSourceCount={len(matches)}")
+print_group_summary("Enabled", enabled_matches)
+print_group_summary("Installed", installed_matches)
 for index, source in enumerate(matches):
     icon = source.get("iconURL", "unknown")
     print(f"tis.targetSource.{index}.includeAllInstalled={source.get('includeAllInstalled', 'unknown')}")
