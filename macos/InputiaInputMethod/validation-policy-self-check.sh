@@ -304,6 +304,9 @@ require(menu_readiness.index('INPUTIA_MENU_READINESS_ALLOW_AXPRESS') < menu_read
 require('INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1 "$ROOT_DIR/menu-readiness.sh"' in status, "status-menu-opt-in-not-explicit")
 require('INPUTIA_STATUS_INCLUDE_MENU_READINESS:-0' in status, "status-missing-menu-include-gate")
 require('INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS:-0' in status, "status-missing-gui-readiness-gate")
+require('INPUTIA_MENU_READINESS_CACHE_FILE="$menu_readiness_cache_file"' in status, "status-menu-readiness-missing-cache-env")
+require('INPUTIA_VERIFICATION_OWNER_PID:-$$' in status, "status-menu-readiness-missing-owner-cache")
+require('menuReadinessCacheFile=' in status, "status-menu-readiness-missing-cache-output")
 require('statusGuiSmokeReady=unknown reason=skipped' in status, "status-default-gui-summary-not-skipped")
 require('app_expected_host_cdhash' in status, "status-missing-settings-expected-host-helper")
 require('targetSettingsExpectedHostCDHash=' in status, "status-missing-target-settings-expected-host-cdhash")
@@ -311,6 +314,9 @@ require('targetSettingsMatchesBuild=' in status, "status-missing-target-settings
 
 require('INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1 "$ROOT_DIR/menu-readiness.sh"' in tis, "tis-menu-opt-in-not-explicit")
 require('INPUTIA_TIS_INCLUDE_MENU_READINESS:-0' in tis, "tis-missing-menu-include-gate")
+require('INPUTIA_MENU_READINESS_CACHE_FILE="$menu_readiness_cache_file"' in tis, "tis-menu-readiness-missing-cache-env")
+require('INPUTIA_VERIFICATION_OWNER_PID:-$$' in tis, "tis-menu-readiness-missing-owner-cache")
+require('tis.menuReadinessCacheFile=' in tis, "tis-menu-readiness-missing-cache-output")
 
 require('INPUTIA_RUN_UI_SMOKE:-0' in post_install, "post-install-missing-ui-smoke-gate")
 require('uiSmokeSkipped=true reason=disabled' in post_install, "post-install-missing-default-skip-marker")

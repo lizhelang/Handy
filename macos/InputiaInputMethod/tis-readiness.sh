@@ -36,6 +36,14 @@ print(os.path.abspath(sys.argv[1]))
 PY
 }
 
+menu_readiness_cache_file() {
+  if [[ -n "${INPUTIA_MENU_READINESS_CACHE_FILE:-}" ]]; then
+    echo "$INPUTIA_MENU_READINESS_CACHE_FILE"
+  else
+    echo "${TMPDIR:-/tmp}/inputia-menu-readiness.${INPUTIA_VERIFICATION_OWNER_PID:-$$}.cache"
+  fi
+}
+
 tis_value() {
   local dump="$1"
   local source_id="$2"
@@ -349,7 +357,8 @@ elif [[ "${INPUTIA_TIS_SKIP_MENU_READINESS:-0}" == "1" ]]; then
   menu_readiness=unknown
   menu_block_reason=skipped
 elif [[ -x "$ROOT_DIR/menu-readiness.sh" ]]; then
-  menu_output="$(INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1 "$ROOT_DIR/menu-readiness.sh" 2>&1 || true)"
+  menu_readiness_cache_file="$(menu_readiness_cache_file)"
+  menu_output="$(INPUTIA_MENU_READINESS_CACHE_FILE="$menu_readiness_cache_file" INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1 "$ROOT_DIR/menu-readiness.sh" 2>&1 || true)"
   menu_readiness="$(/usr/bin/awk -F= '$1 == "menuReadiness" { print $2; exit }' <<<"$menu_output")"
   menu_block_reason="$(/usr/bin/awk -F= '$1 == "menuReadinessBlockReason" { print $2; exit }' <<<"$menu_output")"
   menu_inputia_count="$(/usr/bin/awk -F= '$1 == "menuInputiaCount" { print $2; exit }' <<<"$menu_output")"
@@ -383,6 +392,9 @@ echo "tis.legacyHIToolboxInputiaEnabled=$legacy_hitoolbox_enabled"
 echo "tis.legacyHIToolboxInputiaSelected=$legacy_hitoolbox_selected"
 echo "tis.staleHIToolboxEnabledStateSuspected=$stale_hitoolbox_enabled"
 echo "tis.menuReadiness=$menu_readiness"
+if [[ "${INPUTIA_TIS_INCLUDE_MENU_READINESS:-0}" == "1" && "${INPUTIA_TIS_SKIP_MENU_READINESS:-0}" != "1" ]]; then
+  echo "tis.menuReadinessCacheFile=${menu_readiness_cache_file:-unknown}"
+fi
 echo "tis.menuInputiaCount=$menu_inputia_count"
 echo "tis.menuInputiaSelectedCount=$menu_selected_count"
 echo "tis.menuBlockReason=$menu_block_reason"

@@ -30,6 +30,14 @@ section() {
   printf '\n== %s ==\n' "$1"
 }
 
+menu_readiness_cache_file() {
+  if [[ -n "${INPUTIA_MENU_READINESS_CACHE_FILE:-}" ]]; then
+    echo "$INPUTIA_MENU_READINESS_CACHE_FILE"
+  else
+    echo "${TMPDIR:-/tmp}/inputia-menu-readiness.${INPUTIA_VERIFICATION_OWNER_PID:-$$}.cache"
+  fi
+}
+
 plist_value() {
   local plist="$1"
   local key="$2"
@@ -592,7 +600,9 @@ elif [[ "${INPUTIA_STATUS_SKIP_MENU_READINESS:-0}" == "1" ]]; then
   menu_readiness=unknown
   menu_block_reason=skipped
 elif [[ -x "$ROOT_DIR/menu-readiness.sh" ]]; then
-  menu_output="$(INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1 "$ROOT_DIR/menu-readiness.sh" 2>&1 || true)"
+  menu_readiness_cache_file="$(menu_readiness_cache_file)"
+  echo "menuReadinessCacheFile=$menu_readiness_cache_file"
+  menu_output="$(INPUTIA_MENU_READINESS_CACHE_FILE="$menu_readiness_cache_file" INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1 "$ROOT_DIR/menu-readiness.sh" 2>&1 || true)"
   printf '%s\n' "$menu_output"
   menu_readiness="$(/usr/bin/awk -F= '$1 == "menuReadiness" { print $2; exit }' <<<"$menu_output")"
   menu_block_reason="$(/usr/bin/awk -F= '$1 == "menuReadinessBlockReason" { print $2; exit }' <<<"$menu_output")"
