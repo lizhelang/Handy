@@ -189,6 +189,25 @@ INPUTIA_NOTARIZE_APP_PREFLIGHT_ONLY=1 \
   macos/InputiaInputMethod/build/InputiaInputMethod.app
 ```
 
+如果要交付可双击安装的 `.pkg`，安装包本身也需要用 `Developer ID Installer` 签名并公证。`build-pkg.sh` 通过 `INPUTIA_PKG_SIGN_IDENTITY` 调用 `productsign`，随后用 pkg 公证脚本处理：
+
+```bash
+INPUTIA_PKG_SIGN_IDENTITY="Developer ID Installer: <Name> (<TEAMID>)" \
+  ./macos/InputiaInputMethod/build-pkg.sh
+
+INPUTIA_NOTARY_PROFILE="Inputia" \
+  ./macos/InputiaInputMethod/notarize-pkg.sh \
+  macos/InputiaInputMethod/dist/InputiaInputMethod-latest.pkg
+```
+
+只检查安装包前置条件但不上传：
+
+```bash
+INPUTIA_NOTARIZE_PKG_PREFLIGHT_ONLY=1 \
+  ./macos/InputiaInputMethod/notarize-pkg.sh \
+  macos/InputiaInputMethod/dist/InputiaInputMethod-latest.pkg
+```
+
 注意：菜单栏实际输入链会按 macOS Text Input 的已安装 source 记录连接 `/Library/Input Methods` 里的 app。手动 `open macos/InputiaInputMethod/build/InputiaInputMethod.app` 只能做进程级诊断，不能代替系统目录安装；如果系统目录仍是旧 CDHash，TextEdit 仍会表现为旧 Host 行为。
 
 安装脚本会打印 `sourceCDHash` / `destCDHash` 并要求二者相同，成功时输出 `systemInstallVerified=true`。安装后脚本会刷新 `TextInputMenuAgent` 和 `SystemUIServer`，再用 `verify-system.sh "/Library/Input Methods/InputiaInputMethod.app"` 做系统目录验证。

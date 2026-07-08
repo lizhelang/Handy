@@ -24435,6 +24435,132 @@ pgrep -x TextEdit / Safari / osascript / InputiaInputMethod
 - 公证执行路径已具备可重复脚本入口，但当前机器仍缺 `Developer ID Application` identity 和 `Inputia` notarytool profile；因此脚本会在上传前失败，不会制造半提交状态。
 - 下一步仍是导入/配置真正 Developer ID + notarytool profile，然后使用 Developer ID Application + hardened runtime 重建、`notarize-app.sh` 公证并 staple，再系统安装和复测 `spctlAccepted=true` / `tisReadiness=true`。
 
+## v54 Mac mini：补齐安装包 Developer ID Installer / notarization preflight
+
+背景：
+
+- 用户之前明确希望走“打包出安装包再安装”的路径。
+- v53 已补齐 `.app` 公证入口，但当前 `.pkg` 仍是 unsigned：这会让可双击安装包路径仍不完整。
+- 本轮继续保持不跑真实 TextEdit/Safari/Clipboard GUI smoke，只补 package 分发链诊断/执行入口。
+
+当前 pkg 状态：
+
+```text
+./macos/InputiaInputMethod/verify-pkg.sh macos/InputiaInputMethod/dist/InputiaInputMethod-latest.pkg
+  pkgSignature=none
+  pkgVerificationPassed=true
+
+pkgutil --check-signature macos/InputiaInputMethod/dist/InputiaInputMethod-latest.pkg
+  Package "InputiaInputMethod-latest.pkg":
+     Status: no signature
+
+spctl --assess --type install --verbose=4 macos/InputiaInputMethod/dist/InputiaInputMethod-latest.pkg
+  macos/InputiaInputMethod/dist/InputiaInputMethod-latest.pkg: rejected
+  source=no usable signature
+```
+
+新增脚本：
+
+```text
+macos/InputiaInputMethod/notarize-pkg.sh
+```
+
+行为：
+
+- 默认目标：`macos/InputiaInputMethod/dist/InputiaInputMethod-latest.pkg`。
+- 读取 `INPUTIA_NOTARY_PROFILE`，默认 `Inputia`。
+- 上传前必须满足：
+  - `notarytool` 可用；
+  - `stapler` 可用；
+  - pkg 使用 `Developer ID Installer:` 签名；
+  - `spctl --assess --type install` 可评估；
+  - notarytool keychain profile 可用。
+- 满足前置后才会 `notarytool submit --wait`、`stapler staple`、`stapler validate`、再跑 `spctl --assess --type install`。
+- `INPUTIA_NOTARIZE_PKG_PREFLIGHT_ONLY=1` 只做前置检查，不提交。
+
+当前 Mac mini 运行结果：
+
+```text
+INPUTIA_NOTARIZE_PKG_PREFLIGHT_ONLY=1 \
+./macos/InputiaInputMethod/notarize-pkg.sh macos/InputiaInputMethod/dist/InputiaInputMethod-latest.pkg
+
+  inputiaNotarizePkgTool=true
+  pkgSha256=1c926c1a53308af4c4e57ed2928adbc3c509f70d6671ebb5502dfa24a6ae795d
+  notarytoolAvailable=true
+  staplerAvailable=true
+  pkgSignatureRc=1
+  pkgSignatureOutput: Status: no signature
+  developerIDInstallerSignature=false
+  spctlInstallAccepted=false
+  spctlInstallAssessment: internal error in Code Signing subsystem
+  notaryProfileCheckOutput: Error: An error occurred while accessing the keychain. One or more parameters passed to a function were not valid.
+  notaryProfileAvailable=false
+  notarizePkgRequiredAction=rebuild-pkg-with-developer-id-installer
+  notarizePkgReady=false reason=pkg-not-signed-with-developer-id-installer
+  notarizePkgBlockReasons=pkg-not-signed-with-developer-id-installer,missing-notarytool-profile
+  notarizePkgPassed=false reason=pkg-not-signed-with-developer-id-installer
+  rc=15
+
+find macos/InputiaInputMethod/build/notary -maxdepth 1 -type f -print
+  no output
+```
+
+非 GUI verifier 覆盖：
+
+```text
+verify-nongui.sh 静态合同新增检查：
+  INPUTIA_NOTARIZE_PKG_PREFLIGHT_ONLY
+  Developer ID Installer:
+  notarizePkgRequiredAction=rebuild-pkg-with-developer-id-installer
+  pkgutil --check-signature
+  spctl --assess --type install
+  xcrun notarytool history --keychain-profile
+  xcrun notarytool submit --keychain-profile --wait
+  xcrun stapler staple
+  xcrun stapler validate
+
+verify-nongui.sh 运行入口新增 package preflight：
+  notarizePkgPreflightOnly.rc may be 0/10/12/15
+  notarizePkgPreflightNoSubmit=true
+```
+
+文档更新：
+
+- `README.md` 现在明确区分：
+  - `.app` 需要 `Developer ID Application` 签名 + app notarize/staple；
+  - `.pkg` 需要 `Developer ID Installer` 签名 + pkg notarize/staple；
+  - `build-pkg.sh` 使用 `INPUTIA_PKG_SIGN_IDENTITY` 调用 `productsign`；
+  - `notarize-pkg.sh` 支持 `INPUTIA_NOTARIZE_PKG_PREFLIGHT_ONLY=1` 做无上传检查。
+
+验证：
+
+```text
+zsh -n notarize-pkg.sh notarize-app.sh
+  passed
+
+zsh -n verify-nongui.sh
+  passed
+
+INPUTIA_NOTARIZE_PKG_PREFLIGHT_ONLY=1 \
+./macos/InputiaInputMethod/notarize-pkg.sh macos/InputiaInputMethod/dist/InputiaInputMethod-latest.pkg
+  notarizePkgReady=false reason=pkg-not-signed-with-developer-id-installer
+  notarizePkgPassed=false reason=pkg-not-signed-with-developer-id-installer
+  rc=15
+
+find macos/InputiaInputMethod/build/notary -maxdepth 1 -name 'pkg-notary-submit.plist' -print
+  no output
+
+git diff --check -- notarize-pkg.sh notarize-app.sh verify-nongui.sh README.md EVIDENCE.md
+  passed
+```
+
+结论：
+
+- 当前 package 内容本身仍通过 `verify-pkg`，但它不是可被 Gatekeeper 接受的分发包：缺 `Developer ID Installer` 签名，且缺 notarytool profile。
+- 现在 `.app` 和 `.pkg` 两条 Developer ID/notarization 入口都具备可重复脚本和 verifier 覆盖；当前机器会在上传前明确失败，不会产生半提交或半公证状态。
+- 完整 `verify-nongui.sh` 没作为本轮通过证据：当前 Mac mini 仍有进程列表服务异常，动态 fake-process 夹具要在下一提交单独修。
+- 下一步要让用户双击安装包并进入真实系统级 IME smoke，仍需要导入 Developer ID Application + Developer ID Installer identity，并配置 `Inputia` notarytool profile，然后重建签名 app/pkg、公证、staple、安装，再复测 `spctl accepted` / `tisReadiness=true`。
+
 ## v53 Mac mini：GUI smoke 在系统进程列表/launchctl 异常时硬阻断
 
 背景：

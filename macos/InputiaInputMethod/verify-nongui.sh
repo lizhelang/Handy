@@ -1308,6 +1308,19 @@ require("xcrun stapler staple" in notarize_app_text, "notarize-app-missing-stapl
 require("xcrun stapler validate" in notarize_app_text, "notarize-app-missing-staple-validate")
 require("spctl --assess --type execute" in notarize_app_text, "notarize-app-missing-post-staple-spctl")
 
+notarize_pkg_text = (root / "notarize-pkg.sh").read_text()
+require("INPUTIA_NOTARIZE_PKG_PREFLIGHT_ONLY" in notarize_pkg_text, "notarize-pkg-missing-preflight-only-mode")
+require("Developer ID Installer:" in notarize_pkg_text, "notarize-pkg-missing-developer-id-installer-check")
+require("notarizePkgRequiredAction=rebuild-pkg-with-developer-id-installer" in notarize_pkg_text, "notarize-pkg-missing-developer-id-installer-required-action")
+require("pkgutil --check-signature" in notarize_pkg_text, "notarize-pkg-missing-pkg-signature-check")
+require("spctl --assess --type install" in notarize_pkg_text, "notarize-pkg-missing-install-assessment")
+require("xcrun notarytool history --keychain-profile" in notarize_pkg_text, "notarize-pkg-missing-notary-profile-check")
+require("xcrun notarytool submit" in notarize_pkg_text, "notarize-pkg-missing-notary-submit")
+require("--keychain-profile" in notarize_pkg_text, "notarize-pkg-missing-keychain-profile-submit")
+require("--wait" in notarize_pkg_text, "notarize-pkg-missing-submit-wait")
+require("xcrun stapler staple" in notarize_pkg_text, "notarize-pkg-missing-staple")
+require("xcrun stapler validate" in notarize_pkg_text, "notarize-pkg-missing-staple-validate")
+
 open_settings_text = (root / "open-settings.sh").read_text()
 require("detect_verification_processes()" in open_settings_text, "open-settings-missing-verification-process-detection")
 require("require_no_verification_processes" in open_settings_text, "open-settings-missing-verification-process-preflight")
@@ -1759,6 +1772,7 @@ zsh -n \
 	  "$ROOT_DIR/import-signing-identity.sh" \
 	  "$ROOT_DIR/notarization-readiness.sh" \
 	  "$ROOT_DIR/notarize-app.sh" \
+	  "$ROOT_DIR/notarize-pkg.sh" \
 	  "$ROOT_DIR/uninstall-system.sh" \
 	  "$ROOT_DIR/uninstall-user.sh"
 echo "syntaxOK=true"
@@ -1805,6 +1819,26 @@ if [[ "$notarize_archive_before" != "$notarize_archive_after" ]]; then
   exit 1
 fi
 echo "notarizeAppPreflightNoSubmit=true"
+
+section "notarization package preflight"
+pkg_notary_submission_before="$(/bin/ls "$ROOT_DIR"/build/notary/pkg-notary-submit.plist 2>/dev/null || true)"
+run_allow_rc "0,10,12,15" "notarizePkgPreflightOnly" \
+  /usr/bin/env \
+    INPUTIA_NOTARIZE_PKG_PREFLIGHT_ONLY=1 \
+    "$ROOT_DIR/notarize-pkg.sh" "$ROOT_DIR/dist/InputiaInputMethod-latest.pkg"
+require_output "$RUN_EXPECT_RC_OUTPUT" "inputiaNotarizePkgTool=true" "notarize-pkg-preflight-missing-tool-marker"
+if [[ "$RUN_EXPECT_RC_ACTUAL" == "0" ]]; then
+  require_output "$RUN_EXPECT_RC_OUTPUT" "notarizePkgReady=true mode=preflight-only" "notarize-pkg-preflight-missing-preflight-only-success"
+  require_output "$RUN_EXPECT_RC_OUTPUT" "notarizePkgPassed=skipped reason=preflight-only" "notarize-pkg-preflight-missing-skip-marker"
+else
+  require_output "$RUN_EXPECT_RC_OUTPUT" "notarizePkgPassed=false" "notarize-pkg-preflight-missing-failure-marker"
+fi
+pkg_notary_submission_after="$(/bin/ls "$ROOT_DIR"/build/notary/pkg-notary-submit.plist 2>/dev/null || true)"
+if [[ "$pkg_notary_submission_before" != "$pkg_notary_submission_after" ]]; then
+  echo "nonGuiVerificationPassed=false reason=notarize-pkg-preflight-created-submission"
+  exit 1
+fi
+echo "notarizePkgPreflightNoSubmit=true"
 
 section "shortcut pass-through self-checks"
 require_executable "$ROOT_DIR/build/inputia-shortcut-self-check" "missing-shortcut-self-check"
