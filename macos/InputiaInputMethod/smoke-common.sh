@@ -606,7 +606,7 @@ inputia_select_input_source_or_exit() {
       INPUTIA_APP="$app" INPUTIA_TIS_REQUIRE_APP_MATCH=1 "$tis_tool" >>"$select_log"
     else
       INPUTIA_APP="$app" INPUTIA_TIS_REQUIRE_APP_MATCH=1 \
-        "$tis_tool" --select-inputia-source-id "${INPUTIA_TIS_MODE_ID:-com.inputia.inputmethod.Inputia.Main}" >>"$select_log"
+        "$tis_tool" --select-inputia-source-id "${INPUTIA_TIS_MODE_ID:-com.inputia.inputmethod.Inputia.Hans}" >>"$select_log"
     fi
   elif [[ "${INPUTIA_TIS_REGISTER_BEFORE_SELECT:-0}" == "1" ]]; then
     "$executable" --select-input-source >>"$select_log"

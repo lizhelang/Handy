@@ -12,6 +12,7 @@ SYSTEM_SETTINGS_APP="/Applications/Inputia 设置.app"
 USER_SETTINGS_APP="${INPUTIA_USER_SETTINGS_APP_FOR_TEST:-$HOME/Applications/Inputia 设置.app}"
 LATEST_PKG="$ROOT_DIR/dist/InputiaInputMethod-latest.pkg"
 TIS_TOOL="$ROOT_DIR/build/inputia-tis-tool"
+TARGET_MODE_ID="${INPUTIA_TIS_MODE_ID:-com.inputia.inputmethod.Inputia.Hans}"
 TARGET_APP="${INPUTIA_STATUS_APP:-}"
 if [[ -z "$TARGET_APP" ]]; then
   if [[ -d "$USER_APP" ]]; then
@@ -141,6 +142,9 @@ menu_source_block_reason() {
   inputia-menu-item-duplicate)
     echo menu-source-duplicate
     ;;
+  inputia-menu-selected-separator)
+    echo none
+    ;;
   menu-agent-unavailable)
     echo text-input-menu-agent-unavailable
     ;;
@@ -149,6 +153,9 @@ menu_source_block_reason() {
     ;;
   skipped)
     echo menu-readiness-skipped
+    ;;
+  opt-in-required)
+    echo menu-readiness-opt-in-required
     ;;
   missing-menu-readiness-script)
     echo missing-menu-readiness-script
@@ -168,6 +175,9 @@ menu_presentation_block_reason() {
   inputia-menu-item-duplicate)
     echo text-input-menu-agent-presenting-duplicate-source
     ;;
+  inputia-menu-selected-separator)
+    echo text-input-menu-agent-selected-separator
+    ;;
   menu-agent-unavailable)
     echo text-input-menu-agent-unavailable
     ;;
@@ -176,6 +186,9 @@ menu_presentation_block_reason() {
     ;;
   skipped)
     echo menu-readiness-skipped
+    ;;
+  opt-in-required)
+    echo menu-readiness-opt-in-required
     ;;
   missing-menu-readiness-script)
     echo missing-menu-readiness-script
@@ -503,6 +516,7 @@ fi
 echo "targetRequiresAdmin=$target_requires_admin"
 
 section "tis sources"
+echo "expectedTISModeID=$TARGET_MODE_ID"
 tis_enabled_matches=unknown
 tis_installed_matches=unknown
 tis_current_id=unknown
@@ -527,7 +541,7 @@ if [[ -x "$TIS_TOOL" ]]; then
   tis_current_id="$(INPUTIA_APP="$TARGET_APP" "$TIS_TOOL" --dump-current-input-source 2>/dev/null |
     /usr/bin/awk -F= '$1 == "id" { print $2; exit }')"
   tis_current_id="${tis_current_id:-unknown}"
-  if [[ "$tis_current_id" == "com.inputia.inputmethod.Inputia.Main" ]]; then
+  if [[ "$tis_current_id" == "$TARGET_MODE_ID" ]]; then
     tis_current_matches_target=true
   else
     tis_current_matches_target=false
@@ -541,7 +555,12 @@ fi
 section "menu readiness"
 menu_readiness=unknown
 menu_block_reason=unknown
-if [[ "${INPUTIA_STATUS_SKIP_MENU_READINESS:-0}" == "1" ]]; then
+if [[ "${INPUTIA_STATUS_INCLUDE_MENU_READINESS:-0}" != "1" ]]; then
+  echo "menuReadiness=unknown"
+  echo "menuReadinessBlockReason=opt-in-required"
+  menu_readiness=unknown
+  menu_block_reason=opt-in-required
+elif [[ "${INPUTIA_STATUS_SKIP_MENU_READINESS:-0}" == "1" ]]; then
   echo "menuReadiness=unknown"
   echo "menuReadinessBlockReason=skipped"
   menu_readiness=unknown
@@ -660,9 +679,15 @@ fi
 
 section "gui smoke summary"
 admin_ready="$(admin_install_ready)"
-gui_block_reason="$(gui_session_block_reason)"
-textedit_state="$(process_state TextEdit)"
-safari_state="$(process_state Safari)"
+if [[ "${INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS:-0}" == "1" ]]; then
+  gui_block_reason="$(gui_session_block_reason)"
+  textedit_state="$(process_state TextEdit)"
+  safari_state="$(process_state Safari)"
+else
+  gui_block_reason=skipped
+  textedit_state=skipped
+  safari_state=skipped
+fi
 if [[ "$inputia_running" == "true" ]]; then
   inputia_state=running
 elif [[ "$inputia_running" == "unknown" ]]; then
@@ -699,7 +724,7 @@ fi
 if [[ "$target_exists" == "true" && "$target_signature_accepted" != "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" signature-rejected)"
 fi
-if [[ "$menu_readiness" != "true" ]]; then
+if [[ "${INPUTIA_STATUS_INCLUDE_MENU_READINESS:-0}" == "1" && "$menu_readiness" != "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" "$menu_source_reason")"
 fi
 if [[ "$user_host_conflict" == "true" ]]; then
@@ -708,16 +733,19 @@ fi
 if [[ "$inputia_running" == "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" inputia-host-running)"
 fi
-if [[ "$textedit_state" == "unknown" || "$safari_state" == "unknown" || "$inputia_state" == "unknown" ]]; then
+if [[ "${INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS:-0}" == "1" &&
+  ( "$textedit_state" == "unknown" || "$safari_state" == "unknown" || "$inputia_state" == "unknown" ) ]]; then
   block_reasons="$(append_reason "$block_reasons" process-list-unavailable)"
 fi
-if [[ "$gui_block_reason" != "none" ]]; then
+if [[ "${INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS:-0}" == "1" && "$gui_block_reason" != "none" ]]; then
   block_reasons="$(append_reason "$block_reasons" "$gui_block_reason")"
 fi
-if [[ "$textedit_state" == "running" && "${INPUTIA_TEXTEDIT_SMOKE_ALLOW_EXISTING:-0}" != "1" ]]; then
+if [[ "${INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS:-0}" == "1" &&
+  "$textedit_state" == "running" && "${INPUTIA_TEXTEDIT_SMOKE_ALLOW_EXISTING:-0}" != "1" ]]; then
   block_reasons="$(append_reason "$block_reasons" textedit-already-running)"
 fi
-if [[ "$safari_state" == "running" && "${INPUTIA_SAFARI_SMOKE_ALLOW_EXISTING:-0}" != "1" ]]; then
+if [[ "${INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS:-0}" == "1" &&
+  "$safari_state" == "running" && "${INPUTIA_SAFARI_SMOKE_ALLOW_EXISTING:-0}" != "1" ]]; then
   block_reasons="$(append_reason "$block_reasons" safari-already-running)"
 fi
 if [[ -z "$block_reasons" ]]; then
@@ -742,6 +770,8 @@ echo "statusMenuReadiness=$menu_readiness"
 echo "statusMenuBlockReason=$menu_block_reason"
 if [[ "$menu_readiness" == "true" ]]; then
   echo "statusInputSourceVisible=true"
+elif [[ "$menu_block_reason" == "opt-in-required" || "$menu_block_reason" == "skipped" ]]; then
+  echo "statusInputSourceVisible=unknown"
 else
   echo "statusInputSourceVisible=false"
 fi
@@ -753,7 +783,9 @@ echo "statusTextEditPreflight=$textedit_state"
 echo "statusSafariPreflight=$safari_state"
 echo "statusInputiaHostPreflight=$inputia_state"
 echo "statusGuiSmokeBlockReasons=$block_reasons"
-if [[ "$block_reasons" == "none" ]]; then
+if [[ "${INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS:-0}" != "1" ]]; then
+  echo "statusGuiSmokeReady=unknown reason=skipped"
+elif [[ "$block_reasons" == "none" ]]; then
   echo "statusGuiSmokeReady=true reason=none"
 else
   echo "statusGuiSmokeReady=false reason=$block_reasons"

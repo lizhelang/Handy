@@ -1,7 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-TARGET_NAME="${INPUTIA_MENU_NAME:-Inputia}"
+TARGET_NAME="${INPUTIA_MENU_NAME:-}"
+CACHE_FILE="${INPUTIA_MENU_READINESS_CACHE_FILE:-}"
+
+if [[ -n "$CACHE_FILE" && -s "$CACHE_FILE" && "${INPUTIA_MENU_READINESS_DISABLE_CACHE:-0}" != "1" ]]; then
+  echo "menuReadinessCache=hit path=$CACHE_FILE"
+  /bin/cat "$CACHE_FILE"
+  exit 0
+fi
 
 osascript_output="$(
   /usr/bin/osascript <<'APPLESCRIPT' 2>&1 || true
@@ -43,38 +50,106 @@ end tell
 APPLESCRIPT
 )"
 
-printf '%s\n' "$osascript_output" | tr '\r' '\n'
+normalized_output="$(printf '%s\n' "$osascript_output" | tr '\r' '\n')"
+final_output="$normalized_output"
 
-if ! /usr/bin/grep -q '^menuAgentFound=true$' <<<"$osascript_output"; then
-  echo "menuReadiness=false"
-  echo "menuReadinessBlockReason=menu-agent-unavailable"
+append_line() {
+  final_output="${final_output}"$'\n'"$1"
+}
+
+finish() {
+  if [[ -n "$CACHE_FILE" ]]; then
+    /bin/mkdir -p "$(/usr/bin/dirname "$CACHE_FILE")"
+    tmp_cache="${CACHE_FILE}.$$"
+    printf '%s\n' "$final_output" >"$tmp_cache"
+    /bin/mv "$tmp_cache" "$CACHE_FILE"
+  fi
+  printf '%s\n' "$final_output"
+}
+
+if ! /usr/bin/grep -q '^menuAgentFound=true$' <<<"$normalized_output"; then
+  append_line "menuReadiness=false"
+  append_line "menuReadinessBlockReason=menu-agent-unavailable"
+  finish
   exit 0
 fi
-if ! /usr/bin/grep -q '^menuBarFound=true$' <<<"$osascript_output"; then
-  echo "menuReadiness=false"
-  echo "menuReadinessBlockReason=menu-bar-unavailable"
+if ! /usr/bin/grep -q '^menuBarFound=true$' <<<"$normalized_output"; then
+  append_line "menuReadiness=false"
+  append_line "menuReadinessBlockReason=menu-bar-unavailable"
+  finish
   exit 0
 fi
 
 inputia_count="$(
-  /usr/bin/awk -F'|' -v target="$TARGET_NAME" '$1 ~ /^menuItem=/ && $2 == target { count++ } END { print count + 0 }' \
-    <<<"$(printf '%s\n' "$osascript_output" | tr '\r' '\n')"
+  /usr/bin/awk -F'|' -v target="$TARGET_NAME" '
+    function is_inputia_source(name) {
+      return name == "Inputia" ||
+        name == "Inputia 简体" ||
+        name == "Inputia 簡體" ||
+        name == "Inputia 繁体" ||
+        name == "Inputia 繁體" ||
+        name == "Inputia Simplified" ||
+        name == "Inputia Traditional"
+    }
+    BEGIN { source_block = 1 }
+    $1 ~ /^menuItem=/ && $2 == "<separator>" {
+      source_block = 0
+      next
+    }
+    $1 ~ /^menuItem=/ {
+      if (target != "" && $2 == target) {
+        count++
+      } else if (target == "" && source_block && is_inputia_source($2)) {
+        count++
+      }
+    }
+    END { print count + 0 }
+  ' \
+    <<<"$normalized_output"
 )"
 selected_count="$(
-  /usr/bin/awk -F'|' -v target="$TARGET_NAME" '$1 ~ /^menuItem=/ && $2 == target && $3 != "" { count++ } END { print count + 0 }' \
-    <<<"$(printf '%s\n' "$osascript_output" | tr '\r' '\n')"
+  /usr/bin/awk -F'|' -v target="$TARGET_NAME" '
+    function is_inputia_source(name) {
+      return name == "Inputia" ||
+        name == "Inputia 简体" ||
+        name == "Inputia 簡體" ||
+        name == "Inputia 繁体" ||
+        name == "Inputia 繁體" ||
+        name == "Inputia Simplified" ||
+        name == "Inputia Traditional"
+    }
+    BEGIN { source_block = 1 }
+    $1 ~ /^menuItem=/ && $2 == "<separator>" {
+      source_block = 0
+      next
+    }
+    $1 ~ /^menuItem=/ && $3 != "" {
+      if (target != "" && $2 == target) {
+        count++
+      } else if (target == "" && source_block && is_inputia_source($2)) {
+        count++
+      }
+    }
+    END { print count + 0 }
+  ' \
+    <<<"$normalized_output"
+)"
+selected_separator_count="$(
+  /usr/bin/awk -F'|' '$1 ~ /^menuItem=/ && $2 == "<separator>" && $3 != "" { count++ } END { print count + 0 }' \
+    <<<"$normalized_output"
 )"
 
-echo "menuInputiaCount=$inputia_count"
-echo "menuInputiaSelectedCount=$selected_count"
-if [[ "$inputia_count" == "1" ]]; then
-  echo "menuReadiness=true"
-  echo "menuReadinessBlockReason=none"
+append_line "menuInputiaCount=$inputia_count"
+append_line "menuInputiaSelectedCount=$selected_count"
+append_line "menuSelectedSeparatorCount=$selected_separator_count"
+if [[ "$selected_separator_count" != "0" ]]; then
+  append_line "menuReadiness=false"
+  append_line "menuReadinessBlockReason=inputia-menu-selected-separator"
+elif [[ "$inputia_count" -ge 1 ]]; then
+  append_line "menuReadiness=true"
+  append_line "menuReadinessBlockReason=none"
 else
-  echo "menuReadiness=false"
-  if [[ "$inputia_count" == "0" ]]; then
-    echo "menuReadinessBlockReason=inputia-menu-item-missing"
-  else
-    echo "menuReadinessBlockReason=inputia-menu-item-duplicate"
-  fi
+  append_line "menuReadiness=false"
+  append_line "menuReadinessBlockReason=inputia-menu-item-missing"
 fi
+finish

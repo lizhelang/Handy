@@ -2,11 +2,24 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export INPUTIA_VERIFICATION_OWNER_PID="${INPUTIA_VERIFICATION_OWNER_PID:-$$}"
+
+if [[ "${INPUTIA_VERIFY_NONGUI_FULL:-0}" != "1" ]]; then
+  echo "verifyNonguiCompatibilityMode=dev-fast"
+  echo "verifyNonguiFullOptIn=INPUTIA_VERIFY_NONGUI_FULL=1"
+  exec "$ROOT_DIR/dev-fast.sh" "$@"
+fi
+
+export INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS="${INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS:-1}"
+
 BUILD_APP="$ROOT_DIR/build/InputiaInputMethod.app"
 SYSTEM_APP="/Library/Input Methods/InputiaInputMethod.app"
 source "$ROOT_DIR/smoke-common.sh"
 VERIFY_CLIPBOARD_INFO_BASELINE="$(inputia_current_clipboard_info)"
+set +e
 VERIFY_CLIPBOARD_RESTORABLE_REASON="$(inputia_clipboard_info_restorable_reason "$VERIFY_CLIPBOARD_INFO_BASELINE")"
+VERIFY_CLIPBOARD_RESTORABLE_RC=$?
+set -e
 if [[ "${INPUTIA_VERIFY_STRICT_CLIPBOARD_TEXT_COMPARE:-0}" == "1" &&
   "$VERIFY_CLIPBOARD_RESTORABLE_REASON" == "text-restorable" ]]; then
   VERIFY_CLIPBOARD_TEXT_COMPARE_REQUIRED=true
@@ -15,6 +28,7 @@ else
 fi
 echo "verifyClipboardTextCompareRequired=$VERIFY_CLIPBOARD_TEXT_COMPARE_REQUIRED"
 echo "verifyClipboardBaselineReason=$VERIFY_CLIPBOARD_RESTORABLE_REASON"
+echo "verifyClipboardBaselineClassifierRC=$VERIFY_CLIPBOARD_RESTORABLE_RC"
 
 section() {
   printf '\n== %s ==\n' "$1"
@@ -261,6 +275,15 @@ assert_process_not_running() {
     process_details "$process_name"
     exit 1
   fi
+}
+
+assert_inputia_host_not_running_if_not_preexisting() {
+  local reason="$1"
+  if [[ "${INPUTIA_HOST_PREEXISTING:-false}" == "true" ]]; then
+    echo "inputiaHostResidueCheck=skipped reason=inputia-host-preexisting label=$reason"
+    return 0
+  fi
+  assert_process_not_running InputiaInputMethod "$reason"
 }
 
 current_input_source_id() {
@@ -551,11 +574,15 @@ cleanup_stale_verify_residue
 
 TEXTEDIT_PREEXISTING=false
 SAFARI_PREEXISTING=false
+INPUTIA_HOST_PREEXISTING=false
 if process_running TextEdit; then
   TEXTEDIT_PREEXISTING=true
 fi
 if process_running Safari; then
   SAFARI_PREEXISTING=true
+fi
+if process_running InputiaInputMethod; then
+  INPUTIA_HOST_PREEXISTING=true
 fi
 
 compile_quoted_applescript_blocks() {
@@ -624,6 +651,7 @@ verify_cleanup_permission_contract() {
   /usr/bin/python3 - "$ROOT_DIR" <<'PY'
 import pathlib
 import plistlib
+import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -882,6 +910,7 @@ require("tis.menuReadiness=" in tis_readiness_text, "tis-readiness-missing-menu-
 require("tis.menuSourceBlockReason=" in tis_readiness_text, "tis-readiness-missing-menu-source-block-output")
 require("menu-source-missing" in tis_readiness_text, "tis-readiness-missing-menu-source-missing-block")
 require("text-input-menu-agent-not-presenting-source" in tis_readiness_text, "tis-readiness-missing-menu-agent-not-presenting-source-block")
+require("text-input-menu-agent-selected-separator" in tis_readiness_text, "tis-readiness-missing-selected-separator-block")
 
 status_text = (root / "status.sh").read_text()
 require("return 0" in status_text[status_text.find("plist_value()"):status_text.find("app_version()")], "status-plist-value-missing-safe-return")
@@ -902,20 +931,27 @@ require("you do not exist in the passwd database" in directory_service_text, "di
 info_plist = plistlib.loads((root / "Info.plist").read_bytes())
 require(info_plist.get("CFBundleDisplayName") == "Inputia", "info-plist-display-name-is-not-inputia")
 require(info_plist.get("CFBundleName") == "Inputia", "info-plist-bundle-name-is-not-inputia")
-mode_dict = (
-    info_plist.get("ComponentInputModeDict", {})
-    .get("tsInputModeListKey", {})
-    .get("com.inputia.inputmethod.Inputia.Main", {})
-)
-require(mode_dict.get("TISInputSourceID") == "com.inputia.inputmethod.Inputia.Main", "info-plist-main-mode-id-mismatch")
+input_mode_dict = info_plist.get("ComponentInputModeDict", {})
+mode_list = input_mode_dict.get("tsInputModeListKey", {})
+visible_modes = input_mode_dict.get("tsVisibleInputModeOrderedArrayKey", [])
+hans_mode = mode_list.get("com.inputia.inputmethod.Inputia.Hans", {})
+hant_mode = mode_list.get("com.inputia.inputmethod.Inputia.Hant", {})
+require(hans_mode.get("TISInputSourceID") == "com.inputia.inputmethod.Inputia.Hans", "info-plist-hans-mode-id-mismatch")
+require(hant_mode.get("TISInputSourceID") == "com.inputia.inputmethod.Inputia.Hant", "info-plist-hant-mode-id-mismatch")
+require(hans_mode.get("tsInputModeDefaultStateKey") is True, "info-plist-hans-not-default")
+require(hant_mode.get("tsInputModeDefaultStateKey") is False, "info-plist-hant-not-secondary")
+require(hans_mode.get("tsInputModeIsVisibleKey") is True, "info-plist-hans-not-visible")
+require(hant_mode.get("tsInputModeIsVisibleKey") is True, "info-plist-hant-not-visible")
+require(hans_mode.get("tsInputModeScriptKey") == "smSimpChinese", "info-plist-hans-script-mismatch")
+require(hant_mode.get("tsInputModeScriptKey") == "smTradChinese", "info-plist-hant-script-mismatch")
+require(visible_modes[:2] == ["com.inputia.inputmethod.Inputia.Hans", "com.inputia.inputmethod.Inputia.Hant"], "info-plist-visible-mode-order-mismatch")
 for localization in ("en.lproj", "zh-Hans.lproj", "zh-Hant.lproj"):
     localized_info = (root / "Resources" / localization / "InfoPlist.strings").read_text()
     require('"CFBundleDisplayName" = "Inputia";' in localized_info, f"{localization}-display-name-not-inputia")
     require('"CFBundleName" = "Inputia";' in localized_info, f"{localization}-bundle-name-not-inputia")
     require('"com.inputia.inputmethod.Inputia" = "Inputia";' in localized_info, f"{localization}-parent-name-not-inputia")
-    require('"com.inputia.inputmethod.Inputia.Main" = "Inputia";' in localized_info, f"{localization}-main-mode-name-not-inputia")
-    for forbidden_name_suffix in ("Inputia 简体", "Inputia 繁体", "Inputia Simplified", "Inputia Traditional"):
-        require(forbidden_name_suffix not in localized_info, f"{localization}-inputia-name-has-script-suffix")
+    require('"com.inputia.inputmethod.Inputia.Hans"' in localized_info, f"{localization}-hans-mode-name-missing")
+    require('"com.inputia.inputmethod.Inputia.Hant"' in localized_info, f"{localization}-hant-mode-name-missing")
 
 settings_window_text = (root / "Sources" / "InputiaInputMethod" / "InputiaSettingsWindow.swift").read_text()
 require('var chineseScript: String?' in settings_window_text, "settings-window-missing-chinese-script-field")
@@ -969,7 +1005,11 @@ clipboard_restore_fn_index = clipboard_text.find("restore_clipboard()")
 clipboard_restore_call_index = clipboard_text.find("restore_clipboard", clipboard_restore_fn_index + 1)
 restore_index = clipboard_text.find('if [[ "$CLIPBOARD_CHANGED" == "1"')
 clipboard_restorable_index = clipboard_text.find("inputia_require_text_clipboard_restorable")
-clipboard_inputia_preflight_index = clipboard_text.find('inputia_require_process_not_running \\\n  "InputiaInputMethod" "clipboardRecallSmokeReady"')
+clipboard_inputia_preflight_match = re.search(
+    r'inputia_require_process_not_running \\\n\s+"InputiaInputMethod" "clipboardRecallSmokeReady"',
+    clipboard_text,
+)
+clipboard_inputia_preflight_index = clipboard_inputia_preflight_match.start() if clipboard_inputia_preflight_match else -1
 require('"inputia-host-running" "-"' in clipboard_text, "clipboard-inputia-host-preflight-allows-override")
 clipboard_select_index = clipboard_text.find("inputia_select_input_source_or_exit")
 clipboard_prepare_debug_index = clipboard_text.find('inputia_prepare_debug_event_log "$EVENT_LOG" "$EVENT_LOG_PROVIDED"')
@@ -996,7 +1036,7 @@ require(
     clipboard_restore_fn_index < restore_index < clipboard_inputia_preflight_index < clipboard_restorable_index < clipboard_restore_call_index < clipboard_trap_index < clipboard_prepare_debug_index < clipboard_clean_debug_index < clipboard_select_index < pbpaste_index < pbcopy_index < changed_index < clipboard_osascript_index,
     "clipboard-restore-order",
 )
-clipboard_cleanup_self_check_index = clipboard_text.find("INPUTIA_CLIPBOARD_RECALL_CLEANUP_SELF_CHECK")
+clipboard_cleanup_self_check_index = clipboard_text.find("INPUTIA_CLIPBOARD_RECALL_CLEANUP_SELF_CHECK", clipboard_trap_index)
 clipboard_cleanup_self_check_marker_index = clipboard_text.find("clipboardRecallCleanupSelfCheck=true phase=$self_check_phase")
 require(clipboard_cleanup_self_check_index > clipboard_trap_index, "clipboard-cleanup-self-check-before-trap")
 require(clipboard_cleanup_self_check_index < clipboard_select_index, "clipboard-cleanup-self-check-after-select")
@@ -1318,7 +1358,11 @@ require("inputia_run_with_timeout clipboard-recall-osascript" in clipboard_text,
 
 for filename in ("smoke-clipboard-recall.sh", "smoke-safari-enter.sh"):
     text = (root / filename).read_text()
-    inputia_preflight_index = text.find('inputia_require_process_not_running \\\n  "InputiaInputMethod"')
+    inputia_preflight_match = re.search(
+        r'inputia_require_process_not_running \\\n\s+"InputiaInputMethod"',
+        text,
+    )
+    inputia_preflight_index = inputia_preflight_match.start() if inputia_preflight_match else -1
     capture_index = text.find("inputia_capture_debug_events_env")
     trap_index = text.find("trap cleanup_smoke EXIT")
     select_index = text.find("inputia_select_input_source_or_exit")
@@ -1596,6 +1640,7 @@ require("statusInputSourceVisibilityBlockReason=" in status_text, "status-missin
 require("statusMenuPresentationBlockReason=" in status_text, "status-missing-menu-presentation-block-summary")
 require("menu-source-missing" in status_text, "status-missing-menu-source-missing-block")
 require("text-input-menu-agent-not-presenting-source" in status_text, "status-missing-menu-agent-not-presenting-source-block")
+require("text-input-menu-agent-selected-separator" in status_text, "status-missing-selected-separator-block")
 require("signature-rejected" in status_text, "status-missing-signature-rejected-block")
 require("app-missing" in status_text, "status-missing-app-missing-block")
 require("user-host-conflict" in status_text, "status-missing-user-host-conflict-block")
@@ -1841,6 +1886,9 @@ verify_nongui_text = (root / "verify-nongui.sh").read_text()
 require("current-input-source-unavailable" in verify_nongui_text, "verify-nongui-current-source-unknown-not-fatal")
 require('$before" == "unknown"' in verify_nongui_text, "verify-nongui-before-unknown-not-rejected")
 require('$after" == "unknown"' in verify_nongui_text, "verify-nongui-after-unknown-not-rejected")
+require("VERIFY_CLIPBOARD_RESTORABLE_RC=$?" in verify_nongui_text, "verify-nongui-clipboard-classifier-rc-not-captured")
+require("verifyClipboardBaselineClassifierRC=" in verify_nongui_text, "verify-nongui-clipboard-classifier-rc-not-reported")
+require("VERIFY_CLIPBOARD_TEXT_COMPARE_REQUIRED=false" in verify_nongui_text, "verify-nongui-non-text-clipboard-does-not-disable-text-compare")
 require("INPUTIA_ALLOW_APPLESCRIPT_COMPILE_APP_LAUNCH" in verify_nongui_text, "verify-nongui-missing-applescript-compile-launch-gate")
 require("appleScriptCompileSkipped=true reason=osacompile-may-launch-target-apps" in verify_nongui_text, "verify-nongui-missing-applescript-unsafe-skip")
 require('VERIFY_LOCK_DIR="/tmp/inputia-verify-nongui.lock"' in verify_nongui_text, "verify-nongui-lock-not-fixed-to-tmp")
@@ -2007,6 +2055,7 @@ PY
 section "syntax"
 echo "textEditPreExisting=$TEXTEDIT_PREEXISTING"
 echo "safariPreExisting=$SAFARI_PREEXISTING"
+echo "inputiaHostPreExisting=$INPUTIA_HOST_PREEXISTING"
 bash -n \
   "$ROOT_DIR/smoke-common.sh" \
 	  "$ROOT_DIR/smoke-preflight.sh" \
@@ -2545,7 +2594,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "gui-smoke-readiness-launched-safari"
 fi
 assert_process_not_running osascript "gui-smoke-readiness-left-osascript"
-assert_process_not_running InputiaInputMethod "gui-smoke-readiness-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "gui-smoke-readiness-left-inputia-host"
 echo "guiSmokeReadinessCurrentNoMutationPassed=true"
 
 section "GUI smoke suite self-check"
@@ -2600,7 +2649,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "gui-smoke-suite-missing-readiness-launched-safari"
 fi
 assert_process_not_running osascript "gui-smoke-suite-missing-readiness-left-osascript"
-assert_process_not_running InputiaInputMethod "gui-smoke-suite-missing-readiness-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "gui-smoke-suite-missing-readiness-left-inputia-host"
 echo "guiSmokeSuiteMissingReadinessGateNoMutationPassed=true"
 
 section "GUI smoke suite blocked gate"
@@ -2631,7 +2680,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "gui-smoke-suite-blocked-launched-safari"
 fi
 assert_process_not_running osascript "gui-smoke-suite-blocked-left-osascript"
-assert_process_not_running InputiaInputMethod "gui-smoke-suite-blocked-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "gui-smoke-suite-blocked-left-inputia-host"
 echo "guiSmokeSuiteBlockedGateNoMutationPassed=true"
 
 section "GUI smoke suite current blocked gate"
@@ -2669,7 +2718,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "gui-smoke-suite-current-blocked-launched-safari"
 fi
 assert_process_not_running osascript "gui-smoke-suite-current-blocked-left-osascript"
-assert_process_not_running InputiaInputMethod "gui-smoke-suite-current-blocked-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "gui-smoke-suite-current-blocked-left-inputia-host"
 echo "guiSmokeSuiteCurrentBlockedGateNoMutationPassed=true"
 
 section "GUI smoke suite inconsistent readiness gate"
@@ -2700,7 +2749,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "gui-smoke-suite-inconsistent-readiness-launched-safari"
 fi
 assert_process_not_running osascript "gui-smoke-suite-inconsistent-readiness-left-osascript"
-assert_process_not_running InputiaInputMethod "gui-smoke-suite-inconsistent-readiness-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "gui-smoke-suite-inconsistent-readiness-left-inputia-host"
 echo "guiSmokeSuiteInconsistentReadinessGateNoMutationPassed=true"
 
 section "GUI smoke suite ready-skip gate"
@@ -2734,7 +2783,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "gui-smoke-suite-ready-skip-launched-safari"
 fi
 assert_process_not_running osascript "gui-smoke-suite-ready-skip-left-osascript"
-assert_process_not_running InputiaInputMethod "gui-smoke-suite-ready-skip-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "gui-smoke-suite-ready-skip-left-inputia-host"
 echo "guiSmokeSuiteReadySkipGateNoMutationPassed=true"
 
 section "GUI smoke suite post-install failure gate"
@@ -2768,7 +2817,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "gui-smoke-suite-post-install-failure-launched-safari"
 fi
 assert_process_not_running osascript "gui-smoke-suite-post-install-failure-left-osascript"
-assert_process_not_running InputiaInputMethod "gui-smoke-suite-post-install-failure-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "gui-smoke-suite-post-install-failure-left-inputia-host"
 echo "guiSmokeSuitePostInstallFailureGateNoMutationPassed=true"
 
 section "post-install user settings conflict gate"
@@ -2802,7 +2851,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "post-install-user-settings-gate-launched-safari"
 fi
 assert_process_not_running osascript "post-install-user-settings-gate-left-osascript"
-assert_process_not_running InputiaInputMethod "post-install-user-settings-gate-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "post-install-user-settings-gate-left-inputia-host"
 /bin/rmdir "$VERIFY_POST_INSTALL_USER_SETTINGS_APP" >/dev/null 2>&1 || true
 echo "postInstallUserSettingsGateNoMutationPassed=true"
 
@@ -2842,7 +2891,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "post-install-active-lock-launched-safari"
 fi
 assert_process_not_running osascript "post-install-active-lock-left-osascript"
-assert_process_not_running InputiaInputMethod "post-install-active-lock-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "post-install-active-lock-left-inputia-host"
 /bin/rm -rf "$post_install_active_lock_dir"
 echo "postInstallActiveLockGateNoMutationPassed=true"
 
@@ -2940,7 +2989,7 @@ if [[ "$TEXTEDIT_PREEXISTING" == "false" ]]; then
   assert_process_not_running TextEdit "textedit-cleanup-self-check-launched-textedit"
 fi
 assert_process_not_running osascript "textedit-cleanup-self-check-left-osascript"
-assert_process_not_running InputiaInputMethod "textedit-cleanup-self-check-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "textedit-cleanup-self-check-left-inputia-host"
 echo "textEditCleanupSelfCheckNoMutationPassed=true"
 
 section "safari typing cleanup self-check"
@@ -2974,7 +3023,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "safari-typing-cleanup-self-check-launched-safari"
 fi
 assert_process_not_running osascript "safari-typing-cleanup-self-check-left-osascript"
-assert_process_not_running InputiaInputMethod "safari-typing-cleanup-self-check-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "safari-typing-cleanup-self-check-left-inputia-host"
 echo "safariTypingCleanupSelfCheckNoMutationPassed=true"
 
 section "safari enter cleanup self-check"
@@ -3008,7 +3057,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "safari-enter-cleanup-self-check-launched-safari"
 fi
 assert_process_not_running osascript "safari-enter-cleanup-self-check-left-osascript"
-assert_process_not_running InputiaInputMethod "safari-enter-cleanup-self-check-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "safari-enter-cleanup-self-check-left-inputia-host"
 echo "safariEnterCleanupSelfCheckNoMutationPassed=true"
 
 section "safari enter debug log prepare failure gate"
@@ -3020,6 +3069,7 @@ safari_enter_debug_log_gate_debug_before="$(debug_events_env)"
 run_expect_rc 1 "safariEnterDebugLogPrepareGate" \
   env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_GUI_SESSION_CHECK=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
     INPUTIA_SAFARI_SMOKE_ALLOW_EXISTING=1 \
+    INPUTIA_DEBUG_LOG_PREPARE_SELF_CHECK=1 \
     INPUTIA_DEBUG_EVENTS="$safari_enter_debug_log_dir" \
     "$ROOT_DIR/smoke-safari-enter.sh" "$BUILD_APP" 2>&1
 require_output "$RUN_EXPECT_RC_OUTPUT" "debugEventLogPrepare=false" "safari-enter-debug-log-prepare-marker-missing"
@@ -3043,7 +3093,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "safari-enter-debug-log-prepare-gate-launched-safari"
 fi
 assert_process_not_running osascript "safari-enter-debug-log-prepare-gate-left-osascript"
-assert_process_not_running InputiaInputMethod "safari-enter-debug-log-prepare-gate-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "safari-enter-debug-log-prepare-gate-left-inputia-host"
 echo "safariEnterDebugLogPrepareGateNoMutationPassed=true"
 
 section "textedit command cleanup self-check"
@@ -3079,7 +3129,7 @@ if [[ "$TEXTEDIT_PREEXISTING" == "false" ]]; then
   assert_process_not_running TextEdit "textedit-command-cleanup-self-check-launched-textedit"
 fi
 assert_process_not_running osascript "textedit-command-cleanup-self-check-left-osascript"
-assert_process_not_running InputiaInputMethod "textedit-command-cleanup-self-check-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "textedit-command-cleanup-self-check-left-inputia-host"
 echo "textEditCommandCleanupSelfCheckNoMutationPassed=true"
 
 section "clipboard recall cleanup self-check"
@@ -3114,7 +3164,7 @@ if [[ "$TEXTEDIT_PREEXISTING" == "false" ]]; then
   assert_process_not_running TextEdit "clipboard-cleanup-self-check-launched-textedit"
 fi
 assert_process_not_running osascript "clipboard-cleanup-self-check-left-osascript"
-assert_process_not_running InputiaInputMethod "clipboard-cleanup-self-check-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "clipboard-cleanup-self-check-left-inputia-host"
 echo "clipboardRecallCleanupSelfCheckNoMutationPassed=true"
 
 section "clipboard recall debug log prepare failure gate"
@@ -3127,6 +3177,7 @@ run_expect_rc 1 "clipboardDebugLogPrepareGate" \
   env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_GUI_SESSION_CHECK=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
     INPUTIA_ENABLE_CLIPBOARD_INFO_OVERRIDE_FOR_TEST=1 \
     INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST="Unicode text, 42" \
+    INPUTIA_DEBUG_LOG_PREPARE_SELF_CHECK=1 \
     INPUTIA_DEBUG_EVENTS="$clipboard_debug_log_dir" \
     "$ROOT_DIR/smoke-clipboard-recall.sh" "$BUILD_APP" 2>&1
 require_output "$RUN_EXPECT_RC_OUTPUT" "debugEventLogPrepare=false" "clipboard-debug-log-prepare-marker-missing"
@@ -3150,7 +3201,7 @@ if [[ "$TEXTEDIT_PREEXISTING" == "false" ]]; then
   assert_process_not_running TextEdit "clipboard-debug-log-prepare-gate-launched-textedit"
 fi
 assert_process_not_running osascript "clipboard-debug-log-prepare-gate-left-osascript"
-assert_process_not_running InputiaInputMethod "clipboard-debug-log-prepare-gate-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "clipboard-debug-log-prepare-gate-left-inputia-host"
 echo "clipboardDebugLogPrepareGateNoMutationPassed=true"
 
 section "safari command cleanup self-check"
@@ -3186,7 +3237,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "safari-command-cleanup-self-check-launched-safari"
 fi
 assert_process_not_running osascript "safari-command-cleanup-self-check-left-osascript"
-assert_process_not_running InputiaInputMethod "safari-command-cleanup-self-check-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "safari-command-cleanup-self-check-left-inputia-host"
 echo "safariCommandCleanupSelfCheckNoMutationPassed=true"
 
 section "safari diagnose cleanup self-check"
@@ -3228,7 +3279,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "safari-diagnose-cleanup-self-check-launched-safari"
 fi
 assert_process_not_running osascript "safari-diagnose-cleanup-self-check-left-osascript"
-assert_process_not_running InputiaInputMethod "safari-diagnose-cleanup-self-check-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "safari-diagnose-cleanup-self-check-left-inputia-host"
 echo "safariDiagnoseCleanupSelfCheckNoMutationPassed=true"
 
 section "clipboard info classifier self-check"
@@ -3397,15 +3448,19 @@ section "status"
 status_output="$("$ROOT_DIR/status.sh" 2>&1)"
 status_waits=0
 status_max_wait="${INPUTIA_PROCESS_WAIT_TICKS:-100}"
-while ! /usr/bin/grep -q 'running=false' <<<"$status_output" && ((status_waits < status_max_wait)); do
-  /bin/sleep 0.1
-  status_waits=$((status_waits + 1))
-  status_output="$("$ROOT_DIR/status.sh" 2>&1)"
-done
-if ! /usr/bin/grep -q 'running=false' <<<"$status_output"; then
-  echo "nonGuiVerificationPassed=false reason=inputia-host-running waitedTicks=$status_waits"
-  process_details InputiaInputMethod
-  exit 1
+if [[ "$INPUTIA_HOST_PREEXISTING" == "false" ]]; then
+  while ! /usr/bin/grep -q 'running=false' <<<"$status_output" && ((status_waits < status_max_wait)); do
+    /bin/sleep 0.1
+    status_waits=$((status_waits + 1))
+    status_output="$("$ROOT_DIR/status.sh" 2>&1)"
+  done
+  if ! /usr/bin/grep -q 'running=false' <<<"$status_output"; then
+    echo "nonGuiVerificationPassed=false reason=inputia-host-running waitedTicks=$status_waits"
+    process_details InputiaInputMethod
+    exit 1
+  fi
+else
+  echo "statusInputiaHostBaseline=preexisting"
 fi
 printf '%s\n' "$status_output" | /usr/bin/awk '
   /^buildVersion=|^buildCDHash=|^systemMatchesBuild=|^userMatchesBuild=|^userHostConflict=|^includeAllInstalled=|^matches=|^running=|^sha256=|^statusAdminInstallReady=|^statusTISEnabledMatches=|^statusTISInstalledMatches=|^statusTISCurrentMatchesTarget=|^statusLegacyHIToolboxInputiaEnabled=|^statusLegacyHIToolboxInputiaSelected=|^statusStaleHIToolboxEnabledStateSuspected=|^statusSignatureAccepted=|^statusMenuReadiness=|^statusMenuBlockReason=|^statusUserHostConflict=|^statusGuiSessionBlockReason=|^statusTextEditPreflight=|^statusSafariPreflight=|^statusInputiaHostPreflight=|^statusGuiSmokeBlockReasons=|^statusGuiSmokeReady=/ { print "status: " $0 }
@@ -3423,7 +3478,12 @@ if [[ "$status_gui_session_reason" != "none" ]]; then
 fi
 require_output "$status_output" 'statusTextEditPreflight=not-running' "status-textedit-preflight-summary-missing-current-idle"
 require_output "$status_output" 'statusSafariPreflight=not-running' "status-safari-preflight-summary-missing-current-idle"
-require_output "$status_output" 'statusInputiaHostPreflight=not-running' "status-inputia-host-preflight-summary-missing-current-idle"
+if [[ "$INPUTIA_HOST_PREEXISTING" == "false" ]]; then
+  require_output "$status_output" 'statusInputiaHostPreflight=not-running' "status-inputia-host-preflight-summary-missing-current-idle"
+else
+  require_output "$status_output" 'statusInputiaHostPreflight=running' "status-inputia-host-preflight-summary-missing-current-running"
+  require_status_block_reason "$status_output" "inputia-host-running" "status-inputia-host-preexisting-missing-blocker"
+fi
 require_signature_block_if_rejected "$status_output" "status-current-missing-signature-rejected"
 require_output "$status_output" 'statusGuiSmokeReady=false reason=' "status-gui-smoke-ready-summary-missing-current-blockers"
 
@@ -3476,15 +3536,19 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
 else
   echo "statusSafariBlockerSelfCheck=skipped reason=safari-preexisting"
 fi
-start_fake_existing_process InputiaInputMethod
-fake_status_inputia_pid="$INPUTIA_FAKE_EXISTING_PID"
-status_inputia_output="$("$ROOT_DIR/status.sh" 2>&1)"
-require_output "$status_inputia_output" 'statusInputiaHostPreflight=running' "status-inputia-host-blocker-self-check-missing-running"
-require_signature_block_if_rejected "$status_inputia_output" "status-inputia-host-blocker-self-check-missing-signature-rejected"
-require_status_block_reason "$status_inputia_output" "inputia-host-running" "status-inputia-host-blocker-self-check-missing-inputia-host-running"
-require_output "$status_inputia_output" 'statusGuiSmokeReady=false reason=' "status-inputia-host-blocker-self-check-missing-ready-reason"
-stop_fake_existing_process InputiaInputMethod "$fake_status_inputia_pid"
-echo "statusInputiaHostBlockerSelfCheck=true"
+if [[ "$INPUTIA_HOST_PREEXISTING" == "false" ]]; then
+  start_fake_existing_process InputiaInputMethod
+  fake_status_inputia_pid="$INPUTIA_FAKE_EXISTING_PID"
+  status_inputia_output="$("$ROOT_DIR/status.sh" 2>&1)"
+  require_output "$status_inputia_output" 'statusInputiaHostPreflight=running' "status-inputia-host-blocker-self-check-missing-running"
+  require_signature_block_if_rejected "$status_inputia_output" "status-inputia-host-blocker-self-check-missing-signature-rejected"
+  require_status_block_reason "$status_inputia_output" "inputia-host-running" "status-inputia-host-blocker-self-check-missing-inputia-host-running"
+  require_output "$status_inputia_output" 'statusGuiSmokeReady=false reason=' "status-inputia-host-blocker-self-check-missing-ready-reason"
+  stop_fake_existing_process InputiaInputMethod "$fake_status_inputia_pid"
+  echo "statusInputiaHostBlockerSelfCheck=true"
+else
+  echo "statusInputiaHostBlockerSelfCheck=skipped reason=inputia-host-preexisting"
+fi
 status_user_host_root="$(/usr/bin/mktemp -d "/tmp/inputia-status-user-host.XXXXXX")"
 VERIFY_TEMP_DIRS+=("$status_user_host_root")
 status_fake_user_app="$status_user_host_root/InputiaInputMethod.app"
@@ -3510,7 +3574,7 @@ echo "statusBlockerSelfCheck.clipboardUnchanged=true"
 assert_current_source_unchanged "statusBlockerSelfCheck" "$status_blocker_tis_before" "$status_blocker_tis_after"
 assert_debug_env_unchanged "statusBlockerSelfCheck" "$status_blocker_debug_before" "$status_blocker_debug_after"
 assert_process_not_running osascript "status-blocker-self-check-left-osascript"
-assert_process_not_running InputiaInputMethod "status-blocker-self-check-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "status-blocker-self-check-left-inputia-host"
 
 section "smoke preflight safe gates"
 tis_readiness_build_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3580,7 +3644,7 @@ if [[ "$TEXTEDIT_PREEXISTING" == "false" && "$system_preflight_app_missing" == "
   assert_debug_env_unchanged "systemPreflightTextEditBeforeCdhashGate" "$system_preflight_textedit_debug_before" "$system_preflight_textedit_debug_after"
   assert_no_user_host "systemPreflightTextEditBeforeCdhashGate"
   assert_process_not_running osascript "system-preflight-textedit-before-cdhash-left-osascript"
-  assert_process_not_running InputiaInputMethod "system-preflight-textedit-before-cdhash-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "system-preflight-textedit-before-cdhash-left-inputia-host"
   echo "systemPreflightTextEditBeforeCdhashGateNoLaunchPassed=true"
 else
   echo "systemPreflightTextEditBeforeCdhashGateSkipped=true reason=textedit-preexisting"
@@ -3607,6 +3671,7 @@ if [[ "$TEXTEDIT_PREEXISTING" == "false" && "$SAFARI_PREEXISTING" == "false" ]];
   build_preflight_tis_gate_debug_before="$(debug_events_env)"
   run_expect_rc 8 "buildPreflightUiTisGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_GUI_SESSION_CHECK=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
+      INPUTIA_SKIP_INPUTIA_HOST_PREFLIGHT_FOR_TEST=1 \
       "$ROOT_DIR/smoke-preflight.sh" "$BUILD_APP"
   require_output "$RUN_EXPECT_RC_OUTPUT" "guiSessionCheck=skipped" "build-preflight-ui-tis-gate-missing-gui-session-skip"
   require_output "$RUN_EXPECT_RC_OUTPUT" "textEditPreflight=not-running" "build-preflight-ui-tis-gate-missing-textedit-preflight"
@@ -3629,7 +3694,7 @@ if [[ "$TEXTEDIT_PREEXISTING" == "false" && "$SAFARI_PREEXISTING" == "false" ]];
   assert_process_not_running TextEdit "build-preflight-ui-tis-gate-launched-textedit"
   assert_process_not_running Safari "build-preflight-ui-tis-gate-launched-safari"
   assert_process_not_running osascript "build-preflight-ui-tis-gate-left-osascript"
-  assert_process_not_running InputiaInputMethod "build-preflight-ui-tis-gate-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "build-preflight-ui-tis-gate-left-inputia-host"
   echo "buildPreflightUiTisGateNoLaunchPassed=true"
 else
   echo "buildPreflightUiTisGateSkipped=true reason=existing-gui-app"
@@ -3697,7 +3762,7 @@ if [[ "$TEXTEDIT_PREEXISTING" == "false" ]]; then
   assert_no_user_host "buildPreflightTextEditNoAllowGate"
   stop_fake_existing_process TextEdit "$fake_preflight_textedit_pid"
   assert_process_not_running osascript "build-preflight-textedit-no-allow-left-osascript"
-  assert_process_not_running InputiaInputMethod "build-preflight-textedit-no-allow-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "build-preflight-textedit-no-allow-left-inputia-host"
   echo "buildPreflightTextEditNoAllowGateNoLaunchPassed=true"
 else
   echo "buildPreflightTextEditNoAllowGateSkipped=true reason=textedit-preexisting"
@@ -3729,7 +3794,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_no_user_host "buildPreflightSafariNoAllowGate"
   stop_fake_existing_process Safari "$fake_preflight_safari_pid"
   assert_process_not_running osascript "build-preflight-safari-no-allow-left-osascript"
-  assert_process_not_running InputiaInputMethod "build-preflight-safari-no-allow-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "build-preflight-safari-no-allow-left-inputia-host"
   echo "buildPreflightSafariNoAllowGateNoLaunchPassed=true"
 else
   echo "buildPreflightSafariNoAllowGateSkipped=true reason=safari-preexisting"
@@ -3789,7 +3854,7 @@ else
   assert_no_user_host "clipboardUiDisabled"
   assert_process_not_running TextEdit "ui-disabled-launched-textedit"
   assert_process_not_running osascript "ui-disabled-left-osascript"
-  assert_process_not_running InputiaInputMethod "ui-disabled-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "ui-disabled-left-inputia-host"
   echo "uiDisabledNoLaunchPassed=true"
 
   clipboard_inputia_host_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3815,7 +3880,7 @@ else
   assert_no_user_host "clipboardInputiaHostGate"
   assert_process_not_running TextEdit "clipboard-inputia-host-gate-launched-textedit"
   assert_process_not_running osascript "clipboard-inputia-host-gate-left-osascript"
-  assert_process_not_running InputiaInputMethod "clipboard-inputia-host-gate-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "clipboard-inputia-host-gate-left-inputia-host"
   echo "clipboardInputiaHostGateNoLaunchPassed=true"
 
   textedit_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3837,7 +3902,7 @@ else
   assert_no_user_host "textEditUiTisGate"
 	  assert_process_not_running TextEdit "textedit-ui-tis-gate-launched-textedit"
 	  assert_process_not_running osascript "textedit-ui-tis-gate-left-osascript"
-	  assert_process_not_running InputiaInputMethod "textedit-ui-tis-gate-left-inputia-host"
+	  assert_inputia_host_not_running_if_not_preexisting "textedit-ui-tis-gate-left-inputia-host"
 	  echo "textEditUiTisGateNoLaunchPassed=true"
 
 	  textedit_command_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3858,7 +3923,7 @@ else
 	  assert_no_user_host "textEditCommandUiTisGate"
 	  assert_process_not_running TextEdit "textedit-command-ui-tis-gate-launched-textedit"
 	  assert_process_not_running osascript "textedit-command-ui-tis-gate-left-osascript"
-	  assert_process_not_running InputiaInputMethod "textedit-command-ui-tis-gate-left-inputia-host"
+	  assert_inputia_host_not_running_if_not_preexisting "textedit-command-ui-tis-gate-left-inputia-host"
 	  echo "textEditCommandUiTisGateNoLaunchPassed=true"
 
 	  textedit_command_non_text_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3882,7 +3947,7 @@ else
 	  assert_no_user_host "textEditCommandNonTextClipboardGate"
 	  assert_process_not_running TextEdit "textedit-command-non-text-gate-launched-textedit"
 	  assert_process_not_running osascript "textedit-command-non-text-gate-left-osascript"
-	  assert_process_not_running InputiaInputMethod "textedit-command-non-text-gate-left-inputia-host"
+	  assert_inputia_host_not_running_if_not_preexisting "textedit-command-non-text-gate-left-inputia-host"
 	  echo "textEditCommandNonTextClipboardGatePassed=true"
 
 	  textedit_command_missing_text_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -3906,7 +3971,7 @@ else
 	  assert_no_user_host "textEditCommandMissingTextClipboardGate"
 	  assert_process_not_running TextEdit "textedit-command-missing-text-gate-launched-textedit"
 	  assert_process_not_running osascript "textedit-command-missing-text-gate-left-osascript"
-	  assert_process_not_running InputiaInputMethod "textedit-command-missing-text-gate-left-inputia-host"
+	  assert_inputia_host_not_running_if_not_preexisting "textedit-command-missing-text-gate-left-inputia-host"
 	  echo "textEditCommandMissingTextClipboardGatePassed=true"
 
 	  start_fake_existing_process TextEdit
@@ -3965,7 +4030,7 @@ else
 	  assert_debug_env_unchanged "clipboardExistingTextEditGate" "$clipboard_existing_debug_before" "$clipboard_existing_debug_after"
 	  assert_no_user_host "clipboardExistingTextEditGate"
 	  assert_process_not_running osascript "textedit-existing-gate-left-osascript"
-	  assert_process_not_running InputiaInputMethod "textedit-existing-gate-left-inputia-host"
+	  assert_inputia_host_not_running_if_not_preexisting "textedit-existing-gate-left-inputia-host"
 	  stop_fake_existing_process TextEdit "$fake_textedit_pid"
 	  echo "textEditExistingGateNoMutationPassed=true"
 
@@ -3974,6 +4039,7 @@ else
   clipboard_debug_before="$(debug_events_env)"
   run_allow_rc "8,9,7" "clipboardUiTisGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
+      INPUTIA_SKIP_INPUTIA_HOST_PREFLIGHT_FOR_TEST=1 \
       "$ROOT_DIR/smoke-clipboard-recall.sh" "$BUILD_APP"
   case "$RUN_EXPECT_RC_ACTUAL" in
     8)
@@ -4004,7 +4070,7 @@ else
   assert_no_user_host "clipboardUiTisGate"
   assert_process_not_running TextEdit "clipboard-ui-tis-gate-launched-textedit"
   assert_process_not_running osascript "clipboard-ui-tis-gate-left-osascript"
-  assert_process_not_running InputiaInputMethod "clipboard-ui-tis-gate-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "clipboard-ui-tis-gate-left-inputia-host"
   echo "clipboardUiTisGateNoLaunchPassed=true"
 
   clipboard_non_text_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -4012,6 +4078,7 @@ else
   clipboard_non_text_debug_before="$(debug_events_env)"
   run_expect_rc_or_gui_block 9 7 "clipboardNonTextGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
+      INPUTIA_SKIP_INPUTIA_HOST_PREFLIGHT_FOR_TEST=1 \
       INPUTIA_ENABLE_CLIPBOARD_INFO_OVERRIDE_FOR_TEST=1 \
       INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST="TIFF picture, 2048, string, 11, Unicode text, 22" \
       "$ROOT_DIR/smoke-clipboard-recall.sh" "$BUILD_APP"
@@ -4028,7 +4095,7 @@ else
   assert_no_user_host "clipboardNonTextGate"
   assert_process_not_running TextEdit "clipboard-non-text-gate-launched-textedit"
   assert_process_not_running osascript "clipboard-non-text-gate-left-osascript"
-  assert_process_not_running InputiaInputMethod "clipboard-non-text-gate-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "clipboard-non-text-gate-left-inputia-host"
   echo "clipboardNonTextGatePassed=true"
 
   clipboard_missing_text_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -4036,6 +4103,7 @@ else
   clipboard_missing_text_debug_before="$(debug_events_env)"
   run_expect_rc_or_gui_block 9 7 "clipboardMissingTextGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
+      INPUTIA_SKIP_INPUTIA_HOST_PREFLIGHT_FOR_TEST=1 \
       INPUTIA_ENABLE_CLIPBOARD_INFO_OVERRIDE_FOR_TEST=1 \
       INPUTIA_CLIPBOARD_INFO_OVERRIDE_FOR_TEST="" \
       "$ROOT_DIR/smoke-clipboard-recall.sh" "$BUILD_APP"
@@ -4052,7 +4120,7 @@ else
   assert_no_user_host "clipboardMissingTextGate"
   assert_process_not_running TextEdit "clipboard-missing-text-gate-launched-textedit"
   assert_process_not_running osascript "clipboard-missing-text-gate-left-osascript"
-  assert_process_not_running InputiaInputMethod "clipboard-missing-text-gate-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "clipboard-missing-text-gate-left-inputia-host"
   echo "clipboardMissingTextGatePassed=true"
 fi
 
@@ -4128,7 +4196,7 @@ assert_current_source_unchanged "safariDiagnoseUiDisabled" "$safari_diagnose_ui_
 assert_debug_env_unchanged "safariDiagnoseUiDisabled" "$safari_diagnose_ui_disabled_debug_before" "$safari_diagnose_ui_disabled_debug_after"
 assert_no_user_host "safariDiagnoseUiDisabled"
 assert_process_not_running osascript "safari-ui-disabled-left-osascript"
-assert_process_not_running InputiaInputMethod "safari-ui-disabled-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "safari-ui-disabled-left-inputia-host"
 if [[ "$safari_preexisting" == "false" ]]; then
   assert_process_not_running Safari "safari-ui-disabled-launched-safari"
 
@@ -4155,7 +4223,7 @@ if [[ "$safari_preexisting" == "false" ]]; then
   assert_no_user_host "safariEnterInputiaHostGate"
   assert_process_not_running Safari "safari-enter-inputia-host-gate-launched-safari"
   assert_process_not_running osascript "safari-enter-inputia-host-gate-left-osascript"
-  assert_process_not_running InputiaInputMethod "safari-enter-inputia-host-gate-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "safari-enter-inputia-host-gate-left-inputia-host"
   echo "safariEnterInputiaHostGateNoLaunchPassed=true"
 
   safari_command_non_text_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -4179,7 +4247,7 @@ if [[ "$safari_preexisting" == "false" ]]; then
   assert_no_user_host "safariCommandNonTextClipboardGate"
   assert_process_not_running Safari "safari-command-non-text-gate-launched-safari"
   assert_process_not_running osascript "safari-command-non-text-gate-left-osascript"
-  assert_process_not_running InputiaInputMethod "safari-command-non-text-gate-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "safari-command-non-text-gate-left-inputia-host"
   echo "safariCommandNonTextClipboardGatePassed=true"
 
   safari_command_missing_text_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -4203,7 +4271,7 @@ if [[ "$safari_preexisting" == "false" ]]; then
   assert_no_user_host "safariCommandMissingTextClipboardGate"
   assert_process_not_running Safari "safari-command-missing-text-gate-launched-safari"
   assert_process_not_running osascript "safari-command-missing-text-gate-left-osascript"
-  assert_process_not_running InputiaInputMethod "safari-command-missing-text-gate-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "safari-command-missing-text-gate-left-inputia-host"
   echo "safariCommandMissingTextClipboardGatePassed=true"
 
   safari_typing_tis_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -4225,7 +4293,7 @@ if [[ "$safari_preexisting" == "false" ]]; then
   assert_no_user_host "safariTypingUiTisGate"
   assert_process_not_running Safari "safari-typing-ui-tis-gate-launched-safari"
   assert_process_not_running osascript "safari-typing-ui-tis-gate-left-osascript"
-  assert_process_not_running InputiaInputMethod "safari-typing-ui-tis-gate-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "safari-typing-ui-tis-gate-left-inputia-host"
   echo "safariTypingUiTisGateNoLaunchPassed=true"
 
   safari_command_tis_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -4249,7 +4317,7 @@ if [[ "$safari_preexisting" == "false" ]]; then
   assert_no_user_host "safariCommandUiTisGate"
   assert_process_not_running Safari "safari-command-ui-tis-gate-launched-safari"
   assert_process_not_running osascript "safari-command-ui-tis-gate-left-osascript"
-  assert_process_not_running InputiaInputMethod "safari-command-ui-tis-gate-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "safari-command-ui-tis-gate-left-inputia-host"
   echo "safariCommandUiTisGateNoLaunchPassed=true"
 
   safari_enter_tis_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -4257,6 +4325,7 @@ if [[ "$safari_preexisting" == "false" ]]; then
   safari_enter_tis_debug_before="$(debug_events_env)"
 	  run_expect_rc_or_gui_block 6 5 "safariEnterUiTisGate" \
     env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
+      INPUTIA_SKIP_INPUTIA_HOST_PREFLIGHT_FOR_TEST=1 \
       "$ROOT_DIR/smoke-safari-enter.sh" "$BUILD_APP"
   safari_enter_tis_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
   safari_enter_tis_after="$(current_input_source_id)"
@@ -4271,7 +4340,7 @@ if [[ "$safari_preexisting" == "false" ]]; then
   assert_no_user_host "safariEnterUiTisGate"
   assert_process_not_running Safari "safari-enter-ui-tis-gate-launched-safari"
   assert_process_not_running osascript "safari-enter-ui-tis-gate-left-osascript"
-  assert_process_not_running InputiaInputMethod "safari-enter-ui-tis-gate-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "safari-enter-ui-tis-gate-left-inputia-host"
   echo "safariEnterUiTisGateNoLaunchPassed=true"
 
   safari_diagnose_tis_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
@@ -4293,7 +4362,7 @@ if [[ "$safari_preexisting" == "false" ]]; then
   assert_no_user_host "safariDiagnoseUiTisGate"
   assert_process_not_running Safari "safari-diagnose-ui-tis-gate-launched-safari"
   assert_process_not_running osascript "safari-diagnose-ui-tis-gate-left-osascript"
-  assert_process_not_running InputiaInputMethod "safari-diagnose-ui-tis-gate-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "safari-diagnose-ui-tis-gate-left-inputia-host"
   echo "safariDiagnoseUiTisGateNoLaunchPassed=true"
 fi
 echo "safariUiDisabledNoLaunchPassed=true"
@@ -4378,7 +4447,7 @@ if process_running Safari; then
   assert_no_user_host "safariDiagnoseExistingGate"
 
   assert_process_not_running osascript "safari-existing-gate-left-osascript"
-  assert_process_not_running InputiaInputMethod "safari-existing-gate-left-inputia-host"
+  assert_inputia_host_not_running_if_not_preexisting "safari-existing-gate-left-inputia-host"
   if [[ -n "$fake_safari_pid" ]]; then
     stop_fake_existing_process Safari "$fake_safari_pid"
     fake_safari_pid=""
@@ -4427,7 +4496,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "post-install-non-gui-launched-safari"
 fi
 assert_process_not_running osascript "post-install-non-gui-left-osascript"
-assert_process_not_running InputiaInputMethod "post-install-non-gui-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "post-install-non-gui-left-inputia-host"
 echo "postInstallNonGuiNoMutationPassed=true"
 
 section "post-install UI TIS gate"
@@ -4466,7 +4535,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "post-install-ui-tis-gate-launched-safari"
 fi
 assert_process_not_running osascript "post-install-ui-tis-gate-left-osascript"
-assert_process_not_running InputiaInputMethod "post-install-ui-tis-gate-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "post-install-ui-tis-gate-left-inputia-host"
 echo "postInstallUiTisGateNoLaunchPassed=true"
 
 section "await short readiness or timeout"
@@ -4525,7 +4594,7 @@ if [[ "$SAFARI_PREEXISTING" == "false" ]]; then
   assert_process_not_running Safari "await-ui-not-ready-launched-safari"
 fi
 assert_process_not_running osascript "await-ui-not-ready-left-osascript"
-assert_process_not_running InputiaInputMethod "await-ui-not-ready-left-inputia-host"
+assert_inputia_host_not_running_if_not_preexisting "await-ui-not-ready-left-inputia-host"
 echo "awaitUiNotReadyNoLaunchPassed=true"
 
 section "admin install no-prompt gate"

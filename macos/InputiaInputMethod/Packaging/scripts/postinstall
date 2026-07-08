@@ -124,7 +124,7 @@ target_mode_id() {
   local mode_id
   mode_id="$(/usr/libexec/PlistBuddy -c 'Print :ComponentInputModeDict:tsVisibleInputModeOrderedArrayKey:0' "$APP/Contents/Info.plist" 2>/dev/null || true)"
   if [[ -z "$mode_id" ]]; then
-    mode_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist").Main"
+    mode_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist").Hans"
   fi
   printf '%s\n' "$mode_id"
 }
@@ -171,16 +171,16 @@ post_refresh_tis_ready() {
 }
 
 post_refresh_tis_ready_self_check() {
-  local target_mode_id="com.inputia.inputmethod.Inputia.Main"
+  local target_mode_id="com.inputia.inputmethod.Inputia.Hans"
   local target_icon="/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf"
   local good_dump missing_dump id_mismatch_dump disabled_dump unselectable_dump icon_mismatch_dump
 
-  good_dump=$'inputSourceFound=true\nid=com.inputia.inputmethod.Inputia.Main\nenabled=true\nselectable=true\niconURL=/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf'
+  good_dump=$'inputSourceFound=true\nid=com.inputia.inputmethod.Inputia.Hans\nenabled=true\nselectable=true\niconURL=/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf'
   missing_dump=$'inputSourceFound=false'
   id_mismatch_dump=$'inputSourceFound=true\nid=com.inputia.inputmethod.Inputia.Pinyin\nenabled=true\nselectable=true\niconURL=/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf'
-  disabled_dump=$'inputSourceFound=true\nid=com.inputia.inputmethod.Inputia.Main\nenabled=false\nselectable=true\niconURL=/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf'
-  unselectable_dump=$'inputSourceFound=true\nid=com.inputia.inputmethod.Inputia.Main\nenabled=true\nselectable=false\niconURL=/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf'
-  icon_mismatch_dump=$'inputSourceFound=true\nid=com.inputia.inputmethod.Inputia.Main\nenabled=true\nselectable=true\niconURL=/tmp/inputia.pdf'
+  disabled_dump=$'inputSourceFound=true\nid=com.inputia.inputmethod.Inputia.Hans\nenabled=false\nselectable=true\niconURL=/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf'
+  unselectable_dump=$'inputSourceFound=true\nid=com.inputia.inputmethod.Inputia.Hans\nenabled=true\nselectable=false\niconURL=/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf'
+  icon_mismatch_dump=$'inputSourceFound=true\nid=com.inputia.inputmethod.Inputia.Hans\nenabled=true\nselectable=true\niconURL=/tmp/inputia.pdf'
 
   assert_tis_ready_case "ready" "inputiaPostRefreshTISReady=true" "$target_mode_id" "$target_icon" "$good_dump"
   assert_tis_ready_case "missing" "reason=missing-enabled-source" "$target_mode_id" "$target_icon" "$missing_dump"

@@ -56,9 +56,13 @@ fi
 inputia_require_gui_session "clipboardRecallSmokeReady" 7
 
 inputia_require_textedit_idle "clipboardRecallSmokeReady" 6
-inputia_require_process_not_running \
-  "InputiaInputMethod" "clipboardRecallSmokeReady" 10 \
-  "inputia-host-running" "-"
+if [[ "${INPUTIA_CLIPBOARD_RECALL_CLEANUP_SELF_CHECK:-0}" != "1" &&
+  "${INPUTIA_DEBUG_LOG_PREPARE_SELF_CHECK:-0}" != "1" &&
+  "${INPUTIA_SKIP_INPUTIA_HOST_PREFLIGHT_FOR_TEST:-0}" != "1" ]]; then
+  inputia_require_process_not_running \
+    "InputiaInputMethod" "clipboardRecallSmokeReady" 10 \
+    "inputia-host-running" "-"
+fi
 inputia_require_text_clipboard_restorable "clipboardRecallSmokeReady" 9
 
 cleanup_textedit_smoke() {

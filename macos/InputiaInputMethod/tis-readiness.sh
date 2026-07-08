@@ -10,7 +10,7 @@ fi
 APP="${1:-$DEFAULT_APP}"
 BUILD_APP="$ROOT_DIR/build/InputiaInputMethod.app"
 TIS_TOOL="$ROOT_DIR/build/inputia-tis-tool"
-TARGET_MODE_ID="${INPUTIA_TIS_MODE_ID:-com.inputia.inputmethod.Inputia.Main}"
+TARGET_MODE_ID="${INPUTIA_TIS_MODE_ID:-com.inputia.inputmethod.Inputia.Hans}"
 EXECUTABLE="$APP/Contents/MacOS/InputiaInputMethod"
 
 cdhash() {
@@ -199,6 +199,9 @@ menu_source_block_reason() {
   inputia-menu-item-duplicate)
     echo menu-source-duplicate
     ;;
+  inputia-menu-selected-separator)
+    echo none
+    ;;
   menu-agent-unavailable)
     echo text-input-menu-agent-unavailable
     ;;
@@ -207,6 +210,9 @@ menu_source_block_reason() {
     ;;
   skipped)
     echo menu-readiness-skipped
+    ;;
+  opt-in-required)
+    echo menu-readiness-opt-in-required
     ;;
   missing-menu-readiness-script)
     echo missing-menu-readiness-script
@@ -226,6 +232,9 @@ menu_presentation_block_reason() {
   inputia-menu-item-duplicate)
     echo text-input-menu-agent-presenting-duplicate-source
     ;;
+  inputia-menu-selected-separator)
+    echo text-input-menu-agent-selected-separator
+    ;;
   menu-agent-unavailable)
     echo text-input-menu-agent-unavailable
     ;;
@@ -234,6 +243,9 @@ menu_presentation_block_reason() {
     ;;
   skipped)
     echo menu-readiness-skipped
+    ;;
+  opt-in-required)
+    echo menu-readiness-opt-in-required
     ;;
   missing-menu-readiness-script)
     echo missing-menu-readiness-script
@@ -320,7 +332,10 @@ menu_readiness=unknown
 menu_block_reason=unknown
 menu_inputia_count=unknown
 menu_selected_count=unknown
-if [[ "${INPUTIA_TIS_SKIP_MENU_READINESS:-0}" == "1" ]]; then
+if [[ "${INPUTIA_TIS_INCLUDE_MENU_READINESS:-0}" != "1" ]]; then
+  menu_readiness=unknown
+  menu_block_reason=opt-in-required
+elif [[ "${INPUTIA_TIS_SKIP_MENU_READINESS:-0}" == "1" ]]; then
   menu_readiness=unknown
   menu_block_reason=skipped
 elif [[ -x "$ROOT_DIR/menu-readiness.sh" ]]; then
@@ -386,7 +401,7 @@ else
     echo "tis.readinessBlockReason=icon-mismatch"
   elif [[ "${hans_enabled:-false}" != "true" ]]; then
     echo "tis.readinessBlockReason=hans-disabled"
-  elif [[ "$menu_source_reason" != "none" ]]; then
+  elif [[ "${INPUTIA_TIS_INCLUDE_MENU_READINESS:-0}" == "1" && "$menu_source_reason" != "none" ]]; then
     echo "tis.readinessBlockReason=$menu_source_reason"
     echo "tis.requiredAction=fix-input-source-metadata-or-registration-cache"
     if [[ "$menu_presentation_reason" != "none" ]]; then

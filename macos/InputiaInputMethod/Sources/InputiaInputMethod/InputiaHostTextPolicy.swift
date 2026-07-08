@@ -110,6 +110,13 @@ enum InputiaHostTextPolicy {
       && (committedText ?? "").isEmpty
   }
 
+  static func shouldContinueCompositionAfterCommit(
+    nextComposing: String,
+    committedText: String?
+  ) -> Bool {
+    !(committedText ?? "").isEmpty && !nextComposing.isEmpty
+  }
+
   static func commitReplacementRange(previousComposing: String, markedRange: NSRange) -> NSRange {
     guard !previousComposing.isEmpty else {
       return replacementRange

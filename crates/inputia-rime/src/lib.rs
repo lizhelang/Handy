@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut, NonNull};
 use std::sync::{Mutex, OnceLock};
 
-use inputia_core::{Candidate, CandidateSource, ChineseEngine};
+use inputia_core::{Candidate, CandidateCommit, CandidateSource, ChineseEngine};
 use libloading::Library;
 
 type Bool = c_int;
@@ -105,7 +105,11 @@ fn default_librime_dylib_path() -> PathBuf {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RimeSnapshot {
     pub schema_id: String,
+    pub input: String,
     pub preedit: String,
+    pub cursor_pos: i32,
+    pub sel_start: i32,
+    pub sel_end: i32,
     pub page_no: i32,
     pub page_size: i32,
     pub is_last_page: bool,
@@ -212,6 +216,43 @@ impl RimeEngine {
         self.snapshot(live_session.session_id)
     }
 
+    pub fn select_live_candidate(
+        &self,
+        composing: &str,
+        candidate: &Candidate,
+        page: usize,
+        page_index: usize,
+    ) -> Result<RimeSnapshot> {
+        let _guard = self
+            .evaluation_lock
+            .lock()
+            .map_err(|_| Error::LockPoisoned)?;
+        let api = self.api();
+        let mut live_session = self.live_session.lock().map_err(|_| Error::LockPoisoned)?;
+        let live_session = self.ensure_live_session(api, &mut live_session)?;
+
+        self.prepare_live_input(api, live_session, composing)?;
+        let selected = if let Some(global_index) = rime_candidate_global_index(candidate) {
+            let select_candidate = required(api.select_candidate, "select_candidate")?;
+            unsafe { select_candidate(live_session.session_id, global_index) }
+        } else {
+            self.prepare_live_page(api, live_session, page)?;
+            let select_candidate_on_current_page = required(
+                api.select_candidate_on_current_page,
+                "select_candidate_on_current_page",
+            )?;
+            unsafe { select_candidate_on_current_page(live_session.session_id, page_index) }
+        };
+        if selected == FALSE {
+            return Err(Error::Rime("failed to select candidate"));
+        }
+
+        let snapshot = self.snapshot(live_session.session_id)?;
+        live_session.input = snapshot.input.clone();
+        live_session.page = snapshot.page_no.max(0) as usize;
+        Ok(snapshot)
+    }
+
     fn initialize(&self) -> Result<()> {
         let api = self.api();
         let signature = RimeRuntimeSignature::from(&self.config);
@@ -254,6 +295,11 @@ impl RimeEngine {
         let get_current_schema = required(api.get_current_schema, "get_current_schema")?;
         let get_context = required(api.get_context, "get_context")?;
         let free_context = required(api.free_context, "free_context")?;
+        let input = unsafe {
+            api.get_input
+                .map(|get_input| c_string(get_input(session_id)))
+                .unwrap_or_default()
+        };
 
         let mut schema_buffer = [0_i8; 128];
         let schema_id = if unsafe {
@@ -273,7 +319,11 @@ impl RimeEngine {
         let snapshot = unsafe {
             let snapshot = RimeSnapshot {
                 schema_id: schema_id.clone(),
+                input,
                 preedit: c_string(context.composition.preedit),
+                cursor_pos: context.composition.cursor_pos,
+                sel_start: context.composition.sel_start,
+                sel_end: context.composition.sel_end,
                 page_no: context.menu.page_no,
                 page_size: context.menu.page_size,
                 is_last_page: context.menu.is_last_page != FALSE,
@@ -431,6 +481,18 @@ impl ChineseEngine for RimeEngine {
 
         candidates
     }
+
+    fn select_candidate(
+        &self,
+        composing: &str,
+        candidate: &Candidate,
+        page: usize,
+        page_index: usize,
+    ) -> Option<CandidateCommit> {
+        self.select_live_candidate(composing, candidate, page, page_index)
+            .ok()
+            .and_then(|snapshot| rime_snapshot_commit(snapshot, candidate))
+    }
 }
 
 impl RimeEngine {
@@ -478,6 +540,43 @@ impl RimeEngine {
             }
         }
     }
+}
+
+fn rime_snapshot_commit(
+    snapshot: RimeSnapshot,
+    fallback_candidate: &Candidate,
+) -> Option<CandidateCommit> {
+    if let Some(commit) = snapshot.commit.filter(|commit| !commit.is_empty()) {
+        return Some(CandidateCommit::new(
+            commit,
+            snapshot.input,
+            snapshot.page_no.max(0) as usize,
+            snapshot.candidates,
+        ));
+    }
+
+    if snapshot.candidates.is_empty() {
+        return Some(CandidateCommit::new(
+            fallback_candidate.text.clone(),
+            "",
+            0,
+            Vec::new(),
+        ));
+    }
+
+    Some(CandidateCommit::preedit(
+        snapshot.preedit,
+        snapshot.input,
+        snapshot.page_no.max(0) as usize,
+        snapshot.candidates,
+    ))
+}
+
+fn rime_candidate_global_index(candidate: &Candidate) -> Option<usize> {
+    if !candidate.id.starts_with("rime:") {
+        return None;
+    }
+    candidate.id.rsplit(':').next()?.parse().ok()
 }
 
 fn paged_key_sequence(composing: &str, page: usize) -> String {
@@ -892,6 +991,33 @@ struct RimeApi {
     config_next: UnusedFn,
     config_end: UnusedFn,
     simulate_key_sequence: Option<unsafe extern "C" fn(RimeSessionId, *const c_char) -> Bool>,
+    register_module: UnusedFn,
+    find_module: UnusedFn,
+    run_task: UnusedFn,
+    get_shared_data_dir: UnusedFn,
+    get_user_data_dir: UnusedFn,
+    get_sync_dir: UnusedFn,
+    get_user_id: UnusedFn,
+    get_user_data_sync_dir: UnusedFn,
+    config_init: UnusedFn,
+    config_load_string: UnusedFn,
+    config_set_bool: UnusedFn,
+    config_set_int: UnusedFn,
+    config_set_double: UnusedFn,
+    config_set_string: UnusedFn,
+    config_get_item: UnusedFn,
+    config_set_item: UnusedFn,
+    config_clear: UnusedFn,
+    config_create_list: UnusedFn,
+    config_create_map: UnusedFn,
+    config_list_size: UnusedFn,
+    config_begin_list: UnusedFn,
+    get_input: Option<unsafe extern "C" fn(RimeSessionId) -> *const c_char>,
+    get_caret_pos: UnusedFn,
+    select_candidate: Option<unsafe extern "C" fn(RimeSessionId, usize) -> Bool>,
+    get_version: UnusedFn,
+    set_caret_pos: UnusedFn,
+    select_candidate_on_current_page: Option<unsafe extern "C" fn(RimeSessionId, usize) -> Bool>,
 }
 
 #[cfg(test)]

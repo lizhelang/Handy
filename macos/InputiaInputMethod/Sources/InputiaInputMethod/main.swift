@@ -566,7 +566,6 @@ final class InputiaInputController: IMKInputController {
     if let commit = outcome.commit, !commit.isEmpty {
       candidatePanelExpanded = false
       syncHostState(with: outcome)
-      InputiaHost.candidatePanel?.hide()
       insertCommittedText(
         commit,
         client: client,
@@ -575,6 +574,15 @@ final class InputiaInputController: IMKInputController {
           markedRange: client.markedRange()
         )
       )
+      if InputiaHostTextPolicy.shouldContinueCompositionAfterCommit(
+        nextComposing: outcome.composing,
+        committedText: commit
+      ) {
+        setMarkedComposition(outcome.composing, client: client)
+        updateCandidateWindow(client: client)
+      } else {
+        InputiaHost.candidatePanel?.hide()
+      }
       return outcome.consumed
     }
 
@@ -1178,6 +1186,9 @@ final class InputiaInputMethodDiagnostics {
     case "--bridge-default-chinese-self-check":
       diagnostics.bridgeDefaultChineseSelfCheck()
       return true
+    case "--bridge-direct-session-self-check":
+      diagnostics.bridgeDirectSessionSelfCheck()
+      return true
     case "--host-shortcut-self-check", "--shortcut-self-check":
       diagnostics.hostShortcutSelfCheck()
       return true
@@ -1295,8 +1306,16 @@ final class InputiaInputMethodDiagnostics {
   }
 
   private func bridgeDefaultChineseSelfCheck() {
-    let bridge = InputiaRustBridge.makeDefault()
+    let bridge = InputiaRustBridge.temporaryDefaultChineseForDiagnostics()
     printBridgeSelfCheck(name: "bridgeDefaultChineseSelfCheck", outcomes: bridge.debugDefaultChineseSelfCheck())
+  }
+
+  private func bridgeDirectSessionSelfCheck() {
+    let bridge = InputiaRustBridge.temporaryDirectForDiagnostics()
+    let outcome = bridge.debugCandidatePageSizeSelfCheck()
+    print("bridgeDirectSessionSelfCheck=\(outcome.ok && outcome.candidates.count == 7)")
+    print("candidateCount=\(outcome.candidates.count)")
+    print("firstCandidate=\(outcome.candidates.first ?? "")")
   }
 
   private func hostShortcutSelfCheck() {

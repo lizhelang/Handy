@@ -1,5 +1,6 @@
 "CFBundleDisplayName" = "Inputia";
 "CFBundleName" = "Inputia";
 "com.inputia.inputmethod.Inputia" = "Inputia";
-"com.inputia.inputmethod.Inputia.Main" = "Inputia";
+"com.inputia.inputmethod.Inputia.Hans" = "Inputia";
+"com.inputia.inputmethod.Inputia.Hant" = "Inputia 繁體";
 "NSHumanReadableCopyright" = "Copyright 2026 Inputia contributors.";

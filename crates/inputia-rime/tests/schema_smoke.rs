@@ -108,6 +108,50 @@ fn bundled_rime_schemas_commit_zhongguo_when_available() {
 }
 
 #[test]
+fn bundled_rime_schemas_use_inputia_candidate_page_size_when_available() {
+    let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();
+    let Some(shared_data_dir) = bundled_shared_data_dir() else {
+        eprintln!("skip: Inputia bundled RimeData is not available");
+        return;
+    };
+
+    let Some(dylib_path) = available_librime_dylib() else {
+        eprintln!("skip: librime runtime is not installed on this machine");
+        return;
+    };
+
+    let cases = [
+        ("luna_pinyin_simp", "ni"),
+        ("double_pinyin", "nillem"),
+        ("double_pinyin_sogou", "nillem"),
+    ];
+    for (schema, keys) in cases {
+        let user_data_dir = std::env::temp_dir().join(format!(
+            "inputia-rime-page-size-smoke-{}-{}-{}",
+            std::process::id(),
+            schema,
+            keys
+        ));
+        let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
+            .with_dylib_path(&dylib_path)
+            .with_shared_data_dir(&shared_data_dir)
+            .with_schema(schema);
+        let engine = RimeEngine::open(config).expect("schema should open");
+        let snapshot = engine.evaluate(keys).expect("schema should evaluate");
+
+        assert_eq!(
+            snapshot.page_size, 7,
+            "{schema} should inherit Inputia's bundled menu/page_size for {keys}"
+        );
+        assert_eq!(
+            snapshot.candidates.len(),
+            7,
+            "{schema} should expose seven candidates for {keys}"
+        );
+    }
+}
+
+#[test]
 fn bundled_full_pinyin_promotes_spelling_corrections_when_available() {
     let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();
     let Some(shared_data_dir) = bundled_shared_data_dir() else {
@@ -331,9 +375,9 @@ fn bundled_shared_data_dir() -> Option<PathBuf> {
     }
 
     for path in [
-        PathBuf::from("/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/RimeData"),
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../macos/InputiaInputMethod/build/RimeData"),
+        PathBuf::from("/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/RimeData"),
     ] {
         if path.exists() {
             return Some(path);

@@ -3,6 +3,7 @@ set -eu
 set -o pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$ROOT_DIR/build-artifact-lock.sh"
 PKG_PATH="${1:-$ROOT_DIR/dist/InputiaInputMethod-latest.pkg}"
 BUILD_APP="$ROOT_DIR/build/InputiaInputMethod.app"
 BUILD_SETTINGS_APP="$ROOT_DIR/build/Inputia 设置.app"
@@ -87,6 +88,9 @@ require_order() {
 if [[ ! -f "$PKG_PATH" ]]; then
   fail "missing-pkg path=$PKG_PATH"
 fi
+
+inputia_build_artifact_acquire_lock verifyPkg
+trap 'inputia_build_artifact_release_lock; cleanup' EXIT
 
 TMP_ROOT="$(/usr/bin/mktemp -d /tmp/inputia-pkg-verify.XXXXXX)"
 EXPANDED_DIR="$TMP_ROOT/pkg"

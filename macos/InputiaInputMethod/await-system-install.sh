@@ -15,7 +15,7 @@ USER_APP="$HOME/Library/Input Methods/InputiaInputMethod.app"
 USER_LEGACY_APP="$HOME/Library/Input Methods/IputiaInputMethod.app"
 USER_SETTINGS_APP="$HOME/Applications/Inputia 设置.app"
 TIS_TOOL="$ROOT_DIR/build/inputia-tis-tool"
-TARGET_MODE_ID="${INPUTIA_TIS_MODE_ID:-com.inputia.inputmethod.Inputia.Main}"
+TARGET_MODE_ID="${INPUTIA_TIS_MODE_ID:-com.inputia.inputmethod.Inputia.Hans}"
 WAIT_SECONDS="${INPUTIA_INSTALL_WAIT_SECONDS:-300}"
 POLL_SECONDS="${INPUTIA_INSTALL_POLL_SECONDS:-5}"
 

@@ -58,13 +58,37 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 ./macos/InputiaInputMethod/verify-system.sh /Library/Input\ Methods/InputiaInputMethod.app
 ```
 
+普通开发默认验证：
+
+```bash
+./macos/InputiaInputMethod/dev-fast.sh
+```
+
+`dev-fast.sh` 是候选词、双拼、快捷键、设置 UI 等日常开发的默认入口。它只跑 build、Rust tests、Swift/bridge self-check、Rime probe、router/shortcut self-check；不打开菜单栏、不打开 GUI App、不切换系统输入源、不检查公证。
+
+安装链路变化后的验证：
+
+```bash
+./macos/InputiaInputMethod/install-check.sh
+```
+
+`install-check.sh` 只检查 `/Library/Input Methods/InputiaInputMethod.app`、`/Applications/Inputia 设置.app`、TIS enabled/selectable/current source、running host 是否与当前 build 对齐；默认不碰菜单栏、不做 GUI smoke readiness。
+
+发布前或安装脚本变化后的完整验证：
+
+```bash
+./macos/InputiaInputMethod/release/full-check.sh
+```
+
+`release/full-check.sh` 是显式 opt-in 的重型入口，会跑 pkg/postinstall、公证 readiness、菜单栏 AXPress、TextEdit/Safari/Clipboard GUI smoke。它会为一次验证周期创建 `INPUTIA_MENU_READINESS_CACHE_FILE`，让菜单栏 AXPress 最多执行一次，后续子脚本只读 cache。
+
 查看当前 build、系统安装、运行进程、设置启动器和最新安装包是否同版本：
 
 ```bash
 ./macos/InputiaInputMethod/status.sh
 ```
 
-如果 `systemMatchesBuild=false` 或 `runningMatchesBuild=false`，菜单栏里实际运行的仍是旧 Host；这时不要继续用当前菜单行为判断新版输入逻辑。`status.sh` 还会输出 `statusGuiSmokeBlockReasons=...` 和 `statusGuiSmokeReady=true|false`；只有 `statusGuiSmokeReady=true reason=none` 才能进入真实 TextEdit/Safari/Clipboard GUI smoke，否则只允许跑非 GUI/no-launch 验证。
+默认 `status.sh` 不打开菜单栏、不触碰 `TextInputMenuAgent`，也不做 GUI smoke readiness。需要把菜单栏呈现纳入状态时，显式设置 `INPUTIA_STATUS_INCLUDE_MENU_READINESS=1`；需要 GUI smoke readiness 时，再额外设置 `INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS=1`。
 
 验证最新 pkg 是否确实携带当前 build 和最新 postinstall：
 
@@ -80,13 +104,13 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 - pkg 内嵌设置启动器版本等于当前 build 设置启动器。
 - postinstall 仍包含用户级 host 清理、TIS select、TextInputMenuAgent/SystemUIServer 刷新等关键动作。
 
-安装前一键非 GUI 验证：
+兼容入口：
 
 ```bash
 ./macos/InputiaInputMethod/verify-nongui.sh
 ```
 
-`verify-nongui.sh` 是默认安全收口入口，不打开 TextEdit/Safari。它会串起脚本语法、pkg/build 对齐、`status.sh`、`smoke-preflight.sh` 的安全失败路径、快捷键自检、TextEdit 输入 smoke、TextEdit 代表性 `Command-A/C/V` smoke、Clipboard recall smoke、Safari typing smoke、Safari 代表性 `Command-A/C/V` smoke、Safari enter smoke 的 UI-disabled/TIS-not-ready/existing-app no-launch 门禁，确认这些早退路径不改剪贴板、不改当前输入源、不留下 GUI 进程；同时覆盖 `post-install-regression.sh` 非 GUI 模式、`post-install-regression.sh` 的 UI/TIS-not-ready no-launch 门禁、`await-system-install.sh` 短超时、无弹框管理员安装门禁、残留进程和 `/tmp/inputia-*` 临时文件检查。快捷键自检不是只测复制/粘贴：它要求所有含 `Command` 的 keyDown 组合透传，并覆盖常见 Apple `Command` 快捷键集合以及常见 AppKit command selector。默认不运行 `osacompile` 编译目标 App AppleScript，避免触发 TextEdit/Safari 字典加载；需要做本机 AppleScript 语法检查时可显式设置 `INPUTIA_VERIFY_APPLESCRIPT_COMPILE=1`。只有需要真实输入链验证且 `smoke-preflight.sh` 已报告 `smokePreflightReady=true` 时，才显式设置 `INPUTIA_RUN_UI_SMOKE=1` 跑 GUI smoke。
+`verify-nongui.sh` 现在默认委托到 `dev-fast.sh`，避免日常开发误跑旧的全量聚合验证。确实需要旧全量 non-GUI 聚合时，显式设置 `INPUTIA_VERIFY_NONGUI_FULL=1 ./macos/InputiaInputMethod/verify-nongui.sh`。
 
 `verify-nongui.sh` 会使用 `/tmp/inputia-verify-nongui.lock` 防止两条聚合验证并发互相污染残留判断。活锁存在时会返回 rc=20，并输出 `nonGuiVerificationPassed=false reason=verify-already-running` 与 `verifyLockOwnerPid=...`；pid 不存在的 stale lock 会自动清理并继续验证。不要手工删除仍在运行的 owner pid 对应锁；异常中断后再次运行脚本即可自愈。
 
@@ -96,7 +120,7 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 ./macos/InputiaInputMethod/tis-readiness.sh macos/InputiaInputMethod/build/InputiaInputMethod.app
 ```
 
-`tis-readiness.sh` 不切换输入源、不打开 GUI App，只报告待测 app CDHash、TIS Hans mode 的 icon 是否指向待测 app、是否 enabled/selectable/selected，以及当前输入源。它适合在 Safari/TextEdit 已被用户打开、`smoke-preflight.sh` 会提前停下时，单独确认系统安装和 TIS 状态是否已经足够支持真实 GUI smoke。
+`tis-readiness.sh` 不切换输入源、不打开 GUI App，只报告待测 app CDHash、TIS Hans mode 的 icon 是否指向待测 app、是否 enabled/selectable/selected，以及当前输入源。默认不打开菜单栏、不触碰 `TextInputMenuAgent`；需要菜单栏 AXPress 证据时显式设置 `INPUTIA_TIS_INCLUDE_MENU_READINESS=1`，并建议同时传入 `INPUTIA_MENU_READINESS_CACHE_FILE`。
 
 TextEdit 真实输入 smoke：
 
@@ -226,17 +250,14 @@ INPUTIA_CODESIGN_IDENTITY="Codexbar Local Code Signing Leaf v4" \
 
 当前已生成的本地包以 `build-pkg.sh` 或 `status.sh` 输出为准。不要沿用旧文档里的固定版本号；Installer 打开的包、`/Library/Input Methods` 里的 Host、菜单栏运行进程必须是同一个 CDHash，真实输入 smoke 才有意义。
 
-安装前建议的非 GUI 验证顺序：
+安装前建议的分层验证顺序：
 
 ```bash
-./macos/InputiaInputMethod/build.sh
-./macos/InputiaInputMethod/build-pkg.sh
-./macos/InputiaInputMethod/verify-pkg.sh
-./macos/InputiaInputMethod/status.sh
-./macos/InputiaInputMethod/tis-readiness.sh macos/InputiaInputMethod/build/InputiaInputMethod.app
-./macos/InputiaInputMethod/smoke-preflight.sh
-INPUTIA_RUN_UI_SMOKE=0 ./macos/InputiaInputMethod/post-install-regression.sh macos/InputiaInputMethod/build/InputiaInputMethod.app
-./macos/InputiaInputMethod/verify-nongui.sh
+./macos/InputiaInputMethod/dev-fast.sh
+# 只有安装/重装链路变更后：
+./macos/InputiaInputMethod/install-check.sh
+# 只有发布前或安装脚本变更后：
+./macos/InputiaInputMethod/release/full-check.sh
 ```
 
 安装后建议的收口顺序：

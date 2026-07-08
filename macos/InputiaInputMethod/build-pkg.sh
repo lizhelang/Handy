@@ -3,6 +3,7 @@ set -eu
 set -o pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$ROOT_DIR/build-artifact-lock.sh"
 APP_NAME="InputiaInputMethod.app"
 SETTINGS_APP_NAME="Inputia 设置.app"
 APP_DIR="$ROOT_DIR/build/$APP_NAME"
@@ -22,10 +23,11 @@ detect_verification_processes() {
     process_list="$(/bin/ps -axo pid=,command=)"
   fi
   printf '%s\n' "$process_list" |
-    /usr/bin/awk -v root="$ROOT_DIR" -v self="$$" '
+    /usr/bin/awk -v root="$ROOT_DIR" -v self="$$" -v owner="${INPUTIA_VERIFICATION_OWNER_PID:-}" '
       $1 == self { next }
+      owner != "" && $1 == owner { next }
       index($0, root) &&
-        $0 ~ /\/(verify-nongui|post-install-regression|verify-system|verify-pkg|await-system-install|smoke-preflight|smoke-textedit|smoke-textedit-command-shortcuts|smoke-clipboard-recall|smoke-safari[^ ]*|diagnose-safari-input-source|gui-smoke-readiness|gui-smoke-suite|status|tis-readiness)\.sh( |$)/ {
+        $0 ~ /\/(dev-fast|install-check|release\/full-check|verify-nongui|post-install-regression|verify-system|verify-pkg|await-system-install|smoke-preflight|smoke-textedit|smoke-textedit-command-shortcuts|smoke-clipboard-recall|smoke-safari[^ ]*|diagnose-safari-input-source|gui-smoke-readiness|gui-smoke-suite|status|tis-readiness)\.sh( |$)/ {
           print
         }
     '
@@ -73,7 +75,7 @@ if [[ "${INPUTIA_BUILD_PKG_PREFLIGHT_SELF_CHECK:-0}" == "1" ]]; then
   original_process_list="${INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST:-}"
   INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST="123 /usr/bin/true"
   clear_processes="$(detect_verification_processes)"
-  INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST="456 $ROOT_DIR/gui-smoke-suite.sh"
+  INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST="456 $ROOT_DIR/release/full-check.sh"
   blocked_processes="$(detect_verification_processes)"
   INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST="$original_process_list"
   if [[ -z "$clear_processes" && -n "$blocked_processes" ]]; then
@@ -86,6 +88,8 @@ if [[ "${INPUTIA_BUILD_PKG_PREFLIGHT_SELF_CHECK:-0}" == "1" ]]; then
   exit 1
 fi
 
+inputia_build_artifact_acquire_lock buildPkg
+trap inputia_build_artifact_release_lock EXIT
 require_no_verification_processes
 require_pkg_sign_identity_if_requested
 

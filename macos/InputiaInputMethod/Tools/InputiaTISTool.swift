@@ -6,7 +6,7 @@ private let defaultAppPath = ProcessInfo.processInfo.environment["INPUTIA_APP"]
 private let bundleIdentifier = ProcessInfo.processInfo.environment["INPUTIA_TIS_BUNDLE_ID"]
   ?? "com.inputia.inputmethod.Inputia"
 private let primaryModeIdentifier = ProcessInfo.processInfo.environment["INPUTIA_TIS_MODE_ID"]
-  ?? "com.inputia.inputmethod.Inputia.Main"
+  ?? "com.inputia.inputmethod.Inputia.Hans"
 private let requiresAppMatch = ProcessInfo.processInfo.environment["INPUTIA_TIS_REQUIRE_APP_MATCH"] == "1"
 private let expectedIconPath = URL(fileURLWithPath: defaultAppPath)
   .appendingPathComponent("Contents/Resources/inputia.pdf")

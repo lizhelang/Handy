@@ -95,6 +95,27 @@ struct InputiaHostTextPolicySelfCheck {
         )
       ),
       (
+        "partialCommitContinuesComposition",
+        InputiaHostTextPolicy.shouldContinueCompositionAfterCommit(
+          nextComposing: "laiem",
+          committedText: "你"
+        )
+      ),
+      (
+        "emptyCommitDoesNotContinueComposition",
+        !InputiaHostTextPolicy.shouldContinueCompositionAfterCommit(
+          nextComposing: "laiem",
+          committedText: nil
+        )
+      ),
+      (
+        "finalCommitDoesNotContinueComposition",
+        !InputiaHostTextPolicy.shouldContinueCompositionAfterCommit(
+          nextComposing: "",
+          committedText: "你"
+        )
+      ),
+      (
         "commitUsesMarkedRangeWhenComposing",
         InputiaHostTextPolicy.commitReplacementRange(
           previousComposing: "ni",

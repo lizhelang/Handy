@@ -66,6 +66,47 @@ impl Candidate {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CandidateCommit {
+    pub text: Option<String>,
+    pub remaining_composing: String,
+    pub preedit: String,
+    pub page: usize,
+    pub candidates: Vec<Candidate>,
+}
+
+impl CandidateCommit {
+    pub fn new(
+        text: impl Into<String>,
+        remaining_composing: impl Into<String>,
+        page: usize,
+        candidates: Vec<Candidate>,
+    ) -> Self {
+        Self {
+            text: Some(text.into()),
+            remaining_composing: remaining_composing.into(),
+            preedit: String::new(),
+            page,
+            candidates,
+        }
+    }
+
+    pub fn preedit(
+        preedit: impl Into<String>,
+        remaining_composing: impl Into<String>,
+        page: usize,
+        candidates: Vec<Candidate>,
+    ) -> Self {
+        Self {
+            text: None,
+            remaining_composing: remaining_composing.into(),
+            preedit: preedit.into(),
+            page,
+            candidates,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CandidateSource {
     Engine,
     Memory,
@@ -107,6 +148,16 @@ pub struct InputOutcome {
 
 pub trait ChineseEngine {
     fn candidates(&self, composing: &str) -> Vec<Candidate>;
+
+    fn select_candidate(
+        &self,
+        _composing: &str,
+        _candidate: &Candidate,
+        _page: usize,
+        _page_index: usize,
+    ) -> Option<CandidateCommit> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -361,21 +412,31 @@ impl LocalMemory {
         }
     }
 
-    pub fn rank_candidates(&self, mut candidates: Vec<Candidate>) -> Vec<Candidate> {
-        for candidate in &mut candidates {
-            if let Some(term) = self.terms.iter().find(|term| term.text == candidate.text) {
-                candidate.memory_score += term.score();
-                candidate.source = strongest_candidate_source(term);
-            }
-        }
+    pub fn rank_candidates(&self, candidates: Vec<Candidate>) -> Vec<Candidate> {
+        let leading_engine_len = candidates
+            .first()
+            .map(|candidate| candidate.text.chars().count())
+            .unwrap_or(0);
+        let mut ranked = candidates
+            .into_iter()
+            .enumerate()
+            .map(|(original_index, mut candidate)| {
+                if let Some(term) = self.terms.iter().find(|term| term.text == candidate.text) {
+                    candidate.memory_score += term.score();
+                    candidate.source = strongest_candidate_source(term);
+                }
+                let memory_score_for_ranking =
+                    memory_score_for_ranking(&candidate, leading_engine_len);
+                let ranking_score = candidate.base_score + memory_score_for_ranking;
+                (original_index, ranking_score, candidate)
+            })
+            .collect::<Vec<_>>();
 
-        candidates.sort_by(|left, right| {
-            right
-                .final_score()
-                .cmp(&left.final_score())
-                .then_with(|| left.text.cmp(&right.text))
-        });
-        candidates
+        ranked.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+        ranked
+            .into_iter()
+            .map(|(_, _, candidate)| candidate)
+            .collect()
     }
 
     pub fn completion_candidates(&self, prefix: &str, limit: usize) -> Vec<Candidate> {
@@ -479,6 +540,15 @@ impl LocalMemory {
             .take(limit)
             .map(|term| term.text)
             .collect()
+    }
+}
+
+fn memory_score_for_ranking(candidate: &Candidate, leading_engine_len: usize) -> i32 {
+    let candidate_len = candidate.text.chars().count();
+    if leading_engine_len > 1 && candidate_len < leading_engine_len {
+        0
+    } else {
+        candidate.memory_score
     }
 }
 
@@ -773,6 +843,7 @@ impl SqliteMemory {
 pub struct InputiaCore<E> {
     mode: InputMode,
     composing: String,
+    preedit: String,
     candidates: Vec<Candidate>,
     page: usize,
     settings: CoreSettings,
@@ -784,6 +855,7 @@ impl<E: ChineseEngine> InputiaCore<E> {
         Self {
             mode: InputMode::English,
             composing: String::new(),
+            preedit: String::new(),
             candidates: Vec::new(),
             page: 0,
             settings,
@@ -856,7 +928,7 @@ impl<E: ChineseEngine> InputiaCore<E> {
                 if self.composing.is_empty() {
                     consumed = false;
                 } else {
-                    commit = Some(self.commit_candidate_or_raw_composition(0));
+                    commit = self.commit_candidate_or_raw_composition(0);
                 }
             }
             (InputMode::Chinese, Key::Enter) => {
@@ -903,7 +975,7 @@ impl<E: ChineseEngine> InputiaCore<E> {
     pub fn snapshot(&self) -> InputSnapshot {
         InputSnapshot {
             mode: self.mode.clone(),
-            composing: self.composing.clone(),
+            composing: self.display_composing(),
             page: self.page,
             visible_candidates: self.visible_candidates().to_vec(),
         }
@@ -913,31 +985,71 @@ impl<E: ChineseEngine> InputiaCore<E> {
         self.page = 0;
         if self.composing.is_empty() {
             self.candidates.clear();
+            self.preedit.clear();
         } else {
             self.candidates = self.engine.candidates(&self.composing);
+            self.preedit = self.composing.clone();
         }
     }
 
     fn clear_composition(&mut self) {
         self.composing.clear();
+        self.preedit.clear();
         self.candidates.clear();
         self.page = 0;
     }
 
     fn commit_candidate_on_page(&mut self, page_index: usize) -> Option<String> {
-        let candidate = self.visible_candidates().get(page_index)?.text.clone();
+        let candidate = self.visible_candidates().get(page_index)?.clone();
+        if let Some(commit) =
+            self.engine
+                .select_candidate(&self.composing, &candidate, self.page, page_index)
+        {
+            return self.apply_candidate_commit(commit);
+        }
+        let candidate = candidate.text;
         self.clear_composition();
         Some(candidate)
     }
 
-    fn commit_candidate_or_raw_composition(&mut self, page_index: usize) -> String {
-        let commit = self
-            .visible_candidates()
-            .get(page_index)
-            .map(|candidate| candidate.text.clone())
-            .unwrap_or_else(|| self.composing.clone());
+    fn commit_candidate_or_raw_composition(&mut self, page_index: usize) -> Option<String> {
+        let Some(candidate) = self.visible_candidates().get(page_index).cloned() else {
+            return Some(self.commit_raw_composition());
+        };
+        if let Some(commit) =
+            self.engine
+                .select_candidate(&self.composing, &candidate, self.page, page_index)
+        {
+            return self.apply_candidate_commit(commit);
+        }
+        let commit = candidate.text;
         self.clear_composition();
-        commit
+        Some(commit)
+    }
+
+    fn apply_candidate_commit(&mut self, commit: CandidateCommit) -> Option<String> {
+        self.composing = commit.remaining_composing;
+        self.preedit = if commit.preedit.is_empty() {
+            self.composing.clone()
+        } else {
+            commit.preedit
+        };
+        self.page = commit.page;
+        self.candidates = commit.candidates;
+        if self.composing.is_empty() {
+            self.preedit.clear();
+            self.candidates.clear();
+            self.page = 0;
+        }
+        commit.text
+    }
+
+    fn display_composing(&self) -> String {
+        if self.preedit.is_empty() {
+            self.composing.clone()
+        } else {
+            self.preedit.clone()
+        }
     }
 
     fn commit_raw_composition(&mut self) -> String {
@@ -1065,6 +1177,9 @@ mod tests {
     #[derive(Default)]
     struct ToneEngine;
 
+    #[derive(Default)]
+    struct SegmentingEngine;
+
     impl ChineseEngine for StubEngine {
         fn candidates(&self, composing: &str) -> Vec<Candidate> {
             match composing {
@@ -1088,6 +1203,42 @@ mod tests {
             match composing {
                 "ni3" => [Candidate::new("ni3-0", "你")].into_iter().collect(),
                 _ => Vec::new(),
+            }
+        }
+    }
+
+    impl ChineseEngine for SegmentingEngine {
+        fn candidates(&self, composing: &str) -> Vec<Candidate> {
+            match composing {
+                "nillem" => [
+                    Candidate::new("segment:0", "你"),
+                    Candidate::new("segment:1", "尼"),
+                ]
+                .into_iter()
+                .collect(),
+                "llem" => [Candidate::new("segment:remaining:0", "来了吗")]
+                    .into_iter()
+                    .collect(),
+                _ => Vec::new(),
+            }
+        }
+
+        fn select_candidate(
+            &self,
+            composing: &str,
+            candidate: &Candidate,
+            _page: usize,
+            _page_index: usize,
+        ) -> Option<CandidateCommit> {
+            match (composing, candidate.text.as_str()) {
+                ("nillem", "你") => Some(CandidateCommit::new(
+                    "你",
+                    "llem",
+                    0,
+                    self.candidates("llem"),
+                )),
+                ("llem", "来了吗") => Some(CandidateCommit::new("来了吗", "", 0, Vec::new())),
+                _ => None,
             }
         }
     }
@@ -1248,6 +1399,23 @@ mod tests {
         let outcome = core.handle_key(Key::Space);
         assert_eq!(outcome.commit.as_deref(), Some("你"));
         assert_eq!(outcome.snapshot.composing, "");
+    }
+
+    #[test]
+    fn space_commits_selected_segment_and_keeps_remaining_composition() {
+        let mut core = InputiaCore::new(CoreSettings::default(), SegmentingEngine);
+        core.handle_key(Key::Shift);
+        feed(&mut core, "nillem");
+
+        let first = core.handle_key(Key::Space);
+
+        assert_eq!(first.commit.as_deref(), Some("你"));
+        assert_eq!(first.snapshot.composing, "llem");
+        assert_eq!(first.snapshot.visible_candidates[0].text, "来了吗");
+
+        let remaining = core.handle_key(Key::Space);
+        assert_eq!(remaining.commit.as_deref(), Some("来了吗"));
+        assert_eq!(remaining.snapshot.composing, "");
     }
 
     #[test]
@@ -1450,6 +1618,43 @@ mod tests {
 
         assert_eq!(ranked[0].text, "泥");
         assert!(ranked[0].memory_score > ranked[1].memory_score);
+    }
+
+    #[test]
+    fn memory_ranking_preserves_engine_order_without_memory_score() {
+        let memory = LocalMemory::new(AppPolicy::default());
+
+        let ranked = memory.rank_candidates(vec![
+            Candidate::new("engine-0", "乙"),
+            Candidate::new("engine-1", "甲"),
+            Candidate::new("engine-2", "丁"),
+        ]);
+
+        assert_eq!(
+            ranked
+                .iter()
+                .map(|candidate| candidate.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["乙", "甲", "丁"]
+        );
+    }
+
+    #[test]
+    fn memory_does_not_promote_single_character_over_long_engine_candidate() {
+        let context = AppContext::new("com.apple.TextEdit");
+        let mut memory = LocalMemory::new(AppPolicy::default());
+        for _ in 0..20 {
+            memory.learn(MemorySource::Typed, "你", &context);
+        }
+
+        let ranked = memory.rank_candidates(vec![
+            Candidate::new("rime:0", "你来了吗"),
+            Candidate::new("rime:1", "你"),
+            Candidate::new("rime:2", "你来"),
+        ]);
+
+        assert_eq!(ranked[0].text, "你来了吗");
+        assert!(ranked.iter().any(|candidate| candidate.text == "你"));
     }
 
     #[test]

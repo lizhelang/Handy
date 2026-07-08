@@ -14,6 +14,7 @@ private let inputModeEnglish: Int32 = 1
 private let inputModeChinese: Int32 = 2
 private let sourceTyped: Int32 = 1
 private let sourceClipboard: Int32 = 3
+private let defaultCandidatePageSize = 7
 
 @_silgen_name("inputia_session_new_luna_pinyin_simp")
 private func inputia_session_new_luna_pinyin_simp(
@@ -202,6 +203,15 @@ final class InputiaRustBridge {
     }
   }
 
+  static func temporaryDirectForDiagnostics() -> InputiaRustBridge {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("InputiaDirectBridgeSelfCheck-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+    return InputiaRustBridge(
+      userDataDir: root.appendingPathComponent("rime", isDirectory: true).path,
+      memoryDbPath: nil
+    )
+  }
+
   static func temporaryForDiagnostics() -> InputiaRustBridge {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("InputiaBridgeSelfCheck-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
@@ -209,7 +219,7 @@ final class InputiaRustBridge {
     writeSettings(
       shiftToggleEnabled: true,
       punctuationPreference: "english_in_chinese",
-      candidatePageSize: 7,
+      candidatePageSize: defaultCandidatePageSize,
       rimeUserDataDir: root.appendingPathComponent("rime", isDirectory: true).path,
       to: settingsPath
     )
@@ -230,12 +240,26 @@ final class InputiaRustBridge {
     writeSettings(
       shiftToggleEnabled: true,
       punctuationPreference: "english_in_chinese",
-      candidatePageSize: 7,
+      candidatePageSize: defaultCandidatePageSize,
       chineseScript: safeScript,
       rimeUserDataDir: root.appendingPathComponent("rime", isDirectory: true).path,
       to: settingsPath
     )
     return InputiaRustBridge(settingsPath: settingsPath)
+  }
+
+  static func temporaryDefaultChineseForDiagnostics() -> InputiaRustBridge {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("InputiaDefaultChineseSelfCheck-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+    let settingsPath = root.appendingPathComponent("settings.json").path
+    writeSettings(
+      shiftToggleEnabled: true,
+      punctuationPreference: "english_in_chinese",
+      candidatePageSize: defaultCandidatePageSize,
+      rimeUserDataDir: root.appendingPathComponent("rime", isDirectory: true).path,
+      to: settingsPath
+    )
+    return InputiaRustBridge(settingsPath: settingsPath, startInChineseMode: true)
   }
 
   deinit {
@@ -361,7 +385,7 @@ final class InputiaRustBridge {
       shiftToggleEnabled: false,
       inputModeToggleShortcut: "none",
       punctuationPreference: "english_in_chinese",
-      candidatePageSize: 7,
+      candidatePageSize: defaultCandidatePageSize,
       to: settingsPath
     )
     bridge.reloadSettingsIfNeeded()
@@ -373,7 +397,7 @@ final class InputiaRustBridge {
     Self.writeSettings(
       shiftToggleEnabled: true,
       punctuationPreference: "english_in_chinese",
-      candidatePageSize: 7,
+      candidatePageSize: defaultCandidatePageSize,
       to: settingsPath
     )
     let bridge = InputiaRustBridge(settingsPath: settingsPath)
@@ -405,6 +429,15 @@ final class InputiaRustBridge {
     }
     outcomes.append(space())
     return outcomes
+  }
+
+  func debugCandidatePageSizeSelfCheck() -> InputiaBridgeOutcome {
+    _ = setChineseMode()
+    var outcome = latestOutcome
+    for character in "ni" {
+      outcome = handle(character: character)
+    }
+    return outcome
   }
 
   func debugMemorySelfCheck() -> [InputiaBridgeOutcome] {
@@ -691,7 +724,7 @@ final class InputiaRustBridge {
     writeSettings(
       shiftToggleEnabled: true,
       punctuationPreference: "english_in_chinese",
-      candidatePageSize: 7,
+      candidatePageSize: defaultCandidatePageSize,
       to: path
     )
   }
@@ -863,12 +896,16 @@ final class InputiaRustBridge {
     if let memoryDbPath {
       return userDataDir.withCString { userPointer in
         memoryDbPath.withCString { memoryPointer in
-          inputia_session_new_luna_pinyin_simp_with_memory(userPointer, memoryPointer, 5)
+          inputia_session_new_luna_pinyin_simp_with_memory(
+            userPointer,
+            memoryPointer,
+            defaultCandidatePageSize
+          )
         }
       }
     }
     return userDataDir.withCString { pointer in
-      inputia_session_new_luna_pinyin_simp(pointer, 5)
+      inputia_session_new_luna_pinyin_simp(pointer, defaultCandidatePageSize)
     }
   }
 

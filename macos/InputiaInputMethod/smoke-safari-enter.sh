@@ -49,9 +49,13 @@ if [[ -d "$BUILD_APP" && "${INPUTIA_SKIP_CDHASH_CHECK:-0}" != "1" ]]; then
   fi
 fi
 inputia_require_safari_idle "safariEnterSmokeReady" 7
-inputia_require_process_not_running \
-  "InputiaInputMethod" "safariEnterSmokeReady" 11 \
-  "inputia-host-running" "-"
+if [[ "${INPUTIA_SAFARI_ENTER_CLEANUP_SELF_CHECK:-0}" != "1" &&
+  "${INPUTIA_DEBUG_LOG_PREPARE_SELF_CHECK:-0}" != "1" &&
+  "${INPUTIA_SKIP_INPUTIA_HOST_PREFLIGHT_FOR_TEST:-0}" != "1" ]]; then
+  inputia_require_process_not_running \
+    "InputiaInputMethod" "safariEnterSmokeReady" 11 \
+    "inputia-host-running" "-"
+fi
 
 cleanup_smoke() {
   local cleanup_status=0

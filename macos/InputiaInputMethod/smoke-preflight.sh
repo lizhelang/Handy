@@ -12,7 +12,7 @@ APP="${1:-$DEFAULT_APP}"
 BUILD_APP="$ROOT_DIR/build/InputiaInputMethod.app"
 TIS_TOOL="$ROOT_DIR/build/inputia-tis-tool"
 EXECUTABLE="$APP/Contents/MacOS/InputiaInputMethod"
-TARGET_MODE_ID="${INPUTIA_TIS_MODE_ID:-com.inputia.inputmethod.Inputia.Main}"
+TARGET_MODE_ID="${INPUTIA_TIS_MODE_ID:-com.inputia.inputmethod.Inputia.Hans}"
 
 cdhash() {
   /usr/bin/codesign -dv --verbose=4 "$1" 2>&1 |
@@ -87,9 +87,13 @@ fi
 
 INPUTIA_TEXTEDIT_SMOKE_ALLOW_EXISTING=0 inputia_require_textedit_idle "smokePreflightReady" 6
 INPUTIA_SAFARI_SMOKE_ALLOW_EXISTING=0 inputia_require_safari_idle "smokePreflightReady" 7
-inputia_require_process_not_running \
-  "InputiaInputMethod" "smokePreflightReady" 9 \
-  "inputia-host-running" "-"
+
+if [[ "${INPUTIA_RUN_UI_SMOKE:-0}" == "1" &&
+  "${INPUTIA_SKIP_INPUTIA_HOST_PREFLIGHT_FOR_TEST:-0}" != "1" ]]; then
+  inputia_require_process_not_running \
+    "InputiaInputMethod" "smokePreflightReady" 9 \
+    "inputia-host-running" "-"
+fi
 
 if [[ "${INPUTIA_RUN_UI_SMOKE:-0}" == "1" ]]; then
   inputia_require_gui_session "smokePreflightReady" 5

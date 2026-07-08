@@ -4,8 +4,8 @@ use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
 
 use inputia_core::{
-    AppContext, AppPolicy, Candidate, CharacterWidthPreference, ChineseEngine, CoreSettings,
-    InputMode, InputOutcome, InputiaCore, Key, MemorySource, PrivacyDecision,
+    AppContext, AppPolicy, Candidate, CandidateCommit, CharacterWidthPreference, ChineseEngine,
+    CoreSettings, InputMode, InputOutcome, InputiaCore, Key, MemorySource, PrivacyDecision,
     PunctuationPreference, SqliteMemory,
 };
 use inputia_rime::{RimeEngine, RimeEngineConfig};
@@ -59,6 +59,46 @@ impl ChineseEngine for RankedRimeEngine {
         memory
             .rank_candidates(candidates.clone())
             .unwrap_or(candidates)
+    }
+
+    fn select_candidate(
+        &self,
+        composing: &str,
+        candidate: &Candidate,
+        page: usize,
+        page_index: usize,
+    ) -> Option<CandidateCommit> {
+        let snapshot = self
+            .rime
+            .select_live_candidate(composing, candidate, page, page_index)
+            .ok()?;
+        let candidates = if snapshot.input.is_empty() {
+            Vec::new()
+        } else {
+            self.candidates(&snapshot.input)
+        };
+        if let Some(commit) = snapshot.commit.filter(|commit| !commit.is_empty()) {
+            return Some(CandidateCommit::new(
+                commit,
+                snapshot.input,
+                snapshot.page_no.max(0) as usize,
+                candidates,
+            ));
+        }
+        if candidates.is_empty() {
+            return Some(CandidateCommit::new(
+                candidate.text.clone(),
+                "",
+                0,
+                Vec::new(),
+            ));
+        }
+        Some(CandidateCommit::preedit(
+            snapshot.preedit,
+            snapshot.input,
+            snapshot.page_no.max(0) as usize,
+            candidates,
+        ))
     }
 }
 
@@ -1172,6 +1212,64 @@ mod tests {
         assert!(hotword_values.iter().any(|value| value == "语音 热词"));
         assert!(hotword_values.iter().any(|value| value == "中国"));
         assert!(!hotword_values.iter().any(|value| value == "密码 候选"));
+
+        inputia_session_free(session);
+    }
+
+    #[test]
+    fn capi_memory_does_not_promote_single_character_over_long_double_pinyin_candidate() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        let Some(shared_data_dir) = bundled_shared_data_dir() else {
+            eprintln!("skip: Inputia bundled RimeData is not available");
+            return;
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let settings_path = temp.path().join("settings.json");
+        let memory_db_path = temp.path().join("inputia-memory.db");
+        let settings = InputiaSettings {
+            schema_id: "double_pinyin".to_string(),
+            rime_shared_data_dir: Some(shared_data_dir),
+            rime_user_data_dir: Some(shared_rime_user_data_dir()),
+            memory_db_path: Some(memory_db_path),
+            spelling_correction_enabled: false,
+            ..InputiaSettings::default()
+        };
+        settings.save(&settings_path).unwrap();
+        let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
+        let session = inputia_session_new_from_settings(settings_path.as_ptr());
+        if session.is_null() {
+            eprintln!("skip: Squirrel librime runtime is not available");
+            return;
+        }
+
+        let source_app = CString::new("com.apple.TextEdit").unwrap();
+        let single_char = CString::new("你").unwrap();
+        for _ in 0..30 {
+            let learned = handle_json(inputia_session_learn(
+                session,
+                SOURCE_TYPED,
+                single_char.as_ptr(),
+                source_app.as_ptr(),
+            ));
+            assert_eq!(learned["decision"], "learn");
+        }
+
+        assert_eq!(
+            handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
+            "Chinese"
+        );
+        let mut latest = serde_json::Value::Null;
+        for ch in "nillem".chars() {
+            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+        }
+
+        assert_eq!(latest["visible_candidates"][0]["text"], "你来");
+        assert_ne!(latest["visible_candidates"][0]["text"], "你");
+
+        let selected_single = handle_json(inputia_session_handle_digit(session, 2));
+        assert!(selected_single["commit"].is_null());
+        assert_eq!(selected_single["composing"], "你laiem");
+        assert_eq!(selected_single["visible_candidates"][0]["text"], "来");
 
         inputia_session_free(session);
     }

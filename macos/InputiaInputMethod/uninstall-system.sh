@@ -16,10 +16,11 @@ detect_verification_processes() {
     process_list="$(/bin/ps -axo pid=,command=)"
   fi
   printf '%s\n' "$process_list" |
-    /usr/bin/awk -v root="$ROOT_DIR" -v self="$$" '
+    /usr/bin/awk -v root="$ROOT_DIR" -v self="$$" -v owner="${INPUTIA_VERIFICATION_OWNER_PID:-}" '
       $1 == self { next }
+      owner != "" && $1 == owner { next }
       index($0, root) &&
-        $0 ~ /\/(verify-nongui|post-install-regression|verify-system|verify-pkg|await-system-install|smoke-preflight|smoke-textedit|smoke-textedit-command-shortcuts|smoke-clipboard-recall|smoke-safari[^ ]*|diagnose-safari-input-source|gui-smoke-readiness|gui-smoke-suite|status|tis-readiness)\.sh( |$)/ {
+        $0 ~ /\/(dev-fast|install-check|release\/full-check|verify-nongui|post-install-regression|verify-system|verify-pkg|await-system-install|smoke-preflight|smoke-textedit|smoke-textedit-command-shortcuts|smoke-clipboard-recall|smoke-safari[^ ]*|diagnose-safari-input-source|gui-smoke-readiness|gui-smoke-suite|status|tis-readiness)\.sh( |$)/ {
           print
         }
     '
@@ -39,7 +40,7 @@ if [[ "${INPUTIA_UNINSTALL_PREFLIGHT_SELF_CHECK:-0}" == "1" ]]; then
   original_process_list="${INPUTIA_UNINSTALL_PROCESS_LIST_FOR_TEST:-}"
   INPUTIA_UNINSTALL_PROCESS_LIST_FOR_TEST="123 /usr/bin/true"
   clear_processes="$(detect_verification_processes)"
-  INPUTIA_UNINSTALL_PROCESS_LIST_FOR_TEST="456 $ROOT_DIR/smoke-textedit.sh"
+  INPUTIA_UNINSTALL_PROCESS_LIST_FOR_TEST="456 $ROOT_DIR/dev-fast.sh"
   blocked_processes="$(detect_verification_processes)"
   INPUTIA_UNINSTALL_PROCESS_LIST_FOR_TEST="$original_process_list"
   if [[ -z "$clear_processes" && -n "$blocked_processes" ]]; then

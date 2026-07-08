@@ -162,6 +162,40 @@ download_schema https://raw.githubusercontent.com/baopaau/rime-guobiao-quick/mai
 ' "$BUILD_DIR/default.yaml" >"$BUILD_DIR/default.yaml.tmp"
 /bin/mv "$BUILD_DIR/default.yaml.tmp" "$BUILD_DIR/default.yaml"
 
+/usr/bin/awk '
+  BEGIN {
+    in_menu = 0
+    patched = 0
+  }
+  /^menu:[[:space:]]*$/ {
+    print
+    in_menu = 1
+    next
+  }
+  in_menu && /^[[:space:]]+page_size:/ {
+    print "  page_size: 7"
+    patched = 1
+    in_menu = 0
+    next
+  }
+  in_menu && /^[^[:space:]]/ {
+    print "  page_size: 7"
+    patched = 1
+    in_menu = 0
+  }
+  {
+    print
+  }
+  END {
+    if (!patched) {
+      print ""
+      print "menu:"
+      print "  page_size: 7"
+    }
+  }
+' "$BUILD_DIR/default.yaml" >"$BUILD_DIR/default.yaml.tmp"
+/bin/mv "$BUILD_DIR/default.yaml.tmp" "$BUILD_DIR/default.yaml"
+
 /bin/cat >"$BUILD_DIR/double_pinyin_sogou.schema.yaml" <<'YAML'
 # Rime schema
 # encoding: utf-8
