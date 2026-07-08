@@ -57,6 +57,10 @@ run_rust "$ROOT_DIR/build.sh"
 section "settings launcher build self-check"
 "$ROOT_DIR/settings-launcher-build-self-check.sh"
 
+section "open settings self-check"
+INPUTIA_OPEN_SETTINGS_PREFLIGHT_SELF_CHECK=1 "$ROOT_DIR/open-settings.sh"
+INPUTIA_OPEN_SETTINGS_RESOLUTION_SELF_CHECK=1 "$ROOT_DIR/open-settings.sh"
+
 section "schema catalog self-check"
 "$ROOT_DIR/schema-catalog-self-check.sh"
 

@@ -370,7 +370,7 @@ build 版默认中文自检 ni + Space 可提交 你
 - 输入法菜单中有 `召回剪贴板`；也可以在 Inputia 激活时用 `Ctrl+Shift+V` 调出本地剪贴板候选。Host 会先检查 settings 的隐私开关和敏感 App 列表，允许时才读取当前系统剪贴板并学习为本地候选。
 - 安装当前 `InputiaInputMethod-latest.pkg` 或 `build-pkg.sh` 输出的带 CDHash 包后，还会出现 `/Applications/Inputia 设置.app`。这是独立设置启动器，会打开同一个 `Inputia 设置` 窗口，不依赖 `IMKInputController.menu()` 本轮是否被系统菜单展示。
 - 如果输入法菜单当前没有显示设置项，可以直接运行 `./macos/InputiaInputMethod/open-settings.sh`；它会优先打开 `/Applications/Inputia 设置.app`，找不到启动器时再回退到 `InputiaInputMethod.app --open-settings`。
-- `open-settings.sh` 会跳过和当前 build 版本不一致的旧设置启动器/旧 Host，并回退到当前 build 的设置页，避免本地调试时误开旧 UI。
+- `open-settings.sh` 会跳过和当前 build 版本或 Host CDHash 不一致的旧设置启动器/旧 Host，并回退到当前 build 的设置页，避免本地调试时误开同版本旧 UI。这个选择逻辑已经纳入 `dev-fast.sh` 的 dry-run 自检，不会真的打开设置窗口。
 - 用户截图里如果仍显示 `Iputia 简体`，说明系统当前选中的还是旧 typo 包；必须安装当前 `InputiaInputMethod-v<version>-<cdhash>.pkg` 或运行 system install，让菜单、设置窗口和 bundled RimeData 同步到新包。
 - 第一版设置窗口写入 `~/Library/Application Support/Inputia/settings.json`。
 - 当前可配置：输入方案、候选数量、Shift 切换、中文模式英文标点、本地记忆、隐私学习、敏感 App 排除列表。保存后 Host 会在 App/context 更新时热重载 settings。
