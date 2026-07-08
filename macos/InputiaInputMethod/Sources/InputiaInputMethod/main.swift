@@ -1201,6 +1201,9 @@ final class InputiaInputMethodDiagnostics {
     case "--disable-input-source":
       diagnostics.disable()
       return true
+    case "--disable-all-inputia-sources":
+      diagnostics.disableAllInputiaSources()
+      return true
     case "--select-input-source":
       diagnostics.select()
       return true
@@ -1845,6 +1848,40 @@ final class InputiaInputMethodDiagnostics {
       let status = TISDisableInputSource(parentSource)
       print("disableParentStatus=\(status)")
       printSource(parentSource)
+    }
+  }
+
+  private func disableAllInputiaSources() {
+    guard let unmanagedSourceList = TISCreateInputSourceList(nil, true) else {
+      print("disableAllInputiaSourcesFound=false")
+      return
+    }
+    let sourceList = unmanagedSourceList.takeRetainedValue() as! [TISInputSource]
+    let sources = sourceList
+      .filter { source in
+        let bundleID = stringProperty(source, key: kTISPropertyBundleID) ?? ""
+        let sourceID = stringProperty(source, key: kTISPropertyInputSourceID) ?? ""
+        let modeID = stringProperty(source, key: kTISPropertyInputModeID) ?? ""
+        return inputiaBundlePrefixes.contains { prefix in
+          bundleID.hasPrefix(prefix) || sourceID.hasPrefix(prefix) || modeID.hasPrefix(prefix)
+        }
+      }
+      .sorted { lhs, rhs in
+        let lhsID = stringProperty(lhs, key: kTISPropertyInputSourceID) ?? ""
+        let rhsID = stringProperty(rhs, key: kTISPropertyInputSourceID) ?? ""
+        return lhsID < rhsID
+      }
+    guard !sources.isEmpty else {
+      print("disableAllInputiaSourcesFound=false")
+      print("disableAllInputiaSourcesCount=0")
+      return
+    }
+    print("disableAllInputiaSourcesFound=true")
+    print("disableAllInputiaSourcesCount=\(sources.count)")
+    for source in sources.reversed() {
+      let status = TISDisableInputSource(source)
+      print("disableAllStatus=\(status)")
+      printSource(source)
     }
   }
 

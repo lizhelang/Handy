@@ -78,6 +78,12 @@ install_check_output="$("$ROOT_DIR/install-check.sh" 2>&1 || true)"
 install_check_passed="$(/usr/bin/awk -F= '$1 == "installCheckPassed" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
 install_check_block_reasons="$(/usr/bin/awk -F= '$1 == "installCheckBlockReasons" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
 install_check_required_action="$(/usr/bin/awk -F= '$1 == "installCheckRequiredAction" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+repair_tis_duplicates_command="cd $repo_quoted && INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh"
+if [[ ",$install_check_block_reasons," == *,tis-duplicate-matches,* ]]; then
+  repair_tis_duplicates_required=true
+else
+  repair_tis_duplicates_required=false
+fi
 
 /bin/mkdir -p "$(/usr/bin/dirname "$HANDOFF_PATH")"
 /bin/cat >"$HANDOFF_PATH" <<EOF
@@ -95,6 +101,7 @@ adminReason=$admin_reason
 installCheckPassed=$install_check_passed
 installCheckBlockReasons=$install_check_block_reasons
 installCheckRequiredAction=$install_check_required_action
+repairTISDuplicatesRequired=$repair_tis_duplicates_required
 handoffOpensGUI=false
 handoffChangesSystemInputSource=false
 buildLog=$BUILD_LOG
@@ -109,10 +116,14 @@ $open_installer_command
 $await_command
 $install_check_command
 
+重复 TIS 显式修复（仅当 installCheckBlockReasons 含 tis-duplicate-matches 时运行）：
+$repair_tis_duplicates_command
+
 安装后通过标准：
 systemMatchesBuild=true
 settingsMatchesBuild=true
 installCheckTISReady=true
+installCheckTISDuplicateMatches=false
 runningMatchesBuild=true
 installCheckBlockReasons=none
 installCheckRequiredAction=none
@@ -135,6 +146,8 @@ echo "adminReady=$admin_ready reason=$admin_reason"
 echo "installCheckPassed=$install_check_passed"
 echo "installCheckBlockReasons=$install_check_block_reasons"
 echo "installCheckRequiredAction=$install_check_required_action"
+echo "repairTISDuplicatesRequired=$repair_tis_duplicates_required"
+echo "repairTISDuplicatesCommand=$repair_tis_duplicates_command"
 echo "terminalInstallerCommand=$terminal_installer_command"
 echo "openInstallerCommand=$open_installer_command"
 echo "awaitInstallCommand=$await_command"

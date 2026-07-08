@@ -26,6 +26,7 @@ rime_latency = read("rime-latency-self-check.sh")
 verify_nongui = read("verify-nongui.sh")
 install_check = read("install-check.sh")
 install_handoff = read("install-handoff.sh")
+repair_tis_duplicates = read("repair-tis-duplicates.sh")
 full_check = read("release/full-check.sh")
 menu_readiness = read("menu-readiness.sh")
 gui_readiness = read("gui-smoke-readiness.sh")
@@ -73,9 +74,12 @@ require('INPUTIA_INSTALL_CHECK_SELF_CHECK=1 "$ROOT_DIR/install-check.sh"' in dev
 require('installCheckBlockReasons=' in install_handoff, "install-handoff-missing-block-reasons")
 require('installCheckRequiredAction=' in install_handoff, "install-handoff-missing-required-action")
 require('installCheckPassed=' in install_handoff, "install-handoff-missing-install-check-pass")
+require('repairTISDuplicatesRequired=' in install_handoff, "install-handoff-missing-duplicate-repair-summary")
+require('INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh' in install_handoff, "install-handoff-missing-duplicate-repair-command")
 require('handoffOpensGUI=false' in install_handoff, "install-handoff-missing-no-gui-marker")
 require('handoffChangesSystemInputSource=false' in install_handoff, "install-handoff-missing-no-input-source-marker")
 require('installCheckBlockReasons=none' in install_handoff, "install-handoff-missing-success-criteria")
+require('installCheckTISDuplicateMatches=false' in install_handoff, "install-handoff-missing-duplicate-success-criteria")
 for forbidden in [
     "menu-readiness.sh",
     "gui-smoke-readiness.sh",
@@ -84,6 +88,20 @@ for forbidden in [
     "notarization-readiness.sh",
 ]:
     require(forbidden not in install_check, f"install-check-unexpected-{forbidden}")
+
+require('validationTier=tis-duplicate-repair' in repair_tis_duplicates, "repair-tis-missing-tier-marker")
+require('touchesMenuBar=false' in repair_tis_duplicates, "repair-tis-missing-menu-policy")
+require('opensGUI=false' in repair_tis_duplicates, "repair-tis-missing-gui-policy")
+require('INPUTIA_REPAIR_TIS_DUPLICATES:-0' in repair_tis_duplicates, "repair-tis-missing-opt-in-gate")
+require('tisDuplicateRepairReady=false reason=opt-in-required' in repair_tis_duplicates, "repair-tis-missing-default-deny")
+require('INPUTIA_REPAIR_TIS_READINESS_FOR_TEST' in repair_tis_duplicates, "repair-tis-missing-offline-self-check-readiness")
+require('--disable-all-inputia-sources' in repair_tis_duplicates, "repair-tis-missing-disable-all-command")
+require('--register-input-source' in repair_tis_duplicates, "repair-tis-missing-register-command")
+require('--enable-input-source' in repair_tis_duplicates, "repair-tis-missing-enable-command")
+require('--select-input-source' in repair_tis_duplicates, "repair-tis-missing-select-command")
+require('INPUTIA_REPAIR_TIS_DUPLICATES_SELF_CHECK' in repair_tis_duplicates, "repair-tis-missing-self-check")
+require('repair-tis-duplicates.sh' not in dev_fast, "dev-fast-unexpected-repair-tis")
+require('repair-tis-duplicates.sh' not in install_check, "install-check-unexpected-repair-tis")
 
 require('validationTier=release/full-check' in full_check, "full-check-missing-tier-marker")
 require('touchesMenuBar=true' in full_check, "full-check-missing-menu-policy")

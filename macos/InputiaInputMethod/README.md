@@ -110,7 +110,7 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 - pkg 内 `postinstall` 与 `Packaging/scripts/postinstall` sha256 一致。
 - pkg 内嵌 host app 的 CDHash 等于当前 build app。
 - pkg 内嵌设置启动器版本等于当前 build 设置启动器。
-- postinstall 仍包含用户级 host 清理、TIS select、TextInputMenuAgent/SystemUIServer 刷新等关键动作。
+- postinstall 仍包含用户级 host 清理、TIS register、enabled/current TIS dump 和手动/显式修复提示；不得默认 TIS enable/select 或刷新菜单代理。
 
 兼容入口：
 
@@ -197,7 +197,7 @@ INPUTIA_CODESIGN_IDENTITY="Codexbar Local Code Signing Leaf v4" \
   ./macos/InputiaInputMethod/install-system.sh
 ```
 
-这一步会写入 `/Library/Input Methods/InputiaInputMethod.app`，macOS 会要求管理员授权。安装脚本会清理旧 typo 路径 `/Library/Input Methods/IputiaInputMethod.app`。复制并校验 CDHash 后，脚本会先跑 `spctl --assess --type execute`；如果输出不是 accepted，脚本会打印 `systemInstallRequiredAction=sign-with-accepted-identity`、清理 Inputia 输入源偏好并停止，不再 register/enable/select。首次安装或替换后，如果 System Settings 的添加列表没有热刷新，按 ToyIMK/Squirrel/vChewing 对照经验，需要 logout/login 后再打开 System Settings > Keyboard > Text Input > Edit > Add。
+这一步会写入 `/Library/Input Methods/InputiaInputMethod.app`，macOS 会要求管理员授权。安装脚本会清理旧 typo 路径 `/Library/Input Methods/IputiaInputMethod.app`。复制并校验 CDHash 后，脚本会先跑 `spctl --assess --type execute`；如果输出不是 accepted，脚本会打印 `systemInstallRequiredAction=sign-with-accepted-identity` 并在 TIS 注册前停止，不手写或清理 HIToolbox 输入源偏好。首次安装或替换后，如果 System Settings 的添加列表没有热刷新，按 ToyIMK/Squirrel/vChewing 对照经验，需要 logout/login 后再打开 System Settings > Keyboard > Text Input > Edit > Add。
 
 如果 `spctl` 仍然 rejected，先跑只读公证 readiness：
 
@@ -254,9 +254,9 @@ INPUTIA_CODESIGN_IDENTITY="Codexbar Local Code Signing Leaf v4" \
   ./macos/InputiaInputMethod/build-pkg.sh
 ```
 
-输出：`macos/InputiaInputMethod/dist/InputiaInputMethod-v<version>-<cdhash>.pkg`。当前包是 `--nopayload` 形态，Host 被打成无 AppleDouble 的 `InputiaInputMethod.app.tar.gz` 放在 scripts 中，由 `postinstall` 解压到 `/Library/Input Methods` 后 register/enable/select；设置启动器被打成 `InputiaSettings.app.tar.gz`，安装到 `/Applications/Inputia 设置.app`。这样避免当前 macOS 环境把 `com.apple.provenance` xattr 编进 payload 文件列表。不要在 Installer 已经打开后重建同一个 pkg 路径；Installer 会检测 digest 变化并拒绝安装。
+输出：`macos/InputiaInputMethod/dist/InputiaInputMethod-v<version>-<cdhash>.pkg`。当前包是 `--nopayload` 形态，Host 被打成无 AppleDouble 的 `InputiaInputMethod.app.tar.gz` 放在 scripts 中，由 `postinstall` 解压到 `/Library/Input Methods` 后 register 并 dump enabled/current TIS 状态；设置启动器被打成 `InputiaSettings.app.tar.gz`，安装到 `/Applications/Inputia 设置.app`。这样避免当前 macOS 环境把 `com.apple.provenance` xattr 编进 payload 文件列表。不要在 Installer 已经打开后重建同一个 pkg 路径；Installer 会检测 digest 变化并拒绝安装。
 
-`postinstall` 使用 `/bin/zsh`，并对 LaunchServices 注册和 Inputia 自身的 register/enable/select 命令加了超时保护；如果当前 macOS 的 `syspolicyd`/YARA 状态再次让可执行启动卡住，Installer 不应无限停在“正在运行软件包脚本”。
+`postinstall` 使用 `/bin/zsh`，并对 LaunchServices 注册和 Inputia 自身的 register/dump 命令加了超时保护；如果当前 macOS 的 `syspolicyd`/YARA 状态再次让可执行启动卡住，Installer 不应无限停在“正在运行软件包脚本”。
 
 当前已生成的本地包以 `build-pkg.sh` 或 `status.sh` 输出为准。不要沿用旧文档里的固定版本号；Installer 打开的包、`/Library/Input Methods` 里的 Host、菜单栏运行进程必须是同一个 CDHash，真实输入 smoke 才有意义。
 
@@ -306,9 +306,9 @@ INPUTIA_CODESIGN_IDENTITY="Codexbar Local Code Signing Leaf v4" \
 ./macos/InputiaInputMethod/install-handoff.sh
 ```
 
-`install-handoff.sh` 不会打开 Installer，也不会改系统输入源；它会重建并验证最新 pkg，然后在 `build/install-handoff.txt` 里写入 pkg 路径、SHA256、当前 build CDHash、系统已安装 CDHash、当前 `install-check` 的 block reasons / required action、管理员终端安装命令，以及安装后的 `await-system-install.sh` / `install-check.sh` 验证命令。交接清单里的通过标准必须到 `installCheckBlockReasons=none`、`runningMatchesBuild=true`、`installCheckPassed=true` 才算当前 build 真正进入系统运行态。
+`install-handoff.sh` 不会打开 Installer，也不会改系统输入源；它会重建并验证最新 pkg，然后在 `build/install-handoff.txt` 里写入 pkg 路径、SHA256、当前 build CDHash、系统已安装 CDHash、当前 `install-check` 的 block reasons / required action、管理员终端安装命令，以及安装后的 `await-system-install.sh` / `install-check.sh` 验证命令。若当前状态含 `tis-duplicate-matches`，交接清单会额外写入显式 opt-in 的 `INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh`。交接清单里的通过标准必须到 `installCheckBlockReasons=none`、`installCheckTISDuplicateMatches=false`、`runningMatchesBuild=true`、`installCheckPassed=true` 才算当前 build 真正进入系统运行态。
 
-`postinstall` 会打印 `inputiaInstalledVersion` / `inputiaInstalledCDHash`，并按 Squirrel 的路线 kill 旧 Host、register、以登录用户 enable/select，然后刷新 Text Input 菜单服务。
+`postinstall` 会打印 `inputiaInstalledVersion` / `inputiaInstalledCDHash`，kill 旧 Host、清理旧用户级 Host、register 当前系统 Host，并 dump enabled/current TIS 状态。它默认不 enable/select，也不刷新菜单栏代理；重复输入源或手动添加问题用 `repair-tis-duplicates.sh` 或 System Settings 显式处理，避免安装脚本继续制造 HIToolbox 重复项。
 
 用户级安装诊断：
 
