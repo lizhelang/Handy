@@ -48,6 +48,18 @@ append_reason() {
   fi
 }
 
+append_action() {
+  local actions="$1"
+  local action="$2"
+  if [[ ",$actions," == *",$action,"* ]]; then
+    echo "$actions"
+  elif [[ -z "$actions" ]]; then
+    echo "$action"
+  else
+    echo "$actions,$action"
+  fi
+}
+
 admin_install_ready() {
   if [[ -w "/Library/Input Methods" && -w "/Applications" ]]; then
     echo true
@@ -80,6 +92,42 @@ install_required_action() {
   else
     echo "inspect-install-check-output"
   fi
+}
+
+install_required_actions() {
+  local block_reasons="$1"
+  local actions=""
+
+  if [[ "$block_reasons" == "none" ]]; then
+    echo "none"
+    return
+  fi
+
+  if [[ ",$block_reasons," == *,system-app-missing,* ||
+    ",$block_reasons," == *,system-cdhash-mismatch,* ||
+    ",$block_reasons," == *,settings-version-mismatch,* ]]; then
+    if [[ ",$block_reasons," == *,admin-required,* ]]; then
+      actions="$(append_action "$actions" "run-install-handoff-and-admin-install")"
+    else
+      actions="$(append_action "$actions" "run-install-system")"
+    fi
+  fi
+
+  if [[ ",$block_reasons," == *,tis-duplicate-matches,* ]]; then
+    actions="$(append_action "$actions" "run-repair-tis-duplicates")"
+  elif [[ ",$block_reasons," == *,tis-not-ready,* ]]; then
+    actions="$(append_action "$actions" "select-or-readd-inputia-in-system-settings")"
+  fi
+
+  if [[ ",$block_reasons," == *,running-host-missing,* ||
+    ",$block_reasons," == *,running-cdhash-mismatch,* ]]; then
+    actions="$(append_action "$actions" "restart-inputia-host-after-install")"
+  fi
+
+  if [[ -z "$actions" ]]; then
+    actions="inspect-install-check-output"
+  fi
+  echo "$actions"
 }
 
 install_check_block_reasons() {
@@ -133,7 +181,8 @@ run_install_check_self_check_case() {
   local admin_ready="$9"
   local expected_reasons="${10}"
   local expected_action="${11}"
-  local actual_reasons actual_action
+  local expected_actions="${12}"
+  local actual_reasons actual_action actual_actions
 
   actual_reasons="$(
     install_check_block_reasons \
@@ -147,7 +196,8 @@ run_install_check_self_check_case() {
       "$admin_ready"
   )"
   actual_action="$(install_required_action "$actual_reasons")"
-  echo "installCheckSelfCheck case=$label reasons=$actual_reasons action=$actual_action"
+  actual_actions="$(install_required_actions "$actual_reasons")"
+  echo "installCheckSelfCheck case=$label reasons=$actual_reasons action=$actual_action actions=$actual_actions"
   if [[ "$actual_reasons" != "$expected_reasons" ]]; then
     echo "installCheckSelfCheck=false case=$label reason=reasons-mismatch expected=$expected_reasons actual=$actual_reasons"
     exit 1
@@ -156,36 +206,46 @@ run_install_check_self_check_case() {
     echo "installCheckSelfCheck=false case=$label reason=action-mismatch expected=$expected_action actual=$actual_action"
     exit 1
   fi
+  if [[ "$actual_actions" != "$expected_actions" ]]; then
+    echo "installCheckSelfCheck=false case=$label reason=actions-mismatch expected=$expected_actions actual=$actual_actions"
+    exit 1
+  fi
 }
 
 if [[ "${INPUTIA_INSTALL_CHECK_SELF_CHECK:-0}" == "1" ]]; then
   run_install_check_self_check_case \
     ready true true true true false true true true \
-    none none
+    none none none
   run_install_check_self_check_case \
     admin-required true false true true false true false false \
     system-cdhash-mismatch,running-cdhash-mismatch,admin-required \
-    run-install-handoff-and-admin-install
+    run-install-handoff-and-admin-install \
+    run-install-handoff-and-admin-install,restart-inputia-host-after-install
   run_install_check_self_check_case \
     tis-not-ready true true true false false true true true \
     tis-not-ready \
+    select-or-readd-inputia-in-system-settings \
     select-or-readd-inputia-in-system-settings
   run_install_check_self_check_case \
     tis-duplicate true true true false true true true true \
     tis-duplicate-matches \
-    remove-duplicate-inputia-and-readd-once
+    remove-duplicate-inputia-and-readd-once \
+    run-repair-tis-duplicates
   run_install_check_self_check_case \
     running-missing true true true true false false false true \
     running-host-missing \
+    restart-inputia-host-after-install \
     restart-inputia-host-after-install
   run_install_check_self_check_case \
     settings-admin true true false true false true true false \
     settings-version-mismatch,admin-required \
+    run-install-handoff-and-admin-install \
     run-install-handoff-and-admin-install
   run_install_check_self_check_case \
     system-missing false false true false false false false false \
     system-app-missing,tis-not-ready,running-host-missing,admin-required \
-    run-install-handoff-and-admin-install
+    run-install-handoff-and-admin-install \
+    run-install-handoff-and-admin-install,select-or-readd-inputia-in-system-settings,restart-inputia-host-after-install
   echo "installCheckSelfCheck=true"
   exit 0
 fi
@@ -287,8 +347,10 @@ block_reasons="$(
 echo "installCheckBlockReasons=$block_reasons"
 if [[ "$block_reasons" == "none" ]]; then
   echo "installCheckRequiredAction=none"
+  echo "installCheckRequiredActions=none"
 else
   echo "installCheckRequiredAction=$(install_required_action "$block_reasons")"
+  echo "installCheckRequiredActions=$(install_required_actions "$block_reasons")"
 fi
 if [[ "$system_matches_build" == "true" &&
   "$settings_matches_build" == "true" &&

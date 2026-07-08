@@ -78,7 +78,7 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 
 `install-check.sh` 只检查 `/Library/Input Methods/InputiaInputMethod.app`、`/Applications/Inputia 设置.app`、TIS enabled/selectable/current source、running host 是否与当前 build 对齐；默认不碰菜单栏、不做 GUI smoke readiness。
 
-失败时看 `installCheckBlockReasons` 和 `installCheckRequiredAction`。例如系统 app 或设置启动器不是当前 build 且没有非交互管理员权限时，会输出 `installCheckRequiredAction=run-install-handoff-and-admin-install`；running host 不是当前 build 时，会输出 `running-cdhash-mismatch` 和 `restart-inputia-host-after-install`，不要把 TIS 已选中误判成当前代码正在运行。若 `TISCreateInputSourceList` 对同一个 Inputia mode 返回多个 enabled/installed 命中，会输出 `tis-duplicate-matches` 和 `remove-duplicate-inputia-and-readd-once`，不要把“菜单里能选”误判成单一干净注册态。
+失败时看 `installCheckBlockReasons`、`installCheckRequiredAction` 和 `installCheckRequiredActions`。`installCheckRequiredAction` 是兼容旧脚本的首要动作；`installCheckRequiredActions` 是有序动作链。例如系统 app 或设置启动器不是当前 build 且没有非交互管理员权限时，会输出 `run-install-handoff-and-admin-install`；running host 不是当前 build 时，会在动作链中追加 `restart-inputia-host-after-install`，不要把 TIS 已选中误判成当前代码正在运行。若 `TISCreateInputSourceList` 对同一个 Inputia mode 返回多个 enabled/installed 命中，会输出 `tis-duplicate-matches`，primary action 保持 `remove-duplicate-inputia-and-readd-once`，动作链追加 `run-repair-tis-duplicates`，不要把“菜单里能选”误判成单一干净注册态。
 
 发布前或安装脚本变化后的完整验证：
 
@@ -306,7 +306,7 @@ INPUTIA_CODESIGN_IDENTITY="Codexbar Local Code Signing Leaf v4" \
 ./macos/InputiaInputMethod/install-handoff.sh
 ```
 
-`install-handoff.sh` 不会打开 Installer，也不会改系统输入源；它会重建并验证最新 pkg，然后在 `build/install-handoff.txt` 里写入 pkg 路径、SHA256、当前 build CDHash、系统已安装 CDHash、当前 `install-check` 的 block reasons / required action、管理员终端安装命令，以及安装后的 `await-system-install.sh` / `install-check.sh` 验证命令。若当前状态含 `tis-duplicate-matches`，交接清单会额外写入显式 opt-in 的 `INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh`。这个 repair 脚本要求 `/Library/Input Methods/InputiaInputMethod.app` 已经等于当前 build；如果 `systemMatchesBuild=false`，它会拒绝修复并要求先完成管理员安装。交接清单里的通过标准必须到 `installCheckBlockReasons=none`、`installCheckTISDuplicateMatches=false`、`runningMatchesBuild=true`、`installCheckPassed=true` 才算当前 build 真正进入系统运行态。
+`install-handoff.sh` 不会打开 Installer，也不会改系统输入源；它会重建并验证最新 pkg，然后在 `build/install-handoff.txt` 里写入 pkg 路径、SHA256、当前 build CDHash、系统已安装 CDHash、当前 `install-check` 的 block reasons / primary required action / ordered required actions、管理员终端安装命令，以及安装后的 `await-system-install.sh` / `install-check.sh` 验证命令。若当前状态含 `tis-duplicate-matches`，交接清单会额外写入显式 opt-in 的 `INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh`。这个 repair 脚本要求 `/Library/Input Methods/InputiaInputMethod.app` 已经等于当前 build；如果 `systemMatchesBuild=false`，它会拒绝修复并要求先完成管理员安装。交接清单里的通过标准必须到 `installCheckBlockReasons=none`、`installCheckRequiredActions=none`、`installCheckTISDuplicateMatches=false`、`runningMatchesBuild=true`、`installCheckPassed=true` 才算当前 build 真正进入系统运行态。
 
 `postinstall` 会打印 `inputiaInstalledVersion` / `inputiaInstalledCDHash`，kill 旧 Host、清理旧用户级 Host、register 当前系统 Host，并 dump enabled/current TIS 状态。它默认不 enable/select，也不刷新菜单栏代理；重复输入源或手动添加问题用 `repair-tis-duplicates.sh` 或 System Settings 显式处理，避免安装脚本继续制造 HIToolbox 重复项。
 

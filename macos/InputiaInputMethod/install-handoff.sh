@@ -78,6 +78,7 @@ install_check_output="$("$ROOT_DIR/install-check.sh" 2>&1 || true)"
 install_check_passed="$(/usr/bin/awk -F= '$1 == "installCheckPassed" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
 install_check_block_reasons="$(/usr/bin/awk -F= '$1 == "installCheckBlockReasons" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
 install_check_required_action="$(/usr/bin/awk -F= '$1 == "installCheckRequiredAction" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+install_check_required_actions="$(/usr/bin/awk -F= '$1 == "installCheckRequiredActions" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
 repair_tis_duplicates_command="cd $repo_quoted && INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh"
 if [[ ",$install_check_block_reasons," == *,tis-duplicate-matches,* ]]; then
   repair_tis_duplicates_required=true
@@ -101,6 +102,7 @@ adminReason=$admin_reason
 installCheckPassed=$install_check_passed
 installCheckBlockReasons=$install_check_block_reasons
 installCheckRequiredAction=$install_check_required_action
+installCheckRequiredActions=$install_check_required_actions
 repairTISDuplicatesRequired=$repair_tis_duplicates_required
 handoffOpensGUI=false
 handoffChangesSystemInputSource=false
@@ -127,6 +129,7 @@ installCheckTISDuplicateMatches=false
 runningMatchesBuild=true
 installCheckBlockReasons=none
 installCheckRequiredAction=none
+installCheckRequiredActions=none
 installCheckPassed=true
 EOF
 
@@ -146,6 +149,7 @@ echo "adminReady=$admin_ready reason=$admin_reason"
 echo "installCheckPassed=$install_check_passed"
 echo "installCheckBlockReasons=$install_check_block_reasons"
 echo "installCheckRequiredAction=$install_check_required_action"
+echo "installCheckRequiredActions=$install_check_required_actions"
 echo "repairTISDuplicatesRequired=$repair_tis_duplicates_required"
 echo "repairTISDuplicatesCommand=$repair_tis_duplicates_command"
 echo "terminalInstallerCommand=$terminal_installer_command"

@@ -63,16 +63,20 @@ require('validationTier=install-check' in install_check, "install-check-missing-
 require('INPUTIA_TIS_INCLUDE_MENU_READINESS=0 "$ROOT_DIR/tis-readiness.sh"' in install_check, "install-check-must-disable-menu-readiness")
 require('installCheckBlockReasons=' in install_check, "install-check-missing-block-reasons")
 require('installCheckRequiredAction=' in install_check, "install-check-missing-required-action")
+require('installCheckRequiredActions=' in install_check, "install-check-missing-required-actions")
 require('INPUTIA_INSTALL_CHECK_SELF_CHECK:-0' in install_check, "install-check-missing-self-check-mode")
 require('installCheckSelfCheck=true' in install_check, "install-check-missing-self-check-pass-marker")
 require('run-install-handoff-and-admin-install' in install_check, "install-check-missing-admin-required-action")
 require('restart-inputia-host-after-install' in install_check, "install-check-missing-running-host-action")
 require('tis-duplicate-matches' in install_check, "install-check-missing-tis-duplicate-blocker")
 require('remove-duplicate-inputia-and-readd-once' in install_check, "install-check-missing-tis-duplicate-action")
+require('run-repair-tis-duplicates' in install_check, "install-check-missing-tis-duplicate-actions-chain")
+require('actions-mismatch' in install_check, "install-check-self-check-missing-actions-assertion")
 require('"$ROOT_DIR/install-check.sh"' in dev_fast, "dev-fast-missing-install-check-self-check")
 require('INPUTIA_INSTALL_CHECK_SELF_CHECK=1 "$ROOT_DIR/install-check.sh"' in dev_fast, "dev-fast-install-check-not-self-check-only")
 require('installCheckBlockReasons=' in install_handoff, "install-handoff-missing-block-reasons")
 require('installCheckRequiredAction=' in install_handoff, "install-handoff-missing-required-action")
+require('installCheckRequiredActions=' in install_handoff, "install-handoff-missing-required-actions")
 require('installCheckPassed=' in install_handoff, "install-handoff-missing-install-check-pass")
 require('repairTISDuplicatesRequired=' in install_handoff, "install-handoff-missing-duplicate-repair-summary")
 require('INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh' in install_handoff, "install-handoff-missing-duplicate-repair-command")
@@ -80,6 +84,7 @@ require('handoffOpensGUI=false' in install_handoff, "install-handoff-missing-no-
 require('handoffChangesSystemInputSource=false' in install_handoff, "install-handoff-missing-no-input-source-marker")
 require('installCheckBlockReasons=none' in install_handoff, "install-handoff-missing-success-criteria")
 require('installCheckTISDuplicateMatches=false' in install_handoff, "install-handoff-missing-duplicate-success-criteria")
+require('installCheckRequiredActions=none' in install_handoff, "install-handoff-missing-actions-success-criteria")
 for forbidden in [
     "menu-readiness.sh",
     "gui-smoke-readiness.sh",
