@@ -26350,3 +26350,479 @@ INPUTIA_VERIFY_ALLOW_USER_HOST_BASELINE=1 INPUTIA_PROCESS_WAIT_TICKS=100 ./macos
 - 用户级 Inputia app 当前存在且匹配 build，但 TIS 仍未启用/选中，菜单 readiness 仍不可用。
 - 系统级安装仍被当前 UID 501 缺失 passwd 记录阻断；这也解释了 `sudo`、Git SSH push、HIToolbox 用户域和 GUI bootstrap 同时异常。
 - 真实 TextEdit/Safari/Clipboard GUI smoke 仍不得运行；下一步先修复 Mac mini 登录会话/目录服务，再重新安装/注册/选择 Inputia。
+
+## v68 Mac mini：复刻 MacBook Gatekeeper disabled 路径后，系统安装仍被目录服务阻断
+
+时间：2026-07-08 17:16:29 +0800
+
+本轮纠偏：
+
+- 当前 MVP 本地开发模式复刻 MacBook：`adhoc` 签名 + Gatekeeper assessments disabled。
+- 不再把 Developer ID、notarization、pkg signing 当成本轮可用性 blocker；正式分发以后再走 Developer ID + notarization。
+- 继续禁止真实 TextEdit/Safari/Clipboard GUI smoke，直到 `tisReadiness=true` 且 GUI bootstrap 可用。
+
+执行结果：
+
+```text
+sudo spctl --master-disable
+  sudo: you do not exist in the passwd database
+
+spctl --status
+  assessments disabled
+  rc=1
+
+存在性检查
+  missing /Library/Input Methods/InputiaInputMethod.app
+  exists /Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  missing /Library/Input Methods/IputiaInputMethod.app
+  missing /Users/minizl/Library/Input Methods/IputiaInputMethod.app
+
+./macos/InputiaInputMethod/install-system.sh
+  systemInstallNeedsAdmin=true
+  systemInstallCurrentUID=501
+  systemInstallCurrentUserName=unknown
+  systemInstallUserDirectoryReady=false
+  systemInstallUserDirectoryBlockReason=missing-passwd-record
+  systemInstallAdminChannelReady=false reason=user-directory-unavailable
+  systemInstallReady=false reason=user-directory-unavailable
+  systemInstallBlockReason=missing-passwd-record
+  systemInstallRequiredAction=repair-current-user-directory-service
+  rc=13
+```
+
+系统路径 readiness：
+
+```text
+./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  appExists=false
+  appSignatureAccepted=false
+  appMatchesBuild=false
+  tis.enabledMatches=0
+  tis.installedMatches=2
+  tis.targetEnabledMatches=0
+  tis.targetInstalledMatches=0
+  tis.hansIconURL=/Users/minizl/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf
+  tis.hansIconMatchesApp=false
+  tis.userDirectoryReady=false
+  tis.hitoolboxDefaultsReadable=false
+  tis.readinessBlockReason=app-missing
+  tis.requiredAction=install-inputia-app
+  tis.environmentRequiredAction=repair-current-user-directory-service
+  tisReadiness=false
+
+spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  /Library/Input Methods/InputiaInputMethod.app: accepted
+  override=security disabled
+```
+
+注意：Gatekeeper disabled 时 `spctl --assess` 对缺失的系统路径也会输出 `accepted override=security disabled`；因此安装是否成功必须以 `appExists`、CDHash 和 TIS readiness 为准，不能以这一行 `accepted` 单独判断。
+
+用户路径对照：
+
+```text
+./macos/InputiaInputMethod/status.sh
+  buildVersion=44
+  buildCDHash=0ec2f7d06f720212e3e6039eb19fc84b984d06da
+  system host exists=false
+  user host exists=true
+  userMatchesBuild=true
+  userHostConflict=false
+  targetPath=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  targetScope=user
+  targetExists=true
+  targetMatchesBuild=true
+  includeAllInstalled=false matches=0
+  includeAllInstalled=true matches=2
+  TIS names=Inputia / Inputia
+  currentID=com.apple.keylayout.ABC
+  currentMatchesTarget=false
+  menuReadiness=false
+  menuReadinessBlockReason=menu-agent-unavailable
+  statusCurrentUID=501
+  statusCurrentUserName=unknown
+  statusUserDirectoryReady=false
+  statusUserDirectoryBlockReason=missing-passwd-record
+  statusEnvironmentRequiredAction=repair-current-user-directory-service
+  statusGuiSmokeReady=false reason=tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,gui-bootstrap-unavailable
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  appExists=true
+  appSignatureAccepted=true
+  override=security disabled
+  appMatchesBuild=true
+  tis.targetInstalledMatches=1
+  tis.hansIconMatchesApp=true
+  tis.hansEnabled=true
+  tis.hansSelectable=true
+  tis.hansSelected=false
+  tis.currentID=com.apple.keylayout.ABC
+  tis.currentMatchesTarget=false
+  tis.userDirectoryReady=false
+  tis.hitoolboxDefaultsReadable=false
+  tis.readinessBlockReason=missing-enabled-source
+  tis.requiredAction=repair-current-user-directory-service
+  tisReadiness=false
+```
+
+签名/身份：
+
+```text
+codesign -dv --verbose=4 "$HOME/Library/Input Methods/InputiaInputMethod.app"
+  Identifier=com.inputia.inputmethod.Inputia
+  CDHash=0ec2f7d06f720212e3e6039eb19fc84b984d06da
+  Signature=adhoc
+  TeamIdentifier=not set
+
+security find-identity -v -p codesigning
+  0 valid identities found
+```
+
+当前用户目录服务：
+
+```text
+whoami
+  501
+
+id
+  uid=501 gid=20(staff) groups=20(staff),...,80(admin),...
+
+dscacheutil -q user -a uid 501
+  no user record
+
+dscl . -read /Users/minizl UniqueID NFSHomeDirectory UserShell RealName
+  Operation failed with error: eServerError
+```
+
+脚本修正：
+
+- `verify-nongui.sh` 的 `assert_process_not_running` 改为要求连续 quiet ticks 都看不到进程，避免系统短暂 `osascript` 进程刚好卡在第二次即时检查时被误判为 residue。
+- 真实残留仍会等到 `INPUTIA_PROCESS_WAIT_TICKS` 后失败；本次只是降低瞬时进程竞态误报。
+
+验证：
+
+```text
+bash -n macos/InputiaInputMethod/verify-nongui.sh
+  ok
+
+INPUTIA_VERIFY_ALLOW_USER_HOST_BASELINE=1 INPUTIA_PROCESS_WAIT_TICKS=120 ./macos/InputiaInputMethod/verify-nongui.sh
+  shortcutPassThroughSelfChecks=true
+  commonAppleCommandShortcutSetPassesThrough=true
+  officialAppleCommandKeyDownSetPassesThrough=true
+  anyCommandModifiedKeyPassesThrough=true
+  allCommandModifierVariantsPassThrough=true
+  commandCPassThrough=true
+  commandVPassThrough=true
+  hostTextPolicy appCommandcopy/paste/cut/undo/redo/selectAll/... PassesThrough=true
+  simplifiedScriptCommit=中国
+  traditionalScriptCommit=中國
+  postInstallRegressionPassed=true
+  installNoPrompt.rc=13
+  installNoPrompt: systemInstallRequiredAction=repair-current-user-directory-service
+  residue=false
+  tmpResidue=false
+  nonGuiVerificationPassed=true
+```
+
+结论：
+
+- Mac mini 当前 Gatekeeper 路径已经和 MacBook 本地开发模式对齐：`spctl --status` 输出 `assessments disabled`，ad-hoc app 通过 `override=security disabled`。
+- 系统级安装仍未成功，直接原因是 `/Library/Input Methods/InputiaInputMethod.app` 缺失；更上游根因是当前 UID 501 在 DirectoryServices/passwd 中不可解析，导致 `sudo`、HIToolbox 用户偏好、TextInputMenuAgent 和 GUI bootstrap 同时不可用。
+- 当前源码/验证已锁住：
+  - 输入法显示名为 `Inputia`，不是 `Inputia 简体`。
+  - 设置页存在 `中文字形` 和 `简繁切换`。
+  - 简体提交 `中国`，繁体提交 `中國`。
+  - Command 系常用快捷键，包括 Command-C / Command-V，按 Command 修饰统一 pass-through，不由输入法接管。
+- 在修复 Mac mini 登录用户目录服务前，不应继续跑真实 TextEdit/Safari/Clipboard GUI smoke，也不能把 `spctl accepted` 当成系统安装成功。
+
+## v68 Mac mini：纠偏到用户级安装 + TISRegister + 系统设置手动添加路径
+
+时间：2026-07-08 17:26:00 +0800
+
+纠偏依据：
+
+- Apple Text Input Source Services / TIS API 的分层语义是：`TISRegisterInputSource` 注册 input source bundle；`TISCreateInputSourceList(..., includeAllInstalled=false)` 才代表 enabled sources；`TISSelectInputSource` 只能选择已可用 source，不能替代用户在系统输入源 UI 里添加第三方输入法。
+- 成熟输入法实现也按“复制 bundle + 注册/刷新 + 用户通过系统 UI 添加/选择”的边界处理；脚本伪造 HIToolbox enabled/selected 状态不是可靠安装路径。
+- 因此之前的 blocker 不是“macOS 系统坏”，而是安装流程绕过了系统输入源添加 UI。后续脚本不应继续伪造 `AppleEnabledInputSources` / `AppleSelectedInputSources` / `AppleEnabledThirdPartyInputSources`。
+
+源码/脚本修正：
+
+- `install-user.sh`：用户级主路径保持为 `~/Library/Input Methods/InputiaInputMethod.app`，只 build/copy、`lsregister`、`--register-input-source`、只读 dump/readiness，并输出 `userInstallRequiredAction=add-input-source-in-system-settings`。
+- `install-system.sh`：保留可选系统级安装，但不再 `--enable-input-source` / `--normalize-hitoolbox` / `--select-input-source` / `--clear-input-source-preferences`；签名失败也不再清 HIToolbox 偏好。
+- `Packaging/scripts/postinstall`：删除旧 `HIToolboxEnsure`、normalize/select retry 和自动启用逻辑；pkg postinstall 现在只 register、dump enabled/current、输出手动添加动作。
+- `InputiaInputMethod --normalize-hitoolbox` 与 `--clear-input-source-preferences` 均降级为只读 no-op：只输出 before / would-after 计数和 required action，不写 CFPreferences 或 plist。
+- `tis-readiness.sh` / `status.sh` 增加只读污染诊断：
+  - `tis.legacyHIToolboxInputiaEnabled`
+  - `tis.legacyHIToolboxInputiaSelected`
+  - `tis.staleHIToolboxEnabledStateSuspected`
+  - `statusLegacyHIToolboxInputiaEnabled`
+  - `statusLegacyHIToolboxInputiaSelected`
+  - `statusStaleHIToolboxEnabledStateSuspected`
+- `verify-nongui.sh` 增加静态防回退：安装脚本和 pkg postinstall 不得调用 enable/normalize/select/clear；host 不得再包含 `CFPreferencesSet` 或 HIToolbox plist writer。
+
+用户级安装验证：
+
+```text
+./macos/InputiaInputMethod/install-user.sh
+  userInstallBuild=true
+  registerStatus=0
+  appAssessment=/Users/minizl/Library/Input Methods/InputiaInputMethod.app: accepted
+  override=security disabled
+  appMatchesBuild=true
+  tis.targetEnabledMatches=2
+  tis.targetInstalledMatches=2
+  tis.currentID=com.tencent.inputmethod.wetype.pinyin
+  tis.currentMatchesTarget=false
+  tis.legacyHIToolboxInputiaEnabled=true
+  tis.legacyHIToolboxInputiaSelected=false
+  tis.staleHIToolboxEnabledStateSuspected=true
+  tis.readinessBlockReason=target-not-selected
+  tis.requiredAction=select-inputia-after-manual-add
+  tisReadiness=false
+  userInstallVerified=true
+  userInstallTISReady=false
+  userInstallRequiredAction=add-input-source-in-system-settings
+  userInstallPath=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  userInstallRegistered=true
+  userInstallSystemResiduePresent=false
+  settingsLauncherInstalled=/Users/minizl/Applications/Inputia 设置.app
+```
+
+只读状态验证：
+
+```text
+spctl --status
+  assessments disabled
+
+spctl --assess --type execute --verbose=4 "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  /Users/minizl/Library/Input Methods/InputiaInputMethod.app: accepted
+  override=security disabled
+
+./macos/InputiaInputMethod/status.sh
+  buildVersion=44
+  userMatchesBuild=true
+  userHostConflict=false
+  targetPath=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  targetScope=user
+  targetMatchesBuild=true
+  targetSettingsMatchesBuildVersion=true
+  includeAllInstalled=false matches=3
+  currentID=com.tencent.inputmethod.wetype.pinyin
+  currentMatchesTarget=false
+  menuInputiaCount=0
+  menuReadiness=false
+  menuReadinessBlockReason=inputia-menu-item-missing
+  statusUserDirectoryReady=true
+  statusHIToolboxDefaultsReadable=true
+  statusLegacyHIToolboxInputiaEnabled=true
+  statusLegacyHIToolboxInputiaSelected=false
+  statusStaleHIToolboxEnabledStateSuspected=true
+  statusGuiSmokeReady=false reason=tis-not-ready,menu-inputia-menu-item-missing
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  appExists=true
+  appSignatureAccepted=true
+  appMatchesBuild=true
+  tis.targetEnabledMatches=2
+  tis.targetInstalledMatches=2
+  tis.currentID=com.tencent.inputmethod.wetype.pinyin
+  tis.currentMatchesTarget=false
+  tis.legacyHIToolboxInputiaEnabled=true
+  tis.legacyHIToolboxInputiaSelected=false
+  tis.staleHIToolboxEnabledStateSuspected=true
+  tis.readinessBlockReason=target-not-selected
+  tisReadiness=false
+
+./macos/InputiaInputMethod/gui-smoke-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  target.exists=true
+  target.matchesBuild=true
+  settings.matchesBuild=true
+  tis.blockReason=target-not-selected
+  textEditPreflight=not-running
+  safariPreflight=not-running
+  inputiaHostPreflight=not-running
+  guiSmokeReadinessReady=false reason=tis-not-ready
+```
+
+no-op 验证：
+
+```text
+"/Users/minizl/Library/Input Methods/InputiaInputMethod.app/Contents/MacOS/InputiaInputMethod" --normalize-hitoolbox
+  hitoolboxNormalizeSkipped=true reason=manual-hitoolbox-write-disabled
+  hitoolboxNormalizeEnabledBefore=3
+  hitoolboxNormalizeEnabledAfter=3
+  thirdPartyEnabledBefore=4
+  thirdPartyEnabledAfter=4
+
+"/Users/minizl/Library/Input Methods/InputiaInputMethod.app/Contents/MacOS/InputiaInputMethod" --clear-input-source-preferences
+  inputSourcePreferencesClear=false
+  inputSourcePreferencesClearSkipped=true reason=manual-hitoolbox-write-disabled
+  hitoolboxEnabledBefore=3
+  hitoolboxEnabledWouldAfter=1
+  thirdPartyEnabledBefore=4
+  thirdPartyEnabledWouldAfter=2
+
+静态防回退检查
+  main.no_CFPreferencesSet=true
+  main.no_plist_writer=true
+  install-user.sh.no_enable-input-source=true
+  install-user.sh.no_normalize-hitoolbox=true
+  install-user.sh.no_select-input-source=true
+  install-user.sh.no_clear-input-source-preferences=true
+  install-system.sh.no_enable-input-source=true
+  install-system.sh.no_normalize-hitoolbox=true
+  install-system.sh.no_select-input-source=true
+  install-system.sh.no_clear-input-source-preferences=true
+  Packaging/scripts/postinstall.no_enable-input-source=true
+  Packaging/scripts/postinstall.no_normalize-hitoolbox=true
+  Packaging/scripts/postinstall.no_select-input-source=true
+  Packaging/scripts/postinstall.no_clear-input-source-preferences=true
+```
+
+结论：
+
+- 当前用户级安装和 `TISRegisterInputSource` 已成功，bundle 与 build CDHash 匹配，Gatekeeper 本地开发模式为 `assessments disabled` / `override=security disabled`。
+- 仍不能跑真实 TextEdit/Safari/Clipboard GUI smoke：菜单栏没有 Inputia，当前输入源仍是微信输入法，`tisReadiness=false`。
+- `includeAllInstalled=false` 当前能看到 Inputia，但 `statusLegacyHIToolboxInputiaEnabled=true` 和 `statusStaleHIToolboxEnabledStateSuspected=true` 说明这是旧脚本污染过的 enabled 状态，不能作为可用证据。
+- 下一步必须由用户在 System Settings → Keyboard → Text Input → Edit → Add Inputia 手动添加/选中 Inputia；添加后再复跑 `status.sh` 和 `tis-readiness.sh`。只有 `menuInputiaCount>0`、`TISSelectInputSource` 返回 0 且新进程 current source 为 Inputia 时，才允许真实 GUI smoke。
+
+## v69 Mac mini：当前目录服务再次不可用，用户级 app 匹配但系统级安装仍被 passwd 阻断
+
+时间：2026-07-08 17:31:00 +0800
+
+本轮重新构建和复核后的当前事实：
+
+```text
+./macos/InputiaInputMethod/build.sh
+  rc=0
+  build/InputiaInputMethod.app codesign verify passed
+  build/Inputia 设置.app codesign verify passed
+  ld warning: 部分 Rust object built for newer macOS version (26.0) than linked target (13.0)
+
+spctl --status
+  assessments disabled
+  rc=1
+
+./macos/InputiaInputMethod/install-system.sh
+  systemInstallNeedsAdmin=true
+  systemInstallCurrentUID=501
+  systemInstallCurrentUserName=unknown
+  systemInstallUserDirectoryReady=false
+  systemInstallUserDirectoryBlockReason=missing-passwd-record
+  systemInstallAdminChannelReady=false reason=user-directory-unavailable
+  systemInstallReady=false reason=user-directory-unavailable
+  systemInstallBlockReason=missing-passwd-record
+  systemInstallRequiredAction=repair-current-user-directory-service
+  rc=13
+```
+
+当前只读状态：
+
+```text
+./macos/InputiaInputMethod/status.sh
+  buildVersion=44
+  buildCDHash=1ab460dae4a4f0a4d2aa21a4c84f515bc215b2a2
+  system host exists=false
+  systemMatchesBuild=false
+  user host exists=true
+  userMatchesBuild=true
+  userHostConflict=false
+  targetPath=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  targetScope=user
+  targetExists=true
+  targetMatchesBuild=true
+  includeAllInstalled=false matches=0
+  includeAllInstalled=true matches=2
+  name=Inputia
+  currentID=com.apple.keylayout.ABC
+  currentMatchesTarget=false
+  menuReadiness=false
+  menuReadinessBlockReason=menu-agent-unavailable
+  statusCurrentUID=501
+  statusCurrentUserName=unknown
+  statusUserDirectoryReady=false
+  statusUserDirectoryBlockReason=missing-passwd-record
+  statusHIToolboxDefaultsReadable=false
+  statusHIToolboxDefaultsBlockReason=domain-missing
+  statusEnvironmentRequiredAction=repair-current-user-directory-service
+  statusGuiSmokeReady=false reason=tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,gui-bootstrap-unavailable
+```
+
+用户路径 readiness：
+
+```text
+./macos/InputiaInputMethod/tis-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  appExists=true
+  buildCDHash=1ab460dae4a4f0a4d2aa21a4c84f515bc215b2a2
+  appCDHash=1ab460dae4a4f0a4d2aa21a4c84f515bc215b2a2
+  appAssessment=/Users/minizl/Library/Input Methods/InputiaInputMethod.app: accepted
+  override=security disabled
+  appSignatureAccepted=true
+  appMatchesBuild=true
+  tis.targetInstalledMatches=1
+  tis.hansIconMatchesApp=true
+  tis.hansEnabled=true
+  tis.hansSelectable=true
+  tis.hansSelected=false
+  tis.currentID=com.apple.keylayout.ABC
+  tis.currentMatchesTarget=false
+  tis.userDirectoryReady=false
+  tis.hitoolboxDefaultsReadable=false
+  tis.readinessBlockReason=missing-enabled-source
+  tis.requiredAction=repair-current-user-directory-service
+  tisReadiness=false
+```
+
+系统路径 readiness：
+
+```text
+./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  appExists=false
+  buildCDHash=1ab460dae4a4f0a4d2aa21a4c84f515bc215b2a2
+  appSignatureAccepted=false
+  appMatchesBuild=false
+  tis.targetInstalledMatches=0
+  tis.userDirectoryReady=false
+  tis.hitoolboxDefaultsReadable=false
+  tis.readinessBlockReason=app-missing
+  tis.requiredAction=install-inputia-app
+  tis.environmentRequiredAction=repair-current-user-directory-service
+  tisReadiness=false
+```
+
+本轮脚本修正：
+
+- `verify-nongui.sh` 的进程残留断言要求连续 quiet ticks，避免短暂 `osascript` 进程刚好卡在即时二次检查时误报 residue。
+- 静态契约同步为：签名拒绝时 `install-system.sh` 必须输出 `systemInstallAction=stop-before-tis-registration`，不得再把清理 HIToolbox 偏好当作修复路径。
+
+验证：
+
+```text
+zsh -n macos/InputiaInputMethod/install-system.sh macos/InputiaInputMethod/status.sh macos/InputiaInputMethod/gui-smoke-readiness.sh
+  ok
+
+bash -n macos/InputiaInputMethod/Packaging/scripts/postinstall macos/InputiaInputMethod/verify-nongui.sh
+  ok
+
+INPUTIA_VERIFY_ALLOW_USER_HOST_BASELINE=1 INPUTIA_PROCESS_WAIT_TICKS=120 ./macos/InputiaInputMethod/verify-nongui.sh > /tmp/inputia-verify-nongui-v68-after-build.log 2>&1
+  /tmp/inputia-verify-nongui-v68-after-build.log
+  cleanupPermissionContract=true
+  commandCPassThrough=true
+  commandVPassThrough=true
+  appCommandcopyPassesThrough=true
+  appCommandpastePassesThrough=true
+  simplifiedScriptCommit=中国
+  traditionalScriptCommit=中國
+  postInstallRegressionPassed=true
+  installNoPrompt.rc=13
+  installNoPrompt: systemInstallRequiredAction=repair-current-user-directory-service
+  residue=false
+  tmpResidue=false
+  nonGuiVerificationPassed=true
+```
+
+结论：
+
+- 本地开发签名路径已对齐 MacBook：ad-hoc + Gatekeeper disabled，当前不是 Developer ID/notarization blocker。
+- 当前用户级 app 和 build 已匹配，显示名为 `Inputia`，不是 `Inputia 简体`；但系统级 app 仍不存在。
+- 系统安装、HIToolbox 用户域、TextInputMenuAgent、GUI bootstrap 和 Git SSH push 都受同一个环境问题影响：当前 UID 501 缺失 passwd/DirectoryServices 用户记录。
+- 在 `repair-current-user-directory-service` 解决前，不应继续跑真实 TextEdit/Safari/Clipboard GUI smoke；此时真实 smoke 只会证明环境坏，不会证明输入法行为。

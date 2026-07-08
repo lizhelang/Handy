@@ -179,6 +179,20 @@ hitoolbox_preferences_status() {
   fi
 }
 
+hitoolbox_key_contains_inputia() {
+  local key="$1"
+  local output
+  if ! output="$(/usr/bin/defaults read com.apple.HIToolbox "$key" 2>/dev/null)"; then
+    echo unknown
+    return
+  fi
+  if /usr/bin/grep -q 'com\.inputia\.inputmethod\.Inputia' <<<"$output"; then
+    echo true
+  else
+    echo false
+  fi
+}
+
 process_pids_by_ps() {
   local process_name="$1"
   local ps_output
@@ -249,6 +263,29 @@ process_state() {
   fi
 }
 
+frontmost_app_name() {
+  /usr/bin/python3 <<'PY'
+import subprocess
+import sys
+
+script = 'tell application "System Events" to get name of first application process whose frontmost is true'
+try:
+    result = subprocess.run(
+        ["/usr/bin/osascript", "-e", script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=2,
+    )
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+
+if result.returncode != 0:
+    sys.exit(result.returncode)
+print(result.stdout.strip())
+PY
+}
+
 gui_session_block_reason() {
   if [[ -n "${INPUTIA_GUI_SESSION_BLOCK_REASON_FOR_TEST:-}" ]]; then
     echo "$INPUTIA_GUI_SESSION_BLOCK_REASON_FOR_TEST"
@@ -286,7 +323,7 @@ gui_session_block_reason() {
   fi
 
   local frontmost_app
-  if ! frontmost_app="$(/usr/bin/osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true' 2>/dev/null)"; then
+  if ! frontmost_app="$(frontmost_app_name)"; then
     echo frontmost-unavailable
     return
   fi
@@ -535,6 +572,16 @@ hitoolbox_defaults_readable="$(/usr/bin/awk -F= '$1 == "statusHIToolboxDefaultsR
 hitoolbox_defaults_block_reason="$(/usr/bin/awk -F= '$1 == "statusHIToolboxDefaultsBlockReason" { print $2; exit }' <<<"$hitoolbox_defaults_output")"
 hitoolbox_defaults_readable="${hitoolbox_defaults_readable:-unknown}"
 hitoolbox_defaults_block_reason="${hitoolbox_defaults_block_reason:-unknown}"
+legacy_hitoolbox_enabled="$(hitoolbox_key_contains_inputia AppleEnabledInputSources)"
+legacy_hitoolbox_selected="$(hitoolbox_key_contains_inputia AppleSelectedInputSources)"
+if [[ "$legacy_hitoolbox_enabled" == "true" && "$tis_current_matches_target" != "true" ]]; then
+  stale_hitoolbox_enabled=true
+else
+  stale_hitoolbox_enabled=false
+fi
+echo "statusLegacyHIToolboxInputiaEnabled=$legacy_hitoolbox_enabled"
+echo "statusLegacyHIToolboxInputiaSelected=$legacy_hitoolbox_selected"
+echo "statusStaleHIToolboxEnabledStateSuspected=$stale_hitoolbox_enabled"
 
 section "gui smoke summary"
 admin_ready="$(admin_install_ready)"

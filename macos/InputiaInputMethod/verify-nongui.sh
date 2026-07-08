@@ -232,7 +232,17 @@ assert_process_not_running() {
   local reason="$2"
   local max_wait="${INPUTIA_PROCESS_WAIT_TICKS:-100}"
   local waited=0
-  while process_running "$process_name" && ((waited < max_wait)); do
+  local quiet_ticks="${INPUTIA_PROCESS_QUIET_TICKS:-3}"
+  local quiet=0
+  while ((waited < max_wait)); do
+    if ! process_running "$process_name"; then
+      quiet=$((quiet + 1))
+      if ((quiet >= quiet_ticks)); then
+        return 0
+      fi
+    else
+      quiet=0
+    fi
     /bin/sleep 0.1
     waited=$((waited + 1))
   done
@@ -1328,7 +1338,7 @@ require("INPUTIA_ALLOW_REJECTED_SIGNATURE" in install_system_text, "install-syst
 require("systemInstallInputiaUsable=false reason=signature-rejected" in install_system_text, "install-system-missing-signature-rejected-gate")
 require("systemInstallRequiredAction=sign-with-accepted-identity" in install_system_text, "install-system-missing-signature-required-action")
 require("systemInstallSigningHint=rerun-build-with-INPUTIA_CODESIGN_IDENTITY-that-spctl-accepts" in install_system_text, "install-system-missing-signature-hint")
-require("--clear-input-source-preferences" in install_system_text, "install-system-missing-clear-input-source-preferences")
+require("systemInstallAction=stop-before-tis-registration" in install_system_text, "install-system-signature-rejection-does-not-stop-before-tis-registration")
 require("systemInstallTISReady=false reason=manual-add-required" in install_system_text, "install-system-missing-manual-add-readiness-output")
 require("systemInstallNextStep=System Settings > Keyboard > Text Input > Edit > Add Inputia" in install_system_text, "install-system-missing-manual-add-next-step")
 require(install_menu_restart_index >= 0, "install-system-missing-textinputmenuagent-restart")
@@ -1354,6 +1364,9 @@ install_user_text = (root / "install-user.sh").read_text()
 require('TMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/inputia-install-user.XXXXXX")"' in install_user_text, "install-user-missing-tmp-root")
 require('/bin/rm -rf "$TMP_ROOT"' in install_user_text, "install-user-missing-tmp-root-cleanup")
 require("trap cleanup EXIT" in install_user_text, "install-user-missing-cleanup-trap")
+require("INPUTIA_INSTALL_USER_SKIP_BUILD" in install_user_text, "install-user-missing-skip-build-mode")
+require("userInstallBuild=skipped reason=using-existing-build" in install_user_text, "install-user-missing-skip-build-output")
+require("userInstallRequiredAction=run-build-before-skip-build-install" in install_user_text, "install-user-missing-skip-build-required-action")
 require("detect_verification_processes()" in install_user_text, "install-user-missing-verification-process-detection")
 require("userInstallReady=false reason=verification-running" in install_user_text, "install-user-missing-verification-running-output")
 require("userInstallBlockingProcess:" in install_user_text, "install-user-missing-blocking-process-output")
@@ -1524,6 +1537,9 @@ require("guiSmokeReadinessBlockReasons=" in gui_readiness_text, "gui-readiness-m
 require("guiSmokeReadinessSelfCheck blockReasons=" in gui_readiness_text, "gui-readiness-missing-block-reasons-self-check")
 require("guiSmokeReadinessSelfCheck allBlockReasons=" in gui_readiness_text, "gui-readiness-missing-all-block-reasons-self-check")
 require("duplicate=admin-required" in gui_readiness_text, "gui-readiness-missing-block-reason-dedupe-check")
+require("frontmost_app_name()" in gui_readiness_text, "gui-readiness-missing-frontmost-timeout-helper")
+require("timeout=2" in gui_readiness_text, "gui-readiness-frontmost-missing-timeout")
+require('frontmost_app="$(frontmost_app_name)"' in gui_readiness_text, "gui-readiness-frontmost-does-not-use-timeout-helper")
 
 status_text = (root / "status.sh").read_text()
 require("statusTargetExists=" in status_text, "status-missing-target-exists-summary")
@@ -1678,6 +1694,9 @@ require("statusSafariPreflight=" in status_text, "status-missing-safari-prefligh
 require("statusInputiaHostPreflight=" in status_text, "status-missing-inputia-host-preflight-summary")
 require("inputia-host-running" in status_text, "status-missing-inputia-host-running-reason")
 require("gui_session_block_reason()" in status_text, "status-missing-gui-session-helper")
+require("frontmost_app_name()" in status_text, "status-missing-frontmost-timeout-helper")
+require("timeout=2" in status_text, "status-frontmost-missing-timeout")
+require('frontmost_app="$(frontmost_app_name)"' in status_text, "status-frontmost-does-not-use-timeout-helper")
 require("textedit-already-running" in status_text, "status-missing-textedit-block-reason")
 require("safari-already-running" in status_text, "status-missing-safari-block-reason")
 require("target-cdhash-mismatch" in status_text, "status-missing-target-block-reason")
@@ -1793,15 +1812,32 @@ require("hitoolboxNormalizeSkipped=true reason=manual-hitoolbox-write-disabled" 
 require("hitoolboxNormalizeRequiredAction=enable-via-system-settings-or-fix-user-preference-service" in normalize_text, "host-normalize-missing-required-action-output")
 require("setPreferenceArray(" not in normalize_text, "host-normalize-still-writes-preferences")
 require("writeHIToolboxPreferencePlist(" not in normalize_text, "host-normalize-still-writes-hitoolbox-plist")
+clear_text = main_text[clear_index:main_text.find("private func dumpInputSource", clear_index)]
+require("inputSourcePreferencesClearSkipped=true reason=manual-hitoolbox-write-disabled" in clear_text, "host-clear-preferences-missing-manual-write-disabled-output")
+require("CFPreferencesSet" not in main_text, "host-still-has-cfpreferences-write")
+require("writeHIToolboxPreferencePlist(" not in main_text, "host-still-has-hitoolbox-plist-writer")
 install_user_text = (root / "install-user.sh").read_text()
 install_system_text = (root / "install-system.sh").read_text()
+postinstall_text = (root / "Packaging/scripts/postinstall").read_text()
 for forbidden in ["--enable-input-source", "--normalize-hitoolbox", "--select-input-source"]:
     require(forbidden not in install_user_text, f"install-user-still-calls-{forbidden}")
     require(forbidden not in install_system_text, f"install-system-still-calls-{forbidden}")
+    require(forbidden not in postinstall_text, f"postinstall-still-calls-{forbidden}")
+require("--clear-input-source-preferences" not in install_user_text, "install-user-still-clears-input-source-preferences")
+require("--clear-input-source-preferences" not in install_system_text, "install-system-still-clears-input-source-preferences")
+require("--clear-input-source-preferences" not in postinstall_text, "postinstall-still-clears-input-source-preferences")
 require("userInstallRequiredAction=add-input-source-in-system-settings" in install_user_text, "install-user-missing-manual-add-required-action")
 require("systemInstallRequiredAction=add-input-source-in-system-settings" in install_system_text, "install-system-missing-manual-add-required-action")
 require("--register-input-source" in install_user_text, "install-user-missing-tis-register")
 require("--register-input-source" in install_system_text, "install-system-missing-tis-register")
+require("--register-input-source" in postinstall_text, "postinstall-missing-tis-register")
+require("inputiaPostinstallRequiredAction=add-input-source-in-system-settings" in postinstall_text, "postinstall-missing-manual-add-required-action")
+status_text = (root / "status.sh").read_text()
+tis_readiness_text = (root / "tis-readiness.sh").read_text()
+require("statusLegacyHIToolboxInputiaEnabled=" in status_text, "status-missing-legacy-hitoolbox-enabled-diagnostic")
+require("statusStaleHIToolboxEnabledStateSuspected=" in status_text, "status-missing-stale-hitoolbox-diagnostic")
+require("tis.legacyHIToolboxInputiaEnabled=" in tis_readiness_text, "tis-readiness-missing-legacy-hitoolbox-enabled-diagnostic")
+require("tis.staleHIToolboxEnabledStateSuspected=" in tis_readiness_text, "tis-readiness-missing-stale-hitoolbox-diagnostic")
 handle_key_down_index = main_text.find("private func handleKeyDown(_ event: NSEvent, client: IMKTextInput) -> Bool")
 pass_through_index = main_text.find("InputiaShortcutClassifier.shouldPassThroughKeyDown", handle_key_down_index)
 script_toggle_index = main_text.find("isScriptToggleShortcut(event, modifiers: modifiers)", handle_key_down_index)
@@ -3286,7 +3322,7 @@ if ! /usr/bin/grep -q 'running=false' <<<"$status_output"; then
   exit 1
 fi
 printf '%s\n' "$status_output" | /usr/bin/awk '
-  /^buildVersion=|^buildCDHash=|^systemMatchesBuild=|^userMatchesBuild=|^userHostConflict=|^includeAllInstalled=|^matches=|^running=|^sha256=|^statusAdminInstallReady=|^statusTISEnabledMatches=|^statusTISInstalledMatches=|^statusSignatureAccepted=|^statusMenuReadiness=|^statusMenuBlockReason=|^statusUserHostConflict=|^statusGuiSessionBlockReason=|^statusTextEditPreflight=|^statusSafariPreflight=|^statusInputiaHostPreflight=|^statusGuiSmokeBlockReasons=|^statusGuiSmokeReady=/ { print "status: " $0 }
+  /^buildVersion=|^buildCDHash=|^systemMatchesBuild=|^userMatchesBuild=|^userHostConflict=|^includeAllInstalled=|^matches=|^running=|^sha256=|^statusAdminInstallReady=|^statusTISEnabledMatches=|^statusTISInstalledMatches=|^statusTISCurrentMatchesTarget=|^statusLegacyHIToolboxInputiaEnabled=|^statusLegacyHIToolboxInputiaSelected=|^statusStaleHIToolboxEnabledStateSuspected=|^statusSignatureAccepted=|^statusMenuReadiness=|^statusMenuBlockReason=|^statusUserHostConflict=|^statusGuiSessionBlockReason=|^statusTextEditPreflight=|^statusSafariPreflight=|^statusInputiaHostPreflight=|^statusGuiSmokeBlockReasons=|^statusGuiSmokeReady=/ { print "status: " $0 }
 '
 expected_status_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ROOT_DIR/Info.plist")"
 require_output "$status_output" "buildVersion=$expected_status_version" "status-build-version-missing"

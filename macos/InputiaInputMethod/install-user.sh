@@ -72,12 +72,21 @@ cdhash() {
     /usr/bin/awk -F= '/^CDHash=/{print $2}'
 }
 
-if "$ROOT_DIR/build.sh" >"$BUILD_LOG" 2>&1; then
-  echo "userInstallBuild=true"
+if [[ "${INPUTIA_INSTALL_USER_SKIP_BUILD:-0}" == "1" ]]; then
+  if [[ ! -d "$SOURCE_APP" || ! -d "$SOURCE_SETTINGS_APP" ]]; then
+    echo "userInstallBuild=false reason=missing-existing-build"
+    echo "userInstallRequiredAction=run-build-before-skip-build-install"
+    exit 1
+  fi
+  echo "userInstallBuild=skipped reason=using-existing-build"
 else
-  echo "userInstallBuild=false"
-  /usr/bin/tail -n 80 "$BUILD_LOG" >&2 || true
-  exit 1
+  if "$ROOT_DIR/build.sh" >"$BUILD_LOG" 2>&1; then
+    echo "userInstallBuild=true"
+  else
+    echo "userInstallBuild=false"
+    /usr/bin/tail -n 80 "$BUILD_LOG" >&2 || true
+    exit 1
+  fi
 fi
 
 mkdir -p "$DEST_DIR" "$DEST_SETTINGS_DIR"

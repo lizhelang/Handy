@@ -129,36 +129,6 @@ target_mode_id() {
   printf '%s\n' "$mode_id"
 }
 
-login_defaults() {
-  if [[ -n "$LOGIN_USER" && "$LOGIN_USER" != "root" ]]; then
-    /usr/bin/sudo -u "$LOGIN_USER" /usr/bin/defaults "$@"
-  else
-    /usr/bin/defaults "$@"
-  fi
-}
-
-hitoolbox_contains() {
-  local domain_key="$1"
-  local value="$2"
-  login_defaults read com.apple.HIToolbox "$domain_key" 2>/dev/null | /usr/bin/grep -q -- "$value"
-}
-
-ensure_hitoolbox_inputia_entries() {
-  local target_mode_id="$1"
-
-  if [[ -n "$INSTALL_ROOT" ]]; then
-    echo "inputiaHIToolboxEnsure=skipped reason=install-root"
-    return
-  fi
-  if [[ -n "$LOGIN_USER" && ( "$LOGIN_USER" == "root" || "$LOGIN_USER" == "_mbsetupuser" ) ]]; then
-    echo "inputiaHIToolboxEnsure=skipped reason=login-user"
-    return
-  fi
-
-  run_login_best_effort 12 inputia-normalize-hitoolbox "$EXECUTABLE" --normalize-hitoolbox
-  echo "inputiaHIToolboxEnsure=normalized targetModeID=$target_mode_id"
-}
-
 post_refresh_tis_ready_for() {
   local target_mode_id="$1"
   local target_icon="$2"
@@ -198,59 +168,6 @@ post_refresh_tis_ready() {
   target_icon="$APP/Contents/Resources/inputia.pdf"
 
   post_refresh_tis_ready_for "$target_mode_id" "$target_icon" "$enabled_output"
-}
-
-post_refresh_enabled_output_is_ready() {
-  local enabled_output="$1"
-  local target_mode_id target_icon id enabled selectable icon
-  target_mode_id="$(target_mode_id)"
-  target_icon="$APP/Contents/Resources/inputia.pdf"
-  id="$(dump_value "$enabled_output" id)"
-  enabled="$(dump_value "$enabled_output" enabled)"
-  selectable="$(dump_value "$enabled_output" selectable)"
-  icon="$(dump_value "$enabled_output" iconURL)"
-
-  [[ "$id" == "$target_mode_id" && "$enabled" == "true" && "$selectable" == "true" && "$icon" == "$target_icon" ]]
-}
-
-wait_for_postinstall_tis_selection() {
-  local target_mode_id="$1"
-  local enabled_output=""
-  local current_output=""
-  local current_id=""
-  local consecutive_ready=0
-
-  for attempt in 1 2 3 4 5 6; do
-    enabled_output="$(run_login_capture "$EXECUTABLE" --dump-enabled-input-source)"
-    current_output="$(run_login_capture "$EXECUTABLE" --dump-current-input-source)"
-    current_id="$(dump_value "$current_output" id)"
-
-    if post_refresh_enabled_output_is_ready "$enabled_output" && [[ "$current_id" == "$target_mode_id" ]]; then
-      consecutive_ready=$((consecutive_ready + 1))
-      echo "inputiaPostRefreshTISStableCheck attempt=$attempt ready=true consecutive=$consecutive_ready"
-      if [[ "$consecutive_ready" -ge 2 ]]; then
-        printf '%s\n' "$enabled_output" | /usr/bin/sed 's/^/inputiaPostRefreshEnabledTIS: /'
-        post_refresh_tis_ready "$enabled_output"
-        printf '%s\n' "$current_output" | /usr/bin/sed 's/^/inputiaPostRefreshCurrentTIS: /'
-        echo "inputiaPostRefreshCurrentMatchesTarget=true"
-        return 0
-      fi
-    else
-      consecutive_ready=0
-      echo "inputiaPostRefreshTISStableCheck attempt=$attempt ready=false currentID=${current_id:-unknown}"
-      run_best_effort 12 inputia-register-retry "$EXECUTABLE" --register-input-source
-      run_login_best_effort 12 inputia-normalize-hitoolbox-retry "$EXECUTABLE" --normalize-hitoolbox
-      /usr/bin/killall cfprefsd >/dev/null 2>&1 || true
-      run_login_best_effort 12 inputia-select-retry "$EXECUTABLE" --select-input-source
-    fi
-    /bin/sleep 1
-  done
-
-  printf '%s\n' "$enabled_output" | /usr/bin/sed 's/^/inputiaPostRefreshEnabledTIS: /'
-  post_refresh_tis_ready "$enabled_output"
-  printf '%s\n' "$current_output" | /usr/bin/sed 's/^/inputiaPostRefreshCurrentTIS: /'
-  echo "inputiaPostRefreshCurrentMatchesTarget=false"
-  return 1
 }
 
 post_refresh_tis_ready_self_check() {
@@ -332,12 +249,7 @@ if [[ "$assessment_output" != *": accepted"* && "${INPUTIA_ALLOW_REJECTED_SIGNAT
   echo "inputiaPostinstallUsable=false reason=signature-rejected"
   echo "inputiaPostinstallRequiredAction=sign-with-accepted-identity"
   echo "inputiaPostinstallSigningHint=rerun-build-with-INPUTIA_CODESIGN_IDENTITY-that-spctl-accepts"
-  echo "inputiaPostinstallAction=clear-inputia-preferences"
-  run_login_best_effort 12 inputia-clear-input-source-preferences \
-    "$EXECUTABLE" --clear-input-source-preferences
-  /usr/bin/killall TextInputMenuAgent >/dev/null 2>&1 || true
-  /usr/bin/killall SystemUIServer >/dev/null 2>&1 || true
-  /usr/bin/killall cfprefsd >/dev/null 2>&1 || true
+  echo "inputiaPostinstallAction=stop-before-tis-registration"
   exit 14
 fi
 echo "inputiaPostinstallSignatureAccepted=true"
@@ -365,27 +277,22 @@ run_best_effort 8 lsregister-register-settings "$LSREGISTER" -f "$SETTINGS_APP"
 
 run_best_effort 12 inputia-register "$EXECUTABLE" --register-input-source
 
-run_login_best_effort 12 inputia-enable "$EXECUTABLE" --enable-input-source
-run_login_best_effort 12 inputia-normalize-hitoolbox "$EXECUTABLE" --normalize-hitoolbox
-run_login_best_effort 12 inputia-select "$EXECUTABLE" --select-input-source
-
-initial_enabled_output="$("$EXECUTABLE" --dump-enabled-input-source 2>&1 || true)"
-if ! /usr/bin/grep -q '^id='"$(target_mode_id)"'$' <<<"$initial_enabled_output"; then
-  ensure_hitoolbox_inputia_entries "$(target_mode_id)"
-  /usr/bin/killall cfprefsd >/dev/null 2>&1 || true
-  run_login_best_effort 12 inputia-select-after-hitoolbox "$EXECUTABLE" --select-input-source
+enabled_output="$(run_login_capture "$EXECUTABLE" --dump-enabled-input-source)"
+current_output="$(run_login_capture "$EXECUTABLE" --dump-current-input-source)"
+current_id="$(dump_value "$current_output" id)"
+target_id="$(target_mode_id)"
+printf '%s\n' "$enabled_output" | /usr/bin/sed 's/^/inputiaPostinstallEnabledTIS: /'
+post_refresh_tis_ready "$enabled_output"
+printf '%s\n' "$current_output" | /usr/bin/sed 's/^/inputiaPostinstallCurrentTIS: /'
+if [[ "$current_id" == "$target_id" ]]; then
+  echo "inputiaPostinstallCurrentMatchesTarget=true"
 else
-  echo "inputiaHIToolboxEnsure=skipped reason=tis-ready"
+  echo "inputiaPostinstallCurrentMatchesTarget=false"
 fi
-
-/usr/bin/killall TextInputMenuAgent >/dev/null 2>&1 || true
-/usr/bin/killall SystemUIServer >/dev/null 2>&1 || true
-/bin/sleep 1
-run_best_effort 12 inputia-register-after-refresh "$EXECUTABLE" --register-input-source
-run_login_best_effort 12 inputia-enable-after-refresh "$EXECUTABLE" --enable-input-source
-run_login_best_effort 12 inputia-normalize-after-refresh "$EXECUTABLE" --normalize-hitoolbox
-run_login_best_effort 12 inputia-select-after-refresh "$EXECUTABLE" --select-input-source
-/bin/sleep 1
-wait_for_postinstall_tis_selection "$(target_mode_id)"
+echo "inputiaPostinstallRegistered=true"
+echo "inputiaPostinstallTISReady=false reason=manual-add-required"
+echo "inputiaPostinstallRequiredAction=add-input-source-in-system-settings"
+echo "inputiaPostinstallNextStep=System Settings > Keyboard > Text Input > Edit > Add Inputia"
+echo "inputiaPostinstallOpenSettingsCommand=open 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension'"
 
 exit 0

@@ -62,6 +62,15 @@ require_grep() {
   fi
 }
 
+reject_grep() {
+  local pattern="$1"
+  local path="$2"
+  local reason="$3"
+  if /usr/bin/grep -q -- "$pattern" "$path"; then
+    fail "$reason"
+  fi
+}
+
 require_order() {
   local first_pattern="$1"
   local second_pattern="$2"
@@ -121,27 +130,29 @@ echo "pkgPostinstallSHA256=$pkg_postinstall_sha"
 
 require_grep 'INPUTIA_POSTINSTALL_SKIP_TIS' "$PKG_POSTINSTALL" "postinstall-missing-skip-tis"
 require_grep 'inputiaUserHostRemoved=true' "$PKG_POSTINSTALL" "postinstall-missing-user-host-cleanup"
-require_grep 'inputia-select' "$PKG_POSTINSTALL" "postinstall-missing-select"
-require_grep 'TextInputMenuAgent' "$PKG_POSTINSTALL" "postinstall-missing-textinputmenuagent-refresh"
-require_grep 'SystemUIServer' "$PKG_POSTINSTALL" "postinstall-missing-systemuiserver-refresh"
 require_grep 'INPUTIA_POSTINSTALL_SELF_CHECK' "$PKG_POSTINSTALL" "postinstall-missing-self-check"
 require_grep 'spctl --assess --type execute' "$PKG_POSTINSTALL" "postinstall-missing-spctl-assessment"
 require_grep 'INPUTIA_ALLOW_REJECTED_SIGNATURE' "$PKG_POSTINSTALL" "postinstall-missing-rejected-signature-override"
 require_grep 'inputiaPostinstallUsable=false reason=signature-rejected' "$PKG_POSTINSTALL" "postinstall-missing-signature-rejected-gate"
 require_grep 'inputiaPostinstallRequiredAction=sign-with-accepted-identity' "$PKG_POSTINSTALL" "postinstall-missing-signature-required-action"
 require_grep 'inputiaPostinstallSigningHint=rerun-build-with-INPUTIA_CODESIGN_IDENTITY-that-spctl-accepts' "$PKG_POSTINSTALL" "postinstall-missing-signature-hint"
-require_grep 'inputiaPostinstallAction=clear-inputia-preferences' "$PKG_POSTINSTALL" "postinstall-missing-signature-rejected-cleanup-action"
-require_grep '--clear-input-source-preferences' "$PKG_POSTINSTALL" "postinstall-missing-clear-input-source-preferences"
-require_grep 'inputiaPostRefreshEnabledTIS:' "$PKG_POSTINSTALL" "postinstall-missing-post-refresh-enabled-tis"
-require_grep 'inputiaPostRefreshTISReady=' "$PKG_POSTINSTALL" "postinstall-missing-post-refresh-tis-ready"
-require_grep 'inputiaPostRefreshCurrentTIS:' "$PKG_POSTINSTALL" "postinstall-missing-post-refresh-current-tis"
-require_grep 'inputiaPostRefreshTISStableCheck' "$PKG_POSTINSTALL" "postinstall-missing-post-refresh-stable-check"
-require_grep 'inputiaPostRefreshCurrentMatchesTarget=true' "$PKG_POSTINSTALL" "postinstall-missing-current-target-check"
+require_grep 'inputiaPostinstallAction=stop-before-tis-registration' "$PKG_POSTINSTALL" "postinstall-missing-signature-rejected-stop-action"
+require_grep 'inputiaPostinstallEnabledTIS:' "$PKG_POSTINSTALL" "postinstall-missing-enabled-tis-dump"
+require_grep 'inputiaPostinstallCurrentTIS:' "$PKG_POSTINSTALL" "postinstall-missing-current-tis-dump"
+require_grep 'inputiaPostinstallCurrentMatchesTarget=' "$PKG_POSTINSTALL" "postinstall-missing-current-target-summary"
+require_grep 'inputiaPostinstallRegistered=true' "$PKG_POSTINSTALL" "postinstall-missing-registered-summary"
+require_grep 'inputiaPostinstallTISReady=false reason=manual-add-required' "$PKG_POSTINSTALL" "postinstall-missing-manual-add-tis-ready"
+require_grep 'inputiaPostinstallRequiredAction=add-input-source-in-system-settings' "$PKG_POSTINSTALL" "postinstall-missing-manual-add-required-action"
+require_grep 'inputiaPostinstallNextStep=System Settings > Keyboard > Text Input > Edit > Add Inputia' "$PKG_POSTINSTALL" "postinstall-missing-manual-add-next-step"
+reject_grep '--clear-input-source-preferences' "$PKG_POSTINSTALL" "postinstall-still-clears-input-source-preferences"
+reject_grep '--enable-input-source' "$PKG_POSTINSTALL" "postinstall-still-enables-input-source"
+reject_grep '--normalize-hitoolbox' "$PKG_POSTINSTALL" "postinstall-still-normalizes-hitoolbox"
+reject_grep '--select-input-source' "$PKG_POSTINSTALL" "postinstall-still-selects-input-source"
+reject_grep 'TextInputMenuAgent' "$PKG_POSTINSTALL" "postinstall-still-restarts-textinputmenuagent"
+reject_grep 'SystemUIServer' "$PKG_POSTINSTALL" "postinstall-still-restarts-systemuiserver"
 require_order 'inputiaPostinstallSignatureAccepted=true' 'run_best_effort 12 inputia-register ' "$PKG_POSTINSTALL" "postinstall-register-before-signature-gate"
-require_order 'inputia-select' 'TextInputMenuAgent' "$PKG_POSTINSTALL" "postinstall-menu-refresh-before-select"
-require_order 'TextInputMenuAgent' 'SystemUIServer' "$PKG_POSTINSTALL" "postinstall-systemui-before-textinputmenuagent"
-require_order 'SystemUIServer' 'inputia-normalize-after-refresh' "$PKG_POSTINSTALL" "postinstall-normalize-before-systemui"
-require_order 'inputia-normalize-after-refresh' 'wait_for_postinstall_tis_selection "$(target_mode_id)"' "$PKG_POSTINSTALL" "postinstall-stable-check-before-normalize"
+require_order 'run_best_effort 12 inputia-register ' 'inputiaPostinstallEnabledTIS:' "$PKG_POSTINSTALL" "postinstall-tis-dump-before-register"
+require_order 'inputiaPostinstallCurrentTIS:' 'inputiaPostinstallRequiredAction=add-input-source-in-system-settings' "$PKG_POSTINSTALL" "postinstall-manual-action-before-current-dump"
 echo "postinstallBehaviorChecks=true"
 
 section "postinstall self-check"

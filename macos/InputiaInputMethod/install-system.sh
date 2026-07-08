@@ -339,12 +339,7 @@ else
   echo "systemInstallInputiaUsable=false reason=signature-rejected"
   echo "systemInstallRequiredAction=sign-with-accepted-identity"
   echo "systemInstallSigningHint=rerun-build-with-INPUTIA_CODESIGN_IDENTITY-that-spctl-accepts"
-  echo "systemInstallAction=clear-inputia-preferences"
-  run_login_best_effort 12 inputia-clear-input-source-preferences \
-    "$DEST_APP/Contents/MacOS/InputiaInputMethod" --clear-input-source-preferences
-  /usr/bin/killall TextInputMenuAgent >/dev/null 2>&1 || true
-  /usr/bin/killall SystemUIServer >/dev/null 2>&1 || true
-  /usr/bin/killall cfprefsd >/dev/null 2>&1 || true
+  echo "systemInstallAction=stop-before-tis-registration"
   exit 14
 fi
 
@@ -360,7 +355,6 @@ run_best_effort 12 inputia-dump-installed "$DEST_APP/Contents/MacOS/InputiaInput
 run_best_effort 12 inputia-register-before-refresh "$DEST_APP/Contents/MacOS/InputiaInputMethod" --register-input-source
 /usr/bin/killall TextInputMenuAgent >/dev/null 2>&1 || true
 /usr/bin/killall SystemUIServer >/dev/null 2>&1 || true
-/usr/bin/killall cfprefsd >/dev/null 2>&1 || true
 /bin/sleep 2
 run_best_effort 12 inputia-register-after-refresh "$DEST_APP/Contents/MacOS/InputiaInputMethod" --register-input-source
 echo "systemInstallRegistered=true"

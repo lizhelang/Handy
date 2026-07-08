@@ -1879,35 +1879,30 @@ final class InputiaInputMethodDiagnostics {
       domain: inputSourcesDomain
     )
 
-    let hitoolboxEnabled = deduplicatedPreferenceEntries(
+    let hitoolboxEnabledAfter = deduplicatedPreferenceEntries(
       hitoolboxEnabledBefore.filter { !isInputiaPreferenceEntry($0) }
     )
-    let hitoolboxSelected = deduplicatedPreferenceEntries(
+    let hitoolboxSelectedAfter = deduplicatedPreferenceEntries(
       hitoolboxSelectedBefore.filter { !isInputiaPreferenceEntry($0) }
     )
-    let hitoolboxHistory = deduplicatedPreferenceEntries(
+    let hitoolboxHistoryAfter = deduplicatedPreferenceEntries(
       hitoolboxHistoryBefore.filter { !isInputiaPreferenceEntry($0) }
     )
-    let thirdParty = deduplicatedPreferenceEntries(
+    let thirdPartyAfter = deduplicatedPreferenceEntries(
       thirdPartyBefore.filter { !isInputiaPreferenceEntry($0) }
     )
 
-    setPreferenceArray(hitoolboxEnabled, forKey: "AppleEnabledInputSources", domain: hitoolboxDomain)
-    setPreferenceArray(hitoolboxSelected, forKey: "AppleSelectedInputSources", domain: hitoolboxDomain)
-    setPreferenceArray(hitoolboxHistory, forKey: "AppleInputSourceHistory", domain: hitoolboxDomain)
-    setPreferenceArray(thirdParty, forKey: "AppleEnabledThirdPartyInputSources", domain: inputSourcesDomain)
-    _ = synchronizePreferences(domain: hitoolboxDomain)
-    _ = synchronizePreferences(domain: inputSourcesDomain)
-
-    print("inputSourcePreferencesClear=true")
+    print("inputSourcePreferencesClear=false")
+    print("inputSourcePreferencesClearSkipped=true reason=manual-hitoolbox-write-disabled")
+    print("inputSourcePreferencesClearRequiredAction=remove-inputia-via-system-settings-if-needed")
     print("hitoolboxEnabledBefore=\(hitoolboxEnabledBefore.count)")
-    print("hitoolboxEnabledAfter=\(hitoolboxEnabled.count)")
+    print("hitoolboxEnabledWouldAfter=\(hitoolboxEnabledAfter.count)")
     print("hitoolboxSelectedBefore=\(hitoolboxSelectedBefore.count)")
-    print("hitoolboxSelectedAfter=\(hitoolboxSelected.count)")
+    print("hitoolboxSelectedWouldAfter=\(hitoolboxSelectedAfter.count)")
     print("hitoolboxHistoryBefore=\(hitoolboxHistoryBefore.count)")
-    print("hitoolboxHistoryAfter=\(hitoolboxHistory.count)")
+    print("hitoolboxHistoryWouldAfter=\(hitoolboxHistoryAfter.count)")
     print("thirdPartyEnabledBefore=\(thirdPartyBefore.count)")
-    print("thirdPartyEnabledAfter=\(thirdParty.count)")
+    print("thirdPartyEnabledWouldAfter=\(thirdPartyAfter.count)")
   }
 
   private func dumpInputSource(includeAllInstalled: Bool) {
@@ -2128,53 +2123,6 @@ final class InputiaInputMethodDiagnostics {
       normalized[String(describing: key)] = value
     }
     return normalized
-  }
-
-  private func setPreferenceArray(_ entries: [[String: Any]], forKey key: String) {
-    setPreferenceArray(entries, forKey: key, domain: hitoolboxDomain)
-  }
-
-  private func setPreferenceArray(_ entries: [[String: Any]], forKey key: String, domain: CFString) {
-    CFPreferencesSetValue(
-      key as CFString,
-      entries as CFArray,
-      domain,
-      kCFPreferencesCurrentUser,
-      kCFPreferencesAnyHost
-    )
-    CFPreferencesSetAppValue(key as CFString, entries as CFArray, domain)
-  }
-
-  private func synchronizePreferences(domain: CFString) -> Bool {
-    let userHostSync = CFPreferencesSynchronize(domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
-    let appSync = CFPreferencesAppSynchronize(domain)
-    return userHostSync || appSync
-  }
-
-  private func writeHIToolboxPreferencePlist(
-    enabled: [[String: Any]],
-    selected: [[String: Any]],
-    history: [[String: Any]]
-  ) -> (ok: Bool, error: String?) {
-    guard let preferencesURL = hitoolboxPreferenceURL() else {
-      return (false, "missing-home")
-    }
-    var preferences = readHIToolboxPreferencePlist() ?? [:]
-
-    preferences["AppleEnabledInputSources"] = enabled
-    preferences["AppleSelectedInputSources"] = selected
-    preferences["AppleInputSourceHistory"] = history
-    do {
-      let data = try PropertyListSerialization.data(fromPropertyList: preferences, format: .xml, options: 0)
-      try FileManager.default.createDirectory(
-        at: preferencesURL.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-      )
-      try data.write(to: preferencesURL, options: .atomic)
-      return (true, nil)
-    } catch {
-      return (false, String(describing: error))
-    }
   }
 
   private func readHIToolboxPreferencePlist() -> [String: Any]? {

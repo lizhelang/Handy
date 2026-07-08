@@ -168,6 +168,20 @@ hitoolbox_defaults_readable() {
   fi
 }
 
+hitoolbox_key_contains_inputia() {
+  local key="$1"
+  local output
+  if ! output="$(/usr/bin/defaults read com.apple.HIToolbox "$key" 2>/dev/null)"; then
+    echo unknown
+    return
+  fi
+  if /usr/bin/grep -q 'com\.inputia\.inputmethod\.Inputia' <<<"$output"; then
+    echo true
+  else
+    echo false
+  fi
+}
+
 echo "app=$APP"
 echo "buildApp=$BUILD_APP"
 if [[ -d "$APP" ]]; then
@@ -230,6 +244,13 @@ else
 fi
 user_dir_ready="$(user_directory_ready)"
 hitoolbox_defaults_ok="$(hitoolbox_defaults_readable)"
+legacy_hitoolbox_enabled="$(hitoolbox_key_contains_inputia AppleEnabledInputSources)"
+legacy_hitoolbox_selected="$(hitoolbox_key_contains_inputia AppleSelectedInputSources)"
+if [[ "$legacy_hitoolbox_enabled" == "true" && "$current_matches" != "true" ]]; then
+  stale_hitoolbox_enabled=true
+else
+  stale_hitoolbox_enabled=false
+fi
 
 echo "tis.enabledMatches=${enabled_matches:-unknown}"
 echo "tis.installedMatches=${installed_matches:-unknown}"
@@ -244,6 +265,9 @@ echo "tis.currentID=${current_id:-unknown}"
 echo "tis.currentMatchesTarget=$current_matches"
 echo "tis.userDirectoryReady=$user_dir_ready"
 echo "tis.hitoolboxDefaultsReadable=$hitoolbox_defaults_ok"
+echo "tis.legacyHIToolboxInputiaEnabled=$legacy_hitoolbox_enabled"
+echo "tis.legacyHIToolboxInputiaSelected=$legacy_hitoolbox_selected"
+echo "tis.staleHIToolboxEnabledStateSuspected=$stale_hitoolbox_enabled"
 
 if [[ "$app_exists" != "true" ]]; then
   echo "tis.readinessBlockReason=app-missing"

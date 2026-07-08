@@ -109,6 +109,29 @@ process_state() {
   fi
 }
 
+frontmost_app_name() {
+  /usr/bin/python3 <<'PY'
+import subprocess
+import sys
+
+script = 'tell application "System Events" to get name of first application process whose frontmost is true'
+try:
+    result = subprocess.run(
+        ["/usr/bin/osascript", "-e", script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=2,
+    )
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+
+if result.returncode != 0:
+    sys.exit(result.returncode)
+print(result.stdout.strip())
+PY
+}
+
 admin_status() {
   if [[ "$APP" == "$USER_APP" ]]; then
     echo "adminInstallReady=true reason=user-scope"
@@ -158,7 +181,7 @@ gui_session_block_reason() {
   fi
 
   local frontmost_app
-  if ! frontmost_app="$(/usr/bin/osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true' 2>/dev/null)"; then
+  if ! frontmost_app="$(frontmost_app_name)"; then
     echo frontmost-unavailable
     return
   fi
