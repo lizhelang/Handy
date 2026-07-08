@@ -912,7 +912,13 @@ impl<E: ChineseEngine> InputiaCore<E> {
                 self.refresh_candidates();
             }
             (InputMode::Chinese, Key::Char(ch)) if is_punctuation(ch) => {
-                commit = Some(self.translate_punctuation(ch));
+                let punctuation = self.translate_punctuation(ch);
+                commit = if self.composing.is_empty() {
+                    Some(punctuation)
+                } else {
+                    let text = self.commit_visible_candidate_text_or_raw_composition(0);
+                    Some(format!("{text}{punctuation}"))
+                };
             }
             (InputMode::Chinese, Key::Backspace) => {
                 if self.composing.pop().is_none() {
@@ -1025,6 +1031,14 @@ impl<E: ChineseEngine> InputiaCore<E> {
         let commit = candidate.text;
         self.clear_composition();
         Some(commit)
+    }
+
+    fn commit_visible_candidate_text_or_raw_composition(&mut self, page_index: usize) -> String {
+        let Some(candidate) = self.visible_candidates().get(page_index).cloned() else {
+            return self.commit_raw_composition();
+        };
+        self.clear_composition();
+        candidate.text
     }
 
     fn apply_candidate_commit(&mut self, commit: CandidateCommit) -> Option<String> {
@@ -1518,6 +1532,38 @@ mod tests {
         core.handle_key(Key::Shift);
         let outcome = core.handle_key(Key::Char(','));
         assert_eq!(outcome.commit.as_deref(), Some(","));
+    }
+
+    #[test]
+    fn punctuation_commits_first_candidate_before_punctuation() {
+        let mut core = core();
+        core.handle_key(Key::Shift);
+        feed(&mut core, "ni");
+
+        let outcome = core.handle_key(Key::Char(','));
+
+        assert!(outcome.consumed);
+        assert_eq!(outcome.commit.as_deref(), Some("你,"));
+        assert_eq!(outcome.snapshot.composing, "");
+    }
+
+    #[test]
+    fn follow_mode_punctuation_commits_first_candidate_before_chinese_punctuation() {
+        let mut core = InputiaCore::new(
+            CoreSettings {
+                punctuation_preference: PunctuationPreference::FollowInputMode,
+                ..CoreSettings::default()
+            },
+            StubEngine,
+        );
+        core.handle_key(Key::Shift);
+        feed(&mut core, "ni");
+
+        let outcome = core.handle_key(Key::Char(','));
+
+        assert!(outcome.consumed);
+        assert_eq!(outcome.commit.as_deref(), Some("你，"));
+        assert_eq!(outcome.snapshot.composing, "");
     }
 
     #[test]

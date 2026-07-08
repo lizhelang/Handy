@@ -1027,8 +1027,8 @@ mod tests {
         assert_eq!(page_up["page"], 0);
         assert_eq!(page_up["visible_candidates"][0]["text"], "中国");
 
-        let commit = handle_json(inputia_session_handle_special(session, KEY_SPACE));
-        assert_eq!(commit["commit"], "中国");
+        let commit = handle_json(inputia_session_handle_char(session, ',' as u32));
+        assert_eq!(commit["commit"], "中国,");
         assert_eq!(commit["composing"], "");
 
         inputia_session_free(session);
@@ -1776,7 +1776,8 @@ mod tests {
         assert_eq!(latest["visible_candidates"].as_array().unwrap().len(), 2);
 
         let comma = handle_json(inputia_session_handle_char(session, ',' as u32));
-        assert_eq!(comma["commit"], "，");
+        assert_eq!(comma["commit"], "中国，");
+        assert_eq!(comma["composing"], "");
 
         inputia_session_free(session);
     }

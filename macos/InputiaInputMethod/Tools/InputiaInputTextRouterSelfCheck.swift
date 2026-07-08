@@ -45,6 +45,7 @@ struct InputiaInputTextRouterSelfCheck {
     let carriageReturnOutcomes = routeInChineseMode("ni\r")
     let lineFeedOutcomes = routeInChineseMode("ni\n")
     let spaceOutcomes = routeInChineseMode("ni ")
+    let punctuationOutcomes = routeInChineseMode("ni,")
     let plainSpaceOutcomes = routeInChineseMode(" ")
     let simplifiedBridge = InputiaRustBridge.temporarySettingsForDiagnostics(chineseScript: "simplified")
     let traditionalBridge = InputiaRustBridge.temporarySettingsForDiagnostics(chineseScript: "traditional")
@@ -57,6 +58,8 @@ struct InputiaInputTextRouterSelfCheck {
       && lineFeedOutcomes.last?.composing == ""
     let composingSpaceCommitsCandidate = spaceOutcomes.last?.commit == "你"
       && spaceOutcomes.last?.composing == ""
+    let composingPunctuationCommitsCandidateThenPunctuation = punctuationOutcomes.last?.commit == "你,"
+      && punctuationOutcomes.last?.composing == ""
     let plainSpacePassesThrough = plainSpaceOutcomes.last?.consumed == false
       && plainSpaceOutcomes.last?.commit == nil
 
@@ -74,6 +77,7 @@ struct InputiaInputTextRouterSelfCheck {
     let ok = carriageReturnCommitsRaw
       && lineFeedCommitsRaw
       && composingSpaceCommitsCandidate
+      && composingPunctuationCommitsCandidateThenPunctuation
       && plainSpacePassesThrough
       && routeEnterAction
       && routeEnterPassesThroughWithoutComposing
@@ -87,6 +91,7 @@ struct InputiaInputTextRouterSelfCheck {
     emit("carriageReturnCommitsRaw=\(carriageReturnCommitsRaw)")
     emit("lineFeedCommitsRaw=\(lineFeedCommitsRaw)")
     emit("composingSpaceCommitsCandidate=\(composingSpaceCommitsCandidate)")
+    emit("composingPunctuationCommitsCandidateThenPunctuation=\(composingPunctuationCommitsCandidateThenPunctuation)")
     emit("plainSpacePassesThrough=\(plainSpacePassesThrough)")
     emit("routeEnterAction=\(routeEnterAction)")
     emit("routeEnterPassesThroughWithoutComposing=\(routeEnterPassesThroughWithoutComposing)")
