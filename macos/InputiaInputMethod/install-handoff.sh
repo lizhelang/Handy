@@ -96,27 +96,43 @@ terminal_installer_command="sudo /usr/sbin/installer -pkg $pkg_quoted -target /"
 open_installer_command="/usr/bin/open $pkg_quoted"
 install_check_command="cd $repo_quoted && ./install-check.sh"
 await_command="cd $repo_quoted && ./await-system-install.sh"
-
-install_check_output="$("$ROOT_DIR/install-check.sh" 2>&1 || true)"
-install_check_passed="$(/usr/bin/awk -F= '$1 == "installCheckPassed" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
-install_check_block_reasons="$(/usr/bin/awk -F= '$1 == "installCheckBlockReasons" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
-install_check_required_action="$(/usr/bin/awk -F= '$1 == "installCheckRequiredAction" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
-install_check_required_actions="$(/usr/bin/awk -F= '$1 == "installCheckRequiredActions" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
-settings_matches_build="$(/usr/bin/awk -F= '$1 == "settingsMatchesBuild" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
-build_settings_version="$(/usr/bin/awk -F= '$1 == "buildSettingsVersion" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
-build_settings_expected_host_cdhash="$(/usr/bin/awk -F= '$1 == "buildSettingsExpectedHostCDHash" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
-system_settings_version="$(/usr/bin/awk -F= '$1 == "systemSettingsVersion" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
-system_settings_expected_host_cdhash="$(/usr/bin/awk -F= '$1 == "systemSettingsExpectedHostCDHash" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
 pkg_verification_passed="$(/usr/bin/awk -F= '$1 == "pkgVerificationPassed" { print $2; found = 1; exit } END { if (!found) print "unknown" }' "$BUILD_LOG")"
 repair_tis_duplicates_command="cd $repo_quoted && INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh"
-if [[ ",$install_check_block_reasons," == *,tis-duplicate-matches,* ]]; then
-  repair_tis_duplicates_required=true
-else
-  repair_tis_duplicates_required=false
-fi
 
-/bin/mkdir -p "$(/usr/bin/dirname "$HANDOFF_PATH")"
-/bin/cat >"$HANDOFF_PATH" <<EOF
+install_check_passed=pending
+install_check_block_reasons=pending
+install_check_required_action=pending
+install_check_required_actions=pending
+settings_matches_build=pending
+build_settings_version=unknown
+build_settings_expected_host_cdhash=unknown
+system_settings_version=unknown
+system_settings_expected_host_cdhash=unknown
+repair_tis_duplicates_required=false
+
+capture_install_check_summary() {
+  local install_check_output
+
+  install_check_output="$("$ROOT_DIR/install-check.sh" 2>&1 || true)"
+  install_check_passed="$(/usr/bin/awk -F= '$1 == "installCheckPassed" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+  install_check_block_reasons="$(/usr/bin/awk -F= '$1 == "installCheckBlockReasons" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+  install_check_required_action="$(/usr/bin/awk -F= '$1 == "installCheckRequiredAction" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+  install_check_required_actions="$(/usr/bin/awk -F= '$1 == "installCheckRequiredActions" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+  settings_matches_build="$(/usr/bin/awk -F= '$1 == "settingsMatchesBuild" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+  build_settings_version="$(/usr/bin/awk -F= '$1 == "buildSettingsVersion" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+  build_settings_expected_host_cdhash="$(/usr/bin/awk -F= '$1 == "buildSettingsExpectedHostCDHash" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+  system_settings_version="$(/usr/bin/awk -F= '$1 == "systemSettingsVersion" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+  system_settings_expected_host_cdhash="$(/usr/bin/awk -F= '$1 == "systemSettingsExpectedHostCDHash" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+  if [[ ",$install_check_block_reasons," == *,tis-duplicate-matches,* ]]; then
+    repair_tis_duplicates_required=true
+  else
+    repair_tis_duplicates_required=false
+  fi
+}
+
+write_handoff_file() {
+  /bin/mkdir -p "$(/usr/bin/dirname "$HANDOFF_PATH")"
+  /bin/cat >"$HANDOFF_PATH" <<EOF
 Inputia 安装交接清单
 
 sourceBranch=$source_branch
@@ -171,6 +187,11 @@ installCheckRequiredAction=none
 installCheckRequiredActions=none
 installCheckPassed=true
 EOF
+}
+
+write_handoff_file
+capture_install_check_summary
+write_handoff_file
 
 echo "installHandoffReady=true"
 echo "installHandoffPath=$HANDOFF_PATH"
