@@ -25717,6 +25717,108 @@ pgrep verify/build/status/tis processes
 - 本轮不要再把 Developer ID / notarization 当作 MVP 阻塞；Mac mini 已进入与 MacBook 对齐的本地开发 Gatekeeper disabled 方向。
 - 下一步应继续终端优先定位菜单栏代理为什么没有把 `AppleEnabledThirdPartyInputSources` 中的 Inputia 渲染进输入菜单；在 `menuReadiness=true` 前仍不要跑真实 GUI smoke。
 
+## v63 Mac mini：纠偏安装主路径，停止伪造 HIToolbox enabled 状态
+
+时间：2026-07-08 16:50:00 +0800
+
+纠偏结论：
+
+- 之前的 blocker 不是 macOS 系统坏，也不是继续深挖 Developer ID / notarization。
+- 真正的问题是安装流程绕过了系统输入源添加 UI：脚本把“复制 bundle + TISRegisterInputSource 注册/刷新缓存”和“用户启用输入源”混成了自动写 `AppleEnabledInputSources` / `AppleSelectedInputSources` / `AppleEnabledThirdPartyInputSources`。
+- 这些手写偏好会让 TIS dump 一度看似 ready，但菜单栏仍不可信；脚本不应继续伪造 HIToolbox enabled/selected 状态。
+- 正式本地开发安装主路径改为：复制 app 到输入法目录、调用 `TISRegisterInputSource`、打开 System Settings → Keyboard → Text Input → Edit，让用户手动 Add Inputia。
+
+代码/脚本调整：
+
+- `install-user.sh`：
+  - 目标优先 `~/Library/Input Methods/InputiaInputMethod.app`。
+  - 不再调用 `--enable-input-source`、`--normalize-hitoolbox`、`--select-input-source`。
+  - 安装后只调用 `--register-input-source`。
+  - 改为直接 `ditto` 到用户级目标目录，避免临时 app 搬运后目标状态不稳定。
+- `install-system.sh`：
+  - 保留系统级复制/注册能力作为后备。
+  - 不再自动 enable/normalize/select，也不再等待 fake TIS stable。
+  - 输出 `systemInstallRequiredAction=add-input-source-in-system-settings`。
+- `main.swift`：
+  - `--normalize-hitoolbox` 保持 no-op 诊断，不再写 HIToolbox plist 或 enabled/selected 偏好。
+- `status.sh` / `gui-smoke-readiness.sh`：
+  - 默认优先用户级 target。
+  - 用户级 target 不因缺 sudo 被标为 `admin-required`。
+  - GUI smoke summary 增加 current source 判断。
+- `tis-readiness.sh`：
+  - readiness 必须同时满足 app 存在、签名 accepted、target enabled、图标匹配、当前输入源已切到 Inputia。
+  - 当前未切到 Inputia 时返回 `tis.readinessBlockReason=target-not-selected`。
+
+本轮终端动作：
+
+```text
+移除系统级残留
+  /Library/Input Methods/InputiaInputMethod.app: absent
+  /Library/Input Methods/IputiaInputMethod.app: absent
+
+./macos/InputiaInputMethod/install-user.sh
+  userInstallBuild=true
+  registerStatus=0
+  userInstallVerified=true
+  userInstallTISReady=false
+  userInstallRequiredAction=add-input-source-in-system-settings
+  userInstallPath=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  userInstallRegistered=true
+  userInstallSystemResiduePresent=false
+  settingsLauncherInstalled=/Users/minizl/Applications/Inputia 设置.app
+
+open 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension'
+  openedKeyboardSettings=true
+```
+
+当前终端状态：
+
+```text
+./macos/InputiaInputMethod/status.sh
+  system host exists=false
+  user host exists=true
+  userMatchesBuild=true
+  userHostConflict=false
+  targetPath=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  targetScope=user
+  targetExists=true
+  targetMatchesBuild=true
+  targetSettingsMatchesBuildVersion=true
+  statusTISCurrentID=com.tencent.inputmethod.wetype.pinyin
+  statusTISCurrentMatchesTarget=false
+  statusMenuReadiness=false
+  statusMenuBlockReason=inputia-menu-item-missing
+  statusGuiSmokeReady=false reason=tis-not-ready,menu-inputia-menu-item-missing
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  appExists=true
+  appMatchesBuild=true
+  appSignatureAccepted=true
+  tis.targetEnabledMatches=2
+  tis.hansIconMatchesApp=true
+  tis.currentID=com.tencent.inputmethod.wetype.pinyin
+  tis.currentMatchesTarget=false
+  tis.readinessBlockReason=target-not-selected
+  tis.requiredAction=select-inputia-after-manual-add
+  tisReadiness=false
+
+./macos/InputiaInputMethod/gui-smoke-readiness.sh "/Users/minizl/Library/Input Methods/InputiaInputMethod.app"
+  target.exists=true
+  target.matchesBuild=true
+  settings.matchesBuild=true
+  tis.blockReason=target-not-selected
+  textEditPreflight=not-running
+  safariPreflight=not-running
+  inputiaHostPreflight=not-running
+  guiSmokeReadinessReady=false reason=tis-not-ready
+```
+
+结论：
+
+- 用户级 Inputia bundle 已安装并注册，系统级重复安装已清掉。
+- 现在等待用户在系统设置 Text Input → Edit → Add Inputia，并从菜单选中 Inputia。
+- 在 `includeAllInstalled=false` 能看到 Inputia、`TISSelectInputSource` 返回 0、`tis.currentMatchesTarget=true`、菜单栏出现 Inputia 之前，不运行 TextEdit/Safari/Clipboard GUI smoke。
+
 ## v63 Mac mini：Gatekeeper 已放行，但当前用户目录服务阻塞系统安装
 
 时间：2026-07-08 16:30:00 +0800
@@ -25817,3 +25919,116 @@ INPUTIA_GUI_SMOKE_READINESS_SELF_CHECK=1 ./macos/InputiaInputMethod/gui-smoke-re
 - Gatekeeper / spctl 已不是 blocker；签名被本地开发模式放行。
 - 当前系统安装没有成功，因为当前 Codex/终端会话 UID 501 无 passwd 记录，导致管理员通道、用户偏好服务、TIS readiness 和 GUI bootstrap 同时不可用。
 - 在 `systemMatchesBuild=true`、`tisReadiness=true`、`statusUserDirectoryReady=true`、`statusGuiSessionBlockReason=none` 之前，不运行 TextEdit/Safari/Clipboard GUI smoke。
+
+## v65 Mac mini：缺失安装版必须报告 `app-missing`，不得误判为签名 blocker
+
+时间：2026-07-08 17:00:00 +0800
+
+背景：
+
+- 参考 toyimk 与 Karukan 的 macOS IMK 开发安装经验：首次安装后让系统设置添加输入源，后续更新切走输入法并重启 host，不能把手写 HIToolbox 偏好当作真实菜单栏 ready。
+- 用户已在 Mac mini 系统设置里关闭 Gatekeeper assessments，本轮继续只做终端验证，不做 TextEdit/Safari/Clipboard GUI smoke。
+- 当前系统级和用户级 Inputia bundle 都已清空；`spctl --assess` 在 Gatekeeper disabled 模式下即使目标路径不存在也可能输出 accepted/override，因此不能把它单独当成“安装成功”证据。
+
+本轮终端验证：
+
+```text
+spctl --status
+  assessments disabled
+  exit=1
+
+spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  /Library/Input Methods/InputiaInputMethod.app: accepted
+  override=security disabled
+  exit=0
+
+存在性检查
+  exists=false path=/Library/Input Methods/InputiaInputMethod.app
+  exists=false path=/Users/minizl/Library/Input Methods/InputiaInputMethod.app
+  exists=false path=/Users/minizl/Applications/Inputia 设置.app
+
+./macos/InputiaInputMethod/install-system.sh
+  systemInstallNeedsAdmin=true
+  systemInstallCurrentUID=501
+  systemInstallCurrentUserName=unknown
+  systemInstallUserDirectoryReady=false
+  systemInstallUserDirectoryBlockReason=missing-passwd-record
+  systemInstallAdminChannelReady=false reason=user-directory-unavailable
+  systemInstallReady=false reason=user-directory-unavailable
+  systemInstallBlockReason=missing-passwd-record
+  systemInstallRequiredAction=repair-current-user-directory-service
+  exit=13
+
+./macos/InputiaInputMethod/status.sh
+  buildVersion=44
+  buildCDHash=0ec2f7d06f720212e3e6039eb19fc84b984d06da
+  system host exists=false
+  user host exists=false
+  statusTargetPath=/Library/Input Methods/InputiaInputMethod.app
+  statusTargetExists=false
+  statusTargetMatchesBuild=false
+  statusSignatureAccepted=false
+  statusCurrentUserName=unknown
+  statusUserDirectoryReady=false
+  statusUserDirectoryBlockReason=missing-passwd-record
+  statusHIToolboxDefaultsReadable=false
+  statusHIToolboxDefaultsBlockReason=domain-missing
+  statusGuiSmokeBlockReasons=app-missing,target-cdhash-mismatch,admin-required,settings-version-mismatch,tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,gui-bootstrap-unavailable
+  statusGuiSmokeReady=false reason=app-missing,target-cdhash-mismatch,admin-required,settings-version-mismatch,tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,gui-bootstrap-unavailable
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  appExists=false
+  appSignatureAccepted=false
+  appMatchesBuild=false
+  tis.enabledMatches=0
+  tis.installedMatches=0
+  tis.currentID=com.apple.keylayout.ABC
+  tis.currentMatchesTarget=false
+  tis.userDirectoryReady=false
+  tis.hitoolboxDefaultsReadable=false
+  tis.readinessBlockReason=app-missing
+  tis.requiredAction=install-inputia-app
+  tisReadiness=false
+```
+
+脚本修正：
+
+- `tis-readiness.sh`：新增 `appExists=`，目标 app 不存在时优先输出 `tis.readinessBlockReason=app-missing` 和 `tis.requiredAction=install-inputia-app`，不再把缺失路径归类为 `signature-rejected`。
+- `status.sh`：新增 `statusTargetExists=`，只有目标 app 存在且签名未 accepted 时才追加 `signature-rejected`；缺失 app 会进入 `app-missing`。
+- `gui-smoke-readiness.sh` / `await-system-install.sh`：GUI smoke 前置状态同样优先报告 `app-missing`，并保留组合阻塞原因，防止真实 smoke 在 app 不存在时启动。
+- `verify-nongui.sh`：补齐缺失 app 的静态和动态回归覆盖。
+
+验证：
+
+```text
+bash -n macos/InputiaInputMethod/tis-readiness.sh macos/InputiaInputMethod/verify-nongui.sh
+  ok
+
+zsh -n macos/InputiaInputMethod/status.sh macos/InputiaInputMethod/gui-smoke-readiness.sh macos/InputiaInputMethod/await-system-install.sh macos/InputiaInputMethod/install-user.sh
+  ok
+
+INPUTIA_AWAIT_UI_STATUS_SELF_CHECK=1 ./macos/InputiaInputMethod/await-system-install.sh
+  awaitUiStatusSelfCheck reason=app-missing uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=app-missing uiSmokeBlockReasons=target-cdhash-mismatch,app-missing
+  awaitUiStatusSelfCheck reason=signature-rejected uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=signature-rejected uiSmokeBlockReasons=signature-rejected
+
+INPUTIA_GUI_SMOKE_READINESS_SELF_CHECK=1 ./macos/InputiaInputMethod/gui-smoke-readiness.sh
+  guiSmokeReadinessSelfCheck case=appmissing expected=app-missing actual=app-missing
+  guiSmokeReadinessSelfCheck appMissingBlockReasons=app-missing,tis-not-ready actual=app-missing,tis-not-ready
+  guiSmokeReadinessSelfCheck=true
+
+/tmp/inputia-verify-nongui-20260708-165322-app-missing.log
+  awaitUiNotReadyNoLaunchPassed=true
+  installNoPrompt.rc=13
+  installNoPrompt: systemInstallReady=false reason=user-directory-unavailable
+  installNoPrompt: systemInstallBlockReason=missing-passwd-record
+  installNoPrompt: systemInstallRequiredAction=repair-current-user-directory-service
+  residue=false
+  tmpResidue=false
+  nonGuiVerificationPassed=true
+```
+
+结论：
+
+- Mac mini 已进入 MacBook 对照确认的本地开发 Gatekeeper-disabled 路径；`spctl` 签名 blocker 已不是当前 blocker。
+- 当前不能声称安装成功：系统目标 app 不存在，用户级残留也不存在；标准系统安装入口被当前 UID 501 缺少 passwd 记录挡住。
+- 下一步不是运行 GUI smoke，也不是继续 notarization；应先修复当前登录会话/目录服务，让 `whoami`、`pwd.getpwuid(501)`、`sudo`、`launchctl print gui/501` 恢复正常，然后再重新跑 `install-system.sh`、`status.sh`、`tis-readiness.sh`。

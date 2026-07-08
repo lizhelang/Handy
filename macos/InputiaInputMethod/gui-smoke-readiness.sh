@@ -9,7 +9,8 @@ SYSTEM_SETTINGS_APP="/Applications/Inputia 设置.app"
 USER_APP="${INPUTIA_USER_APP_FOR_TEST:-$HOME/Library/Input Methods/InputiaInputMethod.app}"
 USER_LEGACY_APP="${INPUTIA_USER_LEGACY_APP_FOR_TEST:-$HOME/Library/Input Methods/IputiaInputMethod.app}"
 USER_SETTINGS_APP="${INPUTIA_USER_SETTINGS_APP_FOR_TEST:-$HOME/Applications/Inputia 设置.app}"
-DEFAULT_APP="/Library/Input Methods/InputiaInputMethod.app"
+SYSTEM_APP="${INPUTIA_SYSTEM_APP_FOR_TEST:-/Library/Input Methods/InputiaInputMethod.app}"
+DEFAULT_APP="$SYSTEM_APP"
 if [[ -d "$USER_APP" ]]; then
   DEFAULT_APP="$USER_APP"
 fi
@@ -183,6 +184,8 @@ readiness_reason() {
 
   if [[ "$pkg_ready" != "true" ]]; then
     echo pkg-not-ready
+  elif [[ "$tis_block_reason" == "app-missing" ]]; then
+    echo app-missing
   elif [[ "$app_matches" != "true" ]]; then
     if [[ "$admin_ready" != "true" ]]; then
       echo admin-required
@@ -245,7 +248,11 @@ readiness_block_reasons() {
     append_reason pkg-not-ready
   fi
   if [[ "$app_matches" != "true" ]]; then
-    append_reason target-cdhash-mismatch
+    if [[ "$tis_block_reason" == "app-missing" ]]; then
+      append_reason app-missing
+    else
+      append_reason target-cdhash-mismatch
+    fi
     [[ "$admin_ready" != "true" ]] && append_reason admin-required
   fi
   if [[ "$settings_matches" != "true" ]]; then
@@ -325,6 +332,12 @@ if [[ "${INPUTIA_GUI_SMOKE_READINESS_SELF_CHECK:-0}" == "1" ]]; then
     echo "guiSmokeReadinessSelfCheck=false case=signature"
     exit 1
   fi
+  app_missing_reason="$(readiness_reason true false true false none not-running not-running true not-running false app-missing)"
+  echo "guiSmokeReadinessSelfCheck case=appmissing expected=app-missing actual=$app_missing_reason"
+  if [[ "$app_missing_reason" != "app-missing" ]]; then
+    echo "guiSmokeReadinessSelfCheck=false case=appmissing"
+    exit 1
+  fi
   multi_reasons="$(readiness_block_reasons true true false false none not-running not-running false not-running false)"
   echo "guiSmokeReadinessSelfCheck blockReasons=settings-version-mismatch,admin-required,tis-not-ready actual=$multi_reasons"
   if [[ "$multi_reasons" != *"settings-version-mismatch"* ||
@@ -349,6 +362,12 @@ if [[ "${INPUTIA_GUI_SMOKE_READINESS_SELF_CHECK:-0}" == "1" ]]; then
   echo "guiSmokeReadinessSelfCheck signatureBlockReasons=signature-rejected actual=$signature_reasons"
   if [[ "$signature_reasons" != "signature-rejected" ]]; then
     echo "guiSmokeReadinessSelfCheck=false case=signature-block-reasons"
+    exit 1
+  fi
+  app_missing_reasons="$(readiness_block_reasons true false true false none not-running not-running true not-running false app-missing)"
+  echo "guiSmokeReadinessSelfCheck appMissingBlockReasons=app-missing,tis-not-ready actual=$app_missing_reasons"
+  if [[ "$app_missing_reasons" != *"app-missing"* || "$app_missing_reasons" != *"tis-not-ready"* ]]; then
+    echo "guiSmokeReadinessSelfCheck=false case=app-missing-block-reasons"
     exit 1
   fi
   echo "guiSmokeReadinessSelfCheck=true"
@@ -423,7 +442,7 @@ echo "safariPreflight=$safari_state"
 echo "inputiaHostPreflight=$inputia_state"
 if [[ -e "$USER_LEGACY_APP" ]]; then
   user_host_conflict=true
-elif [[ -e "$USER_APP" && -d "/Library/Input Methods/InputiaInputMethod.app" ]]; then
+elif [[ -e "$USER_APP" && -d "$SYSTEM_APP" ]]; then
   user_host_conflict=true
 else
   user_host_conflict=false

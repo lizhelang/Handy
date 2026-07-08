@@ -170,6 +170,12 @@ hitoolbox_defaults_readable() {
 
 echo "app=$APP"
 echo "buildApp=$BUILD_APP"
+if [[ -d "$APP" ]]; then
+  app_exists=true
+else
+  app_exists=false
+fi
+echo "appExists=$app_exists"
 build_cdhash="$(cdhash "$BUILD_APP")"
 app_cdhash="$(cdhash "$APP")"
 echo "buildCDHash=$build_cdhash"
@@ -239,14 +245,19 @@ echo "tis.currentMatchesTarget=$current_matches"
 echo "tis.userDirectoryReady=$user_dir_ready"
 echo "tis.hitoolboxDefaultsReadable=$hitoolbox_defaults_ok"
 
-if [[ "$signature_accepted" != "true" ]]; then
+if [[ "$app_exists" != "true" ]]; then
+  echo "tis.readinessBlockReason=app-missing"
+  echo "tis.requiredAction=install-inputia-app"
+  echo "tisReadiness=false"
+elif [[ "$signature_accepted" != "true" ]]; then
   echo "tis.readinessBlockReason=signature-rejected"
   echo "tis.requiredAction=sign-with-accepted-identity"
   echo "tisReadiness=false"
 elif [[ "${target_enabled_matches:-0}" != "0" &&
   -n "${target_enabled_matches:-}" &&
   "$icon_matches" == "true" &&
-  "${hans_enabled:-false}" == "true" ]]; then
+  "${hans_enabled:-false}" == "true" &&
+  "$current_matches" == "true" ]]; then
   echo "tis.readinessBlockReason=none"
   echo "tisReadiness=true"
 else
@@ -261,6 +272,9 @@ else
     echo "tis.readinessBlockReason=icon-mismatch"
   elif [[ "${hans_enabled:-false}" != "true" ]]; then
     echo "tis.readinessBlockReason=hans-disabled"
+  elif [[ "$current_matches" != "true" ]]; then
+    echo "tis.readinessBlockReason=target-not-selected"
+    echo "tis.requiredAction=select-inputia-after-manual-add"
   else
     echo "tis.readinessBlockReason=unknown"
   fi

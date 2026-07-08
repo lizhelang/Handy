@@ -14,8 +14,6 @@ DEST_SETTINGS_DIR="$HOME/Applications"
 DEST_SETTINGS_APP="$DEST_SETTINGS_DIR/$SETTINGS_APP_NAME"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 TMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/inputia-install-user.XXXXXX")"
-TMP_APP="$TMP_ROOT/$APP_NAME"
-TMP_SETTINGS_APP="$TMP_ROOT/$SETTINGS_APP_NAME"
 BUILD_LOG="$TMP_ROOT/build.log"
 
 cleanup() {
@@ -86,23 +84,16 @@ mkdir -p "$DEST_DIR" "$DEST_SETTINGS_DIR"
 killall InputiaInputMethod >/dev/null 2>&1 || true
 killall IputiaInputMethod >/dev/null 2>&1 || true
 "$LSREGISTER" -u "$LEGACY_APP" >/dev/null 2>&1 || true
-/usr/bin/ditto --noextattr --noqtn "$SOURCE_APP" "$TMP_APP"
-/usr/bin/ditto --noextattr --noqtn "$SOURCE_SETTINGS_APP" "$TMP_SETTINGS_APP"
 
 source_cdhash="$(cdhash "$SOURCE_APP")"
-tmp_cdhash="$(cdhash "$TMP_APP")"
-if [[ -z "$source_cdhash" || "$tmp_cdhash" != "$source_cdhash" ]]; then
-  echo "userInstallVerified=false reason=temp-cdhash-mismatch" >&2
-  exit 1
-fi
-if [[ ! -f "$TMP_APP/Contents/Info.plist" || ! -x "$TMP_APP/Contents/MacOS/InputiaInputMethod" ]]; then
-  echo "userInstallVerified=false reason=temp-app-incomplete" >&2
-  exit 1
-fi
-
 rm -rf "$DEST_APP" "$LEGACY_APP" "$DEST_SETTINGS_APP"
-/bin/mv "$TMP_APP" "$DEST_APP"
-/bin/mv "$TMP_SETTINGS_APP" "$DEST_SETTINGS_APP"
+/usr/bin/ditto --noextattr --noqtn "$SOURCE_APP" "$DEST_APP"
+/usr/bin/ditto --noextattr --noqtn "$SOURCE_SETTINGS_APP" "$DEST_SETTINGS_APP"
+
+if [[ ! -f "$DEST_APP/Contents/Info.plist" || ! -x "$DEST_APP/Contents/MacOS/InputiaInputMethod" ]]; then
+  echo "userInstallVerified=false reason=dest-app-incomplete" >&2
+  exit 1
+fi
 
 "$LSREGISTER" -u "$DEST_APP" >/dev/null 2>&1 || true
 "$LSREGISTER" -f "$DEST_APP" >/dev/null 2>&1 || true

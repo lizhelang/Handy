@@ -205,12 +205,17 @@ current_source_id() {
 }
 
 tis_status_line() {
-  local dump enabled_matches installed_matches hans_icon hans_enabled hans_selected icon_matches current_id current_matches block_reason signature_accepted
+  local app_exists dump enabled_matches installed_matches hans_icon hans_enabled hans_selected icon_matches current_id current_matches block_reason signature_accepted
   if [[ ! -x "$TIS_TOOL" ]]; then
     echo "tis.tool=false path=$TIS_TOOL"
     return
   fi
 
+  if [[ -d "$APP" ]]; then
+    app_exists=true
+  else
+    app_exists=false
+  fi
   signature_accepted="$(app_signature_accepted "$APP")"
   dump="$(INPUTIA_APP="$APP" "$TIS_TOOL" --dump 2>/dev/null || true)"
   enabled_matches="$(tis_matches "$dump" false)"
@@ -230,7 +235,9 @@ tis_status_line() {
     current_matches=false
   fi
   block_reason=unknown
-  if [[ "$signature_accepted" != "true" ]]; then
+  if [[ "$app_exists" != "true" ]]; then
+    block_reason=app-missing
+  elif [[ "$signature_accepted" != "true" ]]; then
     block_reason=signature-rejected
   elif [[ "${enabled_matches:-0}" != "0" &&
     -n "${enabled_matches:-}" &&
@@ -244,7 +251,7 @@ tis_status_line() {
   elif [[ "${hans_enabled:-false}" != "true" ]]; then
     block_reason=hans-disabled
   fi
-  echo "tis.tool=true tis.appSignatureAccepted=$signature_accepted tis.enabledMatches=${enabled_matches:-unknown} tis.installedMatches=${installed_matches:-unknown} tis.hansIconMatchesApp=$icon_matches tis.hansEnabled=${hans_enabled:-unknown} tis.hansSelected=${hans_selected:-unknown} tis.currentID=${current_id:-unknown} tis.currentMatchesTarget=$current_matches tis.readinessBlockReason=$block_reason"
+  echo "tis.tool=true tis.appExists=$app_exists tis.appSignatureAccepted=$signature_accepted tis.enabledMatches=${enabled_matches:-unknown} tis.installedMatches=${installed_matches:-unknown} tis.hansIconMatchesApp=$icon_matches tis.hansEnabled=${hans_enabled:-unknown} tis.hansSelected=${hans_selected:-unknown} tis.currentID=${current_id:-unknown} tis.currentMatchesTarget=$current_matches tis.readinessBlockReason=$block_reason"
 }
 
 tis_ready() {
@@ -366,7 +373,7 @@ gui_session_block_reason() {
 ui_smoke_status_line() {
   local target_matches_build="$1"
   local tis_status_line="$2"
-  local gui_block_reason textedit_state safari_state inputia_state would_start block_reasons user_host_conflict_state
+  local gui_block_reason textedit_state safari_state inputia_state would_start block_reasons user_host_conflict_state tis_block_reason
   if [[ "${INPUTIA_RUN_UI_SMOKE:-0}" != "1" ]]; then
     echo "uiSmokeRequested=false uiSmokeWouldStart=false uiSmokeBlockReason=ui-smoke-disabled uiSmokeBlockReasons=ui-smoke-disabled"
     return
@@ -374,21 +381,26 @@ ui_smoke_status_line() {
 
   block_reasons=""
   user_host_conflict_state="$(user_host_conflict)"
+  tis_block_reason="$(tis_block_reason_from_status "$tis_status_line")"
   if [[ "$target_matches_build" != "true" ]]; then
     block_reasons="$(append_block_reason "$block_reasons" "target-cdhash-mismatch")"
   fi
   if ! tis_ready "$tis_status_line"; then
-    block_reasons="$(append_block_reason "$block_reasons" "$(tis_block_reason_from_status "$tis_status_line")")"
+    block_reasons="$(append_block_reason "$block_reasons" "$tis_block_reason")"
   fi
   if [[ "$user_host_conflict_state" == "true" ]]; then
     block_reasons="$(append_block_reason "$block_reasons" "user-host-conflict")"
   fi
   if [[ "$target_matches_build" != "true" ]]; then
-    echo "uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=target-cdhash-mismatch uiSmokeBlockReasons=$block_reasons"
+    if [[ "$tis_block_reason" == "app-missing" ]]; then
+      echo "uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=app-missing uiSmokeBlockReasons=$block_reasons"
+    else
+      echo "uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=target-cdhash-mismatch uiSmokeBlockReasons=$block_reasons"
+    fi
     return
   fi
   if ! tis_ready "$tis_status_line"; then
-    echo "uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=$(tis_block_reason_from_status "$tis_status_line") uiSmokeBlockReasons=$block_reasons"
+    echo "uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=$tis_block_reason uiSmokeBlockReasons=$block_reasons"
     return
   fi
   if [[ "$user_host_conflict_state" == "true" ]]; then
@@ -431,11 +443,15 @@ ui_smoke_status_line() {
 
 if [[ "${INPUTIA_AWAIT_UI_STATUS_SELF_CHECK:-0}" == "1" ]]; then
   export INPUTIA_AWAIT_IGNORE_REAL_PROCESSES_FOR_TEST=1
+  export INPUTIA_AWAIT_USER_HOST_CONFLICT_FOR_TEST=false
   ready_tis_status="tis.tool=true tis.appSignatureAccepted=true tis.enabledMatches=1 tis.installedMatches=1 tis.hansIconMatchesApp=true tis.hansEnabled=true tis.currentMatchesTarget=true tis.readinessBlockReason=none"
   not_ready_tis_status="tis.tool=true tis.appSignatureAccepted=true tis.enabledMatches=0 tis.installedMatches=0 tis.hansIconMatchesApp=false tis.hansEnabled=unknown tis.currentMatchesTarget=false tis.readinessBlockReason=missing-enabled-source"
   rejected_tis_status="tis.tool=true tis.appSignatureAccepted=false tis.enabledMatches=0 tis.installedMatches=0 tis.hansIconMatchesApp=false tis.hansEnabled=unknown tis.currentMatchesTarget=false tis.readinessBlockReason=signature-rejected"
+  app_missing_tis_status="tis.tool=true tis.appExists=false tis.appSignatureAccepted=false tis.enabledMatches=0 tis.installedMatches=0 tis.hansIconMatchesApp=false tis.hansEnabled=unknown tis.currentMatchesTarget=false tis.readinessBlockReason=app-missing"
   INPUTIA_RUN_UI_SMOKE=1 ui_smoke_status_line false "$not_ready_tis_status" |
     /usr/bin/sed "s/^/awaitUiStatusSelfCheck reason=target-and-tis /"
+  INPUTIA_RUN_UI_SMOKE=1 ui_smoke_status_line false "$app_missing_tis_status" |
+    /usr/bin/sed "s/^/awaitUiStatusSelfCheck reason=app-missing /"
   INPUTIA_RUN_UI_SMOKE=1 INPUTIA_AWAIT_USER_HOST_CONFLICT_FOR_TEST=true ui_smoke_status_line false "$not_ready_tis_status" |
     /usr/bin/sed "s/^/awaitUiStatusSelfCheck reason=target-tis-userhost /"
   INPUTIA_RUN_UI_SMOKE=1 ui_smoke_status_line true "$rejected_tis_status" |

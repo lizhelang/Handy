@@ -134,9 +134,11 @@ require_status_block_reason() {
 require_signature_block_if_rejected() {
   local output="$1"
   local reason="$2"
+  local target_exists
   local signature_accepted
+  target_exists="$(/usr/bin/awk -F= '$1 == "statusTargetExists" { print $2; found = 1; exit } END { if (!found) print "true" }' <<<"$output")"
   signature_accepted="$(/usr/bin/awk -F= '$1 == "statusSignatureAccepted" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$output")"
-  if [[ "$signature_accepted" != "true" ]]; then
+  if [[ "$target_exists" == "true" && "$signature_accepted" != "true" ]]; then
     require_status_block_reason "$output" "signature-rejected" "$reason"
   fi
 }
@@ -831,6 +833,9 @@ require(diagnose_trap_index < diagnose_cleanup_self_check_index < diagnose_selec
 tis_readiness_text = (root / "tis-readiness.sh").read_text()
 require("app_assessment()" in tis_readiness_text, "tis-readiness-missing-app-assessment-helper")
 require("return 0" in tis_readiness_text[tis_readiness_text.find("cdhash()"):tis_readiness_text.find("app_assessment()")], "tis-readiness-cdhash-missing-safe-return")
+require("appExists=" in tis_readiness_text, "tis-readiness-missing-app-exists-output")
+require("tis.readinessBlockReason=app-missing" in tis_readiness_text, "tis-readiness-missing-app-missing-reason")
+require("tis.requiredAction=install-inputia-app" in tis_readiness_text, "tis-readiness-missing-app-install-action")
 require("appSignatureAccepted=" in tis_readiness_text, "tis-readiness-missing-signature-accepted-output")
 require("tis.readinessBlockReason=signature-rejected" in tis_readiness_text, "tis-readiness-missing-signature-rejected-reason")
 require("tis.requiredAction=sign-with-accepted-identity" in tis_readiness_text, "tis-readiness-missing-signature-required-action")
@@ -1471,6 +1476,7 @@ require("readiness_reason()" in gui_readiness_text, "gui-readiness-missing-reaso
 require("pkg-not-ready" in gui_readiness_text, "gui-readiness-missing-pkg-block")
 require("admin-required" in gui_readiness_text, "gui-readiness-missing-admin-block")
 require("target-cdhash-mismatch" in gui_readiness_text, "gui-readiness-missing-target-block")
+require("app-missing" in gui_readiness_text, "gui-readiness-missing-app-missing-block")
 require("settings-version-mismatch" in gui_readiness_text, "gui-readiness-missing-settings-block")
 require("tis-not-ready" in gui_readiness_text, "gui-readiness-missing-tis-block")
 require("user-host-conflict" in gui_readiness_text, "gui-readiness-missing-user-host-conflict-block")
@@ -1487,11 +1493,14 @@ require("guiSmokeReadinessSelfCheck allBlockReasons=" in gui_readiness_text, "gu
 require("duplicate=admin-required" in gui_readiness_text, "gui-readiness-missing-block-reason-dedupe-check")
 
 status_text = (root / "status.sh").read_text()
+require("statusTargetExists=" in status_text, "status-missing-target-exists-summary")
 require("statusSignatureAccepted=" in status_text, "status-missing-signature-accepted-summary")
 require("statusSigningRequiredAction=sign-with-accepted-identity" in status_text, "status-missing-signature-required-action")
 require("signature-rejected" in status_text, "status-missing-signature-rejected-block")
+require("app-missing" in status_text, "status-missing-app-missing-block")
 require("user-host-conflict" in status_text, "status-missing-user-host-conflict-block")
 require("INPUTIA_USER_APP_FOR_TEST" in status_text, "status-missing-user-app-test-override")
+require("INPUTIA_SYSTEM_APP_FOR_TEST" in status_text, "status-missing-system-app-test-override")
 require("INPUTIA_USER_SETTINGS_APP_FOR_TEST" in status_text, "status-missing-user-settings-test-override")
 require("statusUserHostConflict=" in status_text, "status-missing-user-host-conflict-summary")
 
@@ -1538,7 +1547,9 @@ require(
 
 await_system_text = (root / "await-system-install.sh").read_text()
 require("app_signature_accepted()" in await_system_text, "await-system-missing-signature-assessment-helper")
+require("tis.appExists=" in await_system_text, "await-system-missing-app-exists-tis-output")
 require("tis.appSignatureAccepted=" in await_system_text, "await-system-missing-signature-accepted-tis-output")
+require("app-missing" in await_system_text, "await-system-missing-app-missing-block")
 require("signature-rejected" in await_system_text, "await-system-missing-signature-rejected-block")
 require("systemInstallTargetMatchesBuild=" in await_system_text, "await-system-missing-target-match-summary")
 require("systemInstallTISReady=false reason=target-cdhash-mismatch" in await_system_text, "await-system-missing-timeout-cdhash-reason")
@@ -1546,10 +1557,10 @@ require("systemInstallTISReady=false reason=$last_tis_block_reason" in await_sys
 require("uiSmokeBlockReasons=" in await_system_text, "await-system-missing-ui-block-reasons-output")
 require("append_block_reason()" in await_system_text, "await-system-missing-ui-block-reason-dedupe-helper")
 target_gate_index = await_system_text.find('append_block_reason "$block_reasons" "target-cdhash-mismatch"')
-tis_gate_index = await_system_text.find('append_block_reason "$block_reasons" "$(tis_block_reason_from_status "$tis_status_line")"')
+tis_gate_index = await_system_text.find('append_block_reason "$block_reasons" "$tis_block_reason"')
 user_host_gate_index = await_system_text.find('append_block_reason "$block_reasons" "user-host-conflict"')
 target_echo_index = await_system_text.find('uiSmokeBlockReason=target-cdhash-mismatch uiSmokeBlockReasons=$block_reasons')
-tis_echo_index = await_system_text.find('uiSmokeBlockReason=$(tis_block_reason_from_status "$tis_status_line") uiSmokeBlockReasons=$block_reasons')
+tis_echo_index = await_system_text.find('uiSmokeBlockReason=$tis_block_reason uiSmokeBlockReasons=$block_reasons')
 user_host_echo_index = await_system_text.find('uiSmokeBlockReason=user-host-conflict uiSmokeBlockReasons=$block_reasons')
 gui_session_function_index = await_system_text.find('gui_session_block_reason()')
 gui_session_call_index = await_system_text.find('gui_block_reason="$(gui_session_block_reason)"')
@@ -2211,6 +2222,7 @@ require_output "$await_ui_status_output" "awaitUiStatusSelfCheck=true" "await-ui
 require_output "$await_ui_status_output" "awaitUiStatusSelfCheck reason=target-and-tis uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=target-cdhash-mismatch uiSmokeBlockReasons=target-cdhash-mismatch,missing-enabled-source" "await-ui-status-missing-target-and-tis-block-reasons"
 require_output "$await_ui_status_output" "awaitUiStatusSelfCheck reason=target-tis-userhost uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=target-cdhash-mismatch uiSmokeBlockReasons=target-cdhash-mismatch,missing-enabled-source,user-host-conflict" "await-ui-status-missing-target-tis-userhost-block-reasons"
 require_output "$await_ui_status_output" "awaitUiStatusSelfCheck reason=signature-rejected uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=signature-rejected uiSmokeBlockReasons=signature-rejected" "await-ui-status-missing-signature-rejected-block-line"
+require_output "$await_ui_status_output" "awaitUiStatusSelfCheck reason=app-missing uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=app-missing" "await-ui-status-missing-app-missing-block-line"
 for await_gui_reason in no-console-user gui-bootstrap-unavailable login-not-complete screen-locked frontmost-unavailable loginwindow-frontmost; do
   require_output "$await_ui_status_output" "awaitUiStatusSelfCheck reason=$await_gui_reason uiSmokeRequested=true uiSmokeWouldStart=false uiSmokeBlockReason=$await_gui_reason uiSmokeBlockReasons=$await_gui_reason" "await-ui-status-missing-block-line-$await_gui_reason"
 done
@@ -2316,11 +2328,13 @@ require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCh
 require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck case=allow-textedit expected=none actual=none" "gui-readiness-self-check-missing-allow-textedit"
 require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck case=allow-safari expected=none actual=none" "gui-readiness-self-check-missing-allow-safari"
 require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck case=signature expected=signature-rejected actual=signature-rejected" "gui-readiness-self-check-missing-signature"
+require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck case=appmissing expected=app-missing actual=app-missing" "gui-readiness-self-check-missing-app-missing"
 require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck allBlockReasons=" "gui-readiness-self-check-missing-all-block-reasons"
 for readiness_required_reason in target-cdhash-mismatch admin-required settings-version-mismatch tis-not-ready user-host-conflict inputia-host-running screen-locked textedit-already-running safari-already-running; do
   require_output "$gui_smoke_readiness_self_check_output" "$readiness_required_reason" "gui-readiness-self-check-missing-all-block-reason-$readiness_required_reason"
 done
 require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck signatureBlockReasons=signature-rejected actual=signature-rejected" "gui-readiness-self-check-missing-signature-block-reasons"
+require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck appMissingBlockReasons=app-missing,tis-not-ready actual=" "gui-readiness-self-check-missing-app-missing-block-reasons"
 require_output "$gui_smoke_readiness_self_check_output" "guiSmokeReadinessSelfCheck=true" "gui-readiness-self-check-failed"
 
 if ! process_running InputiaInputMethod; then
@@ -2340,8 +2354,14 @@ fi
 gui_readiness_user_host_root="$(/usr/bin/mktemp -d "/tmp/inputia-gui-readiness-user-host.XXXXXX")"
 VERIFY_TEMP_DIRS+=("$gui_readiness_user_host_root")
 gui_readiness_fake_user_app="$gui_readiness_user_host_root/InputiaInputMethod.app"
+gui_readiness_fake_system_app="$gui_readiness_user_host_root/SystemInputiaInputMethod.app"
 /bin/mkdir -p "$gui_readiness_fake_user_app"
-gui_smoke_readiness_user_host_output="$(INPUTIA_USER_APP_FOR_TEST="$gui_readiness_fake_user_app" "$ROOT_DIR/gui-smoke-readiness.sh" "$BUILD_APP" 2>&1)"
+/bin/mkdir -p "$gui_readiness_fake_system_app"
+gui_smoke_readiness_user_host_output="$(
+  INPUTIA_USER_APP_FOR_TEST="$gui_readiness_fake_user_app" \
+    INPUTIA_SYSTEM_APP_FOR_TEST="$gui_readiness_fake_system_app" \
+    "$ROOT_DIR/gui-smoke-readiness.sh" "$BUILD_APP" 2>&1
+)"
 printf '%s\n' "$gui_smoke_readiness_user_host_output" | /usr/bin/sed 's/^/guiSmokeReadinessUserHostGate: /'
 require_output "$gui_smoke_readiness_user_host_output" "userHostConflict=true" "gui-readiness-user-host-gate-missing-conflict-state"
 require_output "$gui_smoke_readiness_user_host_output" "user-host-conflict" "gui-readiness-user-host-gate-missing-blocker"
@@ -3310,8 +3330,14 @@ echo "statusInputiaHostBlockerSelfCheck=true"
 status_user_host_root="$(/usr/bin/mktemp -d "/tmp/inputia-status-user-host.XXXXXX")"
 VERIFY_TEMP_DIRS+=("$status_user_host_root")
 status_fake_user_app="$status_user_host_root/InputiaInputMethod.app"
+status_fake_system_app="$status_user_host_root/SystemInputiaInputMethod.app"
 /bin/mkdir -p "$status_fake_user_app"
-status_user_host_output="$(INPUTIA_USER_APP_FOR_TEST="$status_fake_user_app" "$ROOT_DIR/status.sh" 2>&1)"
+/bin/mkdir -p "$status_fake_system_app"
+status_user_host_output="$(
+  INPUTIA_USER_APP_FOR_TEST="$status_fake_user_app" \
+    INPUTIA_SYSTEM_APP_FOR_TEST="$status_fake_system_app" \
+    "$ROOT_DIR/status.sh" 2>&1
+)"
 require_output "$status_user_host_output" 'statusUserHostConflict=true' "status-user-host-conflict-self-check-missing-summary"
 require_status_block_reason "$status_user_host_output" "user-host-conflict" "status-user-host-conflict-self-check-missing-block-reason"
 echo "statusUserHostConflictSelfCheck=true"
@@ -3347,8 +3373,12 @@ assert_no_user_host "tisReadinessBuild"
 system_preflight_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
 system_preflight_tis_before="$(current_input_source_id)"
 system_preflight_debug_before="$(debug_events_env)"
-run_allow_rc "2,4" "systemPreflight" "$ROOT_DIR/smoke-preflight.sh" "$SYSTEM_APP"
-if [[ "$RUN_EXPECT_RC_OUTPUT" == *"smokePreflightReady=false reason=cdhash-mismatch"* ]]; then
+system_preflight_app_missing=false
+run_allow_rc "1,2,4" "systemPreflight" "$ROOT_DIR/smoke-preflight.sh" "$SYSTEM_APP"
+if [[ "$RUN_EXPECT_RC_OUTPUT" == *"smokePreflightReady=false reason=missing-executable"* ]]; then
+  system_preflight_app_missing=true
+  echo "systemPreflightAcceptedBlockReason=missing-executable"
+elif [[ "$RUN_EXPECT_RC_OUTPUT" == *"smokePreflightReady=false reason=cdhash-mismatch"* ]]; then
   echo "systemPreflightAcceptedBlockReason=cdhash-mismatch"
 else
   require_output "$RUN_EXPECT_RC_OUTPUT" "smokePreflightReady=false reason=ui-smoke-disabled" "system-preflight-missing-ui-disabled-gate"
@@ -3365,7 +3395,7 @@ echo "systemPreflight.clipboardUnchanged=true"
 assert_current_source_unchanged "systemPreflight" "$system_preflight_tis_before" "$system_preflight_tis_after"
 assert_debug_env_unchanged "systemPreflight" "$system_preflight_debug_before" "$system_preflight_debug_after"
 assert_no_user_host "systemPreflight"
-if [[ "$TEXTEDIT_PREEXISTING" == "false" ]]; then
+if [[ "$TEXTEDIT_PREEXISTING" == "false" && "$system_preflight_app_missing" == "false" ]]; then
   system_preflight_textedit_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   system_preflight_textedit_tis_before="$(current_input_source_id)"
   system_preflight_textedit_debug_before="$(debug_events_env)"

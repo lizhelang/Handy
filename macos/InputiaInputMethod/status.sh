@@ -4,7 +4,7 @@ set -o pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_APP="$ROOT_DIR/build/InputiaInputMethod.app"
-SYSTEM_APP="/Library/Input Methods/InputiaInputMethod.app"
+SYSTEM_APP="${INPUTIA_SYSTEM_APP_FOR_TEST:-/Library/Input Methods/InputiaInputMethod.app}"
 USER_APP="${INPUTIA_USER_APP_FOR_TEST:-$HOME/Library/Input Methods/InputiaInputMethod.app}"
 USER_LEGACY_APP="${INPUTIA_USER_LEGACY_APP_FOR_TEST:-$HOME/Library/Input Methods/IputiaInputMethod.app}"
 LEGACY_APP="/Library/Input Methods/IputiaInputMethod.app"
@@ -368,6 +368,11 @@ else
   echo "targetScope=custom"
 fi
 print_app "target app" "$TARGET_APP"
+if [[ -d "$TARGET_APP" ]]; then
+  target_exists=true
+else
+  target_exists=false
+fi
 target_assessment="$(app_assessment "$TARGET_APP")"
 if [[ "$target_assessment" == *": accepted"* ]]; then
   target_signature_accepted=true
@@ -382,6 +387,7 @@ else
   echo "targetMatchesBuild=false"
 fi
 echo "targetSettingsPath=$TARGET_SETTINGS_APP"
+echo "targetExists=$target_exists"
 target_settings_version="$(app_version "$TARGET_SETTINGS_APP")"
 if [[ -n "$build_version" && "$target_settings_version" == "$build_version" ]]; then
   target_settings_matches_build=true
@@ -400,6 +406,8 @@ echo "targetRequiresAdmin=$target_requires_admin"
 section "tis sources"
 tis_enabled_matches=unknown
 tis_installed_matches=unknown
+tis_current_id=unknown
+tis_current_matches_target=false
 if [[ -x "$TIS_TOOL" ]]; then
   tis_dump="$(INPUTIA_APP="$TARGET_APP" "$TIS_TOOL" --dump 2>/dev/null || true)"
   tis_enabled_matches="$(/usr/bin/awk -F= '
@@ -417,6 +425,16 @@ if [[ -x "$TIS_TOOL" ]]; then
     /^matches=/{print; next}
     /^id=|^bundle=|^mode=|^name=|^iconURL=|^languages=|^enabled=|^selectable=|^selected=/{print; next}
   '
+  tis_current_id="$(INPUTIA_APP="$TARGET_APP" "$TIS_TOOL" --dump-current-input-source 2>/dev/null |
+    /usr/bin/awk -F= '$1 == "id" { print $2; exit }')"
+  tis_current_id="${tis_current_id:-unknown}"
+  if [[ "$tis_current_id" == "com.inputia.inputmethod.Inputia.Main" ]]; then
+    tis_current_matches_target=true
+  else
+    tis_current_matches_target=false
+  fi
+  echo "currentID=$tis_current_id"
+  echo "currentMatchesTarget=$tis_current_matches_target"
 else
   echo "tisToolPresent=false path=$TIS_TOOL"
 fi
@@ -532,6 +550,9 @@ block_reasons=""
 if [[ "$latest_pkg_exists" != "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" pkg-not-ready)"
 fi
+if [[ "$target_exists" != "true" ]]; then
+  block_reasons="$(append_reason "$block_reasons" app-missing)"
+fi
 if [[ "$target_matches_build" != "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" target-cdhash-mismatch)"
   [[ "$target_requires_admin" == "true" && "$admin_ready" != "true" ]] &&
@@ -542,7 +563,7 @@ if [[ "$target_settings_matches_build" != "true" ]]; then
   [[ "$target_requires_admin" == "true" && "$admin_ready" != "true" ]] &&
     block_reasons="$(append_reason "$block_reasons" admin-required)"
 fi
-if [[ "$tis_enabled_matches" == "0" || "$tis_enabled_matches" == "unknown" ]]; then
+if [[ "$tis_enabled_matches" == "0" || "$tis_enabled_matches" == "unknown" || "$tis_current_matches_target" != "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" tis-not-ready)"
 fi
 if [[ "$user_directory_ready" != "true" ]]; then
@@ -551,7 +572,7 @@ fi
 if [[ "$hitoolbox_defaults_readable" != "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" hitoolbox-preferences-unavailable)"
 fi
-if [[ "$target_signature_accepted" != "true" ]]; then
+if [[ "$target_exists" == "true" && "$target_signature_accepted" != "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" signature-rejected)"
 fi
 if [[ "$menu_readiness" != "true" ]]; then
@@ -580,11 +601,14 @@ if [[ -z "$block_reasons" ]]; then
 fi
 echo "statusAdminInstallReady=$admin_ready"
 echo "statusTargetPath=$TARGET_APP"
+echo "statusTargetExists=$target_exists"
 echo "statusTargetMatchesBuild=$target_matches_build"
 echo "statusTISEnabledMatches=$tis_enabled_matches"
 echo "statusTISInstalledMatches=$tis_installed_matches"
+echo "statusTISCurrentID=$tis_current_id"
+echo "statusTISCurrentMatchesTarget=$tis_current_matches_target"
 echo "statusSignatureAccepted=$target_signature_accepted"
-if [[ "$target_signature_accepted" != "true" ]]; then
+if [[ "$target_exists" == "true" && "$target_signature_accepted" != "true" ]]; then
   echo "statusSigningRequiredAction=sign-with-accepted-identity"
 fi
 echo "statusMenuReadiness=$menu_readiness"
