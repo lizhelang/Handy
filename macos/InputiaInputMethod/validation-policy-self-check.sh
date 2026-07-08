@@ -143,6 +143,7 @@ require('installCheckSelfCheck=true' in install_check, "install-check-missing-se
 require('installHandoffFreshnessSelfCheck=true' in install_check, "install-check-missing-handoff-freshness-self-check")
 require('installRequiredCommandsSelfCheck=true' in install_check, "install-check-missing-required-commands-self-check")
 require('run-install-handoff-and-admin-install' in install_check, "install-check-missing-admin-required-action")
+require('admin-install-current-handoff' in install_check, "install-check-missing-current-handoff-admin-action")
 require('restart-inputia-host-after-install' in install_check, "install-check-missing-running-host-action")
 require('tis-duplicate-matches' in install_check, "install-check-missing-tis-duplicate-blocker")
 require('remove-duplicate-inputia-and-readd-once' in install_check, "install-check-missing-tis-duplicate-action")

@@ -116,13 +116,18 @@ admin_install_ready() {
 
 install_required_action() {
   local block_reasons="$1"
+  local handoff_current="${2:-false}"
   if [[ "$block_reasons" == "none" ]]; then
     echo "none"
   elif [[ ",$block_reasons," == *,system-app-missing,* ||
     ",$block_reasons," == *,system-cdhash-mismatch,* ||
     ",$block_reasons," == *,settings-version-mismatch,* ]]; then
     if [[ ",$block_reasons," == *,admin-required,* ]]; then
-      echo "run-install-handoff-and-admin-install"
+      if [[ "$handoff_current" == "true" ]]; then
+        echo "admin-install-current-handoff"
+      else
+        echo "run-install-handoff-and-admin-install"
+      fi
     else
       echo "run-install-system"
     fi
@@ -140,6 +145,7 @@ install_required_action() {
 
 install_required_actions() {
   local block_reasons="$1"
+  local handoff_current="${2:-false}"
   local actions=""
 
   if [[ "$block_reasons" == "none" ]]; then
@@ -151,7 +157,11 @@ install_required_actions() {
     ",$block_reasons," == *,system-cdhash-mismatch,* ||
     ",$block_reasons," == *,settings-version-mismatch,* ]]; then
     if [[ ",$block_reasons," == *,admin-required,* ]]; then
-      actions="$(append_action "$actions" "run-install-handoff-and-admin-install")"
+      if [[ "$handoff_current" == "true" ]]; then
+        actions="$(append_action "$actions" "admin-install-current-handoff")"
+      else
+        actions="$(append_action "$actions" "run-install-handoff-and-admin-install")"
+      fi
     else
       actions="$(append_action "$actions" "run-install-system")"
     fi
@@ -227,6 +237,8 @@ install_required_command_keys() {
 
   if [[ ",$required_actions," == *,run-install-handoff-and-admin-install,* ]]; then
     command_keys="$(append_action "$command_keys" "runInstallHandoff")"
+    command_keys="$(append_action "$command_keys" "adminInstall")"
+  elif [[ ",$required_actions," == *,admin-install-current-handoff,* ]]; then
     command_keys="$(append_action "$command_keys" "adminInstall")"
   elif [[ ",$required_actions," == *,run-install-system,* ]]; then
     command_keys="$(append_action "$command_keys" "runInstallSystem")"
@@ -336,9 +348,10 @@ run_install_check_self_check_case() {
   local running_found="$7"
   local running_matches_build="$8"
   local admin_ready="$9"
-  local expected_reasons="${10}"
-  local expected_action="${11}"
-  local expected_actions="${12}"
+  local handoff_current="${10}"
+  local expected_reasons="${11}"
+  local expected_action="${12}"
+  local expected_actions="${13}"
   local actual_reasons actual_action actual_actions
 
   actual_reasons="$(
@@ -352,9 +365,9 @@ run_install_check_self_check_case() {
       "$running_matches_build" \
       "$admin_ready"
   )"
-  actual_action="$(install_required_action "$actual_reasons")"
-  actual_actions="$(install_required_actions "$actual_reasons")"
-  echo "installCheckSelfCheck case=$label reasons=$actual_reasons action=$actual_action actions=$actual_actions"
+  actual_action="$(install_required_action "$actual_reasons" "$handoff_current")"
+  actual_actions="$(install_required_actions "$actual_reasons" "$handoff_current")"
+  echo "installCheckSelfCheck case=$label handoffCurrent=$handoff_current reasons=$actual_reasons action=$actual_action actions=$actual_actions"
   if [[ "$actual_reasons" != "$expected_reasons" ]]; then
     echo "installCheckSelfCheck=false case=$label reason=reasons-mismatch expected=$expected_reasons actual=$actual_reasons"
     exit 1
@@ -420,35 +433,45 @@ run_install_required_commands_self_check_case() {
 
 if [[ "${INPUTIA_INSTALL_CHECK_SELF_CHECK:-0}" == "1" ]]; then
   run_install_check_self_check_case \
-    ready true true true true false true true true \
+    ready true true true true false true true true false \
     none none none
   run_install_check_self_check_case \
-    admin-required true false true true false true false false \
+    admin-required true false true true false true false false false \
     system-cdhash-mismatch,running-cdhash-mismatch,admin-required \
     run-install-handoff-and-admin-install \
     run-install-handoff-and-admin-install,restart-inputia-host-after-install
   run_install_check_self_check_case \
-    tis-not-ready true true true false false true true true \
+    admin-required-current-handoff true false true true false true false false true \
+    system-cdhash-mismatch,running-cdhash-mismatch,admin-required \
+    admin-install-current-handoff \
+    admin-install-current-handoff,restart-inputia-host-after-install
+  run_install_check_self_check_case \
+    tis-not-ready true true true false false true true true false \
     tis-not-ready \
     select-or-readd-inputia-in-system-settings \
     select-or-readd-inputia-in-system-settings
   run_install_check_self_check_case \
-    tis-duplicate true true true false true true true true \
+    tis-duplicate true true true false true true true true false \
     tis-duplicate-matches \
     remove-duplicate-inputia-and-readd-once \
     run-repair-tis-duplicates
   run_install_check_self_check_case \
-    running-missing true true true true false false false true \
+    running-missing true true true true false false false true false \
     running-host-missing \
     restart-inputia-host-after-install \
     restart-inputia-host-after-install
   run_install_check_self_check_case \
-    settings-admin true true false true false true true false \
+    settings-admin true true false true false true true false false \
     settings-version-mismatch,admin-required \
     run-install-handoff-and-admin-install \
     run-install-handoff-and-admin-install
   run_install_check_self_check_case \
-    system-missing false false true false false false false false \
+    settings-admin-current-handoff true true false true false true true false true \
+    settings-version-mismatch,admin-required \
+    admin-install-current-handoff \
+    admin-install-current-handoff
+  run_install_check_self_check_case \
+    system-missing false false true false false false false false false \
     system-app-missing,tis-not-ready,running-host-missing,admin-required \
     run-install-handoff-and-admin-install \
     run-install-handoff-and-admin-install,select-or-readd-inputia-in-system-settings,restart-inputia-host-after-install
@@ -485,8 +508,14 @@ if [[ "${INPUTIA_INSTALL_CHECK_SELF_CHECK:-0}" == "1" ]]; then
     admin-install run-install-handoff-and-admin-install \
     runInstallHandoff,adminInstall,verify
   run_install_required_commands_self_check_case \
+    admin-install-current-handoff admin-install-current-handoff \
+    adminInstall,verify
+  run_install_required_commands_self_check_case \
     admin-repair-restart run-install-handoff-and-admin-install,run-repair-tis-duplicates,restart-inputia-host-after-install \
     runInstallHandoff,adminInstall,repairTISDuplicates,awaitSystemInstall,verify
+  run_install_required_commands_self_check_case \
+    admin-current-handoff-repair-restart admin-install-current-handoff,run-repair-tis-duplicates,restart-inputia-host-after-install \
+    adminInstall,repairTISDuplicates,awaitSystemInstall,verify
   run_install_required_commands_self_check_case \
     system-install run-install-system \
     runInstallSystem,verify
@@ -596,9 +625,11 @@ handoff_block_reasons="$(
     "$handoff_package_sha_matches"
 )"
 if [[ "$handoff_block_reasons" == "none" ]]; then
+  handoff_current=true
   echo "installHandoffCurrent=true"
   echo "installHandoffRequiredAction=none"
 else
+  handoff_current=false
   echo "installHandoffCurrent=false"
   echo "installHandoffRequiredAction=run-install-handoff"
 fi
@@ -662,8 +693,8 @@ if [[ "$block_reasons" == "none" ]]; then
   echo "installCheckRequiredActions=none"
   required_actions=none
 else
-  echo "installCheckRequiredAction=$(install_required_action "$block_reasons")"
-  required_actions="$(install_required_actions "$block_reasons")"
+  echo "installCheckRequiredAction=$(install_required_action "$block_reasons" "$handoff_current")"
+  required_actions="$(install_required_actions "$block_reasons" "$handoff_current")"
   echo "installCheckRequiredActions=$required_actions"
 fi
 print_install_required_commands "$required_actions" "$handoff_package_path"
