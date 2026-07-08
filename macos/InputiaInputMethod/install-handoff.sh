@@ -102,6 +102,11 @@ install_check_passed="$(/usr/bin/awk -F= '$1 == "installCheckPassed" { print $2;
 install_check_block_reasons="$(/usr/bin/awk -F= '$1 == "installCheckBlockReasons" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
 install_check_required_action="$(/usr/bin/awk -F= '$1 == "installCheckRequiredAction" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
 install_check_required_actions="$(/usr/bin/awk -F= '$1 == "installCheckRequiredActions" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+settings_matches_build="$(/usr/bin/awk -F= '$1 == "settingsMatchesBuild" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+build_settings_version="$(/usr/bin/awk -F= '$1 == "buildSettingsVersion" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+build_settings_expected_host_cdhash="$(/usr/bin/awk -F= '$1 == "buildSettingsExpectedHostCDHash" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+system_settings_version="$(/usr/bin/awk -F= '$1 == "systemSettingsVersion" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+system_settings_expected_host_cdhash="$(/usr/bin/awk -F= '$1 == "systemSettingsExpectedHostCDHash" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
 pkg_verification_passed="$(/usr/bin/awk -F= '$1 == "pkgVerificationPassed" { print $2; found = 1; exit } END { if (!found) print "unknown" }' "$BUILD_LOG")"
 repair_tis_duplicates_command="cd $repo_quoted && INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh"
 if [[ ",$install_check_block_reasons," == *,tis-duplicate-matches,* ]]; then
@@ -126,6 +131,11 @@ buildCDHash=$build_cdhash
 systemVersion=${system_version:-unknown}
 systemCDHash=${system_cdhash:-unknown}
 systemMatchesBuild=$system_matches_build
+buildSettingsVersion=$build_settings_version
+buildSettingsExpectedHostCDHash=$build_settings_expected_host_cdhash
+systemSettingsVersion=$system_settings_version
+systemSettingsExpectedHostCDHash=$system_settings_expected_host_cdhash
+settingsMatchesBuild=$settings_matches_build
 adminReady=$admin_ready
 adminReason=$admin_reason
 installCheckPassed=$install_check_passed
@@ -179,6 +189,11 @@ echo "buildCDHash=$build_cdhash"
 echo "systemVersion=${system_version:-unknown}"
 echo "systemCDHash=${system_cdhash:-unknown}"
 echo "systemMatchesBuild=$system_matches_build"
+echo "buildSettingsVersion=$build_settings_version"
+echo "buildSettingsExpectedHostCDHash=$build_settings_expected_host_cdhash"
+echo "systemSettingsVersion=$system_settings_version"
+echo "systemSettingsExpectedHostCDHash=$system_settings_expected_host_cdhash"
+echo "settingsMatchesBuild=$settings_matches_build"
 echo "adminReady=$admin_ready reason=$admin_reason"
 echo "installCheckPassed=$install_check_passed"
 echo "installCheckBlockReasons=$install_check_block_reasons"
