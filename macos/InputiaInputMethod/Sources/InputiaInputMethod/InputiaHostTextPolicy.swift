@@ -3,6 +3,7 @@ import Foundation
 enum InputiaHostTextPolicy {
   static let replacementRange = NSRange(location: NSNotFound, length: NSNotFound)
   static let recallClipboardMenuKeyEquivalent = ""
+  static let settingsMenuKeyEquivalent = ""
   private static let newlineCommandSelectors: Set<String> = [
     "insertNewline:",
     "insertLineBreak:",

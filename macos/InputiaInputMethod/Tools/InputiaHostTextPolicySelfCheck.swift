@@ -50,6 +50,7 @@ struct InputiaHostTextPolicySelfCheck {
       ("replacementRangeLocationIsNSNotFound", range.location == NSNotFound),
       ("replacementRangeLengthIsNSNotFound", range.length == NSNotFound),
       ("recallClipboardMenuHasNoCommandKeyEquivalent", InputiaHostTextPolicy.recallClipboardMenuKeyEquivalent.isEmpty),
+      ("settingsMenuHasNoCommandKeyEquivalent", InputiaHostTextPolicy.settingsMenuKeyEquivalent.isEmpty),
       (
         "rawComposingFallbackCandidate",
         InputiaHostTextPolicy.candidatesForPanel(composing: "ni", candidates: []) == ["ni"]
@@ -144,9 +145,23 @@ struct InputiaHostTextPolicySelfCheck {
         )
       ),
       (
+        "emptyLineBreakCommandPassesThrough",
+        InputiaHostTextPolicy.shouldPassThroughNewlineCommand(
+          selectorName: "insertLineBreak:",
+          hasComposing: false
+        )
+      ),
+      (
         "composingNewlineCommandIsHandled",
         !InputiaHostTextPolicy.shouldPassThroughNewlineCommand(
           selectorName: "insertNewline:",
+          hasComposing: true
+        )
+      ),
+      (
+        "composingLineBreakCommandIsHandled",
+        !InputiaHostTextPolicy.shouldPassThroughNewlineCommand(
+          selectorName: "insertLineBreak:",
           hasComposing: true
         )
       ),
@@ -161,6 +176,10 @@ struct InputiaHostTextPolicySelfCheck {
       (
         "insertTabIsNotAppCommand",
         !InputiaHostTextPolicy.shouldPassThroughAppCommand(selectorName: "insertTab:")
+      ),
+      (
+        "showPreferencesCommandPassesThrough",
+        InputiaHostTextPolicy.shouldPassThroughAppCommand(selectorName: "showPreferences:")
       ),
       (
         "asciiRawFallbackNewlinePassesThroughAfterCommit",

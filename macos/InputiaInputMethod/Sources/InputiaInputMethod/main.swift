@@ -250,7 +250,11 @@ final class InputiaInputController: IMKInputController {
     recallClipboard.target = self
     recallClipboard.keyEquivalentModifierMask = [.control, .shift]
 
-    let settings = NSMenuItem(title: "Inputia 设置...", action: #selector(openSettings), keyEquivalent: "")
+    let settings = NSMenuItem(
+      title: "Inputia 设置...",
+      action: #selector(openSettings),
+      keyEquivalent: InputiaHostTextPolicy.settingsMenuKeyEquivalent
+    )
     settings.target = self
 
     let menu = NSMenu()
