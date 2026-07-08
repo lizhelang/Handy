@@ -100,6 +100,14 @@ Host 和设置启动器的 build 产物会写入 `InputiaSourceCommit`、`Inputi
 
 `release/full-check.sh` 只有在 `install-check.sh` 和 `notarization-readiness.sh` 都通过后，才会导出 `INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1`、`INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK=1` 和 `INPUTIA_RUN_UI_SMOKE=1`。因此即使运行了 release/full-check，只要安装态或公证 readiness 没过，也不会把重型 opt-in 泄漏给前置检查。
 
+`release/full-check.sh` 也提供离线门禁自检：
+
+```bash
+INPUTIA_FULL_CHECK_SELF_CHECK=1 ./macos/InputiaInputMethod/release/full-check.sh
+```
+
+这个模式只注入模拟输出，验证 install-check 失败、notarization 失败和成功路径的执行顺序；不会构建 pkg、不会查真实公证、不会打开菜单栏，也不会启动 GUI smoke。
+
 `menu-readiness.sh` 和 `gui-smoke-readiness.sh` 本身也带硬门禁：直接运行时默认只输出 opt-in-required，不会打开菜单栏或读取 GUI readiness。只有 `release/full-check.sh` 或显式设置 `INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1` / `INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK=1` 的诊断才允许进入这些检查。
 
 查看当前 build、系统安装、运行进程、设置启动器和最新安装包是否同版本：

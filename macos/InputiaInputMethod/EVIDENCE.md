@@ -27769,3 +27769,44 @@ INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/dev-fast.sh
 
 - Installer 入口现在可在默认开发验证中被证明安全，但不会构建 pkg 或打开前台 Installer。
 - 安装链路的真实系统状态仍由 `install-handoff.sh` / `install-check.sh` 管控，管理员安装仍必须显式执行。
+
+## 2026-07-09 05:37 CST - release/full-check 增加离线门禁自检
+
+背景：
+
+- `release/full-check.sh` 是唯一允许菜单栏 AXPress、GUI smoke 和公证 readiness 的重型入口。
+- 之前 `validation-policy-self-check.sh` 已经用静态顺序断言锁住了 install-check / notarization / heavy opt-in 的相对位置，但缺少一个不触碰系统的执行分支证明。
+
+实现：
+
+- `release/full-check.sh` 新增 `INPUTIA_FULL_CHECK_SELF_CHECK=1`，递归执行三条模拟路径：
+  - `install-gate`：`installCheckPassed=false` 时必须返回 rc=12，并且不能进入 notarization、heavy opt-in 或 menu readiness。
+  - `notary-gate`：安装态通过但 notary submission 未 ready 时必须返回 rc=11，并且不能进入 heavy opt-in 或 menu readiness。
+  - `success`：安装态和 notary 都模拟通过后，才允许设置 `INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1`、`INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK=1`、`INPUTIA_RUN_UI_SMOKE=1`，并把同一个 `INPUTIA_MENU_READINESS_CACHE_FILE` 传给 menu/postinstall 测试路径。
+- 新增 `INPUTIA_FULL_CHECK_*_FOR_TEST` 注入点，只在 self-check/test mode 使用；真实 release/full-check 路径仍调用现有 build/pkg/install/notary/menu/postinstall 脚本。
+- `validation-policy-self-check.sh` 锁住 self-check 入口、测试注入点和关键负向断言，避免以后删掉离线门禁证明。
+- README 补充 self-check 命令，明确它不构建 pkg、不查真实公证、不打开菜单栏、不启动 GUI smoke。
+
+验证：
+
+```text
+bash -n macos/InputiaInputMethod/release/full-check.sh
+  rc=0
+
+INPUTIA_FULL_CHECK_SELF_CHECK=1 ./macos/InputiaInputMethod/release/full-check.sh
+  fullCheckSelfCheck case=install-gate rc=12
+  fullCheckSelfCheck case=notary-gate rc=11
+  fullCheckSelfCheck case=success rc=0
+  fullCheckMenuReadinessOptIn=1
+  fullCheckPostInstallGuiOptIn=1
+  fullCheckPostInstallUiSmoke=1
+  fullCheckSelfCheck=true
+
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+```
+
+结论：
+
+- release/full-check 的重型 opt-in 现在既有静态顺序锁，也有离线执行分支证明。
+- 默认开发验证仍不需要、也不应该运行真实 full-check；这个 self-check 是重型入口自身的可选安全网。
