@@ -55,6 +55,7 @@ require('"$ROOT_DIR/build/inputia-candidate-panel-self-check"' in dev_fast, "dev
 require('"$ROOT_DIR/build/inputia-settings-window-self-check"' in dev_fast, "dev-fast-missing-settings-window-self-check")
 require('schemaCatalogSelfCheck=true' in schema_catalog_self_check, "schema-catalog-self-check-missing-pass-marker")
 require('settings-window-schema-list-mismatch' in schema_catalog_self_check, "schema-catalog-self-check-missing-settings-list-assertion")
+require('capi-settings-schema-list-mismatch' in schema_catalog_self_check, "schema-catalog-self-check-missing-capi-list-assertion")
 require('schema-smoke-missing:' in schema_catalog_self_check, "schema-catalog-self-check-missing-smoke-assertion")
 require('rime-data-missing:' in schema_catalog_self_check, "schema-catalog-self-check-missing-rime-data-assertion")
 require('settingsWindowSelfCheck=\\(ok)' in settings_window_self_check, "settings-window-self-check-missing-pass-marker")

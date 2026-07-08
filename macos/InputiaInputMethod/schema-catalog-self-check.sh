@@ -16,6 +16,7 @@ repo_root = Path(sys.argv[2])
 settings_window = root / "Sources/InputiaInputMethod/InputiaSettingsWindow.swift"
 settings_window_self_check = root / "Tools/InputiaSettingsWindowSelfCheck.swift"
 schema_smoke = repo_root / "crates/inputia-rime/tests/schema_smoke.rs"
+capi = repo_root / "crates/inputia-capi/src/lib.rs"
 rime_data_dirs = [
     root / "build/InputiaInputMethod.app/Contents/Resources/RimeData",
     root / "build/RimeData",
@@ -48,6 +49,7 @@ def read(path: Path) -> str:
 settings_text = read(settings_window)
 self_check_text = read(settings_window_self_check)
 schema_smoke_text = read(schema_smoke)
+capi_text = read(capi)
 
 settings_options = re.findall(
     r'InputiaSchemaOption\(title:\s*"([^"]+)",\s*schemaId:\s*"([^"]+)"\)',
@@ -58,6 +60,10 @@ if not settings_options:
 
 self_check_expected = re.findall(r'\(\s*"([^"]+)",\s*"([^"]+)"\s*\)', self_check_text)
 schema_smoke_ids = sorted(set(re.findall(r'schema:\s*"([^"]+)"', schema_smoke_text)))
+capi_settings_schema_ids = re.findall(
+    r'SettingsSchemaSmokeCase\s*\{\s*schema:\s*"([^"]+)"',
+    capi_text,
+)
 
 settings_schema_ids = [schema_id for _, schema_id in settings_options]
 self_check_schema_ids = [schema_id for _, schema_id in self_check_expected]
@@ -66,6 +72,8 @@ if settings_schema_ids != required_schema_ids:
     fail("settings-window-schema-list-mismatch")
 if self_check_schema_ids != required_schema_ids:
     fail("settings-window-self-check-schema-list-mismatch")
+if capi_settings_schema_ids != required_schema_ids:
+    fail("capi-settings-schema-list-mismatch")
 if len(set(settings_schema_ids)) != len(settings_schema_ids):
     fail("duplicate-settings-schema-id")
 if len({title for title, _ in settings_options}) != len(settings_options):
@@ -90,6 +98,7 @@ if missing_schema_files:
 print("schemaCatalogSelfCheck=true")
 print(f"schemaCatalogSettingsCount={len(settings_schema_ids)}")
 print(f"schemaCatalogSelfCheckCount={len(self_check_schema_ids)}")
+print(f"schemaCatalogCapiSettingsCount={len(capi_settings_schema_ids)}")
 print(f"schemaCatalogSmokeCoveredCount={len([schema_id for schema_id in settings_schema_ids if schema_id in schema_smoke_ids])}")
 print(f"schemaCatalogRimeDataDir={rime_data_dir}")
 for schema_id in settings_schema_ids:
