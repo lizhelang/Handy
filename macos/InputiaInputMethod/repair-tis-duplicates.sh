@@ -48,7 +48,7 @@ run_tis_readiness() {
 }
 
 run_self_check() {
-  local sample output duplicate ready
+  local sample output mismatch_output duplicate ready
   sample=$'tis.targetDuplicateMatches=true\ntisReadiness=false'
   duplicate="$(tis_value "$sample" "tis.targetDuplicateMatches")"
   ready="$(tis_value "$sample" "tisReadiness")"
@@ -69,6 +69,18 @@ run_self_check() {
   fi
   if ! /usr/bin/grep -q '^changesSystemInputSource=false$' <<<"$output"; then
     echo "tisDuplicateRepairSelfCheck=false reason=missing-dry-run-policy"
+    exit 1
+  fi
+  mismatch_output="$(
+    INPUTIA_REPAIR_TIS_DUPLICATES=1 \
+      INPUTIA_REPAIR_TIS_DUPLICATES_SELF_CHECK=0 \
+      INPUTIA_REPAIR_TIS_READINESS_FOR_TEST="$sample" \
+      INPUTIA_REPAIR_SYSTEM_MATCHES_BUILD_FOR_TEST=false \
+      INPUTIA_REPAIR_SYSTEM_APP="$SYSTEM_APP" \
+      "$0" 2>&1 || true
+  )"
+  if ! /usr/bin/grep -q '^tisDuplicateRepairReady=false reason=system-cdhash-mismatch$' <<<"$mismatch_output"; then
+    echo "tisDuplicateRepairSelfCheck=false reason=missing-system-match-gate"
     exit 1
   fi
   echo "tisDuplicateRepairSelfCheck=true"
@@ -101,7 +113,14 @@ echo "buildCDHash=${build_cdhash:-unknown}"
 echo "systemApp=$SYSTEM_APP"
 echo "systemVersion=${system_version:-unknown}"
 echo "systemCDHash=${system_cdhash:-unknown}"
-if [[ -n "${build_cdhash:-}" && "$build_cdhash" == "$system_cdhash" ]]; then
+if [[ -n "${INPUTIA_REPAIR_SYSTEM_MATCHES_BUILD_FOR_TEST:-}" ]]; then
+  system_matches_build="$INPUTIA_REPAIR_SYSTEM_MATCHES_BUILD_FOR_TEST"
+elif [[ -n "${build_cdhash:-}" && "$build_cdhash" == "$system_cdhash" ]]; then
+  system_matches_build=true
+else
+  system_matches_build=false
+fi
+if [[ "$system_matches_build" == "true" ]]; then
   echo "systemMatchesBuild=true"
 else
   echo "systemMatchesBuild=false"
@@ -124,6 +143,12 @@ if [[ "${INPUTIA_REPAIR_TIS_DUPLICATES:-0}" != "1" ]]; then
   echo "tisDuplicateRepairRequiredAction=rerun-with-INPUTIA_REPAIR_TIS_DUPLICATES=1"
   echo "tisDuplicateRepairCommand=INPUTIA_REPAIR_TIS_DUPLICATES=1 $0"
   exit 2
+fi
+
+if [[ "$system_matches_build" != "true" ]]; then
+  echo "tisDuplicateRepairReady=false reason=system-cdhash-mismatch"
+  echo "tisDuplicateRepairRequiredAction=run-install-handoff-and-admin-install-before-repair"
+  exit 7
 fi
 
 if [[ ! -x "$BUILD_EXEC" && ! -x "$SYSTEM_EXEC" ]]; then
