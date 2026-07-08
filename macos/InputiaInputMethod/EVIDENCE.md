@@ -27866,3 +27866,62 @@ rustup run 1.96.0 cargo run --manifest-path crates/inputia-rime/Cargo.toml --exa
 
 - 默认开发验证现在直接暴露“国标 `mlle` 不是第一候选买了、`mkle` 才是”的事实，减少后续把键位差异误判成候选丢失。
 - 这些检查仍然只使用本地打包 RimeData 和临时 user data，不打开 GUI、不改系统输入源。
+
+## 2026-07-09 06:02 CST - dev-fast 增加 Rime partial-select probe
+
+背景：
+
+- 用户反馈过长串双拼输入时，如果第一候选不是想要的整句，先选一个单字后剩余字母和候选会全部消失。
+- Core/CAPI 已经有相关测试，但默认 `dev-fast` 的可见 Rime probe 只验证候选生成，没有直接输出 Rime adapter 在“选第 2 候选”后的 commit/preedit/后续候选状态。
+
+实现：
+
+- `crates/inputia-rime/examples/rime_probe.rs` 新增 `--select-matrix` 模式。
+- select case 规格为 `schema:keys:one_based_index:expected_selected:expected_commit:expected_preedit:expected_next_present[:expected_next_first]`。
+- `dev-fast.sh` 在候选矩阵后追加 partial-select probe：
+  - `double_pinyin:nillem:2:你:-:你laiem:来:来`
+  - `double_pinyin_sogou:nillem:2:你:-:你laiem:来:来`
+- `validation-policy-self-check.sh` 锁住 select probe 的默认门禁和断言输出，防止后续退回只查候选存在。
+
+验证：
+
+```text
+rustup run 1.96.0 cargo fmt --manifest-path crates/inputia-rime/Cargo.toml --check
+  rc=0
+
+INPUTIA_RIME_SHARED_DATA_DIR=macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/Resources/RimeData \
+INPUTIA_RIME_USER_DATA_DIR=<tmp> \
+rustup run 1.96.0 cargo run --manifest-path crates/inputia-rime/Cargo.toml --example rime_probe -- --select-matrix ...
+  selectProbe[0].schema=double_pinyin
+  selectProbe[0].expectedSelected=你
+  selectProbe[0].selectedCommit=<none>
+  selectProbe[0].selectedPreedit=你laiem
+  selectProbe[0].selectedCandidate[0]=来
+  selectProbe[0].selectedCommitMatches=true
+  selectProbe[0].selectedPreeditMatches=true
+  selectProbe[0].expectedNextPresentFound=true
+  selectProbe[1].schema=double_pinyin_sogou
+  selectProbe[1].expectedSelected=你
+  selectProbe[1].selectedCommit=<none>
+  selectProbe[1].selectedPreedit=你laiem
+  selectProbe[1].selectedCandidate[0]=来
+  selectProbeMatrixSelfCheck=true
+
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+
+INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/dev-fast.sh
+  validationTier=dev-fast
+  touchesMenuBar=false
+  opensGUI=false
+  changesSystemInputSource=false
+  checksNotarization=false
+  selectProbeMatrixSelfCheck=true
+  rimeLatencySelfCheck=true
+  devFastPassed=true
+```
+
+结论：
+
+- 默认开发验证现在能直接证明自然码和搜狗双拼在 `nillem` 场景下，选中第 2 候选 `你` 后不会提交/清空，后续候选仍从 `来` 开始。
+- 该验证仍然只跑本地 Rime adapter，不打开菜单栏、不触碰 TextInputMenuAgent、不启动 GUI smoke、不改系统输入源。

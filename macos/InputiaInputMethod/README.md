@@ -84,6 +84,8 @@ guobiao_bispell + mkle     -> 第一候选 买了
 
 这组用例专门锁住“候选窗只剩 raw 字母”和“国标双拼键位与自然码/搜狗不一致”这两类容易混淆的问题。
 
+`dev-fast.sh` 还会跑 Rime select probe，覆盖 `double_pinyin` 和 `double_pinyin_sogou` 下 `nillem` 的第 2 候选 `你`：选中后不应直接提交/清空，preedit 应继续显示 `你laiem`，下一段候选应保留 `来`。这条门禁专门锁住“长串输入先选一个字后，剩余字母和候选全部消失”的回归。
+
 `dev-fast.sh` 也会跑安装链路纯逻辑自检：`INPUTIA_INSTALL_CHECK_SELF_CHECK=1 install-check.sh`、`INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=1 apply-current-handoff.sh`、`INPUTIA_REPAIR_TIS_DUPLICATES_SELF_CHECK=1 repair-tis-duplicates.sh`。这些模式不读取 `/Library`、不查 TIS、不找 running host，也不会改系统输入源；只覆盖 `installCheckBlockReasons` / `installCheckRequiredAction`、安装交接清单 freshness、`installCheckRequiredActions` 到命令提示映射，以及管理员安装/修复 TIS duplicate 的动作链门禁。
 
 安装链路变化后的验证：

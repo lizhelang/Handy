@@ -107,6 +107,12 @@ INPUTIA_RIME_SHARED_DATA_DIR="$HOST_APP/Contents/Resources/RimeData" \
     "double_pinyin_sogou:mlle:买了:买了" \
     "guobiao_bispell:mlle:买了:-" \
     "guobiao_bispell:mkle:买了:买了"
+INPUTIA_RIME_SHARED_DATA_DIR="$HOST_APP/Contents/Resources/RimeData" \
+  INPUTIA_RIME_USER_DATA_DIR="$RIME_USER_DATA_DIR" \
+  run_rust cargo run --manifest-path "$REPO_ROOT/crates/inputia-rime/Cargo.toml" \
+    --example rime_probe -- --select-matrix \
+    "double_pinyin:nillem:2:你:-:你laiem:来:来" \
+    "double_pinyin_sogou:nillem:2:你:-:你laiem:来:来"
 
 section "rime latency self-check"
 "$ROOT_DIR/rime-latency-self-check.sh"
