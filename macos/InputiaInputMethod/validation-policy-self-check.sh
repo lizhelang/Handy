@@ -101,6 +101,16 @@ require('INPUTIA_VERIFY_NONGUI_FULL:-0' in verify_nongui, "verify-nongui-missing
 require('verifyNonguiMenuReadinessCacheFile=' in verify_nongui, "verify-nongui-full-missing-menu-cache-output")
 require('INPUTIA_MENU_READINESS_CACHE_FILE' in verify_nongui, "verify-nongui-full-missing-menu-cache")
 require('VERIFY_TEMP_FILES+=("$INPUTIA_MENU_READINESS_CACHE_FILE")' in verify_nongui, "verify-nongui-full-menu-cache-not-cleaned")
+require('INPUTIA_MENU_READINESS_ALLOW_AXPRESS="${INPUTIA_MENU_READINESS_ALLOW_AXPRESS:-0}"' in verify_nongui, "verify-nongui-menu-readiness-not-explicit-opt-in")
+require('INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK="${INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK:-0}"' in verify_nongui, "verify-nongui-gui-readiness-not-explicit-opt-in")
+require('INPUTIA_STATUS_INCLUDE_MENU_READINESS="${INPUTIA_STATUS_INCLUDE_MENU_READINESS:-0}"' in verify_nongui, "verify-nongui-status-menu-not-explicit-opt-in")
+require('INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS="${INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS:-0}"' in verify_nongui, "verify-nongui-status-gui-not-explicit-opt-in")
+require('INPUTIA_TIS_INCLUDE_MENU_READINESS="${INPUTIA_TIS_INCLUDE_MENU_READINESS:-0}"' in verify_nongui, "verify-nongui-tis-menu-not-explicit-opt-in")
+require('verifyNonguiMenuReadinessOptIn=' in verify_nongui, "verify-nongui-missing-menu-opt-in-output")
+require('verifyNonguiGuiReadinessOptIn=' in verify_nongui, "verify-nongui-missing-gui-opt-in-output")
+require('INPUTIA_MENU_READINESS_ALLOW_AXPRESS="${INPUTIA_MENU_READINESS_ALLOW_AXPRESS:-1}"' not in verify_nongui, "verify-nongui-menu-readiness-defaults-on")
+require('INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK="${INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK:-1}"' not in verify_nongui, "verify-nongui-gui-readiness-defaults-on")
+require('INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS="${INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS:-1}"' not in verify_nongui, "verify-nongui-status-gui-defaults-on")
 require(
     verify_nongui.index('INPUTIA_MENU_READINESS_CACHE_FILE') < verify_nongui.index('INPUTIA_MENU_READINESS_ALLOW_AXPRESS'),
     "verify-nongui-menu-cache-after-axpress-opt-in",
@@ -213,6 +223,9 @@ require('INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1' in full_check, "full-check-miss
 require('INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK=1' in full_check, "full-check-missing-gui-readiness-opt-in")
 require('INPUTIA_RUN_UI_SMOKE=1' in full_check, "full-check-missing-ui-smoke-opt-in")
 require('"$ROOT_DIR/menu-readiness.sh"' in full_check, "full-check-missing-menu-readiness")
+require(full_check.count('"$ROOT_DIR/menu-readiness.sh"') == 1, "full-check-menu-readiness-must-run-once-directly")
+require(full_check.index('INPUTIA_MENU_READINESS_CACHE_FILE="$MENU_CACHE"') < full_check.index('"$ROOT_DIR/menu-readiness.sh"'), "full-check-menu-cache-after-menu-readiness")
+require(full_check.index('INPUTIA_MENU_READINESS_CACHE_FILE="$MENU_CACHE"') < full_check.index('"$ROOT_DIR/post-install-regression.sh" "$APP"'), "full-check-menu-cache-after-postinstall")
 require('"$ROOT_DIR/post-install-regression.sh" "$APP"' in full_check, "full-check-missing-postinstall-regression")
 require('"$ROOT_DIR/notarization-readiness.sh"' in full_check, "full-check-missing-notarization-readiness")
 

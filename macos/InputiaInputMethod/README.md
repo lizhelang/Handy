@@ -120,7 +120,7 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 ./macos/InputiaInputMethod/verify-nongui.sh
 ```
 
-`verify-nongui.sh` 现在默认委托到 `dev-fast.sh`，避免日常开发误跑旧的全量聚合验证。确实需要旧全量 non-GUI 聚合时，显式设置 `INPUTIA_VERIFY_NONGUI_FULL=1 ./macos/InputiaInputMethod/verify-nongui.sh`。
+`verify-nongui.sh` 现在默认委托到 `dev-fast.sh`，避免日常开发误跑旧的全量聚合验证。确实需要旧全量 non-GUI 聚合时，显式设置 `INPUTIA_VERIFY_NONGUI_FULL=1 ./macos/InputiaInputMethod/verify-nongui.sh`。旧 full 兼容模式也不会默认放行菜单栏或 GUI readiness；要把这些重型检查纳入旧聚合，必须额外显式设置 `INPUTIA_MENU_READINESS_ALLOW_AXPRESS=1`、`INPUTIA_GUI_SMOKE_READINESS_ALLOW_CHECK=1`、`INPUTIA_STATUS_INCLUDE_MENU_READINESS=1` 或 `INPUTIA_STATUS_INCLUDE_GUI_SMOKE_READINESS=1`。
 
 旧 full 兼容模式如果进入菜单栏 readiness，会先设置或继承 `INPUTIA_MENU_READINESS_CACHE_FILE`，保证同一次验证周期里 `menu-readiness.sh` 的 AXPress 结果只采一次，后续子检查只读 cache。普通开发仍不应该打开这个 full 模式。
 
