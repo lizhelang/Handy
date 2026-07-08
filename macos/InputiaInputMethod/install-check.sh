@@ -36,12 +36,56 @@ process_pids() {
   /usr/bin/pgrep -x InputiaInputMethod 2>/dev/null || true
 }
 
+append_reason() {
+  local reasons="$1"
+  local reason="$2"
+  if [[ ",$reasons," == *",$reason,"* ]]; then
+    echo "$reasons"
+  elif [[ -z "$reasons" ]]; then
+    echo "$reason"
+  else
+    echo "$reasons,$reason"
+  fi
+}
+
+admin_install_ready() {
+  if [[ -w "/Library/Input Methods" && -w "/Applications" ]]; then
+    echo true
+  elif /usr/bin/sudo -n true >/dev/null 2>&1; then
+    echo true
+  else
+    echo false
+  fi
+}
+
+install_required_action() {
+  local block_reasons="$1"
+  if [[ ",$block_reasons," == *,system-app-missing,* ||
+    ",$block_reasons," == *,system-cdhash-mismatch,* ||
+    ",$block_reasons," == *,settings-version-mismatch,* ]]; then
+    if [[ ",$block_reasons," == *,admin-required,* ]]; then
+      echo "run-install-handoff-and-admin-install"
+    else
+      echo "run-install-system"
+    fi
+  elif [[ ",$block_reasons," == *,tis-not-ready,* ]]; then
+    echo "select-or-readd-inputia-in-system-settings"
+  elif [[ ",$block_reasons," == *,running-host-missing,* ||
+    ",$block_reasons," == *,running-cdhash-mismatch,* ]]; then
+    echo "restart-inputia-host-after-install"
+  else
+    echo "inspect-install-check-output"
+  fi
+}
+
 section "policy"
 echo "validationTier=install-check"
 echo "touchesMenuBar=false"
 echo "opensGUI=false"
 echo "changesSystemInputSource=false"
 echo "checksNotarization=false"
+admin_ready="$(admin_install_ready)"
+echo "adminInstallReady=$admin_ready"
 
 section "system host"
 build_version="$(app_version "$BUILD_APP")"
@@ -111,6 +155,36 @@ echo "runningHostFound=$running_found"
 echo "runningMatchesBuild=$running_matches_build"
 
 section "result"
+block_reasons=""
+if [[ ! -d "$SYSTEM_APP" ]]; then
+  block_reasons="$(append_reason "$block_reasons" "system-app-missing")"
+elif [[ "$system_matches_build" != "true" ]]; then
+  block_reasons="$(append_reason "$block_reasons" "system-cdhash-mismatch")"
+fi
+if [[ "$settings_matches_build" != "true" ]]; then
+  block_reasons="$(append_reason "$block_reasons" "settings-version-mismatch")"
+fi
+if [[ "$tis_ready" != "true" ]]; then
+  block_reasons="$(append_reason "$block_reasons" "tis-not-ready")"
+fi
+if [[ "$running_found" != "true" ]]; then
+  block_reasons="$(append_reason "$block_reasons" "running-host-missing")"
+elif [[ "$running_matches_build" != "true" ]]; then
+  block_reasons="$(append_reason "$block_reasons" "running-cdhash-mismatch")"
+fi
+if [[ "$admin_ready" != "true" &&
+  ( "$system_matches_build" != "true" || "$settings_matches_build" != "true" ) ]]; then
+  block_reasons="$(append_reason "$block_reasons" "admin-required")"
+fi
+if [[ -z "$block_reasons" ]]; then
+  block_reasons=none
+fi
+echo "installCheckBlockReasons=$block_reasons"
+if [[ "$block_reasons" == "none" ]]; then
+  echo "installCheckRequiredAction=none"
+else
+  echo "installCheckRequiredAction=$(install_required_action "$block_reasons")"
+fi
 if [[ "$system_matches_build" == "true" &&
   "$settings_matches_build" == "true" &&
   "$tis_ready" == "true" &&

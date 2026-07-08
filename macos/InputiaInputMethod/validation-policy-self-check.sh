@@ -60,6 +60,10 @@ require('INPUTIA_VERIFY_NONGUI_FULL:-0' in verify_nongui, "verify-nongui-missing
 
 require('validationTier=install-check' in install_check, "install-check-missing-tier-marker")
 require('INPUTIA_TIS_INCLUDE_MENU_READINESS=0 "$ROOT_DIR/tis-readiness.sh"' in install_check, "install-check-must-disable-menu-readiness")
+require('installCheckBlockReasons=' in install_check, "install-check-missing-block-reasons")
+require('installCheckRequiredAction=' in install_check, "install-check-missing-required-action")
+require('run-install-handoff-and-admin-install' in install_check, "install-check-missing-admin-required-action")
+require('restart-inputia-host-after-install' in install_check, "install-check-missing-running-host-action")
 for forbidden in [
     "menu-readiness.sh",
     "gui-smoke-readiness.sh",
