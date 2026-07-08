@@ -596,6 +596,7 @@ compile_safari_applescript_block() {
 verify_cleanup_permission_contract() {
   /usr/bin/python3 - "$ROOT_DIR" <<'PY'
 import pathlib
+import plistlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -853,6 +854,37 @@ status_text = (root / "status.sh").read_text()
 require("return 0" in status_text[status_text.find("plist_value()"):status_text.find("app_version()")], "status-plist-value-missing-safe-return")
 require("return 0" in status_text[status_text.find("app_cdhash()"):status_text.find("app_assessment()")], "status-cdhash-missing-safe-return")
 require("statusGuiSmokeReady=false" in status_text, "status-missing-gui-smoke-not-ready-output")
+
+info_plist = plistlib.loads((root / "Info.plist").read_bytes())
+require(info_plist.get("CFBundleDisplayName") == "Inputia", "info-plist-display-name-is-not-inputia")
+require(info_plist.get("CFBundleName") == "Inputia", "info-plist-bundle-name-is-not-inputia")
+mode_dict = (
+    info_plist.get("ComponentInputModeDict", {})
+    .get("tsInputModeListKey", {})
+    .get("com.inputia.inputmethod.Inputia.Main", {})
+)
+require(mode_dict.get("TISInputSourceID") == "com.inputia.inputmethod.Inputia.Main", "info-plist-main-mode-id-mismatch")
+for localization in ("en.lproj", "zh-Hans.lproj", "zh-Hant.lproj"):
+    localized_info = (root / "Resources" / localization / "InfoPlist.strings").read_text()
+    require('"CFBundleDisplayName" = "Inputia";' in localized_info, f"{localization}-display-name-not-inputia")
+    require('"CFBundleName" = "Inputia";' in localized_info, f"{localization}-bundle-name-not-inputia")
+    require('"com.inputia.inputmethod.Inputia" = "Inputia";' in localized_info, f"{localization}-parent-name-not-inputia")
+    require('"com.inputia.inputmethod.Inputia.Main" = "Inputia";' in localized_info, f"{localization}-main-mode-name-not-inputia")
+    for forbidden_name_suffix in ("Inputia 简体", "Inputia 繁体", "Inputia Simplified", "Inputia Traditional"):
+        require(forbidden_name_suffix not in localized_info, f"{localization}-inputia-name-has-script-suffix")
+
+settings_window_text = (root / "Sources" / "InputiaInputMethod" / "InputiaSettingsWindow.swift").read_text()
+require('var chineseScript: String?' in settings_window_text, "settings-window-missing-chinese-script-field")
+require('var scriptToggleShortcut: String?' in settings_window_text, "settings-window-missing-script-shortcut-field")
+require('case chineseScript = "chinese_script"' in settings_window_text, "settings-window-missing-chinese-script-json-key")
+require('case scriptToggleShortcut = "script_toggle_shortcut"' in settings_window_text, "settings-window-missing-script-shortcut-json-key")
+require('chineseScript: "simplified"' in settings_window_text, "settings-window-missing-default-simplified-script")
+require('scriptToggleShortcut: "control_shift_s"' in settings_window_text, "settings-window-missing-default-script-shortcut")
+require('NSSegmentedControl(labels: ["简体", "繁体"]' in settings_window_text, "settings-window-missing-script-segment-control")
+require('return labeledRow(title: "中文字形", control: chineseScriptSegment)' in settings_window_text, "settings-window-missing-script-row")
+require('return labeledRow(title: "简繁切换", control: scriptShortcutPopup)' in settings_window_text, "settings-window-missing-script-shortcut-row")
+require('next.chineseScript = chineseScriptSegment.selectedSegment == 1 ? "traditional" : "simplified"' in settings_window_text, "settings-window-does-not-save-script-choice")
+require('next.scriptToggleShortcut = (scriptShortcutPopup.selectedItem?.representedObject as? String) ?? "control_shift_s"' in settings_window_text, "settings-window-does-not-save-script-shortcut")
 
 import_signing_text = (root / "import-signing-identity.sh").read_text()
 require("INPUTIA_P12_PASSWORD" in import_signing_text, "import-signing-missing-p12-password-env")
