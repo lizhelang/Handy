@@ -39,6 +39,24 @@ tis_value() {
   /usr/bin/awk -F= -v key="$key" '$1 == key { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$output"
 }
 
+run_install_check_summary() {
+  if [[ -n "${INPUTIA_REPAIR_INSTALL_CHECK_FOR_TEST:-}" ]]; then
+    printf '%s\n' "$INPUTIA_REPAIR_INSTALL_CHECK_FOR_TEST"
+    return
+  fi
+  "$ROOT_DIR/install-check.sh" 2>&1 || true
+}
+
+install_required_action_before_repair() {
+  local output action
+  output="$(run_install_check_summary)"
+  action="$(tis_value "$output" "installCheckRequiredAction")"
+  if [[ "$action" == "none" || "$action" == "unknown" || -z "$action" ]]; then
+    action="run-install-handoff-and-admin-install"
+  fi
+  echo "${action}-before-repair"
+}
+
 run_tis_readiness() {
   if [[ -n "${INPUTIA_REPAIR_TIS_READINESS_FOR_TEST:-}" ]]; then
     printf '%s\n' "$INPUTIA_REPAIR_TIS_READINESS_FOR_TEST"
@@ -76,11 +94,29 @@ run_self_check() {
       INPUTIA_REPAIR_TIS_DUPLICATES_SELF_CHECK=0 \
       INPUTIA_REPAIR_TIS_READINESS_FOR_TEST="$sample" \
       INPUTIA_REPAIR_SYSTEM_MATCHES_BUILD_FOR_TEST=false \
+      INPUTIA_REPAIR_INSTALL_CHECK_FOR_TEST=$'installCheckRequiredAction=admin-install-current-handoff\n' \
       INPUTIA_REPAIR_SYSTEM_APP="$SYSTEM_APP" \
       "$0" 2>&1 || true
   )"
   if ! /usr/bin/grep -q '^tisDuplicateRepairReady=false reason=system-cdhash-mismatch$' <<<"$mismatch_output"; then
     echo "tisDuplicateRepairSelfCheck=false reason=missing-system-match-gate"
+    exit 1
+  fi
+  if ! /usr/bin/grep -q '^tisDuplicateRepairRequiredAction=admin-install-current-handoff-before-repair$' <<<"$mismatch_output"; then
+    echo "tisDuplicateRepairSelfCheck=false reason=missing-current-handoff-action"
+    exit 1
+  fi
+  mismatch_output="$(
+    INPUTIA_REPAIR_TIS_DUPLICATES=1 \
+      INPUTIA_REPAIR_TIS_DUPLICATES_SELF_CHECK=0 \
+      INPUTIA_REPAIR_TIS_READINESS_FOR_TEST="$sample" \
+      INPUTIA_REPAIR_SYSTEM_MATCHES_BUILD_FOR_TEST=false \
+      INPUTIA_REPAIR_INSTALL_CHECK_FOR_TEST=$'installCheckRequiredAction=run-install-handoff-and-admin-install\n' \
+      INPUTIA_REPAIR_SYSTEM_APP="$SYSTEM_APP" \
+      "$0" 2>&1 || true
+  )"
+  if ! /usr/bin/grep -q '^tisDuplicateRepairRequiredAction=run-install-handoff-and-admin-install-before-repair$' <<<"$mismatch_output"; then
+    echo "tisDuplicateRepairSelfCheck=false reason=missing-stale-handoff-action"
     exit 1
   fi
   echo "tisDuplicateRepairSelfCheck=true"
@@ -147,7 +183,7 @@ fi
 
 if [[ "$system_matches_build" != "true" ]]; then
   echo "tisDuplicateRepairReady=false reason=system-cdhash-mismatch"
-  echo "tisDuplicateRepairRequiredAction=run-install-handoff-and-admin-install-before-repair"
+  echo "tisDuplicateRepairRequiredAction=$(install_required_action_before_repair)"
   exit 7
 fi
 
