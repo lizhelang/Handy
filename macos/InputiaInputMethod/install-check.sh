@@ -60,7 +60,9 @@ admin_install_ready() {
 
 install_required_action() {
   local block_reasons="$1"
-  if [[ ",$block_reasons," == *,system-app-missing,* ||
+  if [[ "$block_reasons" == "none" ]]; then
+    echo "none"
+  elif [[ ",$block_reasons," == *,system-app-missing,* ||
     ",$block_reasons," == *,system-cdhash-mismatch,* ||
     ",$block_reasons," == *,settings-version-mismatch,* ]]; then
     if [[ ",$block_reasons," == *,admin-required,* ]]; then
@@ -77,6 +79,105 @@ install_required_action() {
     echo "inspect-install-check-output"
   fi
 }
+
+install_check_block_reasons() {
+  local system_exists="$1"
+  local system_matches_build="$2"
+  local settings_matches_build="$3"
+  local tis_ready="$4"
+  local running_found="$5"
+  local running_matches_build="$6"
+  local admin_ready="$7"
+  local block_reasons=""
+
+  if [[ "$system_exists" != "true" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "system-app-missing")"
+  elif [[ "$system_matches_build" != "true" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "system-cdhash-mismatch")"
+  fi
+  if [[ "$settings_matches_build" != "true" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "settings-version-mismatch")"
+  fi
+  if [[ "$tis_ready" != "true" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "tis-not-ready")"
+  fi
+  if [[ "$running_found" != "true" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "running-host-missing")"
+  elif [[ "$running_matches_build" != "true" ]]; then
+    block_reasons="$(append_reason "$block_reasons" "running-cdhash-mismatch")"
+  fi
+  if [[ "$admin_ready" != "true" &&
+    ( "$system_matches_build" != "true" || "$settings_matches_build" != "true" ) ]]; then
+    block_reasons="$(append_reason "$block_reasons" "admin-required")"
+  fi
+  if [[ -z "$block_reasons" ]]; then
+    block_reasons=none
+  fi
+  echo "$block_reasons"
+}
+
+run_install_check_self_check_case() {
+  local label="$1"
+  local system_exists="$2"
+  local system_matches_build="$3"
+  local settings_matches_build="$4"
+  local tis_ready="$5"
+  local running_found="$6"
+  local running_matches_build="$7"
+  local admin_ready="$8"
+  local expected_reasons="$9"
+  local expected_action="${10}"
+  local actual_reasons actual_action
+
+  actual_reasons="$(
+    install_check_block_reasons \
+      "$system_exists" \
+      "$system_matches_build" \
+      "$settings_matches_build" \
+      "$tis_ready" \
+      "$running_found" \
+      "$running_matches_build" \
+      "$admin_ready"
+  )"
+  actual_action="$(install_required_action "$actual_reasons")"
+  echo "installCheckSelfCheck case=$label reasons=$actual_reasons action=$actual_action"
+  if [[ "$actual_reasons" != "$expected_reasons" ]]; then
+    echo "installCheckSelfCheck=false case=$label reason=reasons-mismatch expected=$expected_reasons actual=$actual_reasons"
+    exit 1
+  fi
+  if [[ "$actual_action" != "$expected_action" ]]; then
+    echo "installCheckSelfCheck=false case=$label reason=action-mismatch expected=$expected_action actual=$actual_action"
+    exit 1
+  fi
+}
+
+if [[ "${INPUTIA_INSTALL_CHECK_SELF_CHECK:-0}" == "1" ]]; then
+  run_install_check_self_check_case \
+    ready true true true true true true true \
+    none none
+  run_install_check_self_check_case \
+    admin-required true false true true true false false \
+    system-cdhash-mismatch,running-cdhash-mismatch,admin-required \
+    run-install-handoff-and-admin-install
+  run_install_check_self_check_case \
+    tis-not-ready true true true false true true true \
+    tis-not-ready \
+    select-or-readd-inputia-in-system-settings
+  run_install_check_self_check_case \
+    running-missing true true true true false false true \
+    running-host-missing \
+    restart-inputia-host-after-install
+  run_install_check_self_check_case \
+    settings-admin true true false true true true false \
+    settings-version-mismatch,admin-required \
+    run-install-handoff-and-admin-install
+  run_install_check_self_check_case \
+    system-missing false false true false false false false \
+    system-app-missing,tis-not-ready,running-host-missing,admin-required \
+    run-install-handoff-and-admin-install
+  echo "installCheckSelfCheck=true"
+  exit 0
+fi
 
 section "policy"
 echo "validationTier=install-check"
@@ -155,30 +256,17 @@ echo "runningHostFound=$running_found"
 echo "runningMatchesBuild=$running_matches_build"
 
 section "result"
-block_reasons=""
-if [[ ! -d "$SYSTEM_APP" ]]; then
-  block_reasons="$(append_reason "$block_reasons" "system-app-missing")"
-elif [[ "$system_matches_build" != "true" ]]; then
-  block_reasons="$(append_reason "$block_reasons" "system-cdhash-mismatch")"
-fi
-if [[ "$settings_matches_build" != "true" ]]; then
-  block_reasons="$(append_reason "$block_reasons" "settings-version-mismatch")"
-fi
-if [[ "$tis_ready" != "true" ]]; then
-  block_reasons="$(append_reason "$block_reasons" "tis-not-ready")"
-fi
-if [[ "$running_found" != "true" ]]; then
-  block_reasons="$(append_reason "$block_reasons" "running-host-missing")"
-elif [[ "$running_matches_build" != "true" ]]; then
-  block_reasons="$(append_reason "$block_reasons" "running-cdhash-mismatch")"
-fi
-if [[ "$admin_ready" != "true" &&
-  ( "$system_matches_build" != "true" || "$settings_matches_build" != "true" ) ]]; then
-  block_reasons="$(append_reason "$block_reasons" "admin-required")"
-fi
-if [[ -z "$block_reasons" ]]; then
-  block_reasons=none
-fi
+system_exists="$([[ -d "$SYSTEM_APP" ]] && echo true || echo false)"
+block_reasons="$(
+  install_check_block_reasons \
+    "$system_exists" \
+    "$system_matches_build" \
+    "$settings_matches_build" \
+    "$tis_ready" \
+    "$running_found" \
+    "$running_matches_build" \
+    "$admin_ready"
+)"
 echo "installCheckBlockReasons=$block_reasons"
 if [[ "$block_reasons" == "none" ]]; then
   echo "installCheckRequiredAction=none"

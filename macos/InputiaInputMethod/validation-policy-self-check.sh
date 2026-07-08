@@ -46,7 +46,6 @@ for forbidden in [
     "gui-smoke-suite.sh",
     "post-install-regression.sh",
     "status.sh",
-    "install-check.sh",
     "notarization-readiness.sh",
     "smoke-textedit.sh",
     "smoke-safari-typing.sh",
@@ -62,8 +61,12 @@ require('validationTier=install-check' in install_check, "install-check-missing-
 require('INPUTIA_TIS_INCLUDE_MENU_READINESS=0 "$ROOT_DIR/tis-readiness.sh"' in install_check, "install-check-must-disable-menu-readiness")
 require('installCheckBlockReasons=' in install_check, "install-check-missing-block-reasons")
 require('installCheckRequiredAction=' in install_check, "install-check-missing-required-action")
+require('INPUTIA_INSTALL_CHECK_SELF_CHECK:-0' in install_check, "install-check-missing-self-check-mode")
+require('installCheckSelfCheck=true' in install_check, "install-check-missing-self-check-pass-marker")
 require('run-install-handoff-and-admin-install' in install_check, "install-check-missing-admin-required-action")
 require('restart-inputia-host-after-install' in install_check, "install-check-missing-running-host-action")
+require('"$ROOT_DIR/install-check.sh"' in dev_fast, "dev-fast-missing-install-check-self-check")
+require('INPUTIA_INSTALL_CHECK_SELF_CHECK=1 "$ROOT_DIR/install-check.sh"' in dev_fast, "dev-fast-install-check-not-self-check-only")
 for forbidden in [
     "menu-readiness.sh",
     "gui-smoke-readiness.sh",

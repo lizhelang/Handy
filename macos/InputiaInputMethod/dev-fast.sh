@@ -42,6 +42,9 @@ section "build artifact lock self-check"
 section "validation policy self-check"
 "$ROOT_DIR/validation-policy-self-check.sh"
 
+section "install check self-check"
+INPUTIA_INSTALL_CHECK_SELF_CHECK=1 "$ROOT_DIR/install-check.sh"
+
 section "build"
 run_rust "$ROOT_DIR/build.sh"
 
