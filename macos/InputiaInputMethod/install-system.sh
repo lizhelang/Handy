@@ -72,13 +72,72 @@ fi
 
 require_no_verification_processes
 
-if [[ ! -w "$DEST_DIR" && "${INPUTIA_INSTALL_NO_ADMIN_PROMPT:-0}" == "1" ]]; then
+current_user_directory_status() {
+  /usr/bin/python3 <<'PY'
+import os
+import pwd
+
+uid = os.getuid()
+print(f"systemInstallCurrentUID={uid}")
+try:
+    record = pwd.getpwuid(uid)
+except KeyError:
+    print("systemInstallCurrentUserName=unknown")
+    print("systemInstallUserDirectoryReady=false")
+    print("systemInstallUserDirectoryBlockReason=missing-passwd-record")
+else:
+    print(f"systemInstallCurrentUserName={record.pw_name}")
+    print("systemInstallUserDirectoryReady=true")
+    print("systemInstallUserDirectoryBlockReason=none")
+PY
+}
+
+require_admin_channel_if_needed() {
+  if [[ -w "$DEST_DIR" && -w "/Applications" ]]; then
+    echo "systemInstallAdminChannelReady=true reason=writable"
+    return
+  fi
+
   echo "systemInstallNeedsAdmin=true"
-  if ! /usr/bin/sudo -n true >/dev/null 2>&1; then
+
+  local user_directory_output user_directory_ready user_directory_block_reason
+  user_directory_output="$(current_user_directory_status)"
+  printf '%s\n' "$user_directory_output"
+  user_directory_ready="$(/usr/bin/awk -F= '$1 == "systemInstallUserDirectoryReady" { print $2; exit }' <<<"$user_directory_output")"
+  user_directory_block_reason="$(/usr/bin/awk -F= '$1 == "systemInstallUserDirectoryBlockReason" { print $2; exit }' <<<"$user_directory_output")"
+
+  if [[ "$user_directory_ready" != "true" ]]; then
+    echo "systemInstallAdminChannelReady=false reason=user-directory-unavailable"
+    echo "systemInstallReady=false reason=user-directory-unavailable"
+    echo "systemInstallBlockReason=${user_directory_block_reason:-unknown}"
+    echo "systemInstallRequiredAction=repair-current-user-directory-service"
+    exit 13
+  fi
+
+  if [[ "${INPUTIA_INSTALL_NO_ADMIN_PROMPT:-0}" == "1" ]]; then
+    if /usr/bin/sudo -n true >/dev/null 2>&1; then
+      echo "systemInstallAdminChannelReady=true reason=sudo-noninteractive"
+      return
+    fi
+    echo "systemInstallAdminChannelReady=false reason=admin-required"
     echo "systemInstallReady=false reason=admin-required"
     exit 12
   fi
-fi
+
+  if [[ -n "${INPUTIA_SUDO_PASSWORD:-}" ]]; then
+    if /usr/bin/printf '%s\n' "$INPUTIA_SUDO_PASSWORD" | /usr/bin/sudo -S -p '' true >/dev/null 2>&1; then
+      echo "systemInstallAdminChannelReady=true reason=sudo-password"
+      return
+    fi
+    echo "systemInstallAdminChannelReady=false reason=sudo-password-rejected"
+    echo "systemInstallReady=false reason=admin-required"
+    exit 12
+  fi
+
+  echo "systemInstallAdminChannelReady=unknown reason=osascript-administrator-privileges-prompt"
+}
+
+require_admin_channel_if_needed
 
 run_with_timeout() {
   local timeout_seconds="$1"
@@ -175,47 +234,6 @@ cleanup_user_inputia_residue() {
   done <<<"$removed_paths"
 }
 
-select_target_mode() {
-  local target_mode_id="$1"
-  if [[ -x "$ROOT_DIR/build/inputia-tis-tool" ]]; then
-    run_login_best_effort 12 inputia-select-after-refresh "$ROOT_DIR/build/inputia-tis-tool" --select-source-id "$target_mode_id"
-  else
-    run_login_best_effort 12 inputia-select-after-refresh "$DEST_APP/Contents/MacOS/InputiaInputMethod" --select-input-source
-  fi
-}
-
-wait_for_stable_tis_selection() {
-  local target_mode_id="$1"
-  local consecutive_ready=0
-  local readiness_output=""
-
-  for attempt in 1 2 3 4 5 6; do
-    readiness_output="$(run_login_capture /bin/bash "$ROOT_DIR/tis-readiness.sh" "$DEST_APP")"
-    if /usr/bin/grep -q '^tisReadiness=true$' <<<"$readiness_output" &&
-      /usr/bin/grep -q '^tis.currentMatchesTarget=true$' <<<"$readiness_output"; then
-      consecutive_ready=$((consecutive_ready + 1))
-      echo "systemInstallTISStableCheck attempt=$attempt ready=true consecutive=$consecutive_ready"
-      if [[ "$consecutive_ready" -ge 2 ]]; then
-        printf '%s\n' "$readiness_output" | /usr/bin/sed 's/^/systemInstallPostRefreshTIS: /'
-        echo "systemInstallPostRefreshTISReady=true"
-        return 0
-      fi
-    else
-      consecutive_ready=0
-      echo "systemInstallTISStableCheck attempt=$attempt ready=false"
-      run_best_effort 12 inputia-register-retry "$DEST_APP/Contents/MacOS/InputiaInputMethod" --register-input-source
-      run_login_best_effort 12 inputia-normalize-hitoolbox-retry "$DEST_APP/Contents/MacOS/InputiaInputMethod" --normalize-hitoolbox
-      /usr/bin/killall cfprefsd >/dev/null 2>&1 || true
-      select_target_mode "$target_mode_id"
-    fi
-    /bin/sleep 1
-  done
-
-  printf '%s\n' "$readiness_output" | /usr/bin/sed 's/^/systemInstallPostRefreshTIS: /'
-  echo "systemInstallPostRefreshTISReady=false"
-  return 1
-}
-
 /bin/zsh "$ROOT_DIR/build.sh" >/dev/null
 
 cdhash() {
@@ -269,7 +287,7 @@ else
 fi
 cleanup_user_inputia_residue
 
-if [[ -w "$DEST_DIR" ]]; then
+if [[ -w "$DEST_DIR" && -w "/Applications" ]]; then
   /bin/zsh -c "$copy_command"
 else
   echo "systemInstallNeedsAdmin=true"
@@ -280,7 +298,8 @@ else
   else
     run_with_timeout 120 admin-copy /usr/bin/osascript \
       -e 'on run argv' \
-      -e 'do shell script item 1 of argv with administrator privileges' \
+      -e 'set copyCommand to item 1 of argv' \
+      -e 'do shell script copyCommand with administrator privileges' \
       -e 'end run' \
       "$copy_command"
   fi
@@ -337,26 +356,17 @@ run_best_effort 8 lsregister-register-inputia "$LSREGISTER" -f "$DEST_APP"
 run_best_effort 8 lsregister-register-settings "$LSREGISTER" -f "$DEST_SETTINGS_APP"
 run_best_effort 12 inputia-register "$DEST_APP/Contents/MacOS/InputiaInputMethod" --register-input-source
 run_best_effort 12 inputia-dump-installed "$DEST_APP/Contents/MacOS/InputiaInputMethod" --dump-input-source
-
-run_login_best_effort 12 inputia-enable "$DEST_APP/Contents/MacOS/InputiaInputMethod" --enable-input-source
-run_login_best_effort 12 inputia-normalize-hitoolbox "$DEST_APP/Contents/MacOS/InputiaInputMethod" --normalize-hitoolbox
-run_login_best_effort 12 inputia-select "$DEST_APP/Contents/MacOS/InputiaInputMethod" --select-input-source
-
-run_best_effort 12 inputia-dump-enabled "$DEST_APP/Contents/MacOS/InputiaInputMethod" --dump-enabled-input-source
 run_best_effort 12 inputia-dump-installed "$DEST_APP/Contents/MacOS/InputiaInputMethod" --dump-input-source
 
-target_mode_id="$(/usr/libexec/PlistBuddy -c 'Print :ComponentInputModeDict:tsVisibleInputModeOrderedArrayKey:0' "$DEST_APP/Contents/Info.plist" 2>/dev/null || true)"
-if [[ -z "$target_mode_id" ]]; then
-  target_mode_id="com.inputia.inputmethod.Inputia.Main"
-fi
 run_best_effort 12 inputia-register-before-refresh "$DEST_APP/Contents/MacOS/InputiaInputMethod" --register-input-source
-run_login_best_effort 12 inputia-enable-before-refresh "$DEST_APP/Contents/MacOS/InputiaInputMethod" --enable-input-source
-run_login_best_effort 12 inputia-normalize-before-refresh "$DEST_APP/Contents/MacOS/InputiaInputMethod" --normalize-hitoolbox
 /usr/bin/killall TextInputMenuAgent >/dev/null 2>&1 || true
 /usr/bin/killall SystemUIServer >/dev/null 2>&1 || true
 /usr/bin/killall cfprefsd >/dev/null 2>&1 || true
 /bin/sleep 2
 run_best_effort 12 inputia-register-after-refresh "$DEST_APP/Contents/MacOS/InputiaInputMethod" --register-input-source
-run_login_best_effort 12 inputia-normalize-after-refresh "$DEST_APP/Contents/MacOS/InputiaInputMethod" --normalize-hitoolbox
-select_target_mode "$target_mode_id"
-wait_for_stable_tis_selection "$target_mode_id"
+echo "systemInstallRegistered=true"
+echo "systemInstallPath=$DEST_APP"
+echo "systemInstallTISReady=false reason=manual-add-required"
+echo "systemInstallRequiredAction=add-input-source-in-system-settings"
+echo "systemInstallNextStep=System Settings > Keyboard > Text Input > Edit > Add Inputia"
+echo "systemInstallOpenSettingsCommand=open 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension'"

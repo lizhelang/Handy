@@ -107,7 +107,6 @@ rm -rf "$DEST_APP" "$LEGACY_APP" "$DEST_SETTINGS_APP"
 "$LSREGISTER" -u "$DEST_APP" >/dev/null 2>&1 || true
 "$LSREGISTER" -f "$DEST_APP" >/dev/null 2>&1 || true
 "$DEST_APP/Contents/MacOS/InputiaInputMethod" --register-input-source
-"$DEST_APP/Contents/MacOS/InputiaInputMethod" --enable-input-source
 dump_output="$("$DEST_APP/Contents/MacOS/InputiaInputMethod" --dump-input-source 2>&1 || true)"
 printf '%s\n' "$dump_output" | /usr/bin/awk -F= '
   $1 == "id" && $2 ~ /^com[.]inputia[.]inputmethod[.]Inputia/ { print "userInstallTISDump: " $0; next }
@@ -127,5 +126,10 @@ if /usr/bin/grep -q '^tisReadiness=true$' <<<"$tis_readiness_output"; then
   echo "userInstallTISReady=true"
 else
   echo "userInstallTISReady=false"
+  echo "userInstallRequiredAction=add-input-source-in-system-settings"
 fi
+echo "userInstallPath=$DEST_APP"
+echo "userInstallRegistered=true"
+echo "userInstallNextStep=System Settings > Keyboard > Text Input > Edit > Add Inputia"
+echo "userInstallOpenSettingsCommand=open 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension'"
 echo "settingsLauncherInstalled=$DEST_SETTINGS_APP"

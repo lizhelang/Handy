@@ -3,13 +3,21 @@ set -eu
 set -o pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP="${1:-/Library/Input Methods/InputiaInputMethod.app}"
 BUILD_APP="$ROOT_DIR/build/InputiaInputMethod.app"
 BUILD_SETTINGS_APP="$ROOT_DIR/build/Inputia 设置.app"
 SYSTEM_SETTINGS_APP="/Applications/Inputia 设置.app"
 USER_APP="${INPUTIA_USER_APP_FOR_TEST:-$HOME/Library/Input Methods/InputiaInputMethod.app}"
 USER_LEGACY_APP="${INPUTIA_USER_LEGACY_APP_FOR_TEST:-$HOME/Library/Input Methods/IputiaInputMethod.app}"
 USER_SETTINGS_APP="${INPUTIA_USER_SETTINGS_APP_FOR_TEST:-$HOME/Applications/Inputia 设置.app}"
+DEFAULT_APP="/Library/Input Methods/InputiaInputMethod.app"
+if [[ -d "$USER_APP" ]]; then
+  DEFAULT_APP="$USER_APP"
+fi
+APP="${1:-$DEFAULT_APP}"
+TARGET_SETTINGS_APP="$SYSTEM_SETTINGS_APP"
+if [[ "$APP" == "$USER_APP" ]]; then
+  TARGET_SETTINGS_APP="$USER_SETTINGS_APP"
+fi
 PKG_PATH="$ROOT_DIR/dist/InputiaInputMethod-latest.pkg"
 TIS_READINESS="$ROOT_DIR/tis-readiness.sh"
 
@@ -350,7 +358,7 @@ target_cdhash="$(cdhash "$APP")"
 build_version="$(version "$BUILD_APP")"
 target_version="$(version "$APP")"
 build_settings_version="$(version "$BUILD_SETTINGS_APP")"
-system_settings_version="$(version "$SYSTEM_SETTINGS_APP")"
+target_settings_version="$(version "$TARGET_SETTINGS_APP")"
 pkg_sha="$(sha256 "$PKG_PATH")"
 
 echo "build.exists=$([[ -d "$BUILD_APP" ]] && echo true || echo false)"
@@ -367,8 +375,9 @@ else
 fi
 echo "target.matchesBuild=$target_matches"
 echo "settings.buildVersion=$build_settings_version"
-echo "settings.systemVersion=$system_settings_version"
-if [[ -n "$build_settings_version" && "$system_settings_version" == "$build_settings_version" ]]; then
+echo "settings.targetPath=$TARGET_SETTINGS_APP"
+echo "settings.targetVersion=$target_settings_version"
+if [[ -n "$build_settings_version" && "$target_settings_version" == "$build_settings_version" ]]; then
   settings_matches=true
 else
   settings_matches=false
@@ -410,7 +419,9 @@ echo "guiSessionBlockReason=$gui_block"
 echo "textEditPreflight=$textedit_state"
 echo "safariPreflight=$safari_state"
 echo "inputiaHostPreflight=$inputia_state"
-if [[ -e "$USER_APP" || -e "$USER_LEGACY_APP" || -e "$USER_SETTINGS_APP" ]]; then
+if [[ -e "$USER_LEGACY_APP" ]]; then
+  user_host_conflict=true
+elif [[ -e "$USER_APP" && -d "/Library/Input Methods/InputiaInputMethod.app" ]]; then
   user_host_conflict=true
 else
   user_host_conflict=false

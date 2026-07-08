@@ -1280,27 +1280,25 @@ install_menu_restart_index = install_system_text.find("killall TextInputMenuAgen
 install_systemui_restart_index = install_system_text.find("killall SystemUIServer")
 install_post_refresh_register_index = install_system_text.find("inputia-register-after-refresh")
 install_post_refresh_normalize_index = install_system_text.find("inputia-normalize-after-refresh")
-install_post_refresh_select_index = install_system_text.rfind('select_target_mode "$target_mode_id"')
-install_post_refresh_wait_index = install_system_text.find('wait_for_stable_tis_selection "$target_mode_id"')
+install_manual_add_index = install_system_text.find("systemInstallTISReady=false reason=manual-add-required")
+install_manual_add_action_index = install_system_text.find("systemInstallRequiredAction=add-input-source-in-system-settings")
 install_preflight_index = install_system_text.find("require_no_verification_processes")
 install_build_index = install_system_text.find('"$ROOT_DIR/build.sh"')
 install_kill_host_index = install_system_text.find("killall InputiaInputMethod")
-require('run_login_capture /bin/bash "$ROOT_DIR/tis-readiness.sh" "$DEST_APP"' in install_system_text, "install-system-missing-tis-readiness")
 require("assess_app()" in install_system_text, "install-system-missing-app-assessment-helper")
 require("INPUTIA_ALLOW_REJECTED_SIGNATURE" in install_system_text, "install-system-missing-rejected-signature-override")
 require("systemInstallInputiaUsable=false reason=signature-rejected" in install_system_text, "install-system-missing-signature-rejected-gate")
 require("systemInstallRequiredAction=sign-with-accepted-identity" in install_system_text, "install-system-missing-signature-required-action")
 require("systemInstallSigningHint=rerun-build-with-INPUTIA_CODESIGN_IDENTITY-that-spctl-accepts" in install_system_text, "install-system-missing-signature-hint")
 require("--clear-input-source-preferences" in install_system_text, "install-system-missing-clear-input-source-preferences")
-require("systemInstallTISStableCheck" in install_system_text, "install-system-missing-stable-tis-check")
-require("systemInstallPostRefreshTISReady=true" in install_system_text, "install-system-missing-post-refresh-tis-ready-output")
-require("tis.currentMatchesTarget=true" in install_system_text, "install-system-missing-current-target-check")
+require("systemInstallTISReady=false reason=manual-add-required" in install_system_text, "install-system-missing-manual-add-readiness-output")
+require("systemInstallNextStep=System Settings > Keyboard > Text Input > Edit > Add Inputia" in install_system_text, "install-system-missing-manual-add-next-step")
 require(install_menu_restart_index >= 0, "install-system-missing-textinputmenuagent-restart")
 require(install_systemui_restart_index > install_menu_restart_index, "install-system-missing-systemui-restart")
 require(install_post_refresh_register_index > install_systemui_restart_index, "install-system-missing-post-refresh-register")
-require(install_post_refresh_normalize_index > install_post_refresh_register_index, "install-system-missing-post-refresh-normalize")
-require(install_post_refresh_select_index > install_post_refresh_normalize_index, "install-system-missing-post-refresh-select")
-require(install_post_refresh_wait_index > install_post_refresh_select_index, "install-system-missing-post-refresh-stable-wait")
+require(install_post_refresh_normalize_index < 0, "install-system-still-runs-post-refresh-normalize")
+require(install_manual_add_index > install_post_refresh_register_index, "install-system-missing-manual-add-tis-output")
+require(install_manual_add_action_index > install_manual_add_index, "install-system-missing-manual-add-required-action")
 require("detect_verification_processes()" in install_system_text, "install-system-missing-verification-process-detection")
 require("systemInstallReady=false reason=verification-running" in install_system_text, "install-system-missing-verification-running-output")
 require("systemInstallBlockingProcess:" in install_system_text, "install-system-missing-blocking-process-output")
@@ -1748,6 +1746,15 @@ require("hitoolboxNormalizeSkipped=true reason=manual-hitoolbox-write-disabled" 
 require("hitoolboxNormalizeRequiredAction=enable-via-system-settings-or-fix-user-preference-service" in normalize_text, "host-normalize-missing-required-action-output")
 require("setPreferenceArray(" not in normalize_text, "host-normalize-still-writes-preferences")
 require("writeHIToolboxPreferencePlist(" not in normalize_text, "host-normalize-still-writes-hitoolbox-plist")
+install_user_text = (root / "install-user.sh").read_text()
+install_system_text = (root / "install-system.sh").read_text()
+for forbidden in ["--enable-input-source", "--normalize-hitoolbox", "--select-input-source"]:
+    require(forbidden not in install_user_text, f"install-user-still-calls-{forbidden}")
+    require(forbidden not in install_system_text, f"install-system-still-calls-{forbidden}")
+require("userInstallRequiredAction=add-input-source-in-system-settings" in install_user_text, "install-user-missing-manual-add-required-action")
+require("systemInstallRequiredAction=add-input-source-in-system-settings" in install_system_text, "install-system-missing-manual-add-required-action")
+require("--register-input-source" in install_user_text, "install-user-missing-tis-register")
+require("--register-input-source" in install_system_text, "install-system-missing-tis-register")
 handle_key_down_index = main_text.find("private func handleKeyDown(_ event: NSEvent, client: IMKTextInput) -> Bool")
 pass_through_index = main_text.find("InputiaShortcutClassifier.shouldPassThroughKeyDown", handle_key_down_index)
 script_toggle_index = main_text.find("isScriptToggleShortcut(event, modifiers: modifiers)", handle_key_down_index)
@@ -4318,8 +4325,16 @@ else
   install_no_prompt_clipboard_before="$(/usr/bin/pbpaste 2>/dev/null || true)"
   install_no_prompt_tis_before="$(current_input_source_id)"
   install_no_prompt_debug_before="$(debug_events_env)"
-  run_expect_rc 12 "installNoPrompt" \
+  run_allow_rc "12,13" "installNoPrompt" \
     env INPUTIA_INSTALL_NO_ADMIN_PROMPT=1 "$ROOT_DIR/install-system.sh"
+  require_output_regex \
+    "$RUN_EXPECT_RC_OUTPUT" \
+    'systemInstallReady=false reason=(admin-required|user-directory-unavailable)' \
+    "install-no-prompt-missing-ready-failure"
+  if [[ "$RUN_EXPECT_RC_ACTUAL" == "13" ]]; then
+    require_output "$RUN_EXPECT_RC_OUTPUT" "systemInstallRequiredAction=repair-current-user-directory-service" "install-no-prompt-missing-user-directory-action"
+    require_output "$RUN_EXPECT_RC_OUTPUT" "systemInstallBlockReason=missing-passwd-record" "install-no-prompt-missing-passwd-blocker"
+  fi
   install_no_prompt_clipboard_after="$(/usr/bin/pbpaste 2>/dev/null || true)"
   install_no_prompt_tis_after="$(current_input_source_id)"
   install_no_prompt_debug_after="$(debug_events_env)"

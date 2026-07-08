@@ -25716,3 +25716,104 @@ pgrep verify/build/status/tis processes
 
 - 本轮不要再把 Developer ID / notarization 当作 MVP 阻塞；Mac mini 已进入与 MacBook 对齐的本地开发 Gatekeeper disabled 方向。
 - 下一步应继续终端优先定位菜单栏代理为什么没有把 `AppleEnabledThirdPartyInputSources` 中的 Inputia 渲染进输入菜单；在 `menuReadiness=true` 前仍不要跑真实 GUI smoke。
+
+## v63 Mac mini：Gatekeeper 已放行，但当前用户目录服务阻塞系统安装
+
+时间：2026-07-08 16:30:00 +0800
+
+背景：
+
+- 用户已在 Mac mini 的隐私与安全性里把 Gatekeeper 改为允许任何来源，本轮按要求停止 UI 探测，只跑终端验证和安装入口。
+- 这是本地开发模式，复刻 MacBook 的 Gatekeeper-disabled 路径；不是正式分发路径。
+
+Gatekeeper / spctl：
+
+```text
+spctl --status
+  assessments disabled
+
+spctl --assess --type execute --verbose=4 "/Library/Input Methods/InputiaInputMethod.app"
+  /Library/Input Methods/InputiaInputMethod.app: accepted
+  override=security disabled
+```
+
+标准系统安装入口：
+
+```text
+./macos/InputiaInputMethod/install-system.sh
+  systemInstallNeedsAdmin=true
+  systemInstallCurrentUID=501
+  systemInstallCurrentUserName=unknown
+  systemInstallUserDirectoryReady=false
+  systemInstallUserDirectoryBlockReason=missing-passwd-record
+  systemInstallAdminChannelReady=false reason=user-directory-unavailable
+  systemInstallReady=false reason=user-directory-unavailable
+  systemInstallBlockReason=missing-passwd-record
+  systemInstallRequiredAction=repair-current-user-directory-service
+  exit=13
+```
+
+当前安装/ready 状态：
+
+```text
+./macos/InputiaInputMethod/status.sh
+  buildVersion=44
+  buildCDHash=0ec2f7d06f720212e3e6039eb19fc84b984d06da
+  systemMatchesBuild=false
+  statusUserDirectoryReady=false
+  statusUserDirectoryBlockReason=missing-passwd-record
+  statusHIToolboxDefaultsReadable=false
+  statusHIToolboxDefaultsBlockReason=domain-missing
+  statusAdminInstallReady=false
+  statusSignatureAccepted=true
+  statusGuiSessionBlockReason=gui-bootstrap-unavailable
+  statusGuiSmokeBlockReasons=target-cdhash-mismatch,admin-required,tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,gui-bootstrap-unavailable
+  statusGuiSmokeReady=false reason=target-cdhash-mismatch,admin-required,tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,gui-bootstrap-unavailable
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  buildCDHash=0ec2f7d06f720212e3e6039eb19fc84b984d06da
+  appCDHash=3623ad086abd01db2c60fb05d7b03229cb060c41
+  appSignatureAccepted=true
+  appMatchesBuild=false
+  tis.currentID=com.apple.keylayout.ABC
+  tis.currentMatchesTarget=false
+  tis.userDirectoryReady=false
+  tis.hitoolboxDefaultsReadable=false
+  tis.readinessBlockReason=missing-enabled-source
+  tis.requiredAction=repair-current-user-directory-service
+  tisReadiness=false
+```
+
+本轮脚本修正：
+
+- `install-system.sh` 在需要写 `/Library/Input Methods` 或 `/Applications` 前先检查当前 UID 是否能解析 passwd 记录；若不能，直接以 `user-directory-unavailable` 失败，避免继续走不可用的 sudo/osascript 授权分支。
+- `install-system.sh` / `install-user.sh` 不再自动 `--enable-input-source` / `--normalize-hitoolbox` / `--select-input-source`；只注册输入源并输出手动添加输入法的 required action，避免再次手写 HIToolbox 偏好造成重复项。
+- `verify-nongui.sh` 更新为当前策略：禁止安装脚本自动写/选 TIS，接受 `missing-passwd-record` 作为安装阻塞，并验证不启动 GUI。
+
+验证：
+
+```text
+zsh -n macos/InputiaInputMethod/install-system.sh
+bash -n macos/InputiaInputMethod/verify-nongui.sh
+  ok
+
+INPUTIA_GUI_SMOKE_READINESS_SELF_CHECK=1 ./macos/InputiaInputMethod/gui-smoke-readiness.sh
+  guiSmokeReadinessSelfCheck case=gui-bootstrap expected=gui-bootstrap-unavailable actual=gui-bootstrap-unavailable
+  guiSmokeReadinessSelfCheck=true
+
+/tmp/inputia-verify-nongui-20260708-162722-gatekeeper-disabled.log
+  awaitUiNotReadyNoLaunchPassed=true
+  installNoPrompt.rc=13
+  installNoPrompt: systemInstallReady=false reason=user-directory-unavailable
+  installNoPrompt: systemInstallBlockReason=missing-passwd-record
+  installNoPrompt: systemInstallRequiredAction=repair-current-user-directory-service
+  residue=false
+  tmpResidue=false
+  nonGuiVerificationPassed=true
+```
+
+结论：
+
+- Gatekeeper / spctl 已不是 blocker；签名被本地开发模式放行。
+- 当前系统安装没有成功，因为当前 Codex/终端会话 UID 501 无 passwd 记录，导致管理员通道、用户偏好服务、TIS readiness 和 GUI bootstrap 同时不可用。
+- 在 `systemMatchesBuild=true`、`tisReadiness=true`、`statusUserDirectoryReady=true`、`statusGuiSessionBlockReason=none` 之前，不运行 TextEdit/Safari/Clipboard GUI smoke。
