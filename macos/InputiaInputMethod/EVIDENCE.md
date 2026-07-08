@@ -25114,6 +25114,75 @@ python3 pwd.getpwuid(os.getuid())
 - 当前不能切换到 Inputia 的剩余 blocker 不是安装包、不是签名、不是 CDHash，而是当前 Mac mini 用户目录服务异常：UID 501 没有 passwd 记录，`sudo` 不可用，`defaults`/CFPreferences 也读不到 `com.apple.HIToolbox` 用户域；TIS 因此仍报告 `missing-enabled-source`，`TISSelectInputSource` 返回 `-50`。
 - 因为 `tisReadiness=false`，本轮没有运行真实 TextEdit/Safari/Clipboard GUI smoke。
 
+## v61 Mac mini：将用户目录服务 / CFPreferences 阻塞显式纳入 readiness 输出
+
+时间：2026-07-08 16:06:30 +0800
+
+背景：
+
+- v60 已证明 Gatekeeper/CDHash/安装包不再是当前阻塞层。
+- 当前剩余问题是 TIS enabled list 仍为 0，同时 macOS 当前会话无法把 UID 501 解析成用户记录，`defaults` 也读不到 `com.apple.HIToolbox` 用户域。
+- 本轮目标是把这个系统环境问题显式写入终端 readiness，避免后续误回到签名、notarization 或安装包方向。
+
+实现：
+
+- `status.sh` 新增：
+  - `statusCurrentUID`
+  - `statusCurrentUserName`
+  - `statusUserDirectoryReady`
+  - `statusUserDirectoryBlockReason`
+  - `statusHIToolboxDefaultsReadable`
+  - `statusHIToolboxDefaultsBlockReason`
+- `statusGuiSmokeBlockReasons` 在对应异常出现时加入：
+  - `user-directory-unavailable`
+  - `hitoolbox-preferences-unavailable`
+- `tis-readiness.sh` 新增：
+  - `tis.userDirectoryReady`
+  - `tis.hitoolboxDefaultsReadable`
+  - 当 `missing-enabled-source` 同时伴随用户目录/CFPreferences 异常时输出 `tis.requiredAction=repair-current-user-directory-service`。
+
+验证：
+
+```text
+./macos/InputiaInputMethod/status.sh
+  systemMatchesBuild=true
+  statusCurrentUID=501
+  statusCurrentUserName=unknown
+  statusUserDirectoryReady=false
+  statusUserDirectoryBlockReason=missing-passwd-record
+  statusHIToolboxDefaultsReadable=false
+  statusHIToolboxDefaultsBlockReason=domain-missing
+  statusTISEnabledMatches=0
+  statusTISInstalledMatches=2
+  statusSignatureAccepted=true
+  statusGuiSmokeBlockReasons=tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,frontmost-unavailable
+  statusGuiSmokeReady=false reason=tis-not-ready,user-directory-unavailable,hitoolbox-preferences-unavailable,menu-menu-agent-unavailable,frontmost-unavailable
+
+./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  appSignatureAccepted=true
+  appMatchesBuild=true
+  tis.enabledMatches=0
+  tis.installedMatches=2
+  tis.currentID=com.apple.keylayout.ABC
+  tis.userDirectoryReady=false
+  tis.hitoolboxDefaultsReadable=false
+  tis.readinessBlockReason=missing-enabled-source
+  tis.requiredAction=repair-current-user-directory-service
+  tisReadiness=false
+
+./macos/InputiaInputMethod/verify-nongui.sh
+  awaitUiNotReadyNoLaunchPassed=true
+  installNoPrompt.rc=12
+  residue=false
+  tmpResidue=false
+  nonGuiVerificationPassed=true
+```
+
+结论：
+
+- readiness 输出现在能直接指出当前 Mac mini 需要先修复“当前用户目录服务 / CFPreferences 用户域”，不是继续重装、重签名或跑 GUI smoke。
+- 因为 `tisReadiness=false` 且 `statusGuiSmokeReady=false`，本轮仍没有运行真实 TextEdit/Safari/Clipboard GUI smoke。
+
 ## v60 Mac mini：复刻 MacBook 本地开发 Gatekeeper disabled 路径后，签名 blocker 已消失，当前阻塞转为 TIS enabled/session
 
 时间：2026-07-08 15:53:39 +0800

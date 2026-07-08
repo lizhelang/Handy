@@ -146,6 +146,28 @@ current_source_id() {
   echo ""
 }
 
+user_directory_ready() {
+  /usr/bin/python3 <<'PY'
+import os
+import pwd
+
+try:
+    pwd.getpwuid(os.getuid())
+except KeyError:
+    print("false")
+else:
+    print("true")
+PY
+}
+
+hitoolbox_defaults_readable() {
+  if /usr/bin/defaults read com.apple.HIToolbox >/dev/null 2>&1; then
+    echo true
+  else
+    echo false
+  fi
+}
+
 echo "app=$APP"
 echo "buildApp=$BUILD_APP"
 build_cdhash="$(cdhash "$BUILD_APP")"
@@ -200,6 +222,8 @@ if [[ "$current_id" == "$TARGET_MODE_ID" ]]; then
 else
   current_matches=false
 fi
+user_dir_ready="$(user_directory_ready)"
+hitoolbox_defaults_ok="$(hitoolbox_defaults_readable)"
 
 echo "tis.enabledMatches=${enabled_matches:-unknown}"
 echo "tis.installedMatches=${installed_matches:-unknown}"
@@ -212,6 +236,8 @@ echo "tis.hansSelectable=${hans_selectable:-unknown}"
 echo "tis.hansSelected=${hans_selected:-unknown}"
 echo "tis.currentID=${current_id:-unknown}"
 echo "tis.currentMatchesTarget=$current_matches"
+echo "tis.userDirectoryReady=$user_dir_ready"
+echo "tis.hitoolboxDefaultsReadable=$hitoolbox_defaults_ok"
 
 if [[ "$signature_accepted" != "true" ]]; then
   echo "tis.readinessBlockReason=signature-rejected"
@@ -228,6 +254,9 @@ else
     echo "tis.readinessBlockReason=target-source-not-installed"
   elif [[ "${target_enabled_matches:-0}" == "0" || -z "${target_enabled_matches:-}" ]]; then
     echo "tis.readinessBlockReason=missing-enabled-source"
+    if [[ "$user_dir_ready" != "true" || "$hitoolbox_defaults_ok" != "true" ]]; then
+      echo "tis.requiredAction=repair-current-user-directory-service"
+    fi
   elif [[ "$icon_matches" != "true" ]]; then
     echo "tis.readinessBlockReason=icon-mismatch"
   elif [[ "${hans_enabled:-false}" != "true" ]]; then

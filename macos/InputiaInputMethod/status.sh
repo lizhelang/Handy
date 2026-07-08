@@ -127,6 +127,44 @@ admin_install_ready() {
   fi
 }
 
+current_user_directory_status() {
+  /usr/bin/python3 <<'PY'
+import os
+import pwd
+
+uid = os.getuid()
+print(f"statusCurrentUID={uid}")
+try:
+    record = pwd.getpwuid(uid)
+except KeyError:
+    print("statusCurrentUserName=unknown")
+    print("statusUserDirectoryReady=false")
+    print("statusUserDirectoryBlockReason=missing-passwd-record")
+else:
+    print(f"statusCurrentUserName={record.pw_name}")
+    print("statusUserDirectoryReady=true")
+    print("statusUserDirectoryBlockReason=none")
+PY
+}
+
+hitoolbox_preferences_status() {
+  local output rc
+  set +e
+  output="$(/usr/bin/defaults read com.apple.HIToolbox 2>&1 >/dev/null)"
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    echo "statusHIToolboxDefaultsReadable=true"
+    echo "statusHIToolboxDefaultsBlockReason=none"
+  elif [[ "$output" == *"Domain com.apple.HIToolbox does not exist"* ]]; then
+    echo "statusHIToolboxDefaultsReadable=false"
+    echo "statusHIToolboxDefaultsBlockReason=domain-missing"
+  else
+    echo "statusHIToolboxDefaultsReadable=false"
+    echo "statusHIToolboxDefaultsBlockReason=defaults-read-failed"
+  fi
+}
+
 process_pids_by_ps() {
   local process_name="$1"
   local ps_output
@@ -404,6 +442,21 @@ else
   echo "exists=false"
 fi
 
+section "user directory"
+user_directory_output="$(current_user_directory_status)"
+printf '%s\n' "$user_directory_output"
+user_directory_ready="$(/usr/bin/awk -F= '$1 == "statusUserDirectoryReady" { print $2; exit }' <<<"$user_directory_output")"
+user_directory_block_reason="$(/usr/bin/awk -F= '$1 == "statusUserDirectoryBlockReason" { print $2; exit }' <<<"$user_directory_output")"
+user_directory_ready="${user_directory_ready:-unknown}"
+user_directory_block_reason="${user_directory_block_reason:-unknown}"
+
+hitoolbox_defaults_output="$(hitoolbox_preferences_status)"
+printf '%s\n' "$hitoolbox_defaults_output"
+hitoolbox_defaults_readable="$(/usr/bin/awk -F= '$1 == "statusHIToolboxDefaultsReadable" { print $2; exit }' <<<"$hitoolbox_defaults_output")"
+hitoolbox_defaults_block_reason="$(/usr/bin/awk -F= '$1 == "statusHIToolboxDefaultsBlockReason" { print $2; exit }' <<<"$hitoolbox_defaults_output")"
+hitoolbox_defaults_readable="${hitoolbox_defaults_readable:-unknown}"
+hitoolbox_defaults_block_reason="${hitoolbox_defaults_block_reason:-unknown}"
+
 section "gui smoke summary"
 admin_ready="$(admin_install_ready)"
 gui_block_reason="$(gui_session_block_reason)"
@@ -430,6 +483,12 @@ if [[ "$system_settings_matches_build" != "true" ]]; then
 fi
 if [[ "$tis_enabled_matches" == "0" || "$tis_enabled_matches" == "unknown" ]]; then
   block_reasons="$(append_reason "$block_reasons" tis-not-ready)"
+fi
+if [[ "$user_directory_ready" != "true" ]]; then
+  block_reasons="$(append_reason "$block_reasons" user-directory-unavailable)"
+fi
+if [[ "$hitoolbox_defaults_readable" != "true" ]]; then
+  block_reasons="$(append_reason "$block_reasons" hitoolbox-preferences-unavailable)"
 fi
 if [[ "$system_signature_accepted" != "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" signature-rejected)"
