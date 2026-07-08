@@ -34,6 +34,14 @@ run_install_check() {
   "$ROOT_DIR/install-check.sh" 2>&1 || true
 }
 
+run_final_install_check() {
+  if [[ -n "${INPUTIA_APPLY_FINAL_INSTALL_CHECK_FOR_TEST:-}" ]]; then
+    printf '%s\n' "$INPUTIA_APPLY_FINAL_INSTALL_CHECK_FOR_TEST"
+    return "${INPUTIA_APPLY_FINAL_INSTALL_CHECK_RC_FOR_TEST:-0}"
+  fi
+  "$ROOT_DIR/install-check.sh" 2>&1
+}
+
 print_install_check_summary() {
   local label="$1"
   local output="$2"
@@ -97,8 +105,42 @@ if [[ "${INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK:-0}" == "1" ]]; then
     echo "applyCurrentHandoffSelfCheck=false reason=missing-admin-prompt-command"
     exit 1
   fi
+  final_failure_output="$(
+    INPUTIA_APPLY_CURRENT_HANDOFF_SELF_CHECK=0 \
+      INPUTIA_APPLY_FINAL_INSTALL_CHECK_FOR_TEST=$'installCheckPassed=false\ninstallCheckRequiredAction=restart-inputia-host-after-install\ninstallCheckRequiredActions=restart-inputia-host-after-install\ninstallCheckNextStep=apply-current-handoff\n' \
+      INPUTIA_APPLY_FINAL_INSTALL_CHECK_RC_FOR_TEST=1 \
+      "$0" --final-check-self-test 2>&1 || true
+  )"
+  if ! /usr/bin/grep -q '^applyCurrentHandoffPassed=false reason=final-install-check-failed$' <<<"$final_failure_output"; then
+    echo "applyCurrentHandoffSelfCheck=false reason=missing-final-failure-marker"
+    exit 1
+  fi
+  if ! /usr/bin/grep -q '^applyCurrentHandoffRequiredAction=restart-inputia-host-after-install$' <<<"$final_failure_output"; then
+    echo "applyCurrentHandoffSelfCheck=false reason=missing-final-required-action"
+    exit 1
+  fi
   echo "applyCurrentHandoffSelfCheck=true"
   exit 0
+fi
+
+if [[ "${1:-}" == "--final-check-self-test" ]]; then
+  section "final install check"
+  set +e
+  final_check="$(run_final_install_check)"
+  final_check_rc=$?
+  set -e
+  printf '%s\n' "$final_check"
+  final_passed="$(value_from_output "$final_check" "installCheckPassed")"
+  if [[ "$final_check_rc" == "0" && "$final_passed" == "true" ]]; then
+    echo "applyCurrentHandoffPassed=true"
+    exit 0
+  fi
+  echo "applyCurrentHandoffPassed=false reason=final-install-check-failed"
+  echo "applyCurrentHandoffFinalInstallCheckExit=$final_check_rc"
+  echo "applyCurrentHandoffRequiredAction=$(value_from_output "$final_check" "installCheckRequiredAction")"
+  echo "applyCurrentHandoffRequiredActions=$(value_from_output "$final_check" "installCheckRequiredActions")"
+  echo "applyCurrentHandoffNextStep=$(value_from_output "$final_check" "installCheckNextStep")"
+  exit 13
 fi
 
 section "policy"
@@ -165,5 +207,19 @@ section "await system install"
 "$ROOT_DIR/await-system-install.sh"
 
 section "final install check"
-"$ROOT_DIR/install-check.sh"
-echo "applyCurrentHandoffPassed=true"
+set +e
+final_check="$(run_final_install_check)"
+final_check_rc=$?
+set -e
+printf '%s\n' "$final_check"
+final_passed="$(value_from_output "$final_check" "installCheckPassed")"
+if [[ "$final_check_rc" == "0" && "$final_passed" == "true" ]]; then
+  echo "applyCurrentHandoffPassed=true"
+else
+  echo "applyCurrentHandoffPassed=false reason=final-install-check-failed"
+  echo "applyCurrentHandoffFinalInstallCheckExit=$final_check_rc"
+  echo "applyCurrentHandoffRequiredAction=$(value_from_output "$final_check" "installCheckRequiredAction")"
+  echo "applyCurrentHandoffRequiredActions=$(value_from_output "$final_check" "installCheckRequiredActions")"
+  echo "applyCurrentHandoffNextStep=$(value_from_output "$final_check" "installCheckNextStep")"
+  exit 13
+fi

@@ -321,7 +321,7 @@ cd macos/InputiaInputMethod
 INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh
 ```
 
-`apply-current-handoff.sh` 会先确认 `install-handoff.txt` 属于当前 commit/pkg，然后按 `install-check` 的动作链执行：管理员安装当前 pkg、必要时显式修复 TIS duplicate、等待系统安装生效、最后重跑 `install-check.sh`。默认不打开 GUI、不触碰菜单栏；若没有非交互 sudo 且未设置 `INPUTIA_ALLOW_ADMIN_PROMPT=1`，它会退出并打印继续命令，而不是卡住。
+`apply-current-handoff.sh` 会先确认 `install-handoff.txt` 属于当前 commit/pkg，然后按 `install-check` 的动作链执行：管理员安装当前 pkg、必要时显式修复 TIS duplicate、等待系统安装生效、最后重跑 `install-check.sh`。默认不打开 GUI、不触碰菜单栏；若没有非交互 sudo 且未设置 `INPUTIA_ALLOW_ADMIN_PROMPT=1`，它会退出并打印继续命令，而不是卡住。最终 `install-check` 未通过时必须输出 `applyCurrentHandoffPassed=false reason=final-install-check-failed` 和下一步动作，不能把半安装态误报为成功。
 
 `postinstall` 会打印 `inputiaInstalledVersion` / `inputiaInstalledCDHash`，kill 旧 Host、清理旧用户级 Host、register 当前系统 Host，并 dump enabled/current TIS 状态。它默认不 enable/select，也不刷新菜单栏代理；重复输入源或手动添加问题用 `repair-tis-duplicates.sh` 或 System Settings 显式处理，避免安装脚本继续制造 HIToolbox 重复项。
 
