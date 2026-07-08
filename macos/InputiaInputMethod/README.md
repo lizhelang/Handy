@@ -84,6 +84,8 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 
 Host 和设置启动器的 build 产物会写入 `InputiaSourceCommit`、`InputiaSourceBranch`、`InputiaSourceDirty`。当 `CFBundleVersion` 相同但 CDHash 不同时，用这些字段判断系统安装版、设置启动器、当前 build 和远端主线到底对应哪次源码状态。
 
+当 TIS 报告 `tis-duplicate-matches` 时，`install-check.sh` 会透出 `tis.targetSource.*` 明细，列出每条目标 `com.inputia.inputmethod.Inputia.Hans` source 来自 enabled list 还是 installed list，以及 type、iconURL、enabled/selectable/selected 状态。这样后续修复时能区分“缺少 source”“icon 指向旧 app”和“同一目标 source 被系统缓存重复登记”。
+
 失败时看 `installCheckBlockReasons`、`installCheckRequiredAction`、`installCheckRequiredActions`、`installCheckNextStep` 和 `installCheckNextCommand`。`installCheckRequiredAction` 是兼容旧脚本的首要动作；`installCheckRequiredActions` 是有序动作链；`installCheckCommand.*` 会把这条动作链展开成只读命令提示，脚本不会自动运行这些命令；`installCheckNextCommand` 是当前状态下最推荐的一条下一步命令。例如系统 app 或设置启动器不是当前 build 且没有非交互管理员权限时，如果 handoff 当前，会输出 `installCheckNextStep=apply-current-handoff` 和 `INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh`；running host 不是当前 build 时，会在动作链中追加 `restart-inputia-host-after-install`，不要把 TIS 已选中误判成当前代码正在运行。若 `TISCreateInputSourceList` 对同一个 Inputia mode 返回多个 enabled/installed 命中，会输出 `tis-duplicate-matches`，primary action 保持 `remove-duplicate-inputia-and-readd-once`，动作链追加 `run-repair-tis-duplicates`，不要把“菜单里能选”误判成单一干净注册态。
 
 发布前或安装脚本变化后的完整验证：

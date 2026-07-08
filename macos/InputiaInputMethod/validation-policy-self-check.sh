@@ -152,6 +152,8 @@ require(
 
 require('validationTier=install-check' in install_check, "install-check-missing-tier-marker")
 require('INPUTIA_TIS_INCLUDE_MENU_READINESS=0 "$ROOT_DIR/tis-readiness.sh"' in install_check, "install-check-must-disable-menu-readiness")
+require('^tis.targetSourceCount=' in install_check, "install-check-missing-target-source-count-output")
+require('^tis.targetSource\\.[0-9]+\\.' in install_check, "install-check-missing-target-source-detail-output")
 require('installCheckBlockReasons=' in install_check, "install-check-missing-block-reasons")
 require('installCheckRequiredAction=' in install_check, "install-check-missing-required-action")
 require('installCheckRequiredActions=' in install_check, "install-check-missing-required-actions")

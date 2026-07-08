@@ -27307,3 +27307,55 @@ rustup run 1.96.0 ./macos/InputiaInputMethod/build.sh
 - 对 `double_pinyin + nillem`，Inputia bridge 现在明确证明“短语候选先于单字候选”。
 - 选择单字候选后，bridge 不会把整串输入清掉，而是保留剩余 composition 并继续返回候选。
 - 这仍不替代真实系统安装/GUI smoke；系统态仍需后续 admin 安装链路解决。
+
+## 2026-07-09 04:12 CST - install-check 输出 TIS duplicate 明细
+
+背景：
+
+- 当前本机系统态仍是旧 Host CDHash，且 `install-check.sh` 报告 `tis-duplicate-matches`。
+- 旧输出只有 `tis.targetEnabledMatches=2` / `tis.targetInstalledMatches=2`，不足以判断重复源到底是旧路径、icon mismatch，还是同一目标 source 被 HIToolbox/TIS 缓存重复登记。
+- 本轮只做只读诊断增强，不打开菜单栏、不打开 GUI、不改系统输入源。
+
+实现：
+
+- `tis-readiness.sh` 新增 `tis.targetSource.*` 明细输出。
+- `install-check.sh` 的 TIS 小节透出这些明细。
+- `validation-policy-self-check.sh` 加静态约束，防止 install-check 以后吞掉 duplicate 明细。
+
+验证：
+
+```text
+bash -n macos/InputiaInputMethod/tis-readiness.sh macos/InputiaInputMethod/install-check.sh
+./macos/InputiaInputMethod/validation-policy-self-check.sh
+  validationPolicySelfCheck=true
+
+INPUTIA_TIS_INCLUDE_MENU_READINESS=0 ./macos/InputiaInputMethod/tis-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"
+  tis.targetEnabledMatches=2
+  tis.targetInstalledMatches=2
+  tis.targetDuplicateMatches=true
+  tis.targetSourceCount=4
+  tis.targetSource.0.includeAllInstalled=false
+  tis.targetSource.0.id=com.inputia.inputmethod.Inputia.Hans
+  tis.targetSource.0.type=TISTypeKeyboardInputMode
+  tis.targetSource.0.iconURL=/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf
+  tis.targetSource.0.iconMatchesExpected=true
+  tis.targetSource.0.enabled=true
+  tis.targetSource.0.selectable=true
+  tis.targetSource.0.selected=true
+  tis.targetSource.1.includeAllInstalled=false
+  tis.targetSource.1.id=com.inputia.inputmethod.Inputia.Hans
+  tis.targetSource.1.type=TISTypeKeyboardInputMode
+  tis.targetSource.1.iconURL=/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf
+  tis.targetSource.1.iconMatchesExpected=true
+  tis.targetSource.1.enabled=true
+  tis.targetSource.1.selectable=true
+  tis.targetSource.1.selected=true
+  tis.readinessBlockReason=target-source-duplicate
+  tis.requiredAction=remove-duplicate-inputia-and-readd-once
+  tisReadiness=false
+```
+
+结论：
+
+- 当前 duplicate 不是 iconURL 指向错误路径；两条 enabled 目标 source 都指向同一个系统 app icon，且都 selected/selectable。
+- 后续修复应按 `apply-current-handoff.sh` 动作链：先管理员安装当前 pkg，让系统 app CDHash 等于 build，再运行显式 TIS duplicate repair，最后等待 running host 切到当前 build。

@@ -136,6 +136,56 @@ print(sum(1 for source in sources if source.get("id") == source_id and source.ge
 PY
 }
 
+print_target_source_details() {
+  local dump="$1"
+  local source_id="$2"
+  local expected_icon="$3"
+  TIS_DUMP="$dump" /usr/bin/python3 - "$source_id" "$expected_icon" <<'PY'
+import os
+import sys
+
+source_id, expected_icon = sys.argv[1:3]
+active_include = None
+current = None
+sources = []
+for line in os.environ.get("TIS_DUMP", "").splitlines():
+    if line.startswith("includeAllInstalled="):
+        if current:
+            sources.append(current)
+            current = None
+        active_include = line.split("=", 1)[1]
+        continue
+    if line.startswith("id="):
+        if current:
+            sources.append(current)
+        current = {
+            "includeAllInstalled": active_include or "unknown",
+            "id": line.split("=", 1)[1],
+        }
+        continue
+    if current and "=" in line:
+        name, value = line.split("=", 1)
+        current[name] = value
+if current:
+    sources.append(current)
+
+matches = [source for source in sources if source.get("id") == source_id]
+print(f"tis.targetSourceCount={len(matches)}")
+for index, source in enumerate(matches):
+    icon = source.get("iconURL", "unknown")
+    print(f"tis.targetSource.{index}.includeAllInstalled={source.get('includeAllInstalled', 'unknown')}")
+    print(f"tis.targetSource.{index}.id={source.get('id', 'unknown')}")
+    print(f"tis.targetSource.{index}.bundle={source.get('bundle', 'unknown')}")
+    print(f"tis.targetSource.{index}.mode={source.get('mode', 'unknown')}")
+    print(f"tis.targetSource.{index}.type={source.get('type', 'unknown')}")
+    print(f"tis.targetSource.{index}.iconURL={icon}")
+    print(f"tis.targetSource.{index}.iconMatchesExpected={str(icon == expected_icon).lower()}")
+    print(f"tis.targetSource.{index}.enabled={source.get('enabled', 'unknown')}")
+    print(f"tis.targetSource.{index}.selectable={source.get('selectable', 'unknown')}")
+    print(f"tis.targetSource.{index}.selected={source.get('selected', 'unknown')}")
+PY
+}
+
 tis_matches() {
   local dump="$1"
   local include="$2"
@@ -379,6 +429,7 @@ echo "tis.installedMatches=${installed_matches:-unknown}"
 echo "tis.targetEnabledMatches=${target_enabled_matches:-unknown}"
 echo "tis.targetInstalledMatches=${target_installed_matches:-unknown}"
 echo "tis.targetDuplicateMatches=$target_duplicate_matches"
+print_target_source_details "$dump" "$TARGET_MODE_ID" "$expected_icon"
 echo "tis.hansIconURL=${hans_icon:-unknown}"
 echo "tis.hansIconMatchesApp=$icon_matches"
 echo "tis.hansEnabled=${hans_enabled:-unknown}"
