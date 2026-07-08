@@ -27925,3 +27925,54 @@ INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/dev-fast.sh
 
 - 默认开发验证现在能直接证明自然码和搜狗双拼在 `nillem` 场景下，选中第 2 候选 `你` 后不会提交/清空，后续候选仍从 `来` 开始。
 - 该验证仍然只跑本地 Rime adapter，不打开菜单栏、不触碰 TextInputMenuAgent、不启动 GUI smoke、不改系统输入源。
+
+## 2026-07-09 06:08 CST - a7801f68 安装交接清单刷新
+
+背景：
+
+- `dev-fast` 已经让 build 产物指向新提交 `a7801f68211a` 且 `sourceDirty=false`。
+- 初次 `install-check.sh` 显示 `build/install-handoff.txt` 仍停在上一笔 `992a2994cf0e`，因此安装链路首要动作是刷新 handoff，而不是直接运行管理员安装。
+
+执行：
+
+```text
+./macos/InputiaInputMethod/install-handoff.sh
+  installHandoffReady=true
+  sourceCommit=a7801f68211a
+  sourceDirty=false
+  packageSHA256=ca8b6a5806cecb5f132e066527736dbf42e8e965d78f4c595e446d2418895818
+  pkgVerificationPassed=true
+  buildVersion=47
+  buildCDHash=c5d7013bb47dd005ca8eb148e004e018e8999781
+  systemCDHash=ef587ead37d7fc3febad02e950b469b228a531a0
+  systemMatchesBuild=false
+  settingsMatchesBuild=false
+  installCheckRequiredAction=admin-install-current-handoff
+  installCheckRequiredActions=admin-install-current-handoff,run-repair-tis-duplicates,restart-inputia-host-after-install
+```
+
+复查：
+
+```text
+./macos/InputiaInputMethod/install-check.sh
+  validationTier=install-check
+  touchesMenuBar=false
+  opensGUI=false
+  changesSystemInputSource=false
+  checksNotarization=false
+  installHandoffCurrent=true
+  installHandoffBlockReasons=none
+  systemMatchesBuild=false
+  settingsMatchesBuild=false
+  installCheckTISDuplicateMatches=true
+  runningMatchesBuild=false
+  installCheckNextStep=apply-current-handoff
+  installCheckNextCommand=cd /Users/lzl/FILE/github/Handy-inputia-v44/macos/InputiaInputMethod && INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh
+  installCheckPassed=false
+```
+
+结论：
+
+- 当前源码、build、pkg、handoff 已经对齐到 `a7801f68`。
+- 本机实际系统安装仍是旧 CDHash `ef587ead37d7fc3febad02e950b469b228a531a0`，running host 也是旧 CDHash。
+- 下一步若要切换本机实际运行版，需要显式运行 `INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh`，随后按动作链修复 TIS duplicate 并重启/等待 Host；这一步会触发管理员安装和系统输入源变更，不能混入普通 `dev-fast`。
