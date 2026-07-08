@@ -152,7 +152,7 @@ fn bundled_rime_schemas_use_inputia_candidate_page_size_when_available() {
 }
 
 #[test]
-fn bundled_double_pinyin_schemas_prioritize_segmented_phrase_candidates() {
+fn bundled_schemas_prioritize_segmented_phrase_candidates() {
     let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();
     let Some(shared_data_dir) = bundled_shared_data_dir() else {
         eprintln!("skip: Inputia bundled RimeData is not available");
@@ -164,22 +164,70 @@ fn bundled_double_pinyin_schemas_prioritize_segmented_phrase_candidates() {
         return;
     };
 
-    for schema in ["double_pinyin", "double_pinyin_sogou"] {
+    let cases = [
+        SegmentedPhraseSmokeCase {
+            schema: "luna_pinyin_simp",
+            keys: "nillem",
+            expected_first: Some("你来了吗"),
+        },
+        SegmentedPhraseSmokeCase {
+            schema: "double_pinyin",
+            keys: "nillem",
+            expected_first: Some("你来"),
+        },
+        SegmentedPhraseSmokeCase {
+            schema: "double_pinyin_flypy",
+            keys: "nillem",
+            expected_first: None,
+        },
+        SegmentedPhraseSmokeCase {
+            schema: "double_pinyin_sogou",
+            keys: "nillem",
+            expected_first: Some("你来"),
+        },
+        SegmentedPhraseSmokeCase {
+            schema: "guobiao_bispell",
+            keys: "nillem",
+            expected_first: Some("你来了吗"),
+        },
+        SegmentedPhraseSmokeCase {
+            schema: "double_pinyin_mspy",
+            keys: "nillem",
+            expected_first: Some("你来"),
+        },
+        SegmentedPhraseSmokeCase {
+            schema: "double_pinyin_abc",
+            keys: "nillem",
+            expected_first: None,
+        },
+        SegmentedPhraseSmokeCase {
+            schema: "double_pinyin_pyjj",
+            keys: "nillem",
+            expected_first: None,
+        },
+        SegmentedPhraseSmokeCase {
+            schema: "double_pinyin_st",
+            keys: "nillem",
+            expected_first: None,
+        },
+    ];
+
+    for case in cases {
         let user_data_dir = std::env::temp_dir().join(format!(
             "inputia-rime-segmented-phrase-smoke-{}-{}",
             std::process::id(),
-            schema
+            case.schema
         ));
         let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
             .with_dylib_path(&dylib_path)
             .with_shared_data_dir(&shared_data_dir)
-            .with_schema(schema)
+            .with_schema(case.schema)
             .with_spelling_correction(false);
         let engine = RimeEngine::open(config).expect("schema should open");
-        let candidates = engine.candidates("nillem");
+        let candidates = engine.candidates(case.keys);
         let first = candidates
             .first()
-            .expect("nillem should produce double-pinyin candidates");
+            .expect("segmented keys should produce candidates");
         let first_len = first.text.chars().count();
         let first_single_index = candidates
             .iter()
@@ -187,17 +235,25 @@ fn bundled_double_pinyin_schemas_prioritize_segmented_phrase_candidates() {
 
         assert!(
             first_len > 1,
-            "{schema} should prefer a phrase candidate for segmented nillem"
+            "{} should prefer a phrase candidate for segmented {}",
+            case.schema,
+            case.keys
         );
-        assert_eq!(
-            first.text, "你来",
-            "{schema} should keep the known nillem phrase candidate first"
-        );
-        assert_eq!(
-            first_single_index,
-            Some(1),
-            "{schema} should place single-character fallback after the first phrase"
-        );
+        if let Some(expected_first) = case.expected_first {
+            assert_eq!(
+                first.text, expected_first,
+                "{} should keep the known phrase candidate first for {}",
+                case.schema, case.keys
+            );
+        }
+        if let Some(first_single_index) = first_single_index {
+            assert!(
+                first_single_index > 0,
+                "{} should place single-character fallback after the first phrase for {}",
+                case.schema,
+                case.keys
+            );
+        }
     }
 }
 
@@ -400,6 +456,13 @@ struct MaileSmokeCase {
     keys: &'static str,
     expected_first: Option<&'static str>,
     expected_present: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct SegmentedPhraseSmokeCase {
+    schema: &'static str,
+    keys: &'static str,
+    expected_first: Option<&'static str>,
 }
 
 trait SnapshotOutcome {

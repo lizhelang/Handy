@@ -1278,6 +1278,117 @@ mod tests {
     }
 
     #[test]
+    fn capi_memory_keeps_segmented_phrase_ahead_of_single_character_across_schemas() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        let Some(shared_data_dir) = bundled_shared_data_dir() else {
+            eprintln!("skip: Inputia bundled RimeData is not available");
+            return;
+        };
+
+        let cases = [
+            "double_pinyin",
+            "double_pinyin_flypy",
+            "double_pinyin_sogou",
+            "guobiao_bispell",
+            "double_pinyin_mspy",
+            "double_pinyin_abc",
+            "double_pinyin_pyjj",
+            "double_pinyin_st",
+        ];
+        let temp_root = tempfile::tempdir().unwrap();
+        let source_app = CString::new("com.apple.TextEdit").unwrap();
+        let single_char = CString::new("你").unwrap();
+
+        for schema in cases {
+            let case_root = temp_root.path().join(schema);
+            let settings_path = case_root.join("settings.json");
+            let rime_user_data_dir = case_root.join("rime-user");
+            let memory_db_path = case_root.join("inputia-memory.db");
+            std::fs::create_dir_all(&rime_user_data_dir).unwrap();
+            let settings = InputiaSettings {
+                schema_id: schema.to_string(),
+                rime_shared_data_dir: Some(shared_data_dir.clone()),
+                rime_user_data_dir: Some(rime_user_data_dir),
+                memory_db_path: Some(memory_db_path),
+                spelling_correction_enabled: false,
+                candidate_page_size: 9,
+                ..InputiaSettings::default()
+            };
+            settings.save(&settings_path).unwrap();
+            let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
+            let session = inputia_session_new_from_settings(settings_path.as_ptr());
+            if session.is_null() {
+                eprintln!("skip: Squirrel librime runtime is not available");
+                return;
+            }
+
+            for _ in 0..30 {
+                let learned = handle_json(inputia_session_learn(
+                    session,
+                    SOURCE_TYPED,
+                    single_char.as_ptr(),
+                    source_app.as_ptr(),
+                ));
+                assert_eq!(learned["decision"], "learn", "{schema}");
+            }
+
+            assert_eq!(
+                handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
+                "Chinese",
+                "{schema}"
+            );
+            let mut latest = Value::Null;
+            for ch in "nillem".chars() {
+                latest = handle_json(inputia_session_handle_char(session, ch as u32));
+            }
+
+            let candidates = latest["visible_candidates"].as_array().unwrap();
+            let first_text = candidates[0]["text"].as_str().unwrap();
+            assert!(
+                first_text.chars().count() > 1,
+                "{schema} should keep a phrase ahead of the learned single-character candidate"
+            );
+            let single_index = candidates
+                .iter()
+                .position(|candidate| candidate["text"] == "你")
+                .unwrap_or(usize::MAX);
+            if single_index == usize::MAX {
+                inputia_session_free(session);
+                continue;
+            }
+            assert!(
+                single_index > 0,
+                "{schema} should not rank the learned single-character candidate first"
+            );
+
+            let selected_single = handle_json(inputia_session_handle_digit(
+                session,
+                (single_index + 1) as u8,
+            ));
+            assert!(
+                selected_single["commit"].is_null(),
+                "{schema} should keep partial single-character selection in composition"
+            );
+            assert!(
+                !selected_single["composing"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .is_empty(),
+                "{schema} should keep remaining composition after single-character selection"
+            );
+            assert!(
+                !selected_single["visible_candidates"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty(),
+                "{schema} should keep candidates after single-character selection"
+            );
+
+            inputia_session_free(session);
+        }
+    }
+
+    #[test]
     fn capi_returns_english_completion_candidates_from_typed_memory() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
