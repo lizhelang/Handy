@@ -298,8 +298,7 @@ else
   else
     run_with_timeout 120 admin-copy /usr/bin/osascript \
       -e 'on run argv' \
-      -e 'set copyCommand to item 1 of argv' \
-      -e 'do shell script copyCommand with administrator privileges' \
+      -e 'do shell script item 1 of argv with administrator privileges' \
       -e 'end run' \
       "$copy_command"
   fi
