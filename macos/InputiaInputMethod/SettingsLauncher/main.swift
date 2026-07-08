@@ -8,6 +8,8 @@ private struct InputiaAppCandidate {
 
 private let launcherVersion =
   Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+private let expectedHostCDHash =
+  Bundle.main.object(forInfoDictionaryKey: "InputiaExpectedHostCDHash") as? String ?? ""
 private let inputiaAppCandidates: [InputiaAppCandidate] = [
   ProcessInfo.processInfo.environment["INPUTIA_APP"].map {
     InputiaAppCandidate(path: $0, source: "INPUTIA_APP")
@@ -52,6 +54,38 @@ private func bundleVersion(at appPath: String) -> String? {
     as? String
 }
 
+private func bundleCDHash(at appPath: String) -> String? {
+  let task = Process()
+  let pipe = Pipe()
+  task.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+  task.arguments = ["-dv", "--verbose=4", appPath]
+  task.standardError = pipe
+  task.standardOutput = pipe
+
+  do {
+    try task.run()
+    task.waitUntilExit()
+  } catch {
+    NSLog("Inputia settings launcher failed to inspect host CDHash: \(error)")
+    return nil
+  }
+
+  let data = pipe.fileHandleForReading.readDataToEndOfFile()
+  guard let output = String(data: data, encoding: .utf8) else {
+    return nil
+  }
+
+  return output
+    .split(separator: "\n")
+    .compactMap { line -> String? in
+      guard line.hasPrefix("CDHash=") else {
+        return nil
+      }
+      return String(line.dropFirst("CDHash=".count))
+    }
+    .first
+}
+
 private func matchingCandidate() -> InputiaAppCandidate? {
   for candidate in inputiaAppCandidates
   where FileManager.default.fileExists(atPath: candidate.path) {
@@ -60,7 +94,9 @@ private func matchingCandidate() -> InputiaAppCandidate? {
     }
 
     if bundleVersion(at: candidate.path) == launcherVersion {
-      return candidate
+      if expectedHostCDHash.isEmpty || bundleCDHash(at: candidate.path) == expectedHostCDHash {
+        return candidate
+      }
     }
   }
 
@@ -71,7 +107,8 @@ private func candidateReport() -> String {
   inputiaAppCandidates
     .map { candidate in
       let version = bundleVersion(at: candidate.path) ?? "missing"
-      return "\(candidate.source): v\(version) \(candidate.path)"
+      let cdhash = bundleCDHash(at: candidate.path) ?? "missing"
+      return "\(candidate.source): v\(version) cdhash=\(cdhash) \(candidate.path)"
     }
     .joined(separator: "\n")
 }
@@ -88,7 +125,7 @@ struct InputiaSettingsLauncher {
     } else {
       showFailure(
         message:
-          "Inputia 设置启动器是 v\(launcherVersion)，但没有找到同版本的 InputiaInputMethod.app。请重新安装同一个新版安装包。\n\n当前检测到：\n\(candidateReport())"
+          "Inputia 设置启动器是 v\(launcherVersion)，但没有找到同版本、同构建的 InputiaInputMethod.app。请重新安装同一个新版安装包。\n\n当前检测到：\n\(candidateReport())"
       )
     }
   }

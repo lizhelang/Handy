@@ -35,6 +35,18 @@ version() {
   fi
 }
 
+plist_value() {
+  local plist="$1"
+  local key="$2"
+  if [[ -f "$plist" ]]; then
+    /usr/libexec/PlistBuddy -c "Print :$key" "$plist" 2>/dev/null || true
+  fi
+}
+
+expected_host_cdhash() {
+  plist_value "$1/Contents/Info.plist" InputiaExpectedHostCDHash
+}
+
 sha256() {
   if [[ -f "$1" ]]; then
     /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'
@@ -467,6 +479,8 @@ build_version="$(version "$BUILD_APP")"
 target_version="$(version "$APP")"
 build_settings_version="$(version "$BUILD_SETTINGS_APP")"
 target_settings_version="$(version "$TARGET_SETTINGS_APP")"
+build_settings_expected_host_cdhash="$(expected_host_cdhash "$BUILD_SETTINGS_APP")"
+target_settings_expected_host_cdhash="$(expected_host_cdhash "$TARGET_SETTINGS_APP")"
 pkg_sha="$(sha256 "$PKG_PATH")"
 
 echo "build.exists=$([[ -d "$BUILD_APP" ]] && echo true || echo false)"
@@ -483,9 +497,15 @@ else
 fi
 echo "target.matchesBuild=$target_matches"
 echo "settings.buildVersion=$build_settings_version"
+echo "settings.buildExpectedHostCDHash=${build_settings_expected_host_cdhash:-unknown}"
 echo "settings.targetPath=$TARGET_SETTINGS_APP"
 echo "settings.targetVersion=$target_settings_version"
-if [[ -n "$build_settings_version" && "$target_settings_version" == "$build_settings_version" ]]; then
+echo "settings.targetExpectedHostCDHash=${target_settings_expected_host_cdhash:-unknown}"
+if [[ -n "$build_settings_version" &&
+  "$target_settings_version" == "$build_settings_version" &&
+  -n "$build_cdhash" &&
+  "$build_settings_expected_host_cdhash" == "$build_cdhash" &&
+  "$target_settings_expected_host_cdhash" == "$build_cdhash" ]]; then
   settings_matches=true
 else
   settings_matches=false

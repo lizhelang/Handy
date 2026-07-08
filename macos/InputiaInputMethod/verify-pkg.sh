@@ -187,16 +187,24 @@ archive_cdhash="$(app_cdhash "$ARCHIVE_APP")"
 build_cdhash="$(app_cdhash "$BUILD_APP")"
 archive_settings_version="$(app_version "$ARCHIVE_SETTINGS_APP")"
 build_settings_version="$(app_version "$BUILD_SETTINGS_APP")"
+archive_settings_expected_host_cdhash="$(plist_value "$ARCHIVE_SETTINGS_APP/Contents/Info.plist" InputiaExpectedHostCDHash)"
+build_settings_expected_host_cdhash="$(plist_value "$BUILD_SETTINGS_APP/Contents/Info.plist" InputiaExpectedHostCDHash)"
 echo "archiveAppVersion=$archive_version"
 echo "archiveAppCDHash=$archive_cdhash"
 echo "buildAppCDHash=$build_cdhash"
 echo "archiveSettingsVersion=$archive_settings_version"
 echo "buildSettingsVersion=$build_settings_version"
+echo "archiveSettingsExpectedHostCDHash=${archive_settings_expected_host_cdhash:-unknown}"
+echo "buildSettingsExpectedHostCDHash=${build_settings_expected_host_cdhash:-unknown}"
 [[ "$archive_version" == "$build_version" ]] || fail "archive-app-version-mismatch"
 [[ -n "$build_cdhash" && "$archive_cdhash" == "$build_cdhash" ]] ||
   fail "archive-app-cdhash-mismatch"
 [[ "$archive_settings_version" == "$build_settings_version" ]] ||
   fail "archive-settings-version-mismatch"
+[[ "$build_settings_expected_host_cdhash" == "$build_cdhash" ]] ||
+  fail "build-settings-expected-host-cdhash-mismatch"
+[[ "$archive_settings_expected_host_cdhash" == "$archive_cdhash" ]] ||
+  fail "archive-settings-expected-host-cdhash-mismatch"
 [[ -x "$ARCHIVE_APP/Contents/MacOS/InputiaInputMethod" ]] ||
   fail "archive-host-executable-missing"
 [[ -x "$ARCHIVE_SETTINGS_APP/Contents/MacOS/InputiaSettingsLauncher" ]] ||

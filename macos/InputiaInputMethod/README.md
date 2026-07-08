@@ -78,7 +78,7 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 ./macos/InputiaInputMethod/install-check.sh
 ```
 
-`install-check.sh` 只检查 `/Library/Input Methods/InputiaInputMethod.app`、`/Applications/Inputia 设置.app`、TIS enabled/selectable/current source、running host 是否与当前 build 对齐；默认不碰菜单栏、不做 GUI smoke readiness。它还会只读检查 `build/install-handoff.txt` 是否由当前 source commit、干净 worktree、当前 build CDHash 和当前 pkg SHA 生成；若输出 `installHandoffCurrent=false`，先运行 `install-handoff.sh` 刷新交接清单，不要拿旧 pkg 去做管理员安装。
+`install-check.sh` 只检查 `/Library/Input Methods/InputiaInputMethod.app`、`/Applications/Inputia 设置.app`、TIS enabled/selectable/current source、running host 是否与当前 build 对齐；默认不碰菜单栏、不做 GUI smoke readiness。设置启动器必须同时满足版本一致且 `InputiaExpectedHostCDHash` 等于当前 Host build CDHash，避免同版本旧 Host 被误打开。它还会只读检查 `build/install-handoff.txt` 是否由当前 source commit、干净 worktree、当前 build CDHash 和当前 pkg SHA 生成；若输出 `installHandoffCurrent=false`，先运行 `install-handoff.sh` 刷新交接清单，不要拿旧 pkg 去做管理员安装。
 
 失败时看 `installCheckBlockReasons`、`installCheckRequiredAction` 和 `installCheckRequiredActions`。`installCheckRequiredAction` 是兼容旧脚本的首要动作；`installCheckRequiredActions` 是有序动作链；`installCheckCommand.*` 会把这条动作链展开成只读命令提示，脚本不会自动运行这些命令。例如系统 app 或设置启动器不是当前 build 且没有非交互管理员权限时，会输出 `run-install-handoff-and-admin-install`；running host 不是当前 build 时，会在动作链中追加 `restart-inputia-host-after-install`，不要把 TIS 已选中误判成当前代码正在运行。若 `TISCreateInputSourceList` 对同一个 Inputia mode 返回多个 enabled/installed 命中，会输出 `tis-duplicate-matches`，primary action 保持 `remove-duplicate-inputia-and-readd-once`，动作链追加 `run-repair-tis-duplicates`，不要把“菜单里能选”误判成单一干净注册态。
 
@@ -111,7 +111,7 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 - pkg `PackageInfo` version 等于当前 build version。
 - pkg 内 `postinstall` 与 `Packaging/scripts/postinstall` sha256 一致。
 - pkg 内嵌 host app 的 CDHash 等于当前 build app。
-- pkg 内嵌设置启动器版本等于当前 build 设置启动器。
+- pkg 内嵌设置启动器版本等于当前 build 设置启动器，且 `InputiaExpectedHostCDHash` 指向同一个内嵌 Host CDHash。
 - postinstall 仍包含用户级 host 清理、TIS register、enabled/current TIS dump 和手动/显式修复提示；不得默认 TIS enable/select 或刷新菜单代理。
 
 兼容入口：

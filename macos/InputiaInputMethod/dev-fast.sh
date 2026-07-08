@@ -48,6 +48,9 @@ INPUTIA_INSTALL_CHECK_SELF_CHECK=1 "$ROOT_DIR/install-check.sh"
 section "build"
 run_rust "$ROOT_DIR/build.sh"
 
+section "settings launcher build self-check"
+"$ROOT_DIR/settings-launcher-build-self-check.sh"
+
 section "rust tests"
 run_rust cargo test --manifest-path "$REPO_ROOT/crates/inputia-core/Cargo.toml"
 run_rust cargo test --manifest-path "$REPO_ROOT/crates/inputia-rime/Cargo.toml" --test core_flow

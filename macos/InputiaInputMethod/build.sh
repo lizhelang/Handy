@@ -253,6 +253,11 @@ if run_codesign "${codesign_args[@]}" "$APP_DIR" >"$codesign_output" 2>&1; then
   /bin/rm -f "$codesign_output"
   repair_root_codesign_artifacts "$APP_DIR"
   /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+  expected_host_cdhash="$(/usr/bin/codesign -dv --verbose=4 "$APP_DIR" 2>&1 | /usr/bin/awk -F= '/^CDHash=/{print $2}')"
+  /usr/libexec/PlistBuddy -c "Delete :InputiaExpectedHostCDHash" "$SETTINGS_CONTENTS_DIR/Info.plist" >/dev/null 2>&1 || true
+  /usr/libexec/PlistBuddy -c "Add :InputiaExpectedHostCDHash string $expected_host_cdhash" "$SETTINGS_CONTENTS_DIR/Info.plist"
+  /usr/libexec/PlistBuddy -c "Print :InputiaExpectedHostCDHash" "$SETTINGS_CONTENTS_DIR/Info.plist" >/dev/null
+  /usr/bin/plutil -lint "$SETTINGS_CONTENTS_DIR/Info.plist" >/dev/null
 else
   /usr/bin/sed 's/^/codesignOutput: /' "$codesign_output" >&2 || true
   /bin/rm -f "$codesign_output"

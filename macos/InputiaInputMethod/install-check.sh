@@ -533,11 +533,19 @@ echo "systemMatchesBuild=$system_matches_build"
 section "settings app"
 build_settings_version="$(app_version "$BUILD_SETTINGS_APP")"
 system_settings_version="$(app_version "$SYSTEM_SETTINGS_APP")"
+build_settings_expected_host_cdhash="$(plist_value "$BUILD_SETTINGS_APP/Contents/Info.plist" InputiaExpectedHostCDHash)"
+system_settings_expected_host_cdhash="$(plist_value "$SYSTEM_SETTINGS_APP/Contents/Info.plist" InputiaExpectedHostCDHash)"
 echo "buildSettingsVersion=${build_settings_version:-unknown}"
+echo "buildSettingsExpectedHostCDHash=${build_settings_expected_host_cdhash:-unknown}"
 echo "systemSettingsApp=$SYSTEM_SETTINGS_APP"
 echo "systemSettingsExists=$([[ -d "$SYSTEM_SETTINGS_APP" ]] && echo true || echo false)"
 echo "systemSettingsVersion=${system_settings_version:-unknown}"
-if [[ -n "${build_settings_version:-}" && "$system_settings_version" == "$build_settings_version" ]]; then
+echo "systemSettingsExpectedHostCDHash=${system_settings_expected_host_cdhash:-unknown}"
+if [[ -n "${build_settings_version:-}" &&
+  "$system_settings_version" == "$build_settings_version" &&
+  -n "${build_cdhash:-}" &&
+  "$build_settings_expected_host_cdhash" == "$build_cdhash" &&
+  "$system_settings_expected_host_cdhash" == "$build_cdhash" ]]; then
   settings_matches_build=true
 else
   settings_matches_build=false

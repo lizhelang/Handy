@@ -69,6 +69,10 @@ app_top_level_tis_source_id() {
   plist_value "$1/Contents/Info.plist" TISInputSourceID
 }
 
+app_expected_host_cdhash() {
+  plist_value "$1/Contents/Info.plist" InputiaExpectedHostCDHash
+}
+
 print_app() {
   local label="$1"
   local path="$2"
@@ -97,6 +101,10 @@ print_app() {
     echo "topLevelTISInputSourceID=absent"
   fi
   echo "cdhash=$(app_cdhash "$path")"
+  expected_host_cdhash="$(app_expected_host_cdhash "$path")"
+  if [[ -n "$expected_host_cdhash" ]]; then
+    echo "expectedHostCDHash=$expected_host_cdhash"
+  fi
   assessment="$(app_assessment "$path")"
   if [[ -n "$assessment" ]]; then
     echo "assessment=$assessment"
@@ -452,23 +460,35 @@ echo "legacyIputiaPresent=$([[ -e "$LEGACY_APP" ]] && echo true || echo false)"
 
 print_app "system settings launcher" "$SYSTEM_SETTINGS_APP"
 settings_version="$(app_version "$SYSTEM_SETTINGS_APP")"
-if [[ -n "$build_version" && "$settings_version" == "$build_version" ]]; then
+system_settings_expected_host_cdhash="$(app_expected_host_cdhash "$SYSTEM_SETTINGS_APP")"
+if [[ -n "$build_version" &&
+  "$settings_version" == "$build_version" &&
+  -n "$build_cdhash" &&
+  "$system_settings_expected_host_cdhash" == "$build_cdhash" ]]; then
   system_settings_matches_build=true
-  echo "systemSettingsMatchesBuildVersion=true"
+  echo "systemSettingsMatchesBuild=true"
 else
   system_settings_matches_build=false
-  echo "systemSettingsMatchesBuildVersion=false"
+  echo "systemSettingsMatchesBuild=false"
 fi
+echo "systemSettingsMatchesBuildVersion=$([[ -n "$build_version" && "$settings_version" == "$build_version" ]] && echo true || echo false)"
+echo "systemSettingsExpectedHostCDHash=${system_settings_expected_host_cdhash:-unknown}"
 
 print_app "user settings launcher" "$USER_SETTINGS_APP"
 user_settings_version="$(app_version "$USER_SETTINGS_APP")"
-if [[ -n "$build_version" && "$user_settings_version" == "$build_version" ]]; then
+user_settings_expected_host_cdhash="$(app_expected_host_cdhash "$USER_SETTINGS_APP")"
+if [[ -n "$build_version" &&
+  "$user_settings_version" == "$build_version" &&
+  -n "$build_cdhash" &&
+  "$user_settings_expected_host_cdhash" == "$build_cdhash" ]]; then
   user_settings_matches_build=true
-  echo "userSettingsMatchesBuildVersion=true"
+  echo "userSettingsMatchesBuild=true"
 else
   user_settings_matches_build=false
-  echo "userSettingsMatchesBuildVersion=false"
+  echo "userSettingsMatchesBuild=false"
 fi
+echo "userSettingsMatchesBuildVersion=$([[ -n "$build_version" && "$user_settings_version" == "$build_version" ]] && echo true || echo false)"
+echo "userSettingsExpectedHostCDHash=${user_settings_expected_host_cdhash:-unknown}"
 
 section "target host"
 echo "targetPath=$TARGET_APP"
@@ -501,13 +521,19 @@ fi
 echo "targetSettingsPath=$TARGET_SETTINGS_APP"
 echo "targetExists=$target_exists"
 target_settings_version="$(app_version "$TARGET_SETTINGS_APP")"
-if [[ -n "$build_version" && "$target_settings_version" == "$build_version" ]]; then
+target_settings_expected_host_cdhash="$(app_expected_host_cdhash "$TARGET_SETTINGS_APP")"
+if [[ -n "$build_version" &&
+  "$target_settings_version" == "$build_version" &&
+  -n "$build_cdhash" &&
+  "$target_settings_expected_host_cdhash" == "$build_cdhash" ]]; then
   target_settings_matches_build=true
-  echo "targetSettingsMatchesBuildVersion=true"
+  echo "targetSettingsMatchesBuild=true"
 else
   target_settings_matches_build=false
-  echo "targetSettingsMatchesBuildVersion=false"
+  echo "targetSettingsMatchesBuild=false"
 fi
+echo "targetSettingsMatchesBuildVersion=$([[ -n "$build_version" && "$target_settings_version" == "$build_version" ]] && echo true || echo false)"
+echo "targetSettingsExpectedHostCDHash=${target_settings_expected_host_cdhash:-unknown}"
 if [[ "$TARGET_APP" == "$SYSTEM_APP" || "$TARGET_SETTINGS_APP" == "$SYSTEM_SETTINGS_APP" ]]; then
   target_requires_admin=true
 else
