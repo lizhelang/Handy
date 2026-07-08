@@ -390,6 +390,12 @@ else
   target_settings_matches_build=false
   echo "targetSettingsMatchesBuildVersion=false"
 fi
+if [[ "$TARGET_APP" == "$SYSTEM_APP" || "$TARGET_SETTINGS_APP" == "$SYSTEM_SETTINGS_APP" ]]; then
+  target_requires_admin=true
+else
+  target_requires_admin=false
+fi
+echo "targetRequiresAdmin=$target_requires_admin"
 
 section "tis sources"
 tis_enabled_matches=unknown
@@ -526,13 +532,15 @@ block_reasons=""
 if [[ "$latest_pkg_exists" != "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" pkg-not-ready)"
 fi
-if [[ "$system_matches_build" != "true" ]]; then
+if [[ "$target_matches_build" != "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" target-cdhash-mismatch)"
-  [[ "$admin_ready" != "true" ]] && block_reasons="$(append_reason "$block_reasons" admin-required)"
+  [[ "$target_requires_admin" == "true" && "$admin_ready" != "true" ]] &&
+    block_reasons="$(append_reason "$block_reasons" admin-required)"
 fi
-if [[ "$system_settings_matches_build" != "true" ]]; then
+if [[ "$target_settings_matches_build" != "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" settings-version-mismatch)"
-  [[ "$admin_ready" != "true" ]] && block_reasons="$(append_reason "$block_reasons" admin-required)"
+  [[ "$target_requires_admin" == "true" && "$admin_ready" != "true" ]] &&
+    block_reasons="$(append_reason "$block_reasons" admin-required)"
 fi
 if [[ "$tis_enabled_matches" == "0" || "$tis_enabled_matches" == "unknown" ]]; then
   block_reasons="$(append_reason "$block_reasons" tis-not-ready)"
@@ -543,7 +551,7 @@ fi
 if [[ "$hitoolbox_defaults_readable" != "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" hitoolbox-preferences-unavailable)"
 fi
-if [[ "$system_signature_accepted" != "true" ]]; then
+if [[ "$target_signature_accepted" != "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" signature-rejected)"
 fi
 if [[ "$menu_readiness" != "true" ]]; then
@@ -571,10 +579,12 @@ if [[ -z "$block_reasons" ]]; then
   block_reasons=none
 fi
 echo "statusAdminInstallReady=$admin_ready"
+echo "statusTargetPath=$TARGET_APP"
+echo "statusTargetMatchesBuild=$target_matches_build"
 echo "statusTISEnabledMatches=$tis_enabled_matches"
 echo "statusTISInstalledMatches=$tis_installed_matches"
-echo "statusSignatureAccepted=$system_signature_accepted"
-if [[ "$system_signature_accepted" != "true" ]]; then
+echo "statusSignatureAccepted=$target_signature_accepted"
+if [[ "$target_signature_accepted" != "true" ]]; then
   echo "statusSigningRequiredAction=sign-with-accepted-identity"
 fi
 echo "statusMenuReadiness=$menu_readiness"
