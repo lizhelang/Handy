@@ -189,6 +189,13 @@ archive_settings_version="$(app_version "$ARCHIVE_SETTINGS_APP")"
 build_settings_version="$(app_version "$BUILD_SETTINGS_APP")"
 archive_settings_expected_host_cdhash="$(plist_value "$ARCHIVE_SETTINGS_APP/Contents/Info.plist" InputiaExpectedHostCDHash)"
 build_settings_expected_host_cdhash="$(plist_value "$BUILD_SETTINGS_APP/Contents/Info.plist" InputiaExpectedHostCDHash)"
+build_source_commit="$(plist_value "$BUILD_APP/Contents/Info.plist" InputiaSourceCommit)"
+archive_source_commit="$(plist_value "$ARCHIVE_APP/Contents/Info.plist" InputiaSourceCommit)"
+archive_settings_source_commit="$(plist_value "$ARCHIVE_SETTINGS_APP/Contents/Info.plist" InputiaSourceCommit)"
+archive_source_branch="$(plist_value "$ARCHIVE_APP/Contents/Info.plist" InputiaSourceBranch)"
+archive_settings_source_branch="$(plist_value "$ARCHIVE_SETTINGS_APP/Contents/Info.plist" InputiaSourceBranch)"
+archive_source_dirty="$(plist_value "$ARCHIVE_APP/Contents/Info.plist" InputiaSourceDirty)"
+archive_settings_source_dirty="$(plist_value "$ARCHIVE_SETTINGS_APP/Contents/Info.plist" InputiaSourceDirty)"
 echo "archiveAppVersion=$archive_version"
 echo "archiveAppCDHash=$archive_cdhash"
 echo "buildAppCDHash=$build_cdhash"
@@ -196,6 +203,13 @@ echo "archiveSettingsVersion=$archive_settings_version"
 echo "buildSettingsVersion=$build_settings_version"
 echo "archiveSettingsExpectedHostCDHash=${archive_settings_expected_host_cdhash:-unknown}"
 echo "buildSettingsExpectedHostCDHash=${build_settings_expected_host_cdhash:-unknown}"
+echo "buildSourceCommit=${build_source_commit:-unknown}"
+echo "archiveSourceCommit=${archive_source_commit:-unknown}"
+echo "archiveSettingsSourceCommit=${archive_settings_source_commit:-unknown}"
+echo "archiveSourceBranch=${archive_source_branch:-unknown}"
+echo "archiveSettingsSourceBranch=${archive_settings_source_branch:-unknown}"
+echo "archiveSourceDirty=${archive_source_dirty:-unknown}"
+echo "archiveSettingsSourceDirty=${archive_settings_source_dirty:-unknown}"
 [[ "$archive_version" == "$build_version" ]] || fail "archive-app-version-mismatch"
 [[ -n "$build_cdhash" && "$archive_cdhash" == "$build_cdhash" ]] ||
   fail "archive-app-cdhash-mismatch"
@@ -205,6 +219,15 @@ echo "buildSettingsExpectedHostCDHash=${build_settings_expected_host_cdhash:-unk
   fail "build-settings-expected-host-cdhash-mismatch"
 [[ "$archive_settings_expected_host_cdhash" == "$archive_cdhash" ]] ||
   fail "archive-settings-expected-host-cdhash-mismatch"
+[[ -n "$build_source_commit" ]] || fail "build-source-commit-missing"
+[[ "$archive_source_commit" == "$build_source_commit" ]] ||
+  fail "archive-source-commit-mismatch"
+[[ "$archive_settings_source_commit" == "$archive_source_commit" ]] ||
+  fail "archive-settings-source-commit-mismatch"
+[[ "$archive_settings_source_branch" == "$archive_source_branch" ]] ||
+  fail "archive-settings-source-branch-mismatch"
+[[ "$archive_settings_source_dirty" == "$archive_source_dirty" ]] ||
+  fail "archive-settings-source-dirty-mismatch"
 [[ -x "$ARCHIVE_APP/Contents/MacOS/InputiaInputMethod" ]] ||
   fail "archive-host-executable-missing"
 [[ -x "$ARCHIVE_SETTINGS_APP/Contents/MacOS/InputiaSettingsLauncher" ]] ||

@@ -36,6 +36,14 @@ app_version() {
   plist_value "$1/Contents/Info.plist" CFBundleVersion
 }
 
+app_source_commit() {
+  plist_value "$1/Contents/Info.plist" InputiaSourceCommit
+}
+
+app_source_dirty() {
+  plist_value "$1/Contents/Info.plist" InputiaSourceDirty
+}
+
 app_cdhash() {
   if [[ -d "$1" ]]; then
     /usr/bin/codesign -dv --verbose=4 "$1" 2>&1 |
@@ -635,14 +643,22 @@ echo "adminInstallReady=$admin_ready"
 section "system host"
 build_version="$(app_version "$BUILD_APP")"
 system_version="$(app_version "$SYSTEM_APP")"
+build_source_commit="$(app_source_commit "$BUILD_APP")"
+system_source_commit="$(app_source_commit "$SYSTEM_APP")"
+build_source_dirty="$(app_source_dirty "$BUILD_APP")"
+system_source_dirty="$(app_source_dirty "$SYSTEM_APP")"
 build_cdhash="$(app_cdhash "$BUILD_APP")"
 system_cdhash="$(app_cdhash "$SYSTEM_APP")"
 echo "buildApp=$BUILD_APP"
 echo "buildVersion=${build_version:-unknown}"
+echo "buildSourceCommit=${build_source_commit:-unknown}"
+echo "buildSourceDirty=${build_source_dirty:-unknown}"
 echo "buildCDHash=${build_cdhash:-unknown}"
 echo "systemApp=$SYSTEM_APP"
 echo "systemExists=$([[ -d "$SYSTEM_APP" ]] && echo true || echo false)"
 echo "systemVersion=${system_version:-unknown}"
+echo "systemSourceCommit=${system_source_commit:-unknown}"
+echo "systemSourceDirty=${system_source_dirty:-unknown}"
 echo "systemCDHash=${system_cdhash:-unknown}"
 if [[ -n "${build_cdhash:-}" && "$system_cdhash" == "$build_cdhash" ]]; then
   system_matches_build=true
@@ -654,13 +670,21 @@ echo "systemMatchesBuild=$system_matches_build"
 section "settings app"
 build_settings_version="$(app_version "$BUILD_SETTINGS_APP")"
 system_settings_version="$(app_version "$SYSTEM_SETTINGS_APP")"
+build_settings_source_commit="$(app_source_commit "$BUILD_SETTINGS_APP")"
+system_settings_source_commit="$(app_source_commit "$SYSTEM_SETTINGS_APP")"
+build_settings_source_dirty="$(app_source_dirty "$BUILD_SETTINGS_APP")"
+system_settings_source_dirty="$(app_source_dirty "$SYSTEM_SETTINGS_APP")"
 build_settings_expected_host_cdhash="$(plist_value "$BUILD_SETTINGS_APP/Contents/Info.plist" InputiaExpectedHostCDHash)"
 system_settings_expected_host_cdhash="$(plist_value "$SYSTEM_SETTINGS_APP/Contents/Info.plist" InputiaExpectedHostCDHash)"
 echo "buildSettingsVersion=${build_settings_version:-unknown}"
+echo "buildSettingsSourceCommit=${build_settings_source_commit:-unknown}"
+echo "buildSettingsSourceDirty=${build_settings_source_dirty:-unknown}"
 echo "buildSettingsExpectedHostCDHash=${build_settings_expected_host_cdhash:-unknown}"
 echo "systemSettingsApp=$SYSTEM_SETTINGS_APP"
 echo "systemSettingsExists=$([[ -d "$SYSTEM_SETTINGS_APP" ]] && echo true || echo false)"
 echo "systemSettingsVersion=${system_settings_version:-unknown}"
+echo "systemSettingsSourceCommit=${system_settings_source_commit:-unknown}"
+echo "systemSettingsSourceDirty=${system_settings_source_dirty:-unknown}"
 echo "systemSettingsExpectedHostCDHash=${system_settings_expected_host_cdhash:-unknown}"
 if [[ -n "${build_settings_version:-}" &&
   "$system_settings_version" == "$build_settings_version" &&

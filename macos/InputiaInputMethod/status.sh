@@ -55,6 +55,18 @@ app_short_version() {
   plist_value "$1/Contents/Info.plist" CFBundleShortVersionString
 }
 
+app_source_commit() {
+  plist_value "$1/Contents/Info.plist" InputiaSourceCommit
+}
+
+app_source_branch() {
+  plist_value "$1/Contents/Info.plist" InputiaSourceBranch
+}
+
+app_source_dirty() {
+  plist_value "$1/Contents/Info.plist" InputiaSourceDirty
+}
+
 app_bundle_id() {
   plist_value "$1/Contents/Info.plist" CFBundleIdentifier
 }
@@ -84,6 +96,7 @@ app_expected_host_cdhash() {
 print_app() {
   local label="$1"
   local path="$2"
+  local source_commit source_branch source_dirty
 
   section "$label"
   echo "path=$path"
@@ -102,6 +115,12 @@ print_app() {
   echo "bundleID=$(app_bundle_id "$path")"
   echo "version=$(app_version "$path")"
   echo "shortVersion=$(app_short_version "$path")"
+  source_commit="$(app_source_commit "$path")"
+  source_branch="$(app_source_branch "$path")"
+  source_dirty="$(app_source_dirty "$path")"
+  echo "sourceCommit=${source_commit:-unknown}"
+  echo "sourceBranch=${source_branch:-unknown}"
+  echo "sourceDirty=${source_dirty:-unknown}"
   top_level_tis_source_id="$(app_top_level_tis_source_id "$path")"
   if [[ -n "$top_level_tis_source_id" ]]; then
     echo "topLevelTISInputSourceID=$top_level_tis_source_id"

@@ -28,12 +28,28 @@ plist_value() {
 
 host_cdhash="$(app_cdhash "$BUILD_APP")"
 expected_host_cdhash="$(plist_value "$SETTINGS_INFO" InputiaExpectedHostCDHash)"
+host_source_commit="$(plist_value "$BUILD_APP/Contents/Info.plist" InputiaSourceCommit)"
+settings_source_commit="$(plist_value "$SETTINGS_INFO" InputiaSourceCommit)"
+host_source_branch="$(plist_value "$BUILD_APP/Contents/Info.plist" InputiaSourceBranch)"
+settings_source_branch="$(plist_value "$SETTINGS_INFO" InputiaSourceBranch)"
+host_source_dirty="$(plist_value "$BUILD_APP/Contents/Info.plist" InputiaSourceDirty)"
+settings_source_dirty="$(plist_value "$SETTINGS_INFO" InputiaSourceDirty)"
 
 echo "settingsLauncherExpectedHostCDHash=${expected_host_cdhash:-unknown}"
 echo "settingsLauncherBuildHostCDHash=${host_cdhash:-unknown}"
+echo "settingsLauncherHostSourceCommit=${host_source_commit:-unknown}"
+echo "settingsLauncherSourceCommit=${settings_source_commit:-unknown}"
+echo "settingsLauncherHostSourceBranch=${host_source_branch:-unknown}"
+echo "settingsLauncherSourceBranch=${settings_source_branch:-unknown}"
+echo "settingsLauncherHostSourceDirty=${host_source_dirty:-unknown}"
+echo "settingsLauncherSourceDirty=${settings_source_dirty:-unknown}"
 
 [[ -n "$host_cdhash" ]] || fail "missing-build-host-cdhash"
 [[ "$expected_host_cdhash" == "$host_cdhash" ]] || fail "expected-host-cdhash-mismatch"
+[[ -n "$host_source_commit" ]] || fail "missing-host-source-commit"
+[[ "$settings_source_commit" == "$host_source_commit" ]] || fail "settings-source-commit-mismatch"
+[[ "$settings_source_branch" == "$host_source_branch" ]] || fail "settings-source-branch-mismatch"
+[[ "$settings_source_dirty" == "$host_source_dirty" ]] || fail "settings-source-dirty-mismatch"
 
 /usr/bin/grep -q 'InputiaExpectedHostCDHash' "$LAUNCHER_SOURCE" ||
   fail "launcher-source-missing-expected-host-cdhash"

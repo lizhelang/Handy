@@ -4,6 +4,7 @@ set -o pipefail
 umask 022
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
 source "$ROOT_DIR/build-artifact-lock.sh"
 BUILD_DIR="$ROOT_DIR/build"
 APP_DIR="$BUILD_DIR/InputiaInputMethod.app"
@@ -35,6 +36,39 @@ CAPI_MANIFEST="$ROOT_DIR/../../crates/inputia-capi/Cargo.toml"
 CAPI_LIB="$ROOT_DIR/../../crates/inputia-capi/target/release/libinputia_capi.a"
 RUST_TOOLCHAIN="${INPUTIA_RUST_TOOLCHAIN:-1.96.0}"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
+
+git_value() {
+  local fallback="$1"
+  shift
+  /usr/bin/git -C "$REPO_ROOT" "$@" 2>/dev/null || echo "$fallback"
+}
+
+git_dirty_state() {
+  if ! /usr/bin/git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo unknown
+    return
+  fi
+  if [[ -n "$(/usr/bin/git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" ]]; then
+    echo true
+  else
+    echo false
+  fi
+}
+
+plist_set_string() {
+  local plist="$1"
+  local key="$2"
+  local value="$3"
+  /usr/libexec/PlistBuddy -c "Delete :$key" "$plist" >/dev/null 2>&1 || true
+  /usr/libexec/PlistBuddy -c "Add :$key string $value" "$plist"
+}
+
+stamp_source_identity() {
+  local plist="$1"
+  plist_set_string "$plist" InputiaSourceCommit "$SOURCE_COMMIT"
+  plist_set_string "$plist" InputiaSourceBranch "$SOURCE_BRANCH"
+  plist_set_string "$plist" InputiaSourceDirty "$SOURCE_DIRTY"
+}
 
 run_cargo() {
   if [[ -n "${CARGO:-}" ]]; then
@@ -98,6 +132,10 @@ inputia_build_artifact_acquire_lock build
 trap inputia_build_artifact_release_lock EXIT
 require_no_verification_processes
 
+SOURCE_COMMIT="$(git_value unknown rev-parse --short=12 HEAD)"
+SOURCE_BRANCH="$(git_value unknown rev-parse --abbrev-ref HEAD)"
+SOURCE_DIRTY="$(git_dirty_state)"
+
 rm -rf "$APP_DIR" "$SETTINGS_APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$SETTINGS_MACOS_DIR" "$SETTINGS_RESOURCES_DIR"
 
@@ -131,6 +169,7 @@ fi
   -o "$MACOS_DIR/InputiaInputMethod"
 
 cp "$ROOT_DIR/Info.plist" "$CONTENTS_DIR/Info.plist"
+stamp_source_identity "$CONTENTS_DIR/Info.plist"
 cp -R "$ROOT_DIR/Resources/." "$RESOURCES_DIR/"
 INPUTIA_RIME_DATA_BUILD_DIR="$RIME_DATA_BUILD_DIR" "$ROOT_DIR/prepare-rime-data.sh" >/dev/null
 cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
@@ -218,6 +257,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   -o "$BUILD_DIR/inputia-bridge-privacy-self-check"
 
 cp "$ROOT_DIR/SettingsLauncher/Info.plist" "$SETTINGS_CONTENTS_DIR/Info.plist"
+stamp_source_identity "$SETTINGS_CONTENTS_DIR/Info.plist"
 cp "$ROOT_DIR/Resources/Inputia.icns" "$SETTINGS_RESOURCES_DIR/Inputia.icns"
 /usr/bin/plutil -lint "$SETTINGS_CONTENTS_DIR/Info.plist"
 
