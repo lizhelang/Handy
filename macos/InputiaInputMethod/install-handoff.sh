@@ -177,15 +177,15 @@ $await_command
 $install_check_command
 
 安装后通过标准：
-systemMatchesBuild=true
-settingsMatchesBuild=true
-installCheckTISReady=true
-installCheckTISDuplicateMatches=false
-runningMatchesBuild=true
-installCheckBlockReasons=none
-installCheckRequiredAction=none
-installCheckRequiredActions=none
-installCheckPassed=true
+successCriteria.systemMatchesBuild=true
+successCriteria.settingsMatchesBuild=true
+successCriteria.installCheckTISReady=true
+successCriteria.installCheckTISDuplicateMatches=false
+successCriteria.runningMatchesBuild=true
+successCriteria.installCheckBlockReasons=none
+successCriteria.installCheckRequiredAction=none
+successCriteria.installCheckRequiredActions=none
+successCriteria.installCheckPassed=true
 EOF
 }
 

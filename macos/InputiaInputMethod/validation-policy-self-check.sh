@@ -200,9 +200,13 @@ require(
 )
 require('handoffOpensGUI=false' in install_handoff, "install-handoff-missing-no-gui-marker")
 require('handoffChangesSystemInputSource=false' in install_handoff, "install-handoff-missing-no-input-source-marker")
-require('installCheckBlockReasons=none' in install_handoff, "install-handoff-missing-success-criteria")
-require('installCheckTISDuplicateMatches=false' in install_handoff, "install-handoff-missing-duplicate-success-criteria")
-require('installCheckRequiredActions=none' in install_handoff, "install-handoff-missing-actions-success-criteria")
+require('successCriteria.installCheckBlockReasons=none' in install_handoff, "install-handoff-missing-success-criteria")
+require('successCriteria.installCheckTISDuplicateMatches=false' in install_handoff, "install-handoff-missing-duplicate-success-criteria")
+require('successCriteria.installCheckRequiredActions=none' in install_handoff, "install-handoff-missing-actions-success-criteria")
+require('successCriteria.installCheckPassed=true' in install_handoff, "install-handoff-missing-passed-success-criteria")
+require('successCriteria.systemMatchesBuild=true' in install_handoff, "install-handoff-missing-system-match-success-criteria")
+require('successCriteria.settingsMatchesBuild=true' in install_handoff, "install-handoff-missing-settings-match-success-criteria")
+require('successCriteria.runningMatchesBuild=true' in install_handoff, "install-handoff-missing-running-match-success-criteria")
 for forbidden in [
     "menu-readiness.sh",
     "gui-smoke-readiness.sh",
