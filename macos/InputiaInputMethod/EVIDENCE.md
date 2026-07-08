@@ -28067,3 +28067,41 @@ INPUTIA_RUST_TOOLCHAIN=1.96.0 ./macos/InputiaInputMethod/dev-fast.sh
 
 - 真实系统切换仍需要完成管理员授权后再进入 TIS duplicate repair 和 running host 等待。
 - 但 install-apply 现在不会无限卡在后台授权窗口，失败会成为可诊断、可重试的安装层状态。
+
+## 2026-07-09 06:38 CST - apply-current-handoff 授权超时真实重试
+
+背景：
+
+- 当前主线为 `da834332a1c8`，handoff/pkg 已对齐该提交。
+- `install-check.sh` 仍显示系统 Host CDHash 为旧值 `ef587ead37d7fc3febad02e950b469b228a531a0`，build CDHash 为 `36394094f465f6c8897f3868cbdaac08280ac531`。
+- 当前下一步仍是 `apply-current-handoff`，需要管理员授权写入 `/Library Input Methods` 和 `/Applications`。
+
+执行：
+
+```text
+INPUTIA_ALLOW_ADMIN_PROMPT=1 INPUTIA_ADMIN_PROMPT_TIMEOUT_SECONDS=60 ./apply-current-handoff.sh
+  validationTier=install-apply
+  applyCurrentHandoffAdminPromptMode=osascript
+  applyCurrentHandoffAdminPromptTimeoutSeconds=60
+  applyCurrentHandoffAdminPromptTimedOut=true
+  applyCurrentHandoffPassed=false reason=admin-authorization-timeout
+  applyCurrentHandoffRequiredAction=rerun-with-admin-prompt
+
+ps -axo ... | rg "apply-current-handoff|osascript|installer|SecurityAgent"
+  no residual process
+
+./macos/InputiaInputMethod/install-check.sh
+  installHandoffCurrent=true
+  systemMatchesBuild=false
+  settingsMatchesBuild=false
+  installCheckTISDuplicateMatches=true
+  runningMatchesBuild=false
+  installCheckNextStep=apply-current-handoff
+  installCheckPassed=false
+```
+
+结论：
+
+- 新增 timeout 行为在真实授权路径上有效：未授权时会退出并清理进程。
+- 当前没有半安装；系统实际运行态仍未切到当前 build。
+- `open-installer.sh` 只能打开 pkg 让系统 Installer 处理，本质仍要求管理员交互，不能替代授权完成。
