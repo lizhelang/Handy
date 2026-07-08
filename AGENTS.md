@@ -10,6 +10,30 @@
 
 This is a **fork** of [cjpais/Handy](https://github.com/cjpais/Handy) — a Tauri 2.x desktop speech-to-text app (Rust backend + React/TypeScript frontend). The fork's goal is to add a **clipboard manager** feature by integrating [ropy](https://github.com/StudentWeis/ropy) capabilities. Current phase: frontend-first design (UX/logic before backend implementation).
 
+## Inputia macOS 验证分层
+
+当工作范围在 `macos/InputiaInputMethod` 或 `crates/inputia-*` 时，默认开发验证只运行：
+
+```bash
+./macos/InputiaInputMethod/dev-fast.sh
+```
+
+`dev-fast.sh` 是候选词、双拼、快捷键、设置 UI、Core/Rime/CAPI 日常迭代的默认入口。它不得打开菜单栏，不得打开 GUI，不得改系统输入源，不得检查公证；只覆盖 build、Rust tests、Swift self-check、Rime probe、router/shortcut self-check。
+
+只有重装、安装脚本、系统目录、TIS enabled/selectable、running host 或设置启动器版本链路发生变化时，才运行：
+
+```bash
+./macos/InputiaInputMethod/install-check.sh
+```
+
+只有发布前或安装脚本变更后，才运行：
+
+```bash
+./macos/InputiaInputMethod/release/full-check.sh
+```
+
+`release/full-check.sh` 才允许 pkg/postinstall、公证 readiness、菜单栏 AXPress、TextEdit/Safari/Clipboard GUI smoke。`menu-readiness.sh`、`gui-smoke-readiness.sh` 和真实 GUI smoke 必须显式 opt-in；一次验证周期里菜单栏 AXPress 结果必须通过 `INPUTIA_MENU_READINESS_CACHE_FILE` 缓存，不能反复触碰 `TextInputMenuAgent`。
+
 ## Quick Reference
 
 ```bash

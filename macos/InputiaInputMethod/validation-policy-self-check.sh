@@ -15,6 +15,10 @@ def read(name: str) -> str:
     return (root / name).read_text(encoding="utf-8")
 
 
+def read_repo(name: str) -> str:
+    return (root.parent.parent / name).read_text(encoding="utf-8")
+
+
 def require(condition: bool, reason: str) -> None:
     if not condition:
         print(f"validationPolicySelfCheck=false reason={reason}")
@@ -46,6 +50,25 @@ gui_suite = read("gui-smoke-suite.sh")
 status = read("status.sh")
 post_install = read("post-install-regression.sh")
 tis = read("tis-readiness.sh")
+inputia_readme = read("README.md")
+agents = read_repo("AGENTS.md")
+
+require('Inputia macOS 验证分层' in agents, "agents-missing-inputia-validation-tier-section")
+require('./macos/InputiaInputMethod/dev-fast.sh' in agents, "agents-missing-dev-fast-command")
+require('./macos/InputiaInputMethod/install-check.sh' in agents, "agents-missing-install-check-command")
+require('./macos/InputiaInputMethod/release/full-check.sh' in agents, "agents-missing-full-check-command")
+require('不得打开菜单栏' in agents, "agents-missing-no-menu-policy")
+require('不得打开 GUI' in agents, "agents-missing-no-gui-policy")
+require('不得改系统输入源' in agents, "agents-missing-no-input-source-policy")
+require('不得检查公证' in agents, "agents-missing-no-notarization-policy")
+require('INPUTIA_MENU_READINESS_CACHE_FILE' in agents, "agents-missing-menu-cache-policy")
+
+require('普通开发默认验证' in inputia_readme, "readme-missing-dev-fast-section")
+require('安装链路变化后的验证' in inputia_readme, "readme-missing-install-check-section")
+require('发布前或安装脚本变化后的完整验证' in inputia_readme, "readme-missing-full-check-section")
+require('`dev-fast.sh` 是候选词、双拼、快捷键、设置 UI 等日常开发的默认入口' in inputia_readme, "readme-missing-dev-fast-default-contract")
+require('`release/full-check.sh` 是显式 opt-in 的重型入口' in inputia_readme, "readme-missing-full-check-opt-in-contract")
+require('让菜单栏 AXPress 最多执行一次' in inputia_readme, "readme-missing-menu-cache-contract")
 
 require('validationTier=dev-fast' in dev_fast, "dev-fast-missing-tier-marker")
 require('touchesMenuBar=false' in dev_fast, "dev-fast-missing-menu-policy")
