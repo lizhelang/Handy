@@ -187,6 +187,9 @@ require('installCheckPassed=' in install_handoff, "install-handoff-missing-insta
 require('settingsMatchesBuild=' in install_handoff, "install-handoff-missing-settings-match-summary")
 require('buildSettingsExpectedHostCDHash=' in install_handoff, "install-handoff-missing-build-settings-host-cdhash")
 require('systemSettingsExpectedHostCDHash=' in install_handoff, "install-handoff-missing-system-settings-host-cdhash")
+require('applyCurrentHandoffCommand=' in install_handoff, "install-handoff-missing-apply-current-command")
+require('推荐完整安装/修复/验证：' in install_handoff, "install-handoff-missing-recommended-apply-section")
+require('INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh' in install_handoff, "install-handoff-missing-apply-current-command-body")
 require('sourceBranch=' in install_handoff, "install-handoff-missing-source-branch")
 require('sourceCommit=' in install_handoff, "install-handoff-missing-source-commit")
 require('sourceUpstream=' in install_handoff, "install-handoff-missing-source-upstream")
@@ -194,6 +197,10 @@ require('sourceDirty=' in install_handoff, "install-handoff-missing-source-dirty
 require('pkgVerificationPassed=' in install_handoff, "install-handoff-missing-pkg-verification")
 require('repairTISDuplicatesRequired=' in install_handoff, "install-handoff-missing-duplicate-repair-summary")
 require('INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh' in install_handoff, "install-handoff-missing-duplicate-repair-command")
+require(
+    install_handoff.index('推荐完整安装/修复/验证：') < install_handoff.index('管理员终端安装：'),
+    "install-handoff-apply-command-after-raw-installer",
+)
 require(
     install_handoff.index('INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh') < install_handoff.index('$await_command'),
     "install-handoff-repair-command-after-await-command",

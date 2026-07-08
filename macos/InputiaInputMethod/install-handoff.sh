@@ -94,6 +94,7 @@ fi
 
 terminal_installer_command="sudo /usr/sbin/installer -pkg $pkg_quoted -target /"
 open_installer_command="/usr/bin/open $pkg_quoted"
+apply_current_handoff_command="cd $repo_quoted && INPUTIA_ALLOW_ADMIN_PROMPT=1 ./apply-current-handoff.sh"
 install_check_command="cd $repo_quoted && ./install-check.sh"
 await_command="cd $repo_quoted && ./await-system-install.sh"
 pkg_verification_passed="$(/usr/bin/awk -F= '$1 == "pkgVerificationPassed" { print $2; found = 1; exit } END { if (!found) print "unknown" }' "$BUILD_LOG")"
@@ -159,9 +160,13 @@ installCheckBlockReasons=$install_check_block_reasons
 installCheckRequiredAction=$install_check_required_action
 installCheckRequiredActions=$install_check_required_actions
 repairTISDuplicatesRequired=$repair_tis_duplicates_required
+applyCurrentHandoffCommand=$apply_current_handoff_command
 handoffOpensGUI=false
 handoffChangesSystemInputSource=false
 buildLog=$BUILD_LOG
+
+推荐完整安装/修复/验证：
+$apply_current_handoff_command
 
 管理员终端安装：
 $terminal_installer_command
@@ -221,6 +226,7 @@ echo "installCheckBlockReasons=$install_check_block_reasons"
 echo "installCheckRequiredAction=$install_check_required_action"
 echo "installCheckRequiredActions=$install_check_required_actions"
 echo "repairTISDuplicatesRequired=$repair_tis_duplicates_required"
+echo "applyCurrentHandoffCommand=$apply_current_handoff_command"
 echo "repairTISDuplicatesCommand=$repair_tis_duplicates_command"
 echo "terminalInstallerCommand=$terminal_installer_command"
 echo "openInstallerCommand=$open_installer_command"
