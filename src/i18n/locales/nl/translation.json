@@ -386,10 +386,10 @@
         "title": "Sneltoets"
       },
       "api": {
-        "title": "API (OpenAI-compatibel)",
+        "title": "Provider",
         "provider": {
           "title": "Provider",
-          "description": "Selecteer een OpenAI-compatibele provider."
+          "description": "Choose Local to use Handy's built-in Qwen model, or select an API provider."
         },
         "appleIntelligence": {
           "unavailable": "Apple Intelligence is niet beschikbaar op dit apparaat. Vereist een Apple Silicon Mac met macOS Tahoe (26.0) of nieuwer waarop Apple Intelligence is ingeschakeld via de Systeeminstellingen."
@@ -413,13 +413,27 @@
           "placeholderNoOptions": "Typ een modelnaam",
           "refreshModels": "Modellen verversen",
           "useCustomModel": "Use \"{{model}}\""
+        },
+        "local": {
+          "providerLabel": "Local",
+          "loadError": "Failed to load local post-processing models.",
+          "selectError": "Failed to select local post-processing model.",
+          "model": {
+            "title": "Local Model",
+            "description": "Handy uses this self-managed Qwen GGUF model to correct custom words after transcription.",
+            "loading": "Loading local models...",
+            "noModels": "No local models found",
+            "rescan": "Rescan local models",
+            "active": "Active",
+            "missing": "Local Qwen model not found. Make sure Handy's custom-word post-processing model is installed."
+          }
         }
       },
       "prompts": {
         "title": "Prompt",
         "selectedPrompt": {
           "title": "Geselecteerde prompt",
-          "description": "Selecteer een sjabloon voor het verfijnen van transcripties of maak een nieuwe aan. Gebruik ${output} in de prompttekst om naar de gemaakte transcriptie te verwijzen."
+          "description": "Select a template for post-processing or create a new one. Use ${output} for the captured transcript and ${custom_words} for the custom words list."
         },
         "noPrompts": "Geen prompts beschikbaar",
         "selectPrompt": "Selecteer een prompt",
@@ -427,8 +441,8 @@
         "promptLabel": "Promptnaam",
         "promptLabelPlaceholder": "Voer promptnaam in",
         "promptInstructions": "Prompt-instructies",
-        "promptInstructionsPlaceholder": "Schrijf de instructies die na de transcriptie moeten worden uitgevoerd. Voorbeeld: Verbeter de grammatica en helderheid van de volgende tekst: ${output}",
-        "promptTip": "Tip: Gebruik <code>${output}</code> om de getranscribeerde tekst in je prompt in te voegen.",
+        "promptInstructionsPlaceholder": "Write the instructions to run after transcription. Example: Correct only custom-word mistakes using ${custom_words}: ${output}",
+        "promptTip": "Tip: Use <code>${output}</code> to insert the transcribed text and <code>${custom_words}</code> to insert the custom words list.",
         "updatePrompt": "Prompt bijwerken",
         "deletePrompt": "Prompt verwijderen",
         "createPrompt": "Prompt maken",
@@ -503,7 +517,8 @@
       "historyLimit": {
         "title": "Geschiedenislimiet",
         "description": "Maximum aantal te bewaren geschiedenisitems",
-        "entries": "items"
+        "entries": "items",
+        "unlimited": "Unlimited"
       },
       "recordingRetention": {
         "title": "Opnames automatisch verwijderen",
@@ -513,7 +528,8 @@
         "days3": "Na 3 dagen",
         "weeks2": "Na 2 weken",
         "months3": "Na 3 maanden",
-        "placeholder": "Selecteer bewaarperiode..."
+        "placeholder": "Selecteer bewaarperiode...",
+        "preserveUnlimited": "Keep all"
       },
       "alwaysOnMicrophone": {
         "label": "Microfoon altijd aan",
@@ -524,8 +540,8 @@
         "description": "Microfoon die gebruikt moet worden wanneer het laptopscherm gesloten is"
       },
       "postProcessingToggle": {
-        "label": "Naverwerking",
-        "description": "Schakel AI-gestuurde tekstverfijning in na transcriptie"
+        "label": "Post Processing",
+        "description": "Enable the dedicated AI post-processing flow and hotkey."
       },
       "muteWhileRecording": {
         "label": "Dempen tijdens opname",

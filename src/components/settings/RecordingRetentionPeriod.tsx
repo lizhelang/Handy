@@ -17,7 +17,13 @@ export const RecordingRetentionPeriodSelector: React.FC<RecordingRetentionPeriod
 
     const selectedRetentionPeriod =
       getSetting("recording_retention_period") || "never";
-    const historyLimit = getSetting("history_limit") || 5;
+    const historyLimit = getSetting("history_limit") ?? 5;
+    const preserveLimitLabel =
+      historyLimit === 0
+        ? t("settings.debug.recordingRetention.preserveUnlimited")
+        : t("settings.debug.recordingRetention.preserveLimit", {
+            count: Number(historyLimit),
+          });
 
     const handleRetentionPeriodSelect = async (period: string) => {
       await updateSetting(
@@ -30,9 +36,7 @@ export const RecordingRetentionPeriodSelector: React.FC<RecordingRetentionPeriod
       { value: "never", label: t("settings.debug.recordingRetention.never") },
       {
         value: "preserve_limit",
-        label: t("settings.debug.recordingRetention.preserveLimit", {
-          count: Number(historyLimit),
-        }),
+        label: preserveLimitLabel,
       },
       { value: "days3", label: t("settings.debug.recordingRetention.days3") },
       { value: "weeks2", label: t("settings.debug.recordingRetention.weeks2") },

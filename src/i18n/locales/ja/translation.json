@@ -386,10 +386,10 @@
         "title": "ショートカット"
       },
       "api": {
-        "title": "API (OpenAI 互換)",
+        "title": "Provider",
         "provider": {
           "title": "プロバイダー",
-          "description": "OpenAI 互換のプロバイダーを選択。"
+          "description": "Choose Local to use Handy's built-in Qwen model, or select an API provider."
         },
         "appleIntelligence": {
           "unavailable": "このデバイスでは Apple Intelligence を利用できません。macOS Tahoe (26.0) 以降を実行し、システム設定で Apple Intelligence が有効になっている Apple Silicon Mac が必要です。"
@@ -413,13 +413,27 @@
           "placeholderNoOptions": "モデル名を入力",
           "refreshModels": "モデルを更新",
           "useCustomModel": "Use \"{{model}}\""
+        },
+        "local": {
+          "providerLabel": "Local",
+          "loadError": "Failed to load local post-processing models.",
+          "selectError": "Failed to select local post-processing model.",
+          "model": {
+            "title": "Local Model",
+            "description": "Handy uses this self-managed Qwen GGUF model to correct custom words after transcription.",
+            "loading": "Loading local models...",
+            "noModels": "No local models found",
+            "rescan": "Rescan local models",
+            "active": "Active",
+            "missing": "Local Qwen model not found. Make sure Handy's custom-word post-processing model is installed."
+          }
         }
       },
       "prompts": {
         "title": "プロンプト",
         "selectedPrompt": {
           "title": "選択したプロンプト",
-          "description": "文字起こしを改善するテンプレートを選択するか、新しく作成します。プロンプトテキスト内で ${output} を使用して、キャプチャした文字起こしを参照します。"
+          "description": "Select a template for post-processing or create a new one. Use ${output} for the captured transcript and ${custom_words} for the custom words list."
         },
         "noPrompts": "プロンプトがありません",
         "selectPrompt": "プロンプトを選択",
@@ -427,8 +441,8 @@
         "promptLabel": "プロンプト名",
         "promptLabelPlaceholder": "プロンプト名を入力",
         "promptInstructions": "プロンプトの指示",
-        "promptInstructionsPlaceholder": "文字起こし後に実行する指示を記述します。例: 以下のテキストの文法と明瞭さを改善してください: ${output}",
-        "promptTip": "ヒント: <code>${output}</code> を使用して、文字起こしテキストをプロンプトに挿入します。",
+        "promptInstructionsPlaceholder": "Write the instructions to run after transcription. Example: Correct only custom-word mistakes using ${custom_words}: ${output}",
+        "promptTip": "Tip: Use <code>${output}</code> to insert the transcribed text and <code>${custom_words}</code> to insert the custom words list.",
         "updatePrompt": "プロンプトを更新",
         "deletePrompt": "プロンプトを削除",
         "createPrompt": "プロンプトを作成",
@@ -496,7 +510,8 @@
       "historyLimit": {
         "title": "履歴上限",
         "description": "保持する履歴エントリーの最大数",
-        "entries": "件"
+        "entries": "件",
+        "unlimited": "Unlimited"
       },
       "recordingRetention": {
         "title": "録音の自動削除",
@@ -506,7 +521,8 @@
         "days3": "3日後",
         "weeks2": "2週間後",
         "months3": "3ヶ月後",
-        "placeholder": "保持期間を選択…"
+        "placeholder": "保持期間を選択…",
+        "preserveUnlimited": "Keep all"
       },
       "alwaysOnMicrophone": {
         "label": "マイク常時オン",
@@ -517,8 +533,8 @@
         "description": "ノートパソコンの蓋を閉じたときに使用するマイク"
       },
       "postProcessingToggle": {
-        "label": "後処理",
-        "description": "文字起こし後の AI によるテキスト改善を有効化"
+        "label": "Post Processing",
+        "description": "Enable the dedicated AI post-processing flow and hotkey."
       },
       "muteWhileRecording": {
         "label": "録音中にミュート",

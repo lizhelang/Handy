@@ -386,10 +386,10 @@
         "title": "快捷键"
       },
       "api": {
-        "title": "API（兼容 OpenAI）",
+        "title": "提供商",
         "provider": {
           "title": "提供商",
-          "description": "选择一个兼容 OpenAI 的提供商。"
+          "description": "选择“本地”可使用 Handy 内置的 Qwen 模型，也可以选择 API 提供商。"
         },
         "appleIntelligence": {
           "unavailable": "Apple Intelligence 在此设备上不可用。需要运行 macOS Tahoe（26.0）或更高版本的 Apple Silicon Mac，并在系统设置中启用 Apple Intelligence。"
@@ -413,13 +413,27 @@
           "placeholderNoOptions": "输入模型名称",
           "refreshModels": "刷新模型",
           "useCustomModel": "使用“{{model}}”"
+        },
+        "local": {
+          "providerLabel": "本地",
+          "loadError": "加载本地后处理模型失败。",
+          "selectError": "选择本地后处理模型失败。",
+          "model": {
+            "title": "本地模型",
+            "description": "Handy 使用这个自管理的 Qwen GGUF 模型，在转录后修正自定义词汇。",
+            "loading": "正在加载本地模型…",
+            "noModels": "未找到本地模型",
+            "rescan": "重新扫描本地模型",
+            "active": "活跃",
+            "missing": "未找到本地 Qwen 模型。请确认 Handy 的自定义词后处理模型已安装。"
+          }
         }
       },
       "prompts": {
         "title": "提示词",
         "selectedPrompt": {
           "title": "已选提示词",
-          "description": "选择用于优化转录的模板或创建新模板。在提示词文本中使用 ${output} 来引用捕获的转录。"
+          "description": "选择一个后处理模板或创建新模板。使用 ${output} 引用捕获的转录，使用 ${custom_words} 引用自定义词汇列表。"
         },
         "noPrompts": "没有可用的提示词",
         "selectPrompt": "选择提示词",
@@ -427,8 +441,8 @@
         "promptLabel": "提示词名称",
         "promptLabelPlaceholder": "输入提示词名称",
         "promptInstructions": "提示词指令",
-        "promptInstructionsPlaceholder": "编写转录后要执行的指令。示例：改进以下文本的语法和清晰度: ${output}",
-        "promptTip": "提示：使用 <code>${output}</code> 将转录文本插入到您的提示词中。",
+        "promptInstructionsPlaceholder": "编写转录后要执行的指令。示例：只根据 ${custom_words} 修正自定义词错误：${output}",
+        "promptTip": "提示：使用 <code>${output}</code> 插入转录文本，使用 <code>${custom_words}</code> 插入自定义词汇列表。",
         "updatePrompt": "更新提示词",
         "deletePrompt": "删除提示词",
         "createPrompt": "创建提示词",
@@ -496,7 +510,8 @@
       "historyLimit": {
         "title": "历史记录上限",
         "description": "保留的最大历史条目数",
-        "entries": "条"
+        "entries": "条",
+        "unlimited": "无限"
       },
       "recordingRetention": {
         "title": "自动删除录音",
@@ -506,7 +521,8 @@
         "days3": "3 天后",
         "weeks2": "2 周后",
         "months3": "3 个月后",
-        "placeholder": "选择保留期限..."
+        "placeholder": "选择保留期限...",
+        "preserveUnlimited": "保留全部"
       },
       "alwaysOnMicrophone": {
         "label": "麦克风常开",
@@ -518,7 +534,7 @@
       },
       "postProcessingToggle": {
         "label": "后处理",
-        "description": "启用转录后的 AI 文本优化"
+        "description": "启用专用 AI 后处理流程和快捷键。"
       },
       "muteWhileRecording": {
         "label": "录制时静音",

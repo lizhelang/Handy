@@ -1152,12 +1152,6 @@ impl TranscriptionManager {
             );
         }
 
-        // Whether the loaded transcribe-cpp model advertises
-        // Feature::InitialPrompt. Informational (logged below); the whisper
-        // run extension and the fuzzy-correction skip are gated on
-        // `model_is_whisper` instead, since non-whisper archs can advertise
-        // the feature while rejecting the whisper-kind extension.
-        let mut model_takes_initial_prompt = false;
         // Whether the loaded model is actually whisper-family (arch string).
         // Non-whisper archs (e.g. Voxtral Small) can advertise
         // Feature::InitialPrompt yet reject the whisper-kind run extension
@@ -1196,7 +1190,10 @@ impl TranscriptionManager {
             if let LoadedEngine::TranscribeCpp(session) = &engine {
                 let model = session.model();
                 let caps = model.capabilities();
-                model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
+                // Informational only: prompt injection is still gated on the
+                // whisper arch because non-whisper archs can advertise this
+                // feature while rejecting the whisper-kind run extension.
+                let model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
                 model_is_whisper = model.arch() == "whisper";
                 model_supports_translate = caps.supports_translate;
                 model_languages = caps.languages;
@@ -1381,11 +1378,10 @@ impl TranscriptionManager {
             }
         };
 
-        // Apply fuzzy word correction if custom words are configured — UNLESS the
-        // words were already handed to the model as an initial prompt (whisper
-        // family). We don't pass a prompt to non-whisper models (it requires the
-        // whisper-kind run extension), so they still get fuzzy correction here,
-        // same as the ONNX engines.
+        // Apply custom-word post-correction even when Whisper received the same
+        // words as an initial prompt. Prompting is a hint, not a guarantee, while
+        // the post-correction path is the shared fallback for non-Whisper,
+        // streaming, and missed Whisper corrections.
         let filtered_result = post_process_transcription_text(result, &settings, model_is_whisper);
 
         let et = std::time::Instant::now();
@@ -1596,9 +1592,9 @@ fn transcribe_cpp_run_plan(
 fn post_process_transcription_text(
     raw: String,
     settings: &AppSettings,
-    custom_words_already_prompted: bool,
+    _custom_words_already_prompted: bool,
 ) -> String {
-    let corrected = if !settings.custom_words.is_empty() && !custom_words_already_prompted {
+    let corrected = if !settings.custom_words.is_empty() {
         apply_custom_words(
             &raw,
             &settings.custom_words,
@@ -1887,6 +1883,15 @@ mod tests {
         codes.iter().map(|code| (*code).to_string()).collect()
     }
 
+    fn settings_with_custom_words(words: &[&str]) -> AppSettings {
+        let mut settings = crate::settings::get_default_settings();
+        settings.custom_words = words.iter().map(|word| (*word).to_string()).collect();
+        settings.word_correction_threshold = 0.5;
+        settings.app_language = "en".to_string();
+        settings.custom_filler_words = Some(Vec::new());
+        settings
+    }
+
     #[test]
     fn transcribe_cpp_run_plan_maps_chinese_variants() {
         let plan = transcribe_cpp_run_plan(false, "zh-Hant", &languages(&["zh"]), true);
@@ -1921,6 +1926,36 @@ mod tests {
         assert!(matches!(plan.task, Task::Transcribe));
         assert_eq!(plan.language.as_deref(), Some("es"));
         assert_eq!(plan.target_language, None);
+    }
+
+    #[test]
+    fn post_process_transcription_text_keeps_english_fallback_after_prompt() {
+        let settings = settings_with_custom_words(&["hello"]);
+
+        let result = post_process_transcription_text("helo world".to_string(), &settings, true);
+
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn post_process_transcription_text_keeps_english_streaming_non_prompt_path() {
+        let settings = settings_with_custom_words(&["ChargeBee"]);
+
+        let result =
+            post_process_transcription_text("using Charge B".to_string(), &settings, false);
+
+        assert_eq!(result, "using ChargeBee");
+    }
+
+    #[test]
+    fn post_process_transcription_text_does_not_use_deterministic_cjk_fuzzy() {
+        let mut settings = settings_with_custom_words(&["罗泽群"]);
+        settings.app_language = "zh".to_string();
+
+        let result =
+            post_process_transcription_text("罗德群今天回家吗?".to_string(), &settings, false);
+
+        assert_eq!(result, "罗德群今天回家吗?");
     }
 }
 

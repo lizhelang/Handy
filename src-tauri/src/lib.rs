@@ -7,6 +7,7 @@ mod catalog;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod custom_words_model;
 mod helpers;
 mod input;
 mod llm_client;
@@ -645,6 +646,13 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
         0.0
     };
 
+    let settings = get_settings(app);
+    if let Some(corrected) = tauri::async_runtime::block_on(
+        custom_words_model::correct_custom_words(app, &settings, &text),
+    ) {
+        text = corrected;
+    }
+
     if args.json {
         println!(
             "{}",
@@ -767,6 +775,9 @@ pub fn run(cli_args: CliArgs) {
             commands::models::cancel_download,
             commands::models::set_active_model,
             commands::models::get_current_model,
+            commands::models::get_available_custom_words_models,
+            commands::models::get_current_custom_words_model,
+            commands::models::set_active_custom_words_model,
             commands::models::get_transcription_model_status,
             commands::models::is_model_loading,
             commands::models::rescan_local_models,

@@ -386,10 +386,10 @@
         "title": "קיצור מקשים"
       },
       "api": {
-        "title": "API (תואם OpenAI)",
+        "title": "Provider",
         "provider": {
           "title": "ספק",
-          "description": "בחר ספק שתואם ל-OpenAI."
+          "description": "Choose Local to use Handy's built-in Qwen model, or select an API provider."
         },
         "appleIntelligence": {
           "unavailable": "Apple Intelligence לא זמין במכשיר הזה. נדרש Mac עם Apple Silicon שמריץ macOS Tahoe (26.0) ומעלה, עם Apple Intelligence מופעל בהגדרות המערכת."
@@ -413,13 +413,27 @@
           "placeholderNoOptions": "הקלד שם מודל",
           "refreshModels": "רענן מודלים",
           "useCustomModel": "Use \"{{model}}\""
+        },
+        "local": {
+          "providerLabel": "Local",
+          "loadError": "Failed to load local post-processing models.",
+          "selectError": "Failed to select local post-processing model.",
+          "model": {
+            "title": "Local Model",
+            "description": "Handy uses this self-managed Qwen GGUF model to correct custom words after transcription.",
+            "loading": "Loading local models...",
+            "noModels": "No local models found",
+            "rescan": "Rescan local models",
+            "active": "Active",
+            "missing": "Local Qwen model not found. Make sure Handy's custom-word post-processing model is installed."
+          }
         }
       },
       "prompts": {
         "title": "פרומפט",
         "selectedPrompt": {
           "title": "פרומפט נבחר",
-          "description": "בחר תבנית לשיפור התמלול או צור חדשה. השתמש ב-${output} בתוך טקסט הפרומפט כדי להפנות לתמלול שנקלט."
+          "description": "Select a template for post-processing or create a new one. Use ${output} for the captured transcript and ${custom_words} for the custom words list."
         },
         "noPrompts": "אין פרומפטים זמינים",
         "selectPrompt": "בחר פרומפט",
@@ -427,8 +441,8 @@
         "promptLabel": "שם הפרומפט",
         "promptLabelPlaceholder": "הזן שם לפרומפט",
         "promptInstructions": "הוראות לפרומפט",
-        "promptInstructionsPlaceholder": "כתוב את ההוראות שירוצו אחרי התמלול. לדוגמה: שפר דקדוק ובהירות עבור הטקסט הבא: ${output}",
-        "promptTip": "טיפ: השתמש ב-<code>${output}</code> כדי להכניס את הטקסט המתומלל לפרומפט שלך.",
+        "promptInstructionsPlaceholder": "Write the instructions to run after transcription. Example: Correct only custom-word mistakes using ${custom_words}: ${output}",
+        "promptTip": "Tip: Use <code>${output}</code> to insert the transcribed text and <code>${custom_words}</code> to insert the custom words list.",
         "updatePrompt": "עדכן פרומפט",
         "deletePrompt": "מחק פרומפט",
         "createPrompt": "צור פרומפט",
@@ -496,7 +510,8 @@
       "historyLimit": {
         "title": "מגבלת היסטוריה",
         "description": "המספר המרבי של רשומות היסטוריה לשמירה",
-        "entries": "רשומות"
+        "entries": "רשומות",
+        "unlimited": "Unlimited"
       },
       "recordingRetention": {
         "title": "מחיקה אוטומטית של הקלטות",
@@ -506,7 +521,8 @@
         "days3": "אחרי 3 ימים",
         "weeks2": "אחרי שבועיים",
         "months3": "אחרי 3 חודשים",
-        "placeholder": "בחר משך שמירה..."
+        "placeholder": "בחר משך שמירה...",
+        "preserveUnlimited": "Keep all"
       },
       "alwaysOnMicrophone": {
         "label": "מיקרופון תמיד פעיל",
@@ -517,8 +533,8 @@
         "description": "המיקרופון שישמש כשהמחשב הנייד סגור"
       },
       "postProcessingToggle": {
-        "label": "עיבוד משלים",
-        "description": "הפעל שיפור טקסט מבוסס AI אחרי התמלול"
+        "label": "Post Processing",
+        "description": "Enable the dedicated AI post-processing flow and hotkey."
       },
       "muteWhileRecording": {
         "label": "השתק בזמן הקלטה",

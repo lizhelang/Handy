@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
-import { RefreshCcw } from "lucide-react";
-import { commands } from "@/bindings";
+import { Check, HardDrive, RefreshCcw } from "lucide-react";
+import { commands, type CustomWordsModelInfo } from "@/bindings";
 
 import { Alert } from "../../ui/Alert";
 import {
@@ -21,10 +21,153 @@ import { ModelSelect } from "../PostProcessingSettingsApi/ModelSelect";
 import { usePostProcessProviderState } from "../PostProcessingSettingsApi/usePostProcessProviderState";
 import { ShortcutInput } from "../ShortcutInput";
 import { useSettings } from "../../../hooks/useSettings";
+import { formatModelSize } from "@/lib/utils/format";
+
+const LOCAL_PROVIDER_ID = "local";
+
+const LocalPostProcessingModelSelector: React.FC = () => {
+  const { t } = useTranslation();
+  const [models, setModels] = useState<CustomWordsModelInfo[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSwitching, setIsSwitching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadModels = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const result = await commands.getAvailableCustomWordsModels();
+      if (result.status === "ok") {
+        setModels(result.data);
+      } else {
+        setError(t("settings.postProcessing.api.local.loadError"));
+      }
+    } catch (err) {
+      console.error("Failed to load local post-processing models:", err);
+      setError(t("settings.postProcessing.api.local.loadError"));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    void loadModels();
+  }, [loadModels]);
+
+  const selectedModel = useMemo(
+    () => models.find((model) => model.is_selected) || models[0] || null,
+    [models],
+  );
+
+  const modelOptions = useMemo(
+    () =>
+      models.map((model) => ({
+        value: model.id,
+        label: model.name,
+      })),
+    [models],
+  );
+
+  const handleSelect = async (modelId: string | null) => {
+    if (!modelId || modelId === selectedModel?.id) return;
+    setIsSwitching(true);
+    setError(null);
+    try {
+      const result = await commands.setActiveCustomWordsModel(modelId);
+      if (result.status === "ok") {
+        await loadModels();
+      } else {
+        setError(t("settings.postProcessing.api.local.selectError"));
+      }
+    } catch (err) {
+      console.error("Failed to select local post-processing model:", err);
+      setError(t("settings.postProcessing.api.local.selectError"));
+    } finally {
+      setIsSwitching(false);
+    }
+  };
+
+  const formattedSize = selectedModel
+    ? formatModelSize(selectedModel.size_bytes / (1024 * 1024))
+    : null;
+
+  return (
+    <SettingContainer
+      title={t("settings.postProcessing.api.local.model.title")}
+      description={t("settings.postProcessing.api.local.model.description")}
+      descriptionMode="tooltip"
+      layout="stacked"
+      grouped={true}
+    >
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Dropdown
+            selectedValue={selectedModel?.id || null}
+            options={modelOptions}
+            onSelect={handleSelect}
+            placeholder={
+              isLoading
+                ? t("settings.postProcessing.api.local.model.loading")
+                : t("settings.postProcessing.api.local.model.noModels")
+            }
+            disabled={isLoading || isSwitching || models.length === 0}
+            className="flex-1 min-w-0"
+          />
+          <ResetButton
+            onClick={loadModels}
+            disabled={isLoading || isSwitching}
+            ariaLabel={t("settings.postProcessing.api.local.model.rescan")}
+            className="flex h-10 w-10 items-center justify-center"
+          >
+            <RefreshCcw
+              className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
+            />
+          </ResetButton>
+        </div>
+
+        {selectedModel && (
+          <div className="flex flex-wrap items-center gap-3 text-sm text-text/60">
+            <span className="inline-flex items-center gap-1.5 text-logo-primary">
+              <Check className="w-4 h-4" />
+              {t("settings.postProcessing.api.local.model.active")}
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <HardDrive className="w-4 h-4" />
+              {formattedSize}
+            </span>
+            <span className="truncate max-w-full" title={selectedModel.path}>
+              {selectedModel.path}
+            </span>
+          </div>
+        )}
+
+        {models.length === 0 && !isLoading && (
+          <Alert variant="warning" contained>
+            {t("settings.postProcessing.api.local.model.missing")}
+          </Alert>
+        )}
+
+        {error && (
+          <Alert variant="error" contained>
+            {error}
+          </Alert>
+        )}
+      </div>
+    </SettingContainer>
+  );
+};
 
 const PostProcessingSettingsApiComponent: React.FC = () => {
   const { t } = useTranslation();
   const state = usePostProcessProviderState();
+  const providerOptions = state.providerOptions.map((option) =>
+    option.value === LOCAL_PROVIDER_ID
+      ? {
+          ...option,
+          label: t("settings.postProcessing.api.local.providerLabel"),
+        }
+      : option,
+  );
 
   return (
     <>
@@ -37,14 +180,16 @@ const PostProcessingSettingsApiComponent: React.FC = () => {
       >
         <div className="flex items-center gap-2">
           <ProviderSelect
-            options={state.providerOptions}
+            options={providerOptions}
             value={state.selectedProviderId}
             onChange={state.handleProviderSelect}
           />
         </div>
       </SettingContainer>
 
-      {state.isAppleProvider ? (
+      {state.isLocalProvider ? (
+        <LocalPostProcessingModelSelector />
+      ) : state.isAppleProvider ? (
         state.appleIntelligenceUnavailable ? (
           <Alert variant="error" contained>
             {t("settings.postProcessing.api.appleIntelligence.unavailable")}
@@ -96,7 +241,7 @@ const PostProcessingSettingsApiComponent: React.FC = () => {
         </>
       )}
 
-      {!state.isAppleProvider && (
+      {!state.isAppleProvider && !state.isLocalProvider && (
         <SettingContainer
           title={t("settings.postProcessing.api.model.title")}
           description={

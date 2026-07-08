@@ -1,3 +1,4 @@
+use crate::custom_words_model::{self, CustomWordsModelInfo};
 use crate::managers::model::{ModelInfo, ModelManager};
 use crate::managers::transcription::{ModelStateEvent, TranscriptionManager};
 use crate::settings::{get_settings, write_settings, ModelUnloadTimeout};
@@ -170,6 +171,46 @@ pub async fn set_active_model(
 pub async fn get_current_model(app_handle: AppHandle) -> Result<String, String> {
     let settings = get_settings(&app_handle);
     Ok(settings.selected_model)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_available_custom_words_models(
+    app_handle: AppHandle,
+) -> Result<Vec<CustomWordsModelInfo>, String> {
+    let settings = get_settings(&app_handle);
+    custom_words_model::list_custom_words_models(&app_handle, &settings.selected_custom_words_model)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_current_custom_words_model(app_handle: AppHandle) -> Result<String, String> {
+    let settings = get_settings(&app_handle);
+    Ok(settings.selected_custom_words_model)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_active_custom_words_model(
+    app_handle: AppHandle,
+    model_id: String,
+) -> Result<(), String> {
+    let model_id = model_id.trim();
+    if !model_id.is_empty() {
+        let settings = get_settings(&app_handle);
+        let available = custom_words_model::list_custom_words_models(
+            &app_handle,
+            &settings.selected_custom_words_model,
+        )?;
+        if !available.iter().any(|model| model.id == model_id) {
+            return Err(format!("Custom-word model not found: {model_id}"));
+        }
+    }
+
+    let mut settings = get_settings(&app_handle);
+    settings.selected_custom_words_model = model_id.to_string();
+    write_settings(&app_handle, settings);
+    Ok(())
 }
 
 #[tauri::command]

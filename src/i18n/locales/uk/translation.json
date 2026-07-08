@@ -386,10 +386,10 @@
         "title": "Гаряча клавіша"
       },
       "api": {
-        "title": "API (сумісний з OpenAI)",
+        "title": "Provider",
         "provider": {
           "title": "Провайдер",
-          "description": "Оберіть OpenAI-сумісного провайдера"
+          "description": "Choose Local to use Handy's built-in Qwen model, or select an API provider."
         },
         "appleIntelligence": {
           "unavailable": "Apple Intelligence недоступний на цьому пристрої. Потрібен Mac з Apple Silicon під управлінням macOS Tahoe (26.0) або новіше з увімкненим Apple Intelligence в Системних налаштуваннях."
@@ -413,13 +413,27 @@
           "placeholderNoOptions": "Введіть назву моделі",
           "refreshModels": "Оновити моделі",
           "useCustomModel": "Use \"{{model}}\""
+        },
+        "local": {
+          "providerLabel": "Local",
+          "loadError": "Failed to load local post-processing models.",
+          "selectError": "Failed to select local post-processing model.",
+          "model": {
+            "title": "Local Model",
+            "description": "Handy uses this self-managed Qwen GGUF model to correct custom words after transcription.",
+            "loading": "Loading local models...",
+            "noModels": "No local models found",
+            "rescan": "Rescan local models",
+            "active": "Active",
+            "missing": "Local Qwen model not found. Make sure Handy's custom-word post-processing model is installed."
+          }
         }
       },
       "prompts": {
         "title": "Промпт",
         "selectedPrompt": {
           "title": "Обраний промпт",
-          "description": "Оберіть шаблон для покращення транскрипцій або створіть новий. Використовуйте ${output} у тексті промпта для посилання на захоплену транскрипцію."
+          "description": "Select a template for post-processing or create a new one. Use ${output} for the captured transcript and ${custom_words} for the custom words list."
         },
         "noPrompts": "Немає доступних промптів",
         "selectPrompt": "Оберіть промпт",
@@ -427,8 +441,8 @@
         "promptLabel": "Назва промпта",
         "promptLabelPlaceholder": "Введіть назву промпта",
         "promptInstructions": "Інструкції промпта",
-        "promptInstructionsPlaceholder": "Напишіть інструкції для виконання після транскрипції. Приклад: Покращити граматику та ясність для наступного тексту: ${output}",
-        "promptTip": "Порада: Використовуйте <code>${output}</code> для вставки транскрибованого тексту у ваш промпт.",
+        "promptInstructionsPlaceholder": "Write the instructions to run after transcription. Example: Correct only custom-word mistakes using ${custom_words}: ${output}",
+        "promptTip": "Tip: Use <code>${output}</code> to insert the transcribed text and <code>${custom_words}</code> to insert the custom words list.",
         "updatePrompt": "Оновити промпт",
         "deletePrompt": "Видалити промпт",
         "createPrompt": "Створити промпт",
@@ -496,7 +510,8 @@
       "historyLimit": {
         "title": "Ліміт історії",
         "description": "Максимальна кількість записів в історії",
-        "entries": "записів"
+        "entries": "записів",
+        "unlimited": "Unlimited"
       },
       "recordingRetention": {
         "title": "Автовидалення записів",
@@ -506,7 +521,8 @@
         "days3": "Через 3 дні",
         "weeks2": "Через 2 тижні",
         "months3": "Через 3 місяці",
-        "placeholder": "Оберіть період зберігання..."
+        "placeholder": "Оберіть період зберігання...",
+        "preserveUnlimited": "Keep all"
       },
       "alwaysOnMicrophone": {
         "label": "Постійно активний мікрофон",
@@ -517,8 +533,8 @@
         "description": "Мікрофон для використання при закритій кришці ноутбука"
       },
       "postProcessingToggle": {
-        "label": "Постобробка",
-        "description": "Увімкнути покращення тексту за допомогою AI після транскрипції"
+        "label": "Post Processing",
+        "description": "Enable the dedicated AI post-processing flow and hotkey."
       },
       "muteWhileRecording": {
         "label": "Вимкнути звук під час запису",

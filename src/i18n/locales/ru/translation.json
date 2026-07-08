@@ -386,10 +386,10 @@
         "title": "Горячая клавиша"
       },
       "api": {
-        "title": "API (совместимый с OpenAI)",
+        "title": "Provider",
         "provider": {
           "title": "Поставщик",
-          "description": "Выберите поставщика, совместимого с OpenAI."
+          "description": "Choose Local to use Handy's built-in Qwen model, or select an API provider."
         },
         "appleIntelligence": {
           "unavailable": "Apple Intelligence недоступен на этом устройстве. Требуется Apple Silicon Mac под управлением macOS Tahoe (26.0) или более поздней версии с включенным Apple Intelligence в настройках системы."
@@ -413,13 +413,27 @@
           "placeholderNoOptions": "Введите название модели",
           "refreshModels": "Обновить модели",
           "useCustomModel": "Use \"{{model}}\""
+        },
+        "local": {
+          "providerLabel": "Local",
+          "loadError": "Failed to load local post-processing models.",
+          "selectError": "Failed to select local post-processing model.",
+          "model": {
+            "title": "Local Model",
+            "description": "Handy uses this self-managed Qwen GGUF model to correct custom words after transcription.",
+            "loading": "Loading local models...",
+            "noModels": "No local models found",
+            "rescan": "Rescan local models",
+            "active": "Active",
+            "missing": "Local Qwen model not found. Make sure Handy's custom-word post-processing model is installed."
+          }
         }
       },
       "prompts": {
         "title": "Запрос к модели",
         "selectedPrompt": {
           "title": "Выберите запрос",
-          "description": "Выберите запрос для постобработки транскрипции или создайте новый. Используйте ${output} внутри текста запроса для ссылки на записанную транскрипцию."
+          "description": "Select a template for post-processing or create a new one. Use ${output} for the captured transcript and ${custom_words} for the custom words list."
         },
         "noPrompts": "Нет доступных запросов",
         "selectPrompt": "Выберите запрос",
@@ -427,8 +441,8 @@
         "promptLabel": "Название запроса",
         "promptLabelPlaceholder": "Введите название запроса",
         "promptInstructions": "Инструкции",
-        "promptInstructionsPlaceholder": "Напишите инструкции для постобработки транскрипции. Например: Улучшить грамматику и ясность следующего текста: ${output}",
-        "promptTip": "Совет: используйте <code>${output}</code>, чтобы вставить транскрипцию.",
+        "promptInstructionsPlaceholder": "Write the instructions to run after transcription. Example: Correct only custom-word mistakes using ${custom_words}: ${output}",
+        "promptTip": "Tip: Use <code>${output}</code> to insert the transcribed text and <code>${custom_words}</code> to insert the custom words list.",
         "updatePrompt": "Обновить запрос",
         "deletePrompt": "Удалить запрос",
         "createPrompt": "Создать запрос",
@@ -496,7 +510,8 @@
       "historyLimit": {
         "title": "Размер истории",
         "description": "Максимальное количество записей истории, которые можно сохранить",
-        "entries": "записи"
+        "entries": "записи",
+        "unlimited": "Unlimited"
       },
       "recordingRetention": {
         "title": "Автоматическое удаление записей",
@@ -506,7 +521,8 @@
         "days3": "Через 3 дня",
         "weeks2": "Через 2 недели",
         "months3": "Через 3 месяца",
-        "placeholder": "Выберите срок хранения..."
+        "placeholder": "Выберите срок хранения...",
+        "preserveUnlimited": "Keep all"
       },
       "alwaysOnMicrophone": {
         "label": "Всегда включенный микрофон",
@@ -517,8 +533,8 @@
         "description": "Микрофон для использования при закрытой крышке ноутбука"
       },
       "postProcessingToggle": {
-        "label": "Постобработка",
-        "description": "Включить уточнение текста с помощью искусственного интеллекта после транскрипции"
+        "label": "Post Processing",
+        "description": "Enable the dedicated AI post-processing flow and hotkey."
       },
       "muteWhileRecording": {
         "label": "Отключить звук во время записи",

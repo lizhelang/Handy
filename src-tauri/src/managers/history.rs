@@ -394,8 +394,8 @@ impl HistoryManager {
             entries.push(row?);
         }
 
-        if entries.len() > limit {
-            let entries_to_delete = &entries[limit..];
+        let entries_to_delete = entries_exceeding_count_limit(&entries, limit);
+        if !entries_to_delete.is_empty() {
             let deleted_count = self.delete_entries_and_files(entries_to_delete)?;
 
             if deleted_count > 0 {
@@ -649,6 +649,14 @@ impl HistoryManager {
     }
 }
 
+fn entries_exceeding_count_limit<T>(entries: &[T], limit: usize) -> &[T] {
+    if limit == 0 || entries.len() <= limit {
+        &[]
+    } else {
+        &entries[limit..]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -733,5 +741,17 @@ mod tests {
 
         assert_eq!(entry.timestamp, 100);
         assert_eq!(entry.transcription_text, "completed");
+    }
+
+    #[test]
+    fn zero_history_limit_keeps_all_entries() {
+        let entries = vec![1, 2, 3];
+        assert!(entries_exceeding_count_limit(&entries, 0).is_empty());
+    }
+
+    #[test]
+    fn positive_history_limit_deletes_only_excess_entries() {
+        let entries = vec![1, 2, 3, 4];
+        assert_eq!(entries_exceeding_count_limit(&entries, 2), &[3, 4]);
     }
 }

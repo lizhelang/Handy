@@ -7,7 +7,10 @@ use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
-use crate::settings::{get_settings, AppSettings, OverlayStyle, APPLE_INTELLIGENCE_PROVIDER_ID};
+use crate::settings::{
+    get_settings, AppSettings, OverlayStyle, APPLE_INTELLIGENCE_PROVIDER_ID,
+    LOCAL_POST_PROCESS_PROVIDER_ID,
+};
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
 use crate::utils::{
@@ -18,6 +21,8 @@ use ferrous_opencc::{config::BuiltinConfig, OpenCC};
 use log::{debug, error, warn};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::Manager;
@@ -59,10 +64,32 @@ fn strip_invisible_chars(s: &str) -> String {
     s.replace(['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'], "")
 }
 
+fn format_custom_words_for_prompt(custom_words: &[String]) -> String {
+    let words = custom_words
+        .iter()
+        .map(|word| word.trim())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    serde_json::to_string(&words).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn render_prompt_template(
+    prompt_template: &str,
+    transcription: &str,
+    custom_words: &[String],
+) -> String {
+    prompt_template.replace("${output}", transcription).replace(
+        "${custom_words}",
+        &format_custom_words_for_prompt(custom_words),
+    )
+}
+
 /// Build a system prompt from the user's prompt template.
 /// Removes `${output}` placeholder since the transcription is sent as the user message.
-fn build_system_prompt(prompt_template: &str) -> String {
-    prompt_template.replace("${output}", "").trim().to_string()
+fn build_system_prompt(prompt_template: &str, custom_words: &[String]) -> String {
+    render_prompt_template(prompt_template, "", custom_words)
+        .trim()
+        .to_string()
 }
 
 /// Returns `true` when a transcription has no meaningful content to
@@ -74,7 +101,48 @@ fn is_blank_transcription(transcription: &str) -> bool {
     transcription.trim().is_empty()
 }
 
-async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
+const SILENT_AUDIO_RMS_THRESHOLD: f32 = 0.0005;
+const SILENT_AUDIO_PEAK_THRESHOLD: f32 = 0.003;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AudioSignalStats {
+    peak: f32,
+    rms: f32,
+}
+
+fn audio_signal_stats(samples: &[f32]) -> AudioSignalStats {
+    if samples.is_empty() {
+        return AudioSignalStats {
+            peak: 0.0,
+            rms: 0.0,
+        };
+    }
+
+    let mut peak = 0.0_f32;
+    let mut sum_squares = 0.0_f64;
+
+    for sample in samples {
+        let value = if sample.is_finite() { *sample } else { 0.0 };
+        let abs = value.abs();
+        peak = peak.max(abs);
+        sum_squares += f64::from(value * value);
+    }
+
+    AudioSignalStats {
+        peak,
+        rms: (sum_squares / samples.len() as f64).sqrt() as f32,
+    }
+}
+
+fn is_probably_silent_audio(stats: AudioSignalStats) -> bool {
+    stats.rms <= SILENT_AUDIO_RMS_THRESHOLD && stats.peak <= SILENT_AUDIO_PEAK_THRESHOLD
+}
+
+async fn post_process_transcription(
+    app: &AppHandle,
+    settings: &AppSettings,
+    transcription: &str,
+) -> Option<String> {
     if is_blank_transcription(transcription) {
         debug!("Post-processing skipped because the transcription is empty");
         return None;
@@ -87,6 +155,11 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
             return None;
         }
     };
+
+    if provider.id == LOCAL_POST_PROCESS_PROVIDER_ID {
+        debug!("Starting local custom-word post-processing");
+        return crate::custom_words_model::correct_custom_words(app, settings, transcription).await;
+    }
 
     let model = settings
         .post_process_models
@@ -160,7 +233,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     if provider.supports_structured_output {
         debug!("Using structured outputs for provider '{}'", provider.id);
 
-        let system_prompt = build_system_prompt(&prompt);
+        let system_prompt = build_system_prompt(&prompt, &settings.custom_words);
         let user_content = transcription.to_string();
 
         // Handle Apple Intelligence separately since it uses native Swift APIs
@@ -275,7 +348,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     }
 
     // Legacy mode: Replace ${output} variable in the prompt with the actual text
-    let processed_prompt = prompt.replace("${output}", transcription);
+    let processed_prompt = render_prompt_template(&prompt, transcription, &settings.custom_words);
     debug!("Processed prompt length: {} chars", processed_prompt.len());
 
     match crate::llm_client::send_chat_completion(
@@ -366,6 +439,8 @@ pub(crate) struct ProcessedTranscription {
     pub post_process_prompt: Option<String>,
 }
 
+type CustomWordCorrectionFuture = Pin<Box<dyn Future<Output = Option<String>> + Send>>;
+
 /// Resolve the persisted language *intent* into the language the currently-loaded
 /// model will actually use — the same capability-aware coercion the transcription
 /// paths apply (see [`crate::managers::model::effective_language`]). Post-processing
@@ -385,6 +460,22 @@ fn resolve_effective_language(app: &AppHandle, settings: &AppSettings) -> String
         ),
         None => settings.selected_language.clone(),
     }
+}
+
+async fn apply_custom_word_correction_stage<F>(
+    settings: &AppSettings,
+    text: &str,
+    corrector: F,
+) -> Option<String>
+where
+    F: FnOnce(AppSettings, String) -> CustomWordCorrectionFuture,
+{
+    if settings.custom_words.is_empty() || is_blank_transcription(text) {
+        return None;
+    }
+
+    let corrected = corrector(settings.clone(), text.to_string()).await?;
+    (corrected != text).then_some(corrected)
 }
 
 pub(crate) async fn process_transcription_output(
@@ -407,8 +498,22 @@ pub(crate) async fn process_transcription_output(
         final_text = converted_text;
     }
 
+    if let Some(corrected_text) =
+        apply_custom_word_correction_stage(&settings, &final_text, |settings, text| {
+            let app = app.clone();
+            Box::pin(async move {
+                crate::custom_words_model::correct_custom_words(&app, &settings, &text).await
+            })
+        })
+        .await
+    {
+        post_processed_text = Some(corrected_text.clone());
+        final_text = corrected_text;
+    }
+
     if post_process {
-        if let Some(processed_text) = post_process_transcription(&settings, &final_text).await {
+        if let Some(processed_text) = post_process_transcription(app, &settings, &final_text).await
+        {
             post_processed_text = Some(processed_text.clone());
             final_text = processed_text;
 
@@ -645,6 +750,18 @@ impl ShortcutAction for TranscribeAction {
                     debug!("Recording produced no audio samples; skipping persistence");
                     // Tear down any streaming worker so its channel doesn't leak
                     // and block the next start_stream.
+                    tm.cancel_stream();
+                    utils::hide_recording_overlay(&ah);
+                    change_tray_icon(&ah, TrayIconState::Idle);
+                } else if {
+                    let stats = audio_signal_stats(&samples);
+                    debug!(
+                        "Recording audio stats: peak={:.6}, rms={:.6}",
+                        stats.peak, stats.rms
+                    );
+                    is_probably_silent_audio(stats)
+                } {
+                    debug!("Recording is near-silent; skipping transcription to avoid hallucinated text");
                     tm.cancel_stream();
                     utils::hide_recording_overlay(&ah);
                     change_tray_icon(&ah, TrayIconState::Idle);
@@ -890,7 +1007,13 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 
 #[cfg(test)]
 mod tests {
-    use super::is_blank_transcription;
+    use super::{
+        apply_custom_word_correction_stage, audio_signal_stats, format_custom_words_for_prompt,
+        is_blank_transcription, is_probably_silent_audio, render_prompt_template,
+    };
+    use crate::settings::get_default_settings;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     #[test]
     fn blank_transcription_is_detected() {
@@ -903,5 +1026,75 @@ mod tests {
     fn non_blank_transcription_is_kept() {
         assert!(!is_blank_transcription("hello"));
         assert!(!is_blank_transcription("  hello  "));
+    }
+
+    #[test]
+    fn near_silent_audio_is_detected() {
+        let samples = vec![0.00002; 16_000];
+        let stats = audio_signal_stats(&samples);
+
+        assert!(is_probably_silent_audio(stats));
+    }
+
+    #[test]
+    fn audible_audio_is_not_treated_as_silent() {
+        let mut samples = vec![0.0; 16_000];
+        for (idx, sample) in samples.iter_mut().enumerate() {
+            *sample = ((idx as f32) * 0.02).sin() * 0.02;
+        }
+        let stats = audio_signal_stats(&samples);
+
+        assert!(!is_probably_silent_audio(stats));
+    }
+
+    #[test]
+    fn prompt_template_includes_custom_words_as_json() {
+        let rendered = render_prompt_template(
+            "Words: ${custom_words}\nText: ${output}",
+            "罗德群今天回家吗?",
+            &["罗泽群".to_string(), "武清".to_string()],
+        );
+
+        assert_eq!(
+            rendered,
+            "Words: [\"罗泽群\",\"武清\"]\nText: 罗德群今天回家吗?"
+        );
+    }
+
+    #[test]
+    fn custom_word_prompt_variable_skips_empty_entries() {
+        let rendered = format_custom_words_for_prompt(&[
+            "  罗泽群 ".to_string(),
+            "".to_string(),
+            "  ".to_string(),
+        ]);
+
+        assert_eq!(rendered, "[\"罗泽群\"]");
+    }
+
+    #[test]
+    fn custom_word_stage_runs_for_non_post_process_pipeline() {
+        tauri::async_runtime::block_on(async {
+            let mut settings = get_default_settings();
+            settings.custom_words = vec!["武清".to_string()];
+            let called = Arc::new(AtomicBool::new(false));
+            let called_in_stage = Arc::clone(&called);
+
+            let result = apply_custom_word_correction_stage(
+                &settings,
+                "武青在天津的西北边。",
+                move |_settings, text| {
+                    called_in_stage.store(true, Ordering::SeqCst);
+                    Box::pin(async move {
+                        assert_eq!(text, "武青在天津的西北边。");
+                        Some("武清在天津的西北边。".to_string())
+                    })
+                },
+            )
+            .await;
+
+            assert!(called.load(Ordering::SeqCst));
+            assert_eq!(result.as_deref(), Some("武清在天津的西北边。"));
+        });
     }
 }

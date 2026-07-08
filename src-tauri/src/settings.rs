@@ -9,6 +9,7 @@ use tauri_plugin_store::StoreExt;
 
 pub const APPLE_INTELLIGENCE_PROVIDER_ID: &str = "apple_intelligence";
 pub const APPLE_INTELLIGENCE_DEFAULT_MODEL_ID: &str = "Apple Intelligence";
+pub const LOCAL_POST_PROCESS_PROVIDER_ID: &str = "local";
 
 #[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
@@ -372,6 +373,8 @@ pub struct AppSettings {
     pub log_level: LogLevel,
     #[serde(default)]
     pub custom_words: Vec<String>,
+    #[serde(default = "default_custom_words_model")]
+    pub selected_custom_words_model: String,
     #[serde(default)]
     pub model_unload_timeout: ModelUnloadTimeout,
     #[serde(default = "default_word_correction_threshold")]
@@ -452,7 +455,11 @@ fn default_model() -> String {
     "".to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 1;
+fn default_custom_words_model() -> String {
+    "".to_string()
+}
+
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 2;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -546,7 +553,7 @@ fn default_sound_theme() -> SoundTheme {
 }
 
 fn default_post_process_enabled() -> bool {
-    false
+    true
 }
 
 fn default_app_language() -> String {
@@ -560,11 +567,39 @@ fn default_show_tray_icon() -> bool {
 }
 
 fn default_post_process_provider_id() -> String {
-    "openai".to_string()
+    LOCAL_POST_PROCESS_PROVIDER_ID.to_string()
+}
+
+fn post_process_provider_order(provider_id: &str) -> usize {
+    match provider_id {
+        LOCAL_POST_PROCESS_PROVIDER_ID => 0,
+        APPLE_INTELLIGENCE_PROVIDER_ID => 1,
+        "openai" => 2,
+        "zai" => 3,
+        "openrouter" => 4,
+        "anthropic" => 5,
+        "groq" => 6,
+        "cerebras" => 7,
+        "bedrock_mantle" => 8,
+        "custom" => 99,
+        _ => 50,
+    }
+}
+
+fn sort_post_process_providers(providers: &mut [PostProcessProvider]) {
+    providers.sort_by_key(|provider| post_process_provider_order(&provider.id));
 }
 
 fn default_post_process_providers() -> Vec<PostProcessProvider> {
     let mut providers = vec![
+        PostProcessProvider {
+            id: LOCAL_POST_PROCESS_PROVIDER_ID.to_string(),
+            label: "Local".to_string(),
+            base_url: "handy-qwen://local".to_string(),
+            allow_base_url_edit: false,
+            models_endpoint: None,
+            supports_structured_output: true,
+        },
         PostProcessProvider {
             id: "openai".to_string(),
             label: "OpenAI".to_string(),
@@ -651,6 +686,7 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
         supports_structured_output: false,
     });
 
+    sort_post_process_providers(&mut providers);
     providers
 }
 
@@ -663,6 +699,9 @@ fn default_post_process_api_keys() -> SecretMap {
 }
 
 fn default_model_for_provider(provider_id: &str) -> String {
+    if provider_id == LOCAL_POST_PROCESS_PROVIDER_ID {
+        return crate::custom_words_model::CUSTOM_WORDS_MODEL_ID.to_string();
+    }
     if provider_id == APPLE_INTELLIGENCE_PROVIDER_ID {
         return APPLE_INTELLIGENCE_DEFAULT_MODEL_ID.to_string();
     }
@@ -681,11 +720,18 @@ fn default_post_process_models() -> HashMap<String, String> {
 }
 
 fn default_post_process_prompts() -> Vec<LLMPrompt> {
-    vec![LLMPrompt {
-        id: "default_improve_transcriptions".to_string(),
-        name: "Improve Transcriptions".to_string(),
-        prompt: "Clean this transcript:\n1. Fix spelling, capitalization, and punctuation errors\n2. Convert number words to digits (twenty-five → 25, ten percent → 10%, five dollars → $5)\n3. Replace spoken punctuation with symbols (period → ., comma → ,, question mark → ?)\n4. Remove filler words (um, uh, like as filler)\n5. Keep the language in the original version (if it was french, keep it in french for example)\n\nPreserve exact meaning and word order. Do not paraphrase or reorder content.\n\nReturn only the cleaned transcript.\n\nTranscript:\n${output}".to_string(),
-    }]
+    vec![
+        LLMPrompt {
+            id: "custom_words_correction".to_string(),
+            name: "Custom Words Correction".to_string(),
+            prompt: "Correct only likely custom-word transcription mistakes.\n\nAllowed custom words:\n${custom_words}\n\nRules:\n1. Only replace a mistaken span with an exact item from the allowed custom words.\n2. Do not rewrite, polish, reorder, add, or delete unrelated text.\n3. If no safe custom-word correction exists, return the transcript unchanged.\n\nReturn only the corrected transcript.\n\nTranscript:\n${output}".to_string(),
+        },
+        LLMPrompt {
+            id: "default_improve_transcriptions".to_string(),
+            name: "Improve Transcriptions".to_string(),
+            prompt: "Clean this transcript:\n1. Fix spelling, capitalization, and punctuation errors\n2. Convert number words to digits (twenty-five → 25, ten percent → 10%, five dollars → $5)\n3. Replace spoken punctuation with symbols (period → ., comma → ,, question mark → ?)\n4. Remove filler words (um, uh, like as filler)\n5. Keep the language in the original version (if it was french, keep it in french for example)\n\nPreserve exact meaning and word order. Do not paraphrase or reorder content.\n\nReturn only the cleaned transcript.\n\nTranscript:\n${output}".to_string(),
+        },
+    ]
 }
 
 fn default_transcribe_gpu_device() -> i32 {
@@ -755,6 +801,47 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
                 changed = true;
             }
         }
+    }
+
+    let before_sort = settings
+        .post_process_providers
+        .iter()
+        .map(|provider| provider.id.clone())
+        .collect::<Vec<_>>();
+    sort_post_process_providers(&mut settings.post_process_providers);
+    let after_sort = settings
+        .post_process_providers
+        .iter()
+        .map(|provider| provider.id.clone())
+        .collect::<Vec<_>>();
+    if before_sort != after_sort {
+        changed = true;
+    }
+
+    for prompt in default_post_process_prompts() {
+        if !settings
+            .post_process_prompts
+            .iter()
+            .any(|existing| existing.id == prompt.id)
+        {
+            settings.post_process_prompts.push(prompt);
+            changed = true;
+        }
+    }
+
+    let selected_prompt_exists = settings
+        .post_process_selected_prompt_id
+        .as_ref()
+        .is_some_and(|selected_id| {
+            settings
+                .post_process_prompts
+                .iter()
+                .any(|prompt| &prompt.id == selected_id)
+        });
+
+    if !selected_prompt_exists {
+        settings.post_process_selected_prompt_id = Some("custom_words_correction".to_string());
+        changed = true;
     }
 
     changed
@@ -838,6 +925,7 @@ pub fn get_default_settings() -> AppSettings {
         debug_mode: false,
         log_level: default_log_level(),
         custom_words: Vec::new(),
+        selected_custom_words_model: default_custom_words_model(),
         model_unload_timeout: ModelUnloadTimeout::default(),
         word_correction_threshold: default_word_correction_threshold(),
         history_limit: default_history_limit(),
@@ -852,7 +940,7 @@ pub fn get_default_settings() -> AppSettings {
         post_process_api_keys: default_post_process_api_keys(),
         post_process_models: default_post_process_models(),
         post_process_prompts: default_post_process_prompts(),
-        post_process_selected_prompt_id: None,
+        post_process_selected_prompt_id: Some("custom_words_correction".to_string()),
         mute_while_recording: false,
         append_trailing_space: false,
         app_language: default_app_language(),
@@ -1023,6 +1111,18 @@ fn apply_settings_migrations(
         if settings.transcribe_gpu_device > 0 {
             settings.transcribe_accelerator = TranscribeAcceleratorSetting::Auto;
             settings.transcribe_gpu_device = default_transcribe_gpu_device();
+        }
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+        updated = true;
+    }
+
+    if stored_schema_version < 2 {
+        settings.post_process_enabled = default_post_process_enabled();
+        if settings.post_process_provider_id.trim().is_empty() {
+            settings.post_process_provider_id = default_post_process_provider_id();
+        }
+        if settings.post_process_selected_prompt_id.is_none() {
+            settings.post_process_selected_prompt_id = Some("custom_words_correction".to_string());
         }
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
