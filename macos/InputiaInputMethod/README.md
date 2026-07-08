@@ -66,6 +66,8 @@ macos/InputiaInputMethod/build/InputiaInputMethod.app/Contents/MacOS/InputiaInpu
 
 `dev-fast.sh` 是候选词、双拼、快捷键、设置 UI 等日常开发的默认入口。它只跑 build、Rust tests、Swift/bridge self-check、Rime probe、router/shortcut self-check；不打开菜单栏、不打开 GUI App、不切换系统输入源、不检查公证。
 
+其中 `inputia-candidate-panel-self-check` 会在不打开候选窗的情况下验证候选窗格式化：默认横向单行，展开态按候选换行，第 7 个候选可见，并且最多显示 9 个候选。
+
 `dev-fast.sh` 还会运行 `rime-latency-self-check.sh`，用 `persistent_session_probe` 比较冷 evaluate 和持久增量 session 的同一输入前缀。默认只做非 GUI、非系统输入源的宽松性能防回退；阈值可用 `INPUTIA_RIME_LATENCY_MAX_INCREMENTAL_MS` 和 `INPUTIA_RIME_LATENCY_MIN_SPEEDUP` 覆盖。
 
 `dev-fast.sh` 也会用 `INPUTIA_INSTALL_CHECK_SELF_CHECK=1 install-check.sh` 跑安装态 block reason 纯逻辑自检。这个模式不读取 `/Library`、不查 TIS、不找 running host，只防止 `installCheckBlockReasons` / `installCheckRequiredAction` 的决策表回退。

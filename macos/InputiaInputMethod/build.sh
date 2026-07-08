@@ -193,6 +193,13 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   -o "$BUILD_DIR/inputia-host-text-policy-self-check"
 
 /usr/bin/swiftc \
+  "$ROOT_DIR/Tools/InputiaCandidatePanelSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaCandidatePanel.swift" \
+  -target "$TARGET_TRIPLE" \
+  -framework AppKit \
+  -o "$BUILD_DIR/inputia-candidate-panel-self-check"
+
+/usr/bin/swiftc \
   "$ROOT_DIR/Tools/InputiaBridgePrivacySelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "$CAPI_LIB" \

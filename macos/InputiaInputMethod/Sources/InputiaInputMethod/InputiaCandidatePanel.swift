@@ -54,7 +54,10 @@ final class InputiaCandidatePanel: NSPanel {
     textField.maximumNumberOfLines = expanded ? 9 : 1
     textField.lineBreakMode = expanded ? .byWordWrapping : .byTruncatingTail
     let panelWidthLimit = expanded ? maxExpandedPanelWidth : maxPanelWidth
-    textField.attributedStringValue = Self.candidateString(candidates, expanded: expanded)
+    textField.attributedStringValue = InputiaCandidatePanelFormatter.candidateString(
+      candidates,
+      expanded: expanded
+    )
     let textSize = textField.attributedStringValue.boundingRect(
       with: NSSize(width: panelWidthLimit, height: .greatestFiniteMagnitude),
       options: [.usesLineFragmentOrigin, .usesFontLeading]
@@ -99,14 +102,30 @@ final class InputiaCandidatePanel: NSPanel {
     orderOut(nil)
   }
 
-  private static func candidateString(_ candidates: [String], expanded: Bool) -> NSAttributedString {
+  private static func normalizedAnchor(_ rect: NSRect) -> NSRect {
+    if rect.width > 0 || rect.height > 0 {
+      return rect
+    }
+    return NSRect(origin: NSEvent.mouseLocation, size: NSSize(width: 1, height: 18))
+  }
+
+  private static func visibleFrame(for anchor: NSRect) -> NSRect {
+    let screen = NSScreen.screens.first { $0.frame.contains(anchor.origin) } ?? NSScreen.main
+    return screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+  }
+}
+
+enum InputiaCandidatePanelFormatter {
+  static let maximumCandidateCount = 9
+
+  static func candidateString(_ candidates: [String], expanded: Bool) -> NSAttributedString {
     let result = NSMutableAttributedString()
     let regularFont = NSFont.systemFont(ofSize: 14)
     let labelFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.lineBreakMode = expanded ? .byWordWrapping : .byTruncatingTail
 
-    for (index, candidate) in candidates.prefix(9).enumerated() {
+    for (index, candidate) in candidates.prefix(maximumCandidateCount).enumerated() {
       if index > 0 {
         result.append(NSAttributedString(string: expanded ? "\n" : "   "))
       }
@@ -128,17 +147,5 @@ final class InputiaCandidatePanel: NSPanel {
     }
 
     return result
-  }
-
-  private static func normalizedAnchor(_ rect: NSRect) -> NSRect {
-    if rect.width > 0 || rect.height > 0 {
-      return rect
-    }
-    return NSRect(origin: NSEvent.mouseLocation, size: NSSize(width: 1, height: 18))
-  }
-
-  private static func visibleFrame(for anchor: NSRect) -> NSRect {
-    let screen = NSScreen.screens.first { $0.frame.contains(anchor.origin) } ?? NSScreen.main
-    return screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
   }
 }

@@ -27,7 +27,10 @@ verify_nongui = read("verify-nongui.sh")
 install_check = read("install-check.sh")
 install_handoff = read("install-handoff.sh")
 repair_tis_duplicates = read("repair-tis-duplicates.sh")
+build = read("build.sh")
 full_check = read("release/full-check.sh")
+candidate_panel = read("Sources/InputiaInputMethod/InputiaCandidatePanel.swift")
+candidate_panel_self_check = read("Tools/InputiaCandidatePanelSelfCheck.swift")
 menu_readiness = read("menu-readiness.sh")
 gui_readiness = read("gui-smoke-readiness.sh")
 gui_suite = read("gui-smoke-suite.sh")
@@ -42,6 +45,7 @@ require('changesSystemInputSource=false' in dev_fast, "dev-fast-missing-input-so
 require('checksNotarization=false' in dev_fast, "dev-fast-missing-notarization-policy")
 require('"$ROOT_DIR/validation-policy-self-check.sh"' in dev_fast, "dev-fast-missing-policy-self-check")
 require('"$ROOT_DIR/rime-latency-self-check.sh"' in dev_fast, "dev-fast-missing-rime-latency-self-check")
+require('"$ROOT_DIR/build/inputia-candidate-panel-self-check"' in dev_fast, "dev-fast-missing-candidate-panel-self-check")
 for forbidden in [
     "menu-readiness.sh",
     "gui-smoke-readiness.sh",
@@ -117,6 +121,17 @@ require('--select-input-source' in repair_tis_duplicates, "repair-tis-missing-se
 require('INPUTIA_REPAIR_TIS_DUPLICATES_SELF_CHECK' in repair_tis_duplicates, "repair-tis-missing-self-check")
 require('repair-tis-duplicates.sh' not in dev_fast, "dev-fast-unexpected-repair-tis")
 require('repair-tis-duplicates.sh' not in install_check, "install-check-unexpected-repair-tis")
+
+require('InputiaCandidatePanelFormatter' in candidate_panel, "candidate-panel-missing-formatter")
+require('maximumCandidateCount = 9' in candidate_panel, "candidate-panel-missing-nine-candidate-cap")
+require('expanded ? "\\n" : "   "' in candidate_panel, "candidate-panel-missing-expanded-line-break")
+require('InputiaCandidatePanelFormatter.candidateString' in candidate_panel, "candidate-panel-show-not-using-formatter")
+require('InputiaCandidatePanelSelfCheck.swift' in build, "build-missing-candidate-panel-self-check-tool")
+require('inputia-candidate-panel-self-check' in build, "build-missing-candidate-panel-self-check-output")
+require('candidatePanelSelfCheck=' in candidate_panel_self_check, "candidate-panel-self-check-missing-pass-marker")
+require('candidatePanelExpandedBreaksLines' in candidate_panel_self_check, "candidate-panel-self-check-missing-expanded-lines-case")
+require('candidatePanelCollapsedContainsSeventhCandidate' in candidate_panel_self_check, "candidate-panel-self-check-missing-seventh-candidate-case")
+require('candidatePanelExpandedCapsAtNineCandidates' in candidate_panel_self_check, "candidate-panel-self-check-missing-cap-case")
 
 require('validationTier=release/full-check' in full_check, "full-check-missing-tier-marker")
 require('touchesMenuBar=true' in full_check, "full-check-missing-menu-policy")
