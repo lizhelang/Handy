@@ -73,7 +73,21 @@ app_status_line() {
 
 running_status() {
   local pids pid command running_app running_cdhash running_version matches
-  pids="$(/usr/bin/pgrep -x InputiaInputMethod 2>/dev/null || true)"
+  local pgrep_output pgrep_rc
+  set +e
+  pgrep_output="$(/usr/bin/pgrep -x InputiaInputMethod 2>&1)"
+  pgrep_rc=$?
+  set -e
+  if [[ "$pgrep_rc" -eq 0 ]]; then
+    pids="$pgrep_output"
+  elif [[ -n "$pgrep_output" ]]; then
+    echo "running.exists=unknown"
+    echo "processListAvailable=false reason=process-list-unavailable"
+    printf '%s\n' "$pgrep_output" | /usr/bin/sed 's/^/processListOutput: /'
+    return
+  else
+    pids=""
+  fi
   if [[ -z "$pids" ]]; then
     echo "running.exists=false"
     return
@@ -226,6 +240,7 @@ user_host_conflict() {
 
 process_preflight() {
   local process_name="$1"
+  local process_check_output process_check_rc
   if [[ ",${INPUTIA_AWAIT_PROCESS_RUNNING_FOR_TEST:-}," == *",$process_name,"* ]]; then
     echo "running"
     return
@@ -234,8 +249,14 @@ process_preflight() {
     echo "not-running"
     return
   fi
-  if /usr/bin/pgrep -x "$process_name" >/dev/null; then
+  set +e
+  process_check_output="$(/usr/bin/pgrep -x "$process_name" 2>&1 >/dev/null)"
+  process_check_rc=$?
+  set -e
+  if [[ "$process_check_rc" -eq 0 ]]; then
     echo "running"
+  elif [[ -n "$process_check_output" ]]; then
+    echo "unknown"
   else
     echo "not-running"
   fi
@@ -326,6 +347,11 @@ ui_smoke_status_line() {
   safari_state="$(process_preflight Safari)"
   inputia_state="$(process_preflight InputiaInputMethod)"
   would_start=true
+  if [[ "$textedit_state" == "unknown" || "$safari_state" == "unknown" || "$inputia_state" == "unknown" ]]; then
+    would_start=false
+    echo "uiSmokeRequested=true uiTextEditPreflight=$textedit_state uiSafariPreflight=$safari_state uiInputiaHostPreflight=$inputia_state uiSmokeWouldStart=$would_start uiSmokeBlockReason=process-list-unavailable uiSmokeBlockReasons=process-list-unavailable"
+    return
+  fi
   if [[ "$inputia_state" == "running" ]]; then
     would_start=false
     echo "uiSmokeRequested=true uiTextEditPreflight=$textedit_state uiSafariPreflight=$safari_state uiInputiaHostPreflight=$inputia_state uiSmokeWouldStart=$would_start uiSmokeBlockReason=inputia-host-running uiSmokeBlockReasons=inputia-host-running"

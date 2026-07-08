@@ -61,8 +61,29 @@ require_ui_process_idle() {
   local allow_value="$2"
   local reason="$3"
 
-  if [[ ",${INPUTIA_UI_PROCESS_RUNNING_FOR_TEST:-}," == *",$process_name,"* ]] ||
-    { [[ "${INPUTIA_UI_PROCESS_IGNORE_REAL_FOR_TEST:-0}" != "1" ]] && /usr/bin/pgrep -x "$process_name" >/dev/null; }; then
+  local process_state="not-running"
+  local process_check_output=""
+  local process_check_rc
+  if [[ ",${INPUTIA_UI_PROCESS_RUNNING_FOR_TEST:-}," == *",$process_name,"* ]]; then
+    process_state="running"
+  elif [[ "${INPUTIA_UI_PROCESS_IGNORE_REAL_FOR_TEST:-0}" != "1" ]]; then
+    set +e
+    process_check_output="$(/usr/bin/pgrep -x "$process_name" 2>&1 >/dev/null)"
+    process_check_rc=$?
+    set -e
+    if [[ "$process_check_rc" -eq 0 ]]; then
+      process_state="running"
+    elif [[ -n "$process_check_output" ]]; then
+      echo "${process_name}Preflight=unknown"
+      echo "processListAvailable=false reason=process-list-unavailable"
+      printf '%s\n' "$process_check_output" | /usr/bin/sed 's/^/processListOutput: /'
+      echo "guiSmokeReady=false reason=process-list-unavailable"
+      echo "postInstallUiSmokeReady=false reason=process-list-unavailable"
+      exit 4
+    fi
+  fi
+
+  if [[ "$process_state" == "running" ]]; then
     echo "${process_name}Preflight=running"
     if [[ "$allow_value" != "1" ]]; then
       echo "guiSmokeReady=false reason=$reason"

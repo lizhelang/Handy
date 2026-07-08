@@ -80,17 +80,14 @@ if [[ ! -x "$EXECUTABLE" ]]; then
   exit 1
 fi
 
+INPUTIA_TEXTEDIT_SMOKE_ALLOW_EXISTING=0 inputia_require_textedit_idle "smokePreflightReady" 6
+INPUTIA_SAFARI_SMOKE_ALLOW_EXISTING=0 inputia_require_safari_idle "smokePreflightReady" 7
+inputia_require_process_not_running \
+  "InputiaInputMethod" "smokePreflightReady" 9 \
+  "inputia-host-running" "-"
+
 if [[ "${INPUTIA_RUN_UI_SMOKE:-0}" == "1" ]]; then
   inputia_require_gui_session "smokePreflightReady" 5
-  INPUTIA_TEXTEDIT_SMOKE_ALLOW_EXISTING=0 inputia_require_textedit_idle "smokePreflightReady" 6
-  INPUTIA_SAFARI_SMOKE_ALLOW_EXISTING=0 inputia_require_safari_idle "smokePreflightReady" 7
-  if /usr/bin/pgrep -x InputiaInputMethod >/dev/null 2>&1; then
-    echo "InputiaInputMethodPreflight=running"
-    echo "guiSmokeReady=false reason=inputia-host-running"
-    echo "smokePreflightReady=false reason=inputia-host-running"
-    exit 9
-  fi
-  echo "InputiaInputMethodPreflight=not-running"
 fi
 
 if [[ -d "$BUILD_APP" && "${INPUTIA_SKIP_CDHASH_CHECK:-0}" != "1" ]]; then

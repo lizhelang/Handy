@@ -129,8 +129,15 @@ admin_install_ready() {
 
 process_state() {
   local process_name="$1"
-  if /usr/bin/pgrep -x "$process_name" >/dev/null 2>&1; then
+  local process_check_output process_check_rc
+  set +e
+  process_check_output="$(/usr/bin/pgrep -x "$process_name" 2>&1 >/dev/null)"
+  process_check_rc=$?
+  set -e
+  if [[ "$process_check_rc" -eq 0 ]]; then
     echo running
+  elif [[ -n "$process_check_output" ]]; then
+    echo unknown
   else
     echo not-running
   fi
@@ -281,11 +288,25 @@ else
 fi
 
 section "running host"
-running_pids="$(/usr/bin/pgrep -x InputiaInputMethod 2>/dev/null || true)"
-if [[ -z "$running_pids" ]]; then
+set +e
+running_pids_output="$(/usr/bin/pgrep -x InputiaInputMethod 2>&1)"
+running_pids_rc=$?
+set -e
+if [[ "$running_pids_rc" -eq 0 ]]; then
+  running_pids="$running_pids_output"
+elif [[ -n "$running_pids_output" ]]; then
+  running_pids=""
+  inputia_running=unknown
+  echo "running=unknown"
+  echo "processListAvailable=false reason=process-list-unavailable"
+  printf '%s\n' "$running_pids_output" | /usr/bin/sed 's/^/processListOutput: /'
+else
+  running_pids=""
+fi
+if [[ "${inputia_running:-}" != "unknown" && -z "$running_pids" ]]; then
   inputia_running=false
   echo "running=false"
-else
+elif [[ "${inputia_running:-}" != "unknown" ]]; then
   inputia_running=true
   echo "running=true"
   while IFS= read -r pid; do
@@ -334,7 +355,13 @@ admin_ready="$(admin_install_ready)"
 gui_block_reason="$(gui_session_block_reason)"
 textedit_state="$(process_state TextEdit)"
 safari_state="$(process_state Safari)"
-inputia_state="$([[ "$inputia_running" == "true" ]] && echo running || echo not-running)"
+if [[ "$inputia_running" == "true" ]]; then
+  inputia_state=running
+elif [[ "$inputia_running" == "unknown" ]]; then
+  inputia_state=unknown
+else
+  inputia_state=not-running
+fi
 block_reasons=""
 if [[ "$latest_pkg_exists" != "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" pkg-not-ready)"
@@ -361,6 +388,9 @@ if [[ "$user_host_conflict" == "true" ]]; then
 fi
 if [[ "$inputia_running" == "true" ]]; then
   block_reasons="$(append_reason "$block_reasons" inputia-host-running)"
+fi
+if [[ "$textedit_state" == "unknown" || "$safari_state" == "unknown" || "$inputia_state" == "unknown" ]]; then
+  block_reasons="$(append_reason "$block_reasons" process-list-unavailable)"
 fi
 if [[ "$gui_block_reason" != "none" ]]; then
   block_reasons="$(append_reason "$block_reasons" "$gui_block_reason")"

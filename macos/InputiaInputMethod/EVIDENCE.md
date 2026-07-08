@@ -24371,3 +24371,59 @@ env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_GUI_SESSION_CHECK=1 INPUTIA_SKIP_CDHASH_
 - 当前 Mac mini 的 `pgrep`/`sysmond` 不可用时，smoke 已不会再误判 TextEdit/Safari/InputiaHost 为未运行；真实 GUI smoke 会被 `process-list-unavailable` 阻断。
 - Clipboard recall 与 Safari Enter cleanup self-check 在 pasteboard/launchctl 异常下仍能走到 trap 路径并保持剪贴板不变。
 - 完整 `verify-nongui.sh` 尚未全绿，原因是当前系统无法列进程，fake process 夹具不能被 `pgrep -x` 观察到；这是系统服务阻断，不是这轮脚本合同失败。
+
+## v54 Mac mini：聚合 GUI smoke 入口同步阻断进程列表不可用
+
+背景：
+
+- v53 已让单个 TextEdit/Safari/Clipboard smoke 脚本在 `pgrep/sysmond` 不可用时硬阻断。
+- 继续检查发现聚合入口仍有直接 `pgrep`：`smoke-preflight.sh`、`status.sh`、`gui-smoke-readiness.sh`、`await-system-install.sh`、`post-install-regression.sh`。这些入口如果把 `pgrep` 失败当成 not-running，会重新制造误启动风险。
+
+实现：
+
+- `smoke-preflight.sh` 复用 `smoke-common.sh` 的 `inputia_require_process_not_running`，让 InputiaHost preflight 也继承 `process-list-unavailable` 阻断。
+- `status.sh` 的 `process_state` 和 running host section 在 `pgrep` 失败时输出 `unknown`，并把 `process-list-unavailable` 加入 `statusGuiSmokeBlockReasons`。
+- `gui-smoke-readiness.sh` 的 TextEdit/Safari/InputiaHost 状态在 `pgrep` 失败时为 `unknown`，并把 `process-list-unavailable` 加入 readiness block reasons。
+- `await-system-install.sh` 的 UI smoke status line 在任一进程状态为 `unknown` 时输出 `uiSmokeWouldStart=false` / `uiSmokeBlockReason=process-list-unavailable`。
+- `post-install-regression.sh` 的 UI process preflight 同步把 `pgrep` stderr 作为 `process-list-unavailable` 早退。
+
+验证：
+
+```text
+zsh -n status.sh gui-smoke-readiness.sh await-system-install.sh post-install-regression.sh
+  passed
+
+bash -n smoke-preflight.sh
+  passed
+
+env INPUTIA_RUN_UI_SMOKE=1 INPUTIA_SKIP_GUI_SESSION_CHECK=1 INPUTIA_SKIP_CDHASH_CHECK=1 \
+  ./macos/InputiaInputMethod/smoke-preflight.sh ./macos/InputiaInputMethod/build/InputiaInputMethod.app
+  textEditPreflight=unknown docs=unknown
+  processListAvailable=false reason=process-list-unavailable
+  guiSmokeReady=false reason=process-list-unavailable
+  smokePreflightReady=false reason=process-list-unavailable
+  rc=6
+
+./macos/InputiaInputMethod/status.sh
+  running=unknown
+  processListAvailable=false reason=process-list-unavailable
+  statusTextEditPreflight=unknown
+  statusSafariPreflight=unknown
+  statusInputiaHostPreflight=unknown
+  statusGuiSmokeBlockReasons=tis-not-ready,signature-rejected,menu-menu-agent-unavailable,process-list-unavailable,screen-locked
+
+./macos/InputiaInputMethod/gui-smoke-readiness.sh ./macos/InputiaInputMethod/build/InputiaInputMethod.app
+  textEditPreflight=unknown
+  safariPreflight=unknown
+  inputiaHostPreflight=unknown
+  guiSmokeReadinessBlockReasons=signature-rejected,process-list-unavailable,screen-locked
+  guiSmokeReadinessReady=false reason=signature-rejected
+
+env INPUTIA_POST_INSTALL_UI_PREFLIGHT_SELF_CHECK=1 ./macos/InputiaInputMethod/post-install-regression.sh
+  postInstallUiPreflightSelfCheck=true
+```
+
+结论：
+
+- 单脚本和聚合入口现在都不会在进程列表不可用时把 TextEdit/Safari/InputiaHost 当作 not-running。
+- 本轮仍没有运行真实 TextEdit/Safari/Clipboard GUI smoke。

@@ -34,8 +34,15 @@ sha256() {
 
 process_state() {
   local process_name="$1"
-  if /usr/bin/pgrep -x "$process_name" >/dev/null 2>&1; then
+  local process_check_output process_check_rc
+  set +e
+  process_check_output="$(/usr/bin/pgrep -x "$process_name" 2>&1 >/dev/null)"
+  process_check_rc=$?
+  set -e
+  if [[ "$process_check_rc" -eq 0 ]]; then
     echo running
+  elif [[ -n "$process_check_output" ]]; then
+    echo unknown
   else
     echo not-running
   fi
@@ -126,6 +133,8 @@ readiness_reason() {
     echo tis-not-ready
   elif [[ "$user_host_conflict" == "true" ]]; then
     echo user-host-conflict
+  elif [[ "$textedit_state" == "unknown" || "$safari_state" == "unknown" || "$inputia_state" == "unknown" ]]; then
+    echo process-list-unavailable
   elif [[ "$inputia_state" == "running" ]]; then
     echo inputia-host-running
   elif [[ "$gui_block" != "none" ]]; then
@@ -182,6 +191,9 @@ readiness_block_reasons() {
   fi
   if [[ "$user_host_conflict" == "true" ]]; then
     append_reason user-host-conflict
+  fi
+  if [[ "$textedit_state" == "unknown" || "$safari_state" == "unknown" || "$inputia_state" == "unknown" ]]; then
+    append_reason process-list-unavailable
   fi
   if [[ "$inputia_state" == "running" ]]; then
     append_reason inputia-host-running
