@@ -64,6 +64,7 @@ final class InputiaInputController: IMKInputController {
   private let bridge = InputiaRustBridge.makeDefault()
   private var latestCandidates: [String] = []
   private var latestPanelCandidates: [String] = []
+  private var latestCandidatePageSize = 7
   private var latestComposing = ""
   private var recallCandidates: [String] = []
   private var englishCompletionPrefix = ""
@@ -383,6 +384,7 @@ final class InputiaInputController: IMKInputController {
     latestComposing = ""
     latestCandidates = []
     latestPanelCandidates = []
+    latestCandidatePageSize = 7
     englishCompletionPrefix = ""
     englishCompletionCandidates = []
     candidatePanelExpanded = false
@@ -638,6 +640,7 @@ final class InputiaInputController: IMKInputController {
     latestComposing = outcome.composing
     latestCandidates = outcome.candidates
     latestPanelCandidates = outcome.panelCandidates
+    latestCandidatePageSize = max(1, min(outcome.pageSize, 9))
     if outcome.mode != "English" {
       englishCompletionPrefix = ""
       englishCompletionCandidates = []
@@ -810,6 +813,7 @@ final class InputiaInputController: IMKInputController {
     latestComposing = ""
     latestCandidates = candidates
     latestPanelCandidates = candidates
+    latestCandidatePageSize = max(1, min(candidates.count, 9))
     candidatePanelExpanded = false
 
     var inputRect = NSRect.zero
@@ -861,6 +865,7 @@ final class InputiaInputController: IMKInputController {
     recallCandidates = []
     latestCandidates = []
     latestPanelCandidates = []
+    latestCandidatePageSize = 7
     latestComposing = ""
     candidatePanelExpanded = false
     InputiaHost.candidatePanel?.hide()
@@ -915,6 +920,7 @@ final class InputiaInputController: IMKInputController {
     englishCompletionCandidates = candidates
     latestCandidates = candidates
     latestPanelCandidates = candidates
+    latestCandidatePageSize = max(1, min(candidates.count, 9))
     candidatePanelExpanded = false
 
     var inputRect = NSRect.zero
@@ -973,6 +979,7 @@ final class InputiaInputController: IMKInputController {
     if latestComposing.isEmpty && recallCandidates.isEmpty {
       latestCandidates = []
       latestPanelCandidates = []
+      latestCandidatePageSize = 7
       candidatePanelExpanded = false
       InputiaHost.candidatePanel?.hide()
     }
@@ -1006,6 +1013,7 @@ final class InputiaInputController: IMKInputController {
     recallCandidates = []
     latestCandidates = []
     latestPanelCandidates = []
+    latestCandidatePageSize = 7
     latestComposing = ""
     englishCompletionPrefix = ""
     englishCompletionCandidates = []
@@ -1021,6 +1029,7 @@ final class InputiaInputController: IMKInputController {
     recallCandidates = []
     latestCandidates = []
     latestPanelCandidates = []
+    latestCandidatePageSize = 7
     latestComposing = ""
     englishCompletionPrefix = ""
     englishCompletionCandidates = []
@@ -1049,7 +1058,13 @@ final class InputiaInputController: IMKInputController {
 
     var inputRect = NSRect.zero
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
-    panel.show(candidates: displayedCandidates, near: inputRect, expanded: candidatePanelExpanded)
+    panel.show(
+      candidates: displayedCandidates,
+      near: inputRect,
+      expanded: candidatePanelExpanded,
+      activePage: bridge.latestOutcome.page,
+      pageSize: latestCandidatePageSize
+    )
   }
 
   private func updateAppContext(client: IMKTextInput, forceRefresh: Bool = false) {

@@ -45,7 +45,13 @@ final class InputiaCandidatePanel: NSPanel {
   override var canBecomeKey: Bool { false }
   override var canBecomeMain: Bool { false }
 
-  func show(candidates: [String], near anchorRect: NSRect, expanded: Bool = false) {
+  func show(
+    candidates: [String],
+    near anchorRect: NSRect,
+    expanded: Bool = false,
+    activePage: Int = 0,
+    pageSize: Int = InputiaCandidatePanelFormatter.maximumCollapsedCandidateCount
+  ) {
     guard !candidates.isEmpty else {
       hide()
       return
@@ -56,7 +62,9 @@ final class InputiaCandidatePanel: NSPanel {
     let panelWidthLimit = expanded ? maxExpandedPanelWidth : maxPanelWidth
     textField.attributedStringValue = InputiaCandidatePanelFormatter.candidateString(
       candidates,
-      expanded: expanded
+      expanded: expanded,
+      activePage: activePage,
+      pageSize: pageSize
     )
     let textSize = textField.attributedStringValue.boundingRect(
       with: NSSize(width: panelWidthLimit, height: .greatestFiniteMagnitude),
@@ -117,44 +125,83 @@ final class InputiaCandidatePanel: NSPanel {
 
 enum InputiaCandidatePanelFormatter {
   static let maximumCollapsedCandidateCount = 9
-  static let maximumExpandedCandidateCount = 32
-  static let expandedColumnCount = 8
-  static let maximumExpandedRows =
-    Int(ceil(Double(maximumExpandedCandidateCount) / Double(expandedColumnCount)))
+  static let maximumExpandedRows = 4
+  static let expandedCellWidth: CGFloat = 94
 
-  static func candidateString(_ candidates: [String], expanded: Bool) -> NSAttributedString {
+  static func candidateString(
+    _ candidates: [String],
+    expanded: Bool,
+    activePage: Int = 0,
+    pageSize: Int = maximumCollapsedCandidateCount
+  ) -> NSAttributedString {
     let result = NSMutableAttributedString()
     let regularFont = NSFont.systemFont(ofSize: 14)
     let labelFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.lineBreakMode = expanded ? .byWordWrapping : .byTruncatingTail
+    paragraphStyle.tabStops = (1...maximumCollapsedCandidateCount).map { column in
+      NSTextTab(textAlignment: .left, location: CGFloat(column) * expandedCellWidth)
+    }
+    paragraphStyle.defaultTabInterval = expandedCellWidth
 
+    let safePageSize = max(1, min(pageSize, maximumCollapsedCandidateCount))
     let maximumCandidateCount = expanded
-      ? maximumExpandedCandidateCount
+      ? safePageSize * maximumExpandedRows
       : maximumCollapsedCandidateCount
+    let pageCount = candidatePageCount(candidates, pageSize: safePageSize)
+    let activePage = max(0, min(activePage, max(0, pageCount - 1)))
+    let firstVisiblePage = max(0, min(activePage, max(0, pageCount - maximumExpandedRows)))
+    let activeStartIndex = activePage * safePageSize
+    let visibleStartIndex = expanded ? firstVisiblePage * safePageSize : 0
+    let visibleCandidates = Array(
+      candidates
+        .dropFirst(visibleStartIndex)
+        .prefix(maximumCandidateCount)
+    )
 
-    for (index, candidate) in candidates.prefix(maximumCandidateCount).enumerated() {
-      if index > 0 {
-        let separator = expanded && index % expandedColumnCount == 0 ? "\n" : "   "
+    for (visibleIndex, candidate) in visibleCandidates.enumerated() {
+      let globalIndex = visibleStartIndex + visibleIndex
+      let columnIndex = visibleIndex % safePageSize
+      let isActiveRow = expanded && globalIndex >= activeStartIndex
+        && globalIndex < activeStartIndex + safePageSize
+      let labelIndex = expanded ? columnIndex + 1 : visibleIndex + 1
+      let isHighlightedCandidate = expanded
+        ? globalIndex == activeStartIndex
+        : visibleIndex == 0
+
+      if visibleIndex > 0 {
+        let separator: String
+        if expanded {
+          separator = columnIndex == 0 ? "\n" : "\t"
+        } else {
+          separator = "   "
+        }
         result.append(NSAttributedString(string: separator))
       }
 
       let labelAttributes: [NSAttributedString.Key: Any] = [
         .font: labelFont,
-        .foregroundColor: index == 0 ? NSColor.selectedMenuItemTextColor : NSColor.secondaryLabelColor,
+        .foregroundColor: isHighlightedCandidate ? NSColor.selectedMenuItemTextColor : NSColor.secondaryLabelColor,
         .paragraphStyle: paragraphStyle,
       ]
       let candidateAttributes: [NSAttributedString.Key: Any] = [
         .font: regularFont,
-        .foregroundColor: index == 0 ? NSColor.selectedMenuItemTextColor : NSColor.labelColor,
-        .backgroundColor: index == 0 ? NSColor.controlAccentColor : NSColor.clear,
+        .foregroundColor: isHighlightedCandidate ? NSColor.selectedMenuItemTextColor : NSColor.labelColor,
+        .backgroundColor: isHighlightedCandidate ? NSColor.controlAccentColor : NSColor.clear,
         .paragraphStyle: paragraphStyle,
       ]
 
-      result.append(NSAttributedString(string: "\(index + 1) ", attributes: labelAttributes))
+      if isActiveRow || !expanded {
+        result.append(NSAttributedString(string: "\(labelIndex) ", attributes: labelAttributes))
+      }
       result.append(NSAttributedString(string: candidate, attributes: candidateAttributes))
     }
 
     return result
+  }
+
+  private static func candidatePageCount(_ candidates: [String], pageSize: Int) -> Int {
+    let safePageSize = max(1, pageSize)
+    return Int(ceil(Double(candidates.count) / Double(safePageSize)))
   }
 }

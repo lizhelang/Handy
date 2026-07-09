@@ -742,7 +742,7 @@ unsafe fn optional_c_string(value: *const c_char) -> Option<String> {
 
 fn outcome_json(envelope: OutputEnvelope) -> *mut c_char {
     let json = serde_json::to_string(&envelope).unwrap_or_else(|_| {
-        r#"{"ok":false,"error":"failed to serialize outcome","consumed":false,"commit":null,"mode":"English","composing":"","page":0,"visible_candidates":[],"panel_candidates":[]}"#
+        r#"{"ok":false,"error":"failed to serialize outcome","consumed":false,"commit":null,"mode":"English","composing":"","page":0,"page_size":7,"visible_candidates":[],"panel_candidates":[]}"#
             .to_string()
     });
     CString::new(json)
@@ -796,6 +796,7 @@ struct OutputEnvelope {
     mode: &'static str,
     composing: String,
     page: usize,
+    page_size: usize,
     visible_candidates: Vec<CandidateEnvelope>,
     panel_candidates: Vec<CandidateEnvelope>,
 }
@@ -814,6 +815,7 @@ impl OutputEnvelope {
             mode: mode_name(&snapshot.mode),
             composing: snapshot.composing,
             page: snapshot.page,
+            page_size: snapshot.page_size,
             visible_candidates: snapshot
                 .visible_candidates
                 .into_iter()
@@ -836,6 +838,7 @@ impl OutputEnvelope {
             mode: "English",
             composing: String::new(),
             page: 0,
+            page_size: 7,
             visible_candidates: Vec::new(),
             panel_candidates: Vec::new(),
         }

@@ -136,6 +136,7 @@ pub struct InputSnapshot {
     pub mode: InputMode,
     pub composing: String,
     pub page: usize,
+    pub page_size: usize,
     pub visible_candidates: Vec<Candidate>,
     pub panel_candidates: Vec<Candidate>,
 }
@@ -984,6 +985,7 @@ impl<E: ChineseEngine> InputiaCore<E> {
             mode: self.mode.clone(),
             composing: self.display_composing(),
             page: self.page,
+            page_size: self.settings.candidate_page_size.max(1),
             visible_candidates: self.visible_candidates().to_vec(),
             panel_candidates: self.candidates.clone(),
         }

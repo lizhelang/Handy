@@ -127,6 +127,7 @@ struct InputiaBridgeOutcome {
   let mode: String
   let composing: String
   let page: Int
+  let pageSize: Int
   let candidates: [String]
   let panelCandidates: [String]
 
@@ -137,6 +138,7 @@ struct InputiaBridgeOutcome {
     mode: "English",
     composing: "",
     page: 0,
+    pageSize: 7,
     candidates: [],
     panelCandidates: []
   )
@@ -148,6 +150,7 @@ struct InputiaBridgeOutcome {
     mode: String,
     composing: String,
     page: Int,
+    pageSize: Int,
     candidates: [String],
     panelCandidates: [String]
   ) {
@@ -157,6 +160,7 @@ struct InputiaBridgeOutcome {
     self.mode = mode
     self.composing = composing
     self.page = page
+    self.pageSize = pageSize
     self.candidates = candidates
     self.panelCandidates = panelCandidates
   }
@@ -168,6 +172,7 @@ struct InputiaBridgeOutcome {
     mode = dictionary["mode"] as? String ?? "English"
     composing = dictionary["composing"] as? String ?? ""
     page = dictionary["page"] as? Int ?? 0
+    pageSize = dictionary["page_size"] as? Int ?? 7
     let rawCandidates = dictionary["visible_candidates"] as? [[String: Any]] ?? []
     candidates = rawCandidates.compactMap { $0["text"] as? String }
     let rawPanelCandidates = dictionary["panel_candidates"] as? [[String: Any]]
