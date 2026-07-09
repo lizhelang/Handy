@@ -913,6 +913,14 @@ impl<E: ChineseEngine> InputiaCore<E> {
                 self.composing.push(ch.to_ascii_lowercase());
                 self.refresh_candidates();
             }
+            (InputMode::Chinese, Key::Char('\'')) => {
+                if self.composing.is_empty() || self.composing.ends_with('\'') {
+                    consumed = false;
+                } else {
+                    self.composing.push('\'');
+                    self.refresh_candidates();
+                }
+            }
             (InputMode::Chinese, Key::Char(ch)) if is_punctuation(ch) => {
                 let punctuation = self.translate_punctuation(ch);
                 commit = if self.composing.is_empty() {
@@ -1387,6 +1395,17 @@ mod tests {
         assert_eq!(outcome.snapshot.composing, "ni");
         assert_eq!(outcome.snapshot.visible_candidates[0].text, "你");
         assert_eq!(outcome.snapshot.visible_candidates.len(), 7);
+    }
+
+    #[test]
+    fn apostrophe_separates_chinese_composition() {
+        let mut core = core();
+        core.handle_key(Key::Shift);
+
+        let outcome = feed(&mut core, "ni'hao");
+
+        assert!(outcome.consumed);
+        assert_eq!(outcome.snapshot.composing, "ni'hao");
     }
 
     #[test]

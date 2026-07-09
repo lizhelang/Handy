@@ -64,6 +64,8 @@ final class InputiaInputController: IMKInputController {
   private let bridge = InputiaRustBridge.makeDefault()
   private var latestCandidates: [String] = []
   private var latestPanelCandidates: [String] = []
+  private var latestCandidateDetails: [InputiaBridgeCandidate] = []
+  private var latestPanelCandidateDetails: [InputiaBridgeCandidate] = []
   private var latestCandidatePageSize = 7
   private var latestComposing = ""
   private var recallCandidates: [String] = []
@@ -107,6 +109,10 @@ final class InputiaInputController: IMKInputController {
     updateAppContext(client: client)
     var handled = false
     for character in string {
+      if handleMainCandidateDigit(character, client: client) {
+        handled = true
+        continue
+      }
       let outcome: InputiaBridgeOutcome
       switch InputiaInputTextRouter.action(
         for: character,
@@ -384,6 +390,8 @@ final class InputiaInputController: IMKInputController {
     latestComposing = ""
     latestCandidates = []
     latestPanelCandidates = []
+    latestCandidateDetails = []
+    latestPanelCandidateDetails = []
     latestCandidatePageSize = 7
     englishCompletionPrefix = ""
     englishCompletionCandidates = []
@@ -566,6 +574,10 @@ final class InputiaInputController: IMKInputController {
 
     var handled = false
     for character in text {
+      if handleMainCandidateDigit(character, client: client) {
+        handled = true
+        continue
+      }
       let outcome = bridge.handle(character: character)
       handled = apply(outcome, client: client) || handled
       updateEnglishCompletionAfterCharacter(character, outcome: outcome, client: client)
@@ -640,6 +652,8 @@ final class InputiaInputController: IMKInputController {
     latestComposing = outcome.composing
     latestCandidates = outcome.candidates
     latestPanelCandidates = outcome.panelCandidates
+    latestCandidateDetails = outcome.candidateDetails
+    latestPanelCandidateDetails = outcome.panelCandidateDetails
     latestCandidatePageSize = max(1, min(outcome.pageSize, 9))
     if outcome.mode != "English" {
       englishCompletionPrefix = ""
@@ -813,12 +827,18 @@ final class InputiaInputController: IMKInputController {
     latestComposing = ""
     latestCandidates = candidates
     latestPanelCandidates = candidates
+    latestCandidateDetails = panelPayloads(for: candidates)
+    latestPanelCandidateDetails = latestCandidateDetails
     latestCandidatePageSize = max(1, min(candidates.count, 9))
     candidatePanelExpanded = false
 
     var inputRect = NSRect.zero
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
-    InputiaHost.candidatePanel?.show(candidates: candidates, near: inputRect)
+    InputiaHost.candidatePanel?.show(
+      candidates: latestPanelCandidateDetails.map(\.panelPayload),
+      visibleCandidates: latestCandidateDetails.map(\.panelPayload),
+      near: inputRect
+    )
     inputiaDebugLog("clipboardRecallShown count=\(candidates.count)")
     return true
   }
@@ -865,6 +885,8 @@ final class InputiaInputController: IMKInputController {
     recallCandidates = []
     latestCandidates = []
     latestPanelCandidates = []
+    latestCandidateDetails = []
+    latestPanelCandidateDetails = []
     latestCandidatePageSize = 7
     latestComposing = ""
     candidatePanelExpanded = false
@@ -920,12 +942,18 @@ final class InputiaInputController: IMKInputController {
     englishCompletionCandidates = candidates
     latestCandidates = candidates
     latestPanelCandidates = candidates
+    latestCandidateDetails = panelPayloads(for: candidates, source: "english_completion")
+    latestPanelCandidateDetails = latestCandidateDetails
     latestCandidatePageSize = max(1, min(candidates.count, 9))
     candidatePanelExpanded = false
 
     var inputRect = NSRect.zero
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
-    InputiaHost.candidatePanel?.show(candidates: candidates, near: inputRect)
+    InputiaHost.candidatePanel?.show(
+      candidates: latestPanelCandidateDetails.map(\.panelPayload),
+      visibleCandidates: latestCandidateDetails.map(\.panelPayload),
+      near: inputRect
+    )
     inputiaDebugLog("englishCompletionShown prefix=\(englishCompletionPrefix) count=\(candidates.count)")
   }
 
@@ -979,6 +1007,8 @@ final class InputiaInputController: IMKInputController {
     if latestComposing.isEmpty && recallCandidates.isEmpty {
       latestCandidates = []
       latestPanelCandidates = []
+      latestCandidateDetails = []
+      latestPanelCandidateDetails = []
       latestCandidatePageSize = 7
       candidatePanelExpanded = false
       InputiaHost.candidatePanel?.hide()
@@ -1013,6 +1043,8 @@ final class InputiaInputController: IMKInputController {
     recallCandidates = []
     latestCandidates = []
     latestPanelCandidates = []
+    latestCandidateDetails = []
+    latestPanelCandidateDetails = []
     latestCandidatePageSize = 7
     latestComposing = ""
     englishCompletionPrefix = ""
@@ -1029,6 +1061,8 @@ final class InputiaInputController: IMKInputController {
     recallCandidates = []
     latestCandidates = []
     latestPanelCandidates = []
+    latestCandidateDetails = []
+    latestPanelCandidateDetails = []
     latestCandidatePageSize = 7
     latestComposing = ""
     englishCompletionPrefix = ""
@@ -1045,26 +1079,81 @@ final class InputiaInputController: IMKInputController {
     guard let panel = InputiaHost.candidatePanel else {
       return
     }
-    let displayedCandidates = InputiaHostTextPolicy.candidatesForPanel(
-      composing: latestComposing,
-      candidates: candidatePanelExpanded && !latestPanelCandidates.isEmpty
-        ? latestPanelCandidates
-        : latestCandidates
-    )
-    if displayedCandidates.isEmpty {
+    let visiblePayloads = payloadsForVisibleCandidates()
+    let panelPayloads = payloadsForPanelCandidates(expanded: candidatePanelExpanded)
+    if visiblePayloads.isEmpty && panelPayloads.isEmpty {
       panel.hide()
       return
     }
 
     var inputRect = NSRect.zero
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
+    panel.selectionHandler = { [weak self] entry in
+      self?.commitPanelCandidate(entry, client: client)
+    }
     panel.show(
-      candidates: displayedCandidates,
+      candidates: panelPayloads,
+      visibleCandidates: visiblePayloads,
       near: inputRect,
       expanded: candidatePanelExpanded,
       activePage: bridge.latestOutcome.page,
       pageSize: latestCandidatePageSize
     )
+  }
+
+  private func payloadsForVisibleCandidates() -> [InputiaCandidatePayload] {
+    if latestCandidateDetails.isEmpty && !latestComposing.isEmpty && latestCandidates.isEmpty {
+      return [InputiaCandidatePayload(text: latestComposing, source: "raw", originalIndex: 0)]
+    }
+    if !latestCandidateDetails.isEmpty {
+      return latestCandidateDetails.map(\.panelPayload)
+    }
+    return panelPayloads(for: latestCandidates).map(\.panelPayload)
+  }
+
+  private func payloadsForPanelCandidates(expanded: Bool) -> [InputiaCandidatePayload] {
+    if expanded, !latestPanelCandidateDetails.isEmpty {
+      return latestPanelCandidateDetails.map(\.panelPayload)
+    }
+    if !expanded, !latestCandidateDetails.isEmpty {
+      return latestCandidateDetails.map(\.panelPayload)
+    }
+    let fallback = expanded ? latestPanelCandidates : latestCandidates
+    return panelPayloads(for: fallback).map(\.panelPayload)
+  }
+
+  private func panelPayloads(for candidates: [String], source: String = "engine") -> [InputiaBridgeCandidate] {
+    candidates.enumerated().map { index, text in
+      InputiaBridgeCandidate(text: text, source: source, originalIndex: index)
+    }
+  }
+
+  private func handleMainCandidateDigit(_ character: Character, client: IMKTextInput) -> Bool {
+    guard
+      !latestComposing.isEmpty,
+      !latestCandidates.isEmpty,
+      character.isNumber,
+      let digit = Int(String(character)),
+      (1...9).contains(digit),
+      let originalIndex = InputiaHost.candidatePanel?.mainCandidateOriginalIndex(forLabel: digit),
+      latestCandidates.indices.contains(originalIndex)
+    else {
+      return false
+    }
+    return apply(bridge.chooseCandidate(atZeroBasedIndex: originalIndex), client: client)
+  }
+
+  private func commitPanelCandidate(_ entry: InputiaCandidatePanelEntry, client: IMKTextInput) {
+    switch entry.section {
+    case .mainCandidate:
+      guard latestCandidates.indices.contains(entry.candidate.originalIndex) else {
+        return
+      }
+      _ = apply(bridge.chooseCandidate(atZeroBasedIndex: entry.candidate.originalIndex), client: client)
+    case .topSuggestion, .charCandidate, .rareCandidate:
+      insertCommittedText(entry.candidate.text, client: client)
+      clearInputState(client: client)
+    }
   }
 
   private func updateAppContext(client: IMKTextInput, forceRefresh: Bool = false) {
@@ -2445,5 +2534,17 @@ final class InputiaInputMethodDiagnostics {
       return []
     }
     return property.map { "\($0)" }
+  }
+}
+
+private extension InputiaBridgeCandidate {
+  var panelPayload: InputiaCandidatePayload {
+    InputiaCandidatePayload(
+      text: text,
+      annotation: annotation,
+      source: source,
+      finalScore: finalScore,
+      originalIndex: originalIndex
+    )
   }
 }

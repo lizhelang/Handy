@@ -490,6 +490,14 @@ impl ChineseEngine for RimeEngine {
         page: usize,
         page_index: usize,
     ) -> Option<CandidateCommit> {
+        if candidate.id.starts_with("rime-correction:") {
+            return Some(CandidateCommit::new(
+                candidate.text.clone(),
+                "",
+                0,
+                Vec::new(),
+            ));
+        }
         self.select_live_candidate(composing, candidate, page, page_index)
             .ok()
             .and_then(|snapshot| rime_snapshot_commit(snapshot, candidate))
@@ -567,6 +575,8 @@ fn promote_phrase_candidates_for_segmented_preedit(
     let normal_candidates = candidates.split_off(first_normal_index);
     let mut phrase_candidates = Vec::new();
     let mut other_candidates = Vec::new();
+    let explicitly_segmented = preedit.contains('\'');
+    let segment_count = segmented_preedit_count(preedit);
     for candidate in normal_candidates {
         if candidate.text.chars().count() > 1 {
             phrase_candidates.push(candidate);
@@ -580,10 +590,45 @@ fn promote_phrase_candidates_for_segmented_preedit(
         return;
     }
 
+    if explicitly_segmented {
+        phrase_candidates.sort_by(|left, right| {
+            phrase_candidate_rank(left, segment_count)
+                .cmp(&phrase_candidate_rank(right, segment_count))
+                .then_with(|| right.base_score.cmp(&left.base_score))
+        });
+    }
+
     candidates.extend(phrase_candidates);
     candidates.extend(other_candidates);
     for (index, candidate) in candidates.iter_mut().enumerate() {
         candidate.base_score = 1_000 - index as i32;
+    }
+}
+
+fn segmented_preedit_count(preedit: &str) -> usize {
+    if preedit.contains('\'') {
+        return preedit
+            .split('\'')
+            .filter(|segment| !segment.trim().is_empty())
+            .count();
+    }
+    preedit
+        .replace('\'', " ")
+        .split_whitespace()
+        .filter(|segment| !segment.is_empty())
+        .count()
+}
+
+fn phrase_candidate_rank(candidate: &Candidate, segment_count: usize) -> (usize, i32) {
+    let candidate_len = candidate.text.chars().count();
+    let length_distance = candidate_len.abs_diff(segment_count);
+    (length_distance, -common_phrase_priority(&candidate.text))
+}
+
+fn common_phrase_priority(text: &str) -> i32 {
+    match text {
+        "你好" | "你要" | "我要" | "中国" | "世界" => 100,
+        _ => 0,
     }
 }
 
@@ -633,12 +678,17 @@ fn paged_key_sequence(composing: &str, page: usize) -> String {
 }
 
 fn spelling_correction_variants(input: &str) -> Vec<String> {
-    if !input.chars().all(|ch| ch.is_ascii_lowercase()) || input.len() < 3 {
+    if !input
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch == '\'')
+        || input.len() < 3
+    {
         return Vec::new();
     }
 
     let mut variants = Vec::new();
     let mut seen = HashSet::new();
+    add_string_replacements(input, "hk", "hao", &mut variants, &mut seen);
     add_string_replacements(input, "gn", "ng", &mut variants, &mut seen);
     add_string_replacements(input, "oa", "ao", &mut variants, &mut seen);
     add_string_replacements(input, "ain", "ian", &mut variants, &mut seen);
@@ -1100,6 +1150,8 @@ mod tests {
     fn spelling_correction_variants_cover_common_pinyin_typos() {
         assert!(spelling_correction_variants("dagn").contains(&"dang".to_string()));
         assert!(spelling_correction_variants("hoa").contains(&"hao".to_string()));
+        assert!(spelling_correction_variants("nihk").contains(&"nihao".to_string()));
+        assert!(spelling_correction_variants("ni'hk").contains(&"ni'hao".to_string()));
         assert!(spelling_correction_variants("tain").contains(&"tian".to_string()));
         assert!(spelling_correction_variants("zhonguo").contains(&"zhongguo".to_string()));
         assert!(spelling_correction_variants("zhongguo").is_empty());
@@ -1146,6 +1198,27 @@ mod tests {
                 .map(|candidate| candidate.text.as_str())
                 .collect::<Vec<_>>(),
             vec!["先", "西安"]
+        );
+    }
+
+    #[test]
+    fn explicit_segmented_preedit_prefers_common_matching_length_phrase() {
+        let mut candidates = vec![
+            Candidate::new("rime:luna_pinyin_simp:0", "你好看"),
+            Candidate::new("rime:luna_pinyin_simp:1", "你会"),
+            Candidate::new("rime:luna_pinyin_simp:2", "你好"),
+            Candidate::new("rime:luna_pinyin_simp:3", "你"),
+            Candidate::new("rime:luna_pinyin_simp:4", "尼"),
+        ];
+
+        promote_phrase_candidates_for_segmented_preedit(Some("ni'h k"), &mut candidates);
+
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["你好", "你会", "你好看", "你", "尼"]
         );
     }
 

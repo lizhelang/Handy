@@ -56,6 +56,48 @@ fn rime_engine_drives_inputia_core_full_pinyin_flow_when_available() {
 }
 
 #[test]
+fn rime_engine_ranks_ni_hk_correction_before_long_raw_phrase_when_available() {
+    let _guard = RIME_TEST_LOCK.lock().unwrap();
+    let Some(shared_data_dir) = bundled_shared_data_dir() else {
+        eprintln!("skip: Inputia bundled RimeData is not available");
+        return;
+    };
+
+    for input in ["ni'hk", "nihk"] {
+        let config = RimeEngineConfig::squirrel_luna_pinyin_simp(rime_user_data_dir())
+            .with_shared_data_dir(shared_data_dir.clone());
+        if !config.dylib_path.exists() {
+            eprintln!("skip: librime runtime is not installed on this machine");
+            return;
+        }
+
+        let engine = RimeEngine::open(config).unwrap();
+        let mut core = InputiaCore::new(
+            CoreSettings {
+                candidate_page_size: 7,
+                ..CoreSettings::default()
+            },
+            engine,
+        );
+
+        let switched = core.handle_key(Key::Shift);
+        assert_eq!(switched.snapshot.mode, InputMode::Chinese);
+
+        let mut outcome = switched;
+        for ch in input.chars() {
+            outcome = core.handle_key(Key::Char(ch));
+        }
+
+        assert_eq!(outcome.snapshot.composing, input);
+        assert_eq!(outcome.snapshot.visible_candidates[0].text, "你好");
+
+        let committed = core.handle_key(Key::Space);
+        assert_eq!(committed.commit.as_deref(), Some("你好"));
+        assert!(committed.snapshot.composing.is_empty());
+    }
+}
+
+#[test]
 fn rime_engine_exposes_rime_second_page_to_core_paging_when_available() {
     let _guard = RIME_TEST_LOCK.lock().unwrap();
     let Some(shared_data_dir) = bundled_shared_data_dir() else {

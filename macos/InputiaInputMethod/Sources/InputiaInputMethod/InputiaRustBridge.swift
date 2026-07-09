@@ -128,6 +128,8 @@ struct InputiaBridgeOutcome {
   let composing: String
   let page: Int
   let pageSize: Int
+  let candidateDetails: [InputiaBridgeCandidate]
+  let panelCandidateDetails: [InputiaBridgeCandidate]
   let candidates: [String]
   let panelCandidates: [String]
 
@@ -139,6 +141,8 @@ struct InputiaBridgeOutcome {
     composing: "",
     page: 0,
     pageSize: 7,
+    candidateDetails: [],
+    panelCandidateDetails: [],
     candidates: [],
     panelCandidates: []
   )
@@ -151,6 +155,8 @@ struct InputiaBridgeOutcome {
     composing: String,
     page: Int,
     pageSize: Int,
+    candidateDetails: [InputiaBridgeCandidate],
+    panelCandidateDetails: [InputiaBridgeCandidate],
     candidates: [String],
     panelCandidates: [String]
   ) {
@@ -161,6 +167,8 @@ struct InputiaBridgeOutcome {
     self.composing = composing
     self.page = page
     self.pageSize = pageSize
+    self.candidateDetails = candidateDetails
+    self.panelCandidateDetails = panelCandidateDetails
     self.candidates = candidates
     self.panelCandidates = panelCandidates
   }
@@ -174,9 +182,48 @@ struct InputiaBridgeOutcome {
     page = dictionary["page"] as? Int ?? 0
     pageSize = dictionary["page_size"] as? Int ?? 7
     let rawCandidates = dictionary["visible_candidates"] as? [[String: Any]] ?? []
-    candidates = rawCandidates.compactMap { $0["text"] as? String }
+    candidateDetails = rawCandidates.enumerated().compactMap { index, dictionary in
+      InputiaBridgeCandidate(dictionary: dictionary, originalIndex: index)
+    }
+    candidates = candidateDetails.map(\.text)
     let rawPanelCandidates = dictionary["panel_candidates"] as? [[String: Any]]
-    panelCandidates = rawPanelCandidates?.compactMap { $0["text"] as? String } ?? candidates
+    panelCandidateDetails = rawPanelCandidates?.enumerated().compactMap { index, dictionary in
+      InputiaBridgeCandidate(dictionary: dictionary, originalIndex: index)
+    } ?? candidateDetails
+    panelCandidates = panelCandidateDetails.map(\.text)
+  }
+}
+
+struct InputiaBridgeCandidate: Equatable {
+  let text: String
+  let annotation: String
+  let source: String
+  let finalScore: Int
+  let originalIndex: Int
+
+  init(
+    text: String,
+    annotation: String = "",
+    source: String = "engine",
+    finalScore: Int = 0,
+    originalIndex: Int
+  ) {
+    self.text = text
+    self.annotation = annotation
+    self.source = source
+    self.finalScore = finalScore
+    self.originalIndex = originalIndex
+  }
+
+  init?(dictionary: [String: Any], originalIndex: Int) {
+    guard let text = dictionary["text"] as? String else {
+      return nil
+    }
+    self.text = text
+    annotation = dictionary["annotation"] as? String ?? ""
+    source = dictionary["source"] as? String ?? "engine"
+    finalScore = dictionary["final_score"] as? Int ?? 0
+    self.originalIndex = originalIndex
   }
 }
 
