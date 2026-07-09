@@ -128,6 +128,7 @@ struct InputiaBridgeOutcome {
   let composing: String
   let page: Int
   let candidates: [String]
+  let panelCandidates: [String]
 
   static let error = InputiaBridgeOutcome(
     ok: false,
@@ -136,7 +137,8 @@ struct InputiaBridgeOutcome {
     mode: "English",
     composing: "",
     page: 0,
-    candidates: []
+    candidates: [],
+    panelCandidates: []
   )
 
   init(
@@ -146,7 +148,8 @@ struct InputiaBridgeOutcome {
     mode: String,
     composing: String,
     page: Int,
-    candidates: [String]
+    candidates: [String],
+    panelCandidates: [String]
   ) {
     self.ok = ok
     self.consumed = consumed
@@ -155,6 +158,7 @@ struct InputiaBridgeOutcome {
     self.composing = composing
     self.page = page
     self.candidates = candidates
+    self.panelCandidates = panelCandidates
   }
 
   init(dictionary: [String: Any]) {
@@ -166,6 +170,8 @@ struct InputiaBridgeOutcome {
     page = dictionary["page"] as? Int ?? 0
     let rawCandidates = dictionary["visible_candidates"] as? [[String: Any]] ?? []
     candidates = rawCandidates.compactMap { $0["text"] as? String }
+    let rawPanelCandidates = dictionary["panel_candidates"] as? [[String: Any]]
+    panelCandidates = rawPanelCandidates?.compactMap { $0["text"] as? String } ?? candidates
   }
 }
 

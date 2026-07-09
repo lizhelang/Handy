@@ -63,6 +63,7 @@ enum InputiaHost {
 final class InputiaInputController: IMKInputController {
   private let bridge = InputiaRustBridge.makeDefault()
   private var latestCandidates: [String] = []
+  private var latestPanelCandidates: [String] = []
   private var latestComposing = ""
   private var recallCandidates: [String] = []
   private var englishCompletionPrefix = ""
@@ -382,6 +383,7 @@ final class InputiaInputController: IMKInputController {
     }
     latestComposing = ""
     latestCandidates = []
+    latestPanelCandidates = []
     englishCompletionPrefix = ""
     englishCompletionCandidates = []
     candidatePanelExpanded = false
@@ -636,6 +638,7 @@ final class InputiaInputController: IMKInputController {
   private func syncHostState(with outcome: InputiaBridgeOutcome) {
     latestComposing = outcome.composing
     latestCandidates = outcome.candidates
+    latestPanelCandidates = outcome.panelCandidates
     if outcome.mode != "English" {
       englishCompletionPrefix = ""
       englishCompletionCandidates = []
@@ -807,6 +810,7 @@ final class InputiaInputController: IMKInputController {
     recallCandidates = candidates
     latestComposing = ""
     latestCandidates = candidates
+    latestPanelCandidates = candidates
     candidatePanelExpanded = false
 
     var inputRect = NSRect.zero
@@ -857,6 +861,7 @@ final class InputiaInputController: IMKInputController {
     }
     recallCandidates = []
     latestCandidates = []
+    latestPanelCandidates = []
     latestComposing = ""
     candidatePanelExpanded = false
     InputiaHost.candidatePanel?.hide()
@@ -910,6 +915,7 @@ final class InputiaInputController: IMKInputController {
 
     englishCompletionCandidates = candidates
     latestCandidates = candidates
+    latestPanelCandidates = candidates
     candidatePanelExpanded = false
 
     var inputRect = NSRect.zero
@@ -967,6 +973,7 @@ final class InputiaInputController: IMKInputController {
     englishCompletionCandidates = []
     if latestComposing.isEmpty && recallCandidates.isEmpty {
       latestCandidates = []
+      latestPanelCandidates = []
       candidatePanelExpanded = false
       InputiaHost.candidatePanel?.hide()
     }
@@ -999,6 +1006,7 @@ final class InputiaInputController: IMKInputController {
     }
     recallCandidates = []
     latestCandidates = []
+    latestPanelCandidates = []
     latestComposing = ""
     englishCompletionPrefix = ""
     englishCompletionCandidates = []
@@ -1013,6 +1021,7 @@ final class InputiaInputController: IMKInputController {
       || !englishCompletionCandidates.isEmpty || !bridge.latestOutcome.composing.isEmpty
     recallCandidates = []
     latestCandidates = []
+    latestPanelCandidates = []
     latestComposing = ""
     englishCompletionPrefix = ""
     englishCompletionCandidates = []
@@ -1030,7 +1039,9 @@ final class InputiaInputController: IMKInputController {
     }
     let displayedCandidates = InputiaHostTextPolicy.candidatesForPanel(
       composing: latestComposing,
-      candidates: latestCandidates
+      candidates: candidatePanelExpanded && !latestPanelCandidates.isEmpty
+        ? latestPanelCandidates
+        : latestCandidates
     )
     if displayedCandidates.isEmpty {
       panel.hide()
@@ -1394,20 +1405,23 @@ final class InputiaInputMethodDiagnostics {
     let segmentedPhrasePreferred = segmented.beforeSelection.ok
       && segmentedFirst.count > 1
       && segmentedFirst != "你"
+    let panelCandidatesBeyondCurrentPage = outcome.panelCandidates.count > outcome.candidates.count
     let singleSelectionKeepsRemaining = segmented.selectedSingle.ok
       && segmented.selectedSingle.commit == nil
       && !segmented.selectedSingle.composing.isEmpty
       && !(segmented.selectedSingle.candidates.first ?? "").isEmpty
     print(
-      "bridgeDirectSessionSelfCheck=\(outcome.ok && outcome.candidates.count == 7 && segmentedPhrasePreferred && singleSelectionKeepsRemaining)"
+      "bridgeDirectSessionSelfCheck=\(outcome.ok && outcome.candidates.count == 7 && panelCandidatesBeyondCurrentPage && segmentedPhrasePreferred && singleSelectionKeepsRemaining)"
     )
     print("candidateCount=\(outcome.candidates.count)")
+    print("panelCandidateCount=\(outcome.panelCandidates.count)")
     print("firstCandidate=\(outcome.candidates.first ?? "")")
     print("segmentedPhraseFirstCandidate=\(segmentedFirst)")
     print("segmentedPhraseCandidateCount=\(segmented.beforeSelection.candidates.count)")
     print("segmentedSingleCandidateIndex=\(segmented.singleCandidateIndex.map { String($0) } ?? "missing")")
     print("segmentedSingleSelectionComposing=\(segmented.selectedSingle.composing)")
     print("segmentedSingleSelectionFirstCandidate=\(segmented.selectedSingle.candidates.first ?? "")")
+    print("panelCandidatesBeyondCurrentPage=\(panelCandidatesBeyondCurrentPage)")
     print("segmentedPhrasePreferred=\(segmentedPhrasePreferred)")
     print("segmentedSingleSelectionKeepsRemaining=\(singleSelectionKeepsRemaining)")
   }

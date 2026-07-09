@@ -5,7 +5,7 @@ final class InputiaCandidatePanel: NSPanel {
   private let textField = NSTextField(labelWithString: "")
   private let padding = NSEdgeInsets(top: 7, left: 10, bottom: 7, right: 10)
   private let maxPanelWidth: CGFloat = 720
-  private let maxExpandedPanelWidth: CGFloat = 360
+  private let maxExpandedPanelWidth: CGFloat = 820
   private let cursorOffset: CGFloat = 6
 
   init() {
@@ -51,7 +51,7 @@ final class InputiaCandidatePanel: NSPanel {
       return
     }
 
-    textField.maximumNumberOfLines = expanded ? 9 : 1
+    textField.maximumNumberOfLines = expanded ? InputiaCandidatePanelFormatter.maximumExpandedRows : 1
     textField.lineBreakMode = expanded ? .byWordWrapping : .byTruncatingTail
     let panelWidthLimit = expanded ? maxExpandedPanelWidth : maxPanelWidth
     textField.attributedStringValue = InputiaCandidatePanelFormatter.candidateString(
@@ -116,7 +116,11 @@ final class InputiaCandidatePanel: NSPanel {
 }
 
 enum InputiaCandidatePanelFormatter {
-  static let maximumCandidateCount = 9
+  static let maximumCollapsedCandidateCount = 9
+  static let maximumExpandedCandidateCount = 32
+  static let expandedColumnCount = 8
+  static let maximumExpandedRows =
+    Int(ceil(Double(maximumExpandedCandidateCount) / Double(expandedColumnCount)))
 
   static func candidateString(_ candidates: [String], expanded: Bool) -> NSAttributedString {
     let result = NSMutableAttributedString()
@@ -125,9 +129,14 @@ enum InputiaCandidatePanelFormatter {
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.lineBreakMode = expanded ? .byWordWrapping : .byTruncatingTail
 
+    let maximumCandidateCount = expanded
+      ? maximumExpandedCandidateCount
+      : maximumCollapsedCandidateCount
+
     for (index, candidate) in candidates.prefix(maximumCandidateCount).enumerated() {
       if index > 0 {
-        result.append(NSAttributedString(string: expanded ? "\n" : "   "))
+        let separator = expanded && index % expandedColumnCount == 0 ? "\n" : "   "
+        result.append(NSAttributedString(string: separator))
       }
 
       let labelAttributes: [NSAttributedString.Key: Any] = [

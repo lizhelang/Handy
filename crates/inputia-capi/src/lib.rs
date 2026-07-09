@@ -742,7 +742,7 @@ unsafe fn optional_c_string(value: *const c_char) -> Option<String> {
 
 fn outcome_json(envelope: OutputEnvelope) -> *mut c_char {
     let json = serde_json::to_string(&envelope).unwrap_or_else(|_| {
-        r#"{"ok":false,"error":"failed to serialize outcome","consumed":false,"commit":null,"mode":"English","composing":"","page":0,"visible_candidates":[]}"#
+        r#"{"ok":false,"error":"failed to serialize outcome","consumed":false,"commit":null,"mode":"English","composing":"","page":0,"visible_candidates":[],"panel_candidates":[]}"#
             .to_string()
     });
     CString::new(json)
@@ -797,6 +797,7 @@ struct OutputEnvelope {
     composing: String,
     page: usize,
     visible_candidates: Vec<CandidateEnvelope>,
+    panel_candidates: Vec<CandidateEnvelope>,
 }
 
 impl OutputEnvelope {
@@ -818,6 +819,11 @@ impl OutputEnvelope {
                 .into_iter()
                 .map(CandidateEnvelope::from)
                 .collect(),
+            panel_candidates: snapshot
+                .panel_candidates
+                .into_iter()
+                .map(CandidateEnvelope::from)
+                .collect(),
         }
     }
 
@@ -831,6 +837,7 @@ impl OutputEnvelope {
             composing: String::new(),
             page: 0,
             visible_candidates: Vec::new(),
+            panel_candidates: Vec::new(),
         }
     }
 }
@@ -1081,11 +1088,20 @@ mod tests {
             latest = handle_json(inputia_session_handle_char(session, ch as u32));
         }
         assert_eq!(latest["visible_candidates"][0]["text"], "你");
+        assert_eq!(latest["panel_candidates"][0]["text"], "你");
+        assert!(
+            latest["panel_candidates"].as_array().unwrap().len()
+                > latest["visible_candidates"].as_array().unwrap().len()
+        );
 
         let page_down = handle_json(inputia_session_handle_special(session, KEY_PAGE_DOWN));
         assert_eq!(page_down["page"], 1);
         assert_ne!(page_down["visible_candidates"][0]["text"], "你");
         assert_eq!(page_down["visible_candidates"].as_array().unwrap().len(), 5);
+        assert!(
+            page_down["panel_candidates"].as_array().unwrap().len()
+                > page_down["visible_candidates"].as_array().unwrap().len()
+        );
 
         inputia_session_free(session);
     }

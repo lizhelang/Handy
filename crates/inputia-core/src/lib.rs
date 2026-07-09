@@ -137,6 +137,7 @@ pub struct InputSnapshot {
     pub composing: String,
     pub page: usize,
     pub visible_candidates: Vec<Candidate>,
+    pub panel_candidates: Vec<Candidate>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -984,6 +985,7 @@ impl<E: ChineseEngine> InputiaCore<E> {
             composing: self.display_composing(),
             page: self.page,
             visible_candidates: self.visible_candidates().to_vec(),
+            panel_candidates: self.candidates.clone(),
         }
     }
 
@@ -1524,6 +1526,18 @@ mod tests {
         let outcome = core.handle_key(Key::PageUp);
         assert_eq!(outcome.snapshot.page, 0);
         assert_eq!(outcome.snapshot.visible_candidates[0].text, "你");
+    }
+
+    #[test]
+    fn snapshot_keeps_panel_candidates_beyond_current_page() {
+        let mut core = core();
+        core.handle_key(Key::Shift);
+        let outcome = feed(&mut core, "ni");
+
+        assert_eq!(outcome.snapshot.visible_candidates.len(), 7);
+        assert_eq!(outcome.snapshot.panel_candidates.len(), 9);
+        assert_eq!(outcome.snapshot.visible_candidates[0].text, "你");
+        assert_eq!(outcome.snapshot.panel_candidates[8].text, "霓");
     }
 
     #[test]

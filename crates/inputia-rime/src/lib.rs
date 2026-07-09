@@ -16,7 +16,7 @@ type UnusedFn = Option<unsafe extern "C" fn()>;
 
 const FALSE: Bool = 0;
 const TRUE: Bool = 1;
-const MAX_CANDIDATE_PAGES: usize = 2;
+const MAX_CANDIDATE_PAGES: usize = 4;
 const DEFAULT_SQUIRREL_DYLIB: &str =
     "/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib";
 const DEFAULT_SQUIRREL_SHARED_DATA: &str =
