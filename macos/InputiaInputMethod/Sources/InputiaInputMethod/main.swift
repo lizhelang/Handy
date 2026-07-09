@@ -238,10 +238,9 @@ final class InputiaInputController: IMKInputController {
   }
 
   override func candidates(_ sender: Any!) -> [Any]! {
-    InputiaHostTextPolicy.candidatesForPanel(
-      composing: latestComposing,
-      candidates: latestCandidates
-    )
+    // Inputia draws its own candidate panel. Supplying candidates here lets
+    // IMKCandidates open the system single-column panel over our grid.
+    return []
   }
 
   override func menu() -> NSMenu! {
