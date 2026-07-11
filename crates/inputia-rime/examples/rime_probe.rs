@@ -27,12 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("schema={}", snapshot.schema_id);
     println!("keys={keys}");
-    println!("input={}", snapshot.input);
     println!("preedit={}", snapshot.preedit);
-    println!(
-        "cursor={} sel_start={} sel_end={}",
-        snapshot.cursor_pos, snapshot.sel_start, snapshot.sel_end
-    );
     println!(
         "page={} page_size={} candidates={} last={} highlighted={}",
         snapshot.page_no,
@@ -43,8 +38,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     for (index, candidate) in snapshot.candidates.iter().enumerate() {
         println!(
-            "candidate[{index}]={}\t{}",
-            candidate.text, candidate.annotation
+            "candidate[{index}]={}\t{}\tid={}",
+            candidate.text, candidate.annotation, candidate.id
         );
     }
     println!(

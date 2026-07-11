@@ -1,7 +1,9 @@
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::apple_intelligence;
 use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
-use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error, VadPolicy};
+use crate::audio_toolkit::{
+    apply_custom_words, is_microphone_access_denied, is_no_input_device_error, VadPolicy,
+};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
@@ -474,7 +476,17 @@ where
         return None;
     }
 
-    let corrected = corrector(settings.clone(), text.to_string()).await?;
+    if let Some(corrected) = corrector(settings.clone(), text.to_string()).await {
+        if corrected != text {
+            return Some(corrected);
+        }
+    }
+
+    let corrected = apply_custom_words(
+        text,
+        &settings.custom_words,
+        settings.word_correction_threshold,
+    );
     (corrected != text).then_some(corrected)
 }
 
@@ -1095,6 +1107,42 @@ mod tests {
 
             assert!(called.load(Ordering::SeqCst));
             assert_eq!(result.as_deref(), Some("武清在天津的西北边。"));
+        });
+    }
+
+    #[test]
+    fn custom_word_stage_falls_back_when_model_returns_none() {
+        tauri::async_runtime::block_on(async {
+            let mut settings = get_default_settings();
+            settings.custom_words = vec!["ollama".to_string()];
+            settings.word_correction_threshold = 0.18;
+
+            let result = apply_custom_word_correction_stage(
+                &settings,
+                "我希望先接一下Olama吧。",
+                |_settings, _text| Box::pin(async { None }),
+            )
+            .await;
+
+            assert_eq!(result.as_deref(), Some("我希望先接一下Ollama吧。"));
+        });
+    }
+
+    #[test]
+    fn custom_word_stage_falls_back_when_model_keeps_original_text() {
+        tauri::async_runtime::block_on(async {
+            let mut settings = get_default_settings();
+            settings.custom_words = vec!["ollama".to_string()];
+            settings.word_correction_threshold = 0.18;
+
+            let result = apply_custom_word_correction_stage(
+                &settings,
+                "using Olama locally",
+                |_settings, text| Box::pin(async move { Some(text) }),
+            )
+            .await;
+
+            assert_eq!(result.as_deref(), Some("using Ollama locally"));
         });
     }
 }

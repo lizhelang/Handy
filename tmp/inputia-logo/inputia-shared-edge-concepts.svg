@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+<rect width="100%" height="100%" fill="#fbf8f2"/>
+<g>
+<circle cx="200.000" cy="200.000" r="96.000" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="200.000" cy="200.000" r="42.860" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="264.145" cy="226.570" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="226.570" cy="264.145" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="173.430" cy="264.145" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="135.855" cy="226.570" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="135.855" cy="173.430" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="173.430" cy="135.855" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="226.570" cy="135.855" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="264.145" cy="173.430" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+</g>
+<g>
+<circle cx="600.000" cy="200.000" r="96.000" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="600.000" cy="200.000" r="50.675" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="669.748" cy="222.663" r="22.663" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="643.107" cy="259.331" r="22.663" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="600.000" cy="273.337" r="22.663" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="556.893" cy="259.331" r="22.663" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="530.252" cy="222.663" r="22.663" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="530.252" cy="177.337" r="22.663" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="556.893" cy="140.669" r="22.663" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="600.000" cy="126.663" r="22.663" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="643.107" cy="140.669" r="22.663" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="669.748" cy="177.337" r="22.663" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+</g>
+<g>
+<path d="M 1081.413 250.872 A 96.000 96.000 0 1 1 1089.010 164.038" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<path d="M 1036.348 222.713 A 42.860 42.860 0 1 1 1039.739 183.944" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="1026.570" cy="264.145" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="973.430" cy="264.145" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="935.855" cy="226.570" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="935.855" cy="173.430" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="973.430" cy="135.855" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="1026.570" cy="135.855" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="1064.145" cy="173.430" r="26.570" fill="none" stroke="#2F6F73" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+</g>
+<g>
+<circle cx="200.000" cy="590.000" r="96.000" fill="none" stroke="#2F6F73" stroke-width="5.2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="200.000" cy="590.000" r="32.000" fill="none" stroke="#2F6F73" stroke-width="5.2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="255.426" cy="622.000" r="32.000" fill="none" stroke="#2F6F73" stroke-width="5.2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="200.000" cy="654.000" r="32.000" fill="none" stroke="#2F6F73" stroke-width="5.2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="144.574" cy="622.000" r="32.000" fill="none" stroke="#2F6F73" stroke-width="5.2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="144.574" cy="558.000" r="32.000" fill="none" stroke="#2F6F73" stroke-width="5.2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="200.000" cy="526.000" r="32.000" fill="none" stroke="#2F6F73" stroke-width="5.2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="255.426" cy="558.000" r="32.000" fill="none" stroke="#2F6F73" stroke-width="5.2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+</g>
+<g>
+<circle cx="600.000" cy="590.000" r="82.000" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="600.000" cy="590.000" r="36.610" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="654.791" cy="612.695" r="22.695" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="622.695" cy="644.791" r="22.695" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="577.305" cy="644.791" r="22.695" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="545.209" cy="612.695" r="22.695" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="545.209" cy="567.305" r="22.695" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="577.305" cy="535.209" r="22.695" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="622.695" cy="535.209" r="22.695" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="654.791" cy="567.305" r="22.695" fill="none" stroke="#2F6F73" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+</g>
+<g>
+<circle cx="1000.000" cy="590.000" r="82.000" fill="none" stroke="#2F6F73" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="1000.000" cy="590.000" r="43.285" fill="none" stroke="#2F6F73" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="1059.576" cy="609.358" r="19.358" fill="none" stroke="#2F6F73" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="1036.820" cy="640.679" r="19.358" fill="none" stroke="#2F6F73" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="1000.000" cy="652.642" r="19.358" fill="none" stroke="#2F6F73" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="963.180" cy="640.679" r="19.358" fill="none" stroke="#2F6F73" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="940.424" cy="609.358" r="19.358" fill="none" stroke="#2F6F73" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="940.424" cy="570.642" r="19.358" fill="none" stroke="#2F6F73" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="963.180" cy="539.321" r="19.358" fill="none" stroke="#2F6F73" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="1000.000" cy="527.358" r="19.358" fill="none" stroke="#2F6F73" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="1036.820" cy="539.321" r="19.358" fill="none" stroke="#2F6F73" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+<circle cx="1059.576" cy="570.642" r="19.358" fill="none" stroke="#2F6F73" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+</g>
+</svg>

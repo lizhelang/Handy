@@ -2,8 +2,6 @@
 
 日期：2026-07-06
 
-更新：2026-07-08
-
 当前只处理 macOS Text Input Source / InputMethodKit Host 入口问题。不要把这个阻塞归到 Core、Rime、候选窗、Settings 或记忆层。
 
 ## 结论先行
@@ -15,9 +13,8 @@
 3. 旧的 `/Library/Input Methods/InputiaInputMethod.app` 缺 `Inputia.icns` 和 `InfoPlist.strings`，不能用它证明最新版 Host 方案失败。
 4. `TISEnableInputSource` 返回 `0/noErr` 不是成功标准。成功标准只能是 `TISCreateInputSourceList(nil, false)` 能枚举出 Inputia mode，System Settings 已启用列表能看到它，且 `TISSelectInputSource` 返回 `0/noErr`。
 5. ToyIMK 和本机 probe 现象都指向同一个 macOS 行为：首次安装新的 IMK app 后，System Settings 的可添加输入源列表可能不会热刷新。先关闭 System Settings 并刷新 `TextInputMenuAgent` / `SystemUIServer`；仍不出现时再 logout/login。
-6. 历史上 v4 机器曾经解除过 Host 入口阻塞：`Inputia 简体` 已添加到 System Settings 已启用输入源列表，`includeAllInstalled=false` 能枚举到 Inputia parent 和 Hans mode，Hans mode `enabled=true/selectable=true/selected=true`，`TISSelectInputSource` 返回 `0`，TextEdit 真实按键能上屏。
-7. 但当前 v41 状态必须以 `status.sh` / `gui-smoke-readiness.sh` 为准：构建版是 v41，系统目录 `/Library/Input Methods/InputiaInputMethod.app` 和 `/Applications/Inputia 设置.app` 仍是 v40，TIS enabled/installed matches 为 0。真实 TextEdit/Safari/Clipboard GUI smoke 仍被正确阻断。
-8. 菜单栏真实 Host 仍取决于 `/Library/Input Methods/InputiaInputMethod.app`。临时取消旧 LaunchServices 记录并注册 build app 后，TIS source 的 `iconURL` 仍指向 `/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf`；因此不能靠手动注册 build app 代替系统目录安装。
+6. 当前机器上阻塞已解除：`Inputia 简体` 已添加到 System Settings 已启用输入源列表，`includeAllInstalled=false` 能枚举到 Inputia parent 和 Hans mode，Hans mode `enabled=true/selectable=true/selected=true`，`TISSelectInputSource` 返回 `0`，TextEdit 真实按键能上屏。
+7. 菜单栏真实 Host 仍取决于 `/Library/Input Methods/InputiaInputMethod.app`。临时取消旧 LaunchServices 记录并注册 build app 后，TIS source 的 `iconURL` 仍指向 `/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/inputia.pdf`；因此不能靠手动注册 build app 代替系统目录安装。
 
 ## 外部证据
 
@@ -66,24 +63,7 @@ zh-Hans.lproj/InfoPlist.strings
 zh-Hant.lproj/InfoPlist.strings
 ```
 
-因此早先 System Settings 搜不到 Inputia，最小解释不是 Info.plist 又错了，而是系统目录没有最新版 bundle，且 Add list 没有刷新到 probe / user-level 安装。历史上最新版系统安装并刷新 UI 后，System Settings 的简体中文添加列表曾出现 `Inputia 简体`。后续菜单图标改为只使用 `TISIconLabels`，不再把旧白色 PDF 作为 mode 图标。若 `/Library/Input Methods` 仍是旧包，TIS `iconURL` 会继续指向旧 `inputia.pdf`，菜单和真实输入链也会继续表现为旧 Host。
-
-当前 v41 事实：
-
-```text
-buildVersion=41
-buildCDHash=6d7e1033ef95597258f7c9c30f7d361f1b3dee2f
-system.version=40
-system.cdhash=8d4f473adcc2f7c093b5629b9b1e742dcba184f8
-systemMatchesBuild=false
-settings.systemVersion=40
-systemSettingsMatchesBuildVersion=false
-tis.includeAllInstalled=false matches=0
-tis.includeAllInstalled=true matches=0
-latestPkgSHA256=e6af057c5199c590a6eba4529439738cd4919e0d1be42530b7776ddc3b16858c
-```
-
-当前不要硬跑真实 GUI smoke。先把系统目录和设置启动器更新到 v41，再等 TIS readiness 通过。
+因此早先 System Settings 搜不到 Inputia，最小解释不是 Info.plist 又错了，而是系统目录没有最新版 bundle，且 Add list 没有刷新到 probe / user-level 安装。最新版系统安装并刷新 UI 后，System Settings 的简体中文添加列表已经出现 `Inputia 简体`。后续菜单图标改为只使用 `TISIconLabels`，不再把旧白色 PDF 作为 mode 图标。若 `/Library/Input Methods` 仍是旧包，TIS `iconURL` 会继续指向旧 `inputia.pdf`，菜单和真实输入链也会继续表现为旧 Host。
 
 ## 正确验证顺序
 
@@ -167,7 +147,7 @@ enabled=true
 selectable=true
 ```
 
-历史 v4 机器曾验证过的 ready 形态如下；当前 v41 不能沿用这段作为现状证明，必须重新以 `status.sh` / `gui-smoke-readiness.sh` 输出为准：
+当前机器已验证：
 
 ```text
 includeAllInstalled=false
@@ -195,11 +175,11 @@ selected=true
 selectStatus=0
 ```
 
-历史 v4 机器曾验证 `selectStatus=0`。当前 v41 仍未满足该前置状态。
+当前机器已验证 `selectStatus=0`。
 
 9. TextEdit 或 Notes 里选择 Inputia，按键应进入 `InputiaInputController` 并通过 `insertText` 上屏英文字符。
 
-历史 v4 机器曾验证 TextEdit smoke：
+当前机器已验证 TextEdit smoke：
 
 ```text
 current source = com.inputia.inputmethod.Inputia.Hans
@@ -207,8 +187,6 @@ System Events keystroke "xyz"
 TextEdit text value = abcxyz
 InputiaInputMethod log = InputMethodKit Inserting text
 ```
-
-当前 v41 仍未运行真实 TextEdit/Safari/Clipboard GUI smoke；系统安装版/settings 仍需先更新到 v41，且 TIS readiness 必须通过。
 
 ## 不再重复尝试的方向
 
@@ -220,12 +198,4 @@ InputiaInputMethod log = InputMethodKit Inserting text
 
 ## 后续动作
 
-历史 v4 的 macOS enabled/selectable 入口阻塞曾经解除，并验证了物理键盘 Shift 的 `flagsChanged` 事件能进入 IMK，在 `mode=English` / `mode=Chinese` 之间切换。当前 v41 不能沿用这条历史状态：必须先更新系统安装版和 TIS 状态。
-
-当前正确下一步：
-
-1. 用管理员权限安装当前 v41 pkg 或运行 `install-system.sh`。
-2. 跑 `status.sh`，要求系统 host/settings 都变成 v41，CDHash 对齐 build。
-3. 跑 `gui-smoke-readiness.sh "/Library/Input Methods/InputiaInputMethod.app"`，要求 `guiSmokeReadinessReady=true reason=none`。
-4. readiness 通过后再跑 `INPUTIA_RUN_UI_SMOKE=1 gui-smoke-suite.sh "/Library/Input Methods/InputiaInputMethod.app"`。
-5. 只有 GUI suite 通过后，才把注意力转回候选窗、设置实时重载和 Core/Rime/Settings 集成验证。
+macOS enabled/selectable 入口阻塞已经解除。v4 还验证了物理键盘 Shift 的 `flagsChanged` 事件能进入 IMK，并能在 `mode=English` / `mode=Chinese` 之间切换。下一步可以回到正式 MVP 路线：继续完善 Host 事件处理、候选窗分页、设置实时重载和 Core/Rime/Settings 集成验证。

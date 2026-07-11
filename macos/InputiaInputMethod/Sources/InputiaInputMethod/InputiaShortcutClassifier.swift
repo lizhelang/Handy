@@ -12,19 +12,6 @@ struct InputiaShortcutClassifier {
   private static let keyCodeUpArrow: UInt16 = 126
   private static let inputTextEnterCharacters: Set<String> = ["\r", "\n"]
 
-  static func shouldPassThroughCommandShortcut(
-    modifiers: NSEvent.ModifierFlags
-  ) -> Bool {
-    modifiers.contains(.command)
-  }
-
-  static func shouldPassThroughKeyDown(
-    keyCode: UInt16,
-    modifiers: NSEvent.ModifierFlags
-  ) -> Bool {
-    shouldPassThroughCommandShortcut(modifiers: modifiers)
-  }
-
   static func isClipboardRecall(
     charactersIgnoringModifiers: String?,
     modifiers: NSEvent.ModifierFlags

@@ -4,7 +4,6 @@ set -o pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="${INPUTIA_RIME_DATA_BUILD_DIR:-$ROOT_DIR/build/RimeData}"
-DEFAULT_BUILD_DIR="$ROOT_DIR/build/RimeData"
 SQUIRREL_SHARED="${INPUTIA_SQUIRREL_SHARED_DATA:-/Library/Input Methods/Squirrel.app/Contents/SharedSupport}"
 INSTALLED_INPUTIA_RIME_DATA="/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/RimeData"
 PREVIOUS_BUILD_DIR=""
@@ -22,76 +21,41 @@ cleanup_previous_build_dir() {
 }
 trap cleanup_previous_build_dir EXIT
 
+if [[ ! -d "$SQUIRREL_SHARED" ]]; then
+  echo "missing Squirrel shared data: $SQUIRREL_SHARED" >&2
+  echo "Inputia currently reuses Squirrel librime/shared data for the macOS MVP." >&2
+  exit 1
+fi
+
 /bin/rm -rf "$BUILD_DIR"
 /bin/mkdir -p "$BUILD_DIR"
+echo "copySquirrelShared=$SQUIRREL_SHARED"
+COPYFILE_DISABLE=1 /usr/bin/ditto "$SQUIRREL_SHARED" "$BUILD_DIR"
 
-copy_or_download() {
-  local url="$1"
-  local output="$2"
-
-  for fallback_dir in "$PREVIOUS_BUILD_DIR" "$INSTALLED_INPUTIA_RIME_DATA" "$ROOT_DIR/Resources/RimeData" "$DEFAULT_BUILD_DIR"; do
-    if [[ -n "$fallback_dir" && -f "$fallback_dir/$output" ]]; then
-      echo "reuseRimeData=$output from=$fallback_dir"
-      /bin/mkdir -p "$BUILD_DIR/$(/usr/bin/dirname "$output")"
-      /bin/cp "$fallback_dir/$output" "$BUILD_DIR/$output"
-      return
-    fi
-  done
-
-  echo "fetchRimeData=$output"
-  /bin/mkdir -p "$BUILD_DIR/$(/usr/bin/dirname "$output")"
-  /usr/bin/curl --connect-timeout 10 --max-time 45 --retry 2 --retry-delay 1 -fsSL \
-    "$url" -o "$BUILD_DIR/$output"
-}
-
-bootstrap_official_rime_data() {
-  echo "squirrelSharedMissing=$SQUIRREL_SHARED"
-  echo "bootstrapRimeData=official-rime-packages"
-
-  local prelude="https://raw.githubusercontent.com/rime/rime-prelude/master"
-  local luna="https://raw.githubusercontent.com/rime/rime-luna-pinyin/master"
-  local essay="https://raw.githubusercontent.com/rime/rime-essay/master"
-  local stroke="https://raw.githubusercontent.com/rime/rime-stroke/master"
-  local terra="https://raw.githubusercontent.com/rime/rime-terra-pinyin/master"
-
-  copy_or_download "$prelude/default.yaml" default.yaml
-  copy_or_download "$prelude/key_bindings.yaml" key_bindings.yaml
-  copy_or_download "$prelude/punctuation.yaml" punctuation.yaml
-  copy_or_download "$prelude/symbols.yaml" symbols.yaml
-  copy_or_download "$essay/essay.txt" essay.txt
-  copy_or_download "$luna/pinyin.yaml" pinyin.yaml
-  copy_or_download "$luna/luna_pinyin.schema.yaml" luna_pinyin.schema.yaml
-  copy_or_download "$luna/luna_pinyin_simp.schema.yaml" luna_pinyin_simp.schema.yaml
-  copy_or_download "$luna/luna_pinyin.dict.yaml" luna_pinyin.dict.yaml
-  copy_or_download "$stroke/stroke.schema.yaml" stroke.schema.yaml
-  copy_or_download "$stroke/stroke.dict.yaml" stroke.dict.yaml
-  copy_or_download "$terra/terra_pinyin.schema.yaml" terra_pinyin.schema.yaml
-  copy_or_download "$terra/terra_pinyin.dict.yaml" terra_pinyin.dict.yaml
-}
-
-if [[ -d "$SQUIRREL_SHARED" ]]; then
-  echo "copySquirrelShared=$SQUIRREL_SHARED"
-  COPYFILE_DISABLE=1 /usr/bin/ditto "$SQUIRREL_SHARED" "$BUILD_DIR"
-else
-  bootstrap_official_rime_data
-fi
+INPUTIA_RIME_RESOURCES="$ROOT_DIR/Resources/RimeData"
+inputia_extension_dicts=(
+  inputia_luna_pinyin.dict.yaml
+  inputia_idiom.dict.yaml
+  inputia_poetry.dict.yaml
+  inputia_classical.dict.yaml
+  inputia_ext_chars.dict.yaml
+)
 
 download_schema() {
   local url="$1"
   local output="$2"
+  echo "fetchRimeSchema=$output"
+  if /usr/bin/curl --connect-timeout 10 --max-time 45 --retry 2 --retry-delay 1 -fsSL "$url" -o "$BUILD_DIR/$output"; then
+    return
+  fi
 
-  for fallback_dir in "$PREVIOUS_BUILD_DIR" "$INSTALLED_INPUTIA_RIME_DATA" "$ROOT_DIR/Resources/RimeData" "$DEFAULT_BUILD_DIR"; do
+  for fallback_dir in "$PREVIOUS_BUILD_DIR" "$INSTALLED_INPUTIA_RIME_DATA" "$ROOT_DIR/Resources/RimeData"; do
     if [[ -n "$fallback_dir" && -f "$fallback_dir/$output" ]]; then
       echo "reuseRimeSchema=$output from=$fallback_dir"
       /bin/cp "$fallback_dir/$output" "$BUILD_DIR/$output"
       return
     fi
   done
-
-  echo "fetchRimeSchema=$output"
-  if /usr/bin/curl --connect-timeout 10 --max-time 45 --retry 2 --retry-delay 1 -fsSL "$url" -o "$BUILD_DIR/$output"; then
-    return
-  fi
 
   echo "missing Rime schema and no local fallback: $output" >&2
   return 1
@@ -107,6 +71,15 @@ download_schema https://raw.githubusercontent.com/rime/rime-double-pinyin/master
 download_schema https://raw.githubusercontent.com/rime/rime-double-pinyin/master/double_pinyin_st.schema.yaml double_pinyin_st.schema.yaml
 download_schema https://raw.githubusercontent.com/baopaau/rime-guobiao-quick/main/README.md rime-guobiao-quick.README.md
 download_schema https://raw.githubusercontent.com/baopaau/rime-guobiao-quick/main/guobiao_bispell.schema.yaml guobiao_bispell.schema.yaml
+
+for dict in "${inputia_extension_dicts[@]}"; do
+  if [[ ! -f "$INPUTIA_RIME_RESOURCES/$dict" ]]; then
+    echo "missing Inputia extension dictionary: $INPUTIA_RIME_RESOURCES/$dict" >&2
+    echo "Run: python3 $ROOT_DIR/Tools/generate_inputia_lexicons.py" >&2
+    exit 1
+  fi
+  /bin/cp "$INPUTIA_RIME_RESOURCES/$dict" "$BUILD_DIR/$dict"
+done
 
 # The upstream Guobiao schema enables an optional emoji OpenCC filter, but the
 # bundled Squirrel shared data used by the MVP does not include emoji.json.
@@ -158,40 +131,6 @@ download_schema https://raw.githubusercontent.com/baopaau/rime-guobiao-quick/mai
   }
   !skipping {
     print
-  }
-' "$BUILD_DIR/default.yaml" >"$BUILD_DIR/default.yaml.tmp"
-/bin/mv "$BUILD_DIR/default.yaml.tmp" "$BUILD_DIR/default.yaml"
-
-/usr/bin/awk '
-  BEGIN {
-    in_menu = 0
-    patched = 0
-  }
-  /^menu:[[:space:]]*$/ {
-    print
-    in_menu = 1
-    next
-  }
-  in_menu && /^[[:space:]]+page_size:/ {
-    print "  page_size: 7"
-    patched = 1
-    in_menu = 0
-    next
-  }
-  in_menu && /^[^[:space:]]/ {
-    print "  page_size: 7"
-    patched = 1
-    in_menu = 0
-  }
-  {
-    print
-  }
-  END {
-    if (!patched) {
-      print ""
-      print "menu:"
-      print "  page_size: 7"
-    }
   }
 ' "$BUILD_DIR/default.yaml" >"$BUILD_DIR/default.yaml.tmp"
 /bin/mv "$BUILD_DIR/default.yaml.tmp" "$BUILD_DIR/default.yaml"
@@ -351,5 +290,25 @@ recognizer:
   patterns:
     reverse_lookup: "`[a-z]*'?$"
 YAML
+
+for schema in \
+  luna_pinyin.schema.yaml \
+  double_pinyin.schema.yaml \
+  double_pinyin_flypy.schema.yaml \
+  double_pinyin_sogou.schema.yaml \
+  double_pinyin_mspy.schema.yaml \
+  double_pinyin_abc.schema.yaml \
+  double_pinyin_pyjj.schema.yaml \
+  double_pinyin_st.schema.yaml; do
+  if [[ -f "$BUILD_DIR/$schema" ]]; then
+    /usr/bin/awk '
+      /^[[:space:]]*dictionary:[[:space:]]*luna_pinyin([[:space:]]*(#.*)?)?$/ {
+        sub(/luna_pinyin([[:space:]]*(#.*)?)?$/, "inputia_luna_pinyin")
+      }
+      { print }
+    ' "$BUILD_DIR/$schema" >"$BUILD_DIR/$schema.tmp"
+    /bin/mv "$BUILD_DIR/$schema.tmp" "$BUILD_DIR/$schema"
+  fi
+done
 
 echo "rimeDataDir=$BUILD_DIR"

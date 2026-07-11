@@ -66,47 +66,6 @@ impl Candidate {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CandidateCommit {
-    pub text: Option<String>,
-    pub remaining_composing: String,
-    pub preedit: String,
-    pub page: usize,
-    pub candidates: Vec<Candidate>,
-}
-
-impl CandidateCommit {
-    pub fn new(
-        text: impl Into<String>,
-        remaining_composing: impl Into<String>,
-        page: usize,
-        candidates: Vec<Candidate>,
-    ) -> Self {
-        Self {
-            text: Some(text.into()),
-            remaining_composing: remaining_composing.into(),
-            preedit: String::new(),
-            page,
-            candidates,
-        }
-    }
-
-    pub fn preedit(
-        preedit: impl Into<String>,
-        remaining_composing: impl Into<String>,
-        page: usize,
-        candidates: Vec<Candidate>,
-    ) -> Self {
-        Self {
-            text: None,
-            remaining_composing: remaining_composing.into(),
-            preedit: preedit.into(),
-            page,
-            candidates,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CandidateSource {
     Engine,
     Memory,
@@ -146,16 +105,32 @@ pub struct InputOutcome {
     pub snapshot: InputSnapshot,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CandidateSelection {
+    pub commit: String,
+    pub composing: String,
+    pub candidates: Vec<Candidate>,
+}
+
 pub trait ChineseEngine {
     fn candidates(&self, composing: &str) -> Vec<Candidate>;
+
+    fn candidates_up_to(&self, composing: &str, minimum_count: usize) -> Vec<Candidate> {
+        let _ = minimum_count;
+        self.candidates(composing)
+    }
 
     fn select_candidate(
         &self,
         _composing: &str,
-        _candidate: &Candidate,
         _page: usize,
         _page_index: usize,
-    ) -> Option<CandidateCommit> {
+        _candidate: &Candidate,
+    ) -> Option<CandidateSelection> {
+        None
+    }
+
+    fn candidate_consumed_len(&self, _composing: &str, _candidate: &Candidate) -> Option<usize> {
         None
     }
 }
@@ -413,30 +388,22 @@ impl LocalMemory {
     }
 
     pub fn rank_candidates(&self, candidates: Vec<Candidate>) -> Vec<Candidate> {
-        let leading_engine_len = candidates
-            .first()
-            .map(|candidate| candidate.text.chars().count())
-            .unwrap_or(0);
-        let mut ranked = candidates
-            .into_iter()
-            .enumerate()
-            .map(|(original_index, mut candidate)| {
-                if let Some(term) = self.terms.iter().find(|term| term.text == candidate.text) {
-                    candidate.memory_score += term.score();
-                    candidate.source = strongest_candidate_source(term);
-                }
-                let memory_score_for_ranking =
-                    memory_score_for_ranking(&candidate, leading_engine_len);
-                let ranking_score = candidate.base_score + memory_score_for_ranking;
-                (original_index, ranking_score, candidate)
-            })
-            .collect::<Vec<_>>();
+        self.rank_candidates_for_composing("", candidates)
+    }
 
-        ranked.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
-        ranked
-            .into_iter()
-            .map(|(_, _, candidate)| candidate)
-            .collect()
+    pub fn rank_candidates_for_composing(
+        &self,
+        composing: &str,
+        mut candidates: Vec<Candidate>,
+    ) -> Vec<Candidate> {
+        for candidate in &mut candidates {
+            if let Some(term) = self.terms.iter().find(|term| term.text == candidate.text) {
+                candidate.memory_score += term.score();
+                candidate.source = strongest_candidate_source(term);
+            }
+        }
+
+        sort_ranked_candidates(composing, candidates)
     }
 
     pub fn completion_candidates(&self, prefix: &str, limit: usize) -> Vec<Candidate> {
@@ -540,15 +507,6 @@ impl LocalMemory {
             .take(limit)
             .map(|term| term.text)
             .collect()
-    }
-}
-
-fn memory_score_for_ranking(candidate: &Candidate, leading_engine_len: usize) -> i32 {
-    let candidate_len = candidate.text.chars().count();
-    if leading_engine_len > 1 && candidate_len < leading_engine_len {
-        0
-    } else {
-        candidate.memory_score
     }
 }
 
@@ -695,12 +653,20 @@ impl SqliteMemory {
     }
 
     pub fn rank_candidates(&self, candidates: Vec<Candidate>) -> rusqlite::Result<Vec<Candidate>> {
+        self.rank_candidates_for_composing("", candidates)
+    }
+
+    pub fn rank_candidates_for_composing(
+        &self,
+        composing: &str,
+        candidates: Vec<Candidate>,
+    ) -> rusqlite::Result<Vec<Candidate>> {
         let memory = LocalMemory {
             policy: self.policy.clone(),
             tick: 0,
             terms: self.load_terms()?,
         };
-        Ok(memory.rank_candidates(candidates))
+        Ok(memory.rank_candidates_for_composing(composing, candidates))
     }
 
     pub fn completion_candidates(
@@ -843,7 +809,6 @@ impl SqliteMemory {
 pub struct InputiaCore<E> {
     mode: InputMode,
     composing: String,
-    preedit: String,
     candidates: Vec<Candidate>,
     page: usize,
     settings: CoreSettings,
@@ -855,7 +820,6 @@ impl<E: ChineseEngine> InputiaCore<E> {
         Self {
             mode: InputMode::English,
             composing: String::new(),
-            preedit: String::new(),
             candidates: Vec::new(),
             page: 0,
             settings,
@@ -928,7 +892,7 @@ impl<E: ChineseEngine> InputiaCore<E> {
                 if self.composing.is_empty() {
                     consumed = false;
                 } else {
-                    commit = self.commit_candidate_or_raw_composition(0);
+                    commit = Some(self.commit_candidate_or_raw_composition(0));
                 }
             }
             (InputMode::Chinese, Key::Enter) => {
@@ -949,8 +913,9 @@ impl<E: ChineseEngine> InputiaCore<E> {
                 }
             }
             (InputMode::Chinese, Key::PageDown) => {
-                if self.page + 1 < self.page_count() {
-                    self.page += 1;
+                let next_page = self.page + 1;
+                if self.ensure_candidates_for_page(next_page) {
+                    self.page = next_page;
                 }
             }
             (InputMode::Chinese, Key::PageUp) => {
@@ -975,7 +940,7 @@ impl<E: ChineseEngine> InputiaCore<E> {
     pub fn snapshot(&self) -> InputSnapshot {
         InputSnapshot {
             mode: self.mode.clone(),
-            composing: self.display_composing(),
+            composing: self.composing.clone(),
             page: self.page,
             visible_candidates: self.visible_candidates().to_vec(),
         }
@@ -985,71 +950,84 @@ impl<E: ChineseEngine> InputiaCore<E> {
         self.page = 0;
         if self.composing.is_empty() {
             self.candidates.clear();
-            self.preedit.clear();
         } else {
-            self.candidates = self.engine.candidates(&self.composing);
-            self.preedit = self.composing.clone();
+            let requested_count = self.settings.candidate_page_size.max(1);
+            let mut candidates = self
+                .engine
+                .candidates_up_to(&self.composing, requested_count);
+            if candidates.len() < requested_count {
+                let retry = self
+                    .engine
+                    .candidates_up_to(&self.composing, requested_count);
+                if retry.len() > candidates.len() {
+                    candidates = retry;
+                }
+            }
+            self.candidates = candidates;
         }
     }
 
     fn clear_composition(&mut self) {
         self.composing.clear();
-        self.preedit.clear();
         self.candidates.clear();
         self.page = 0;
     }
 
     fn commit_candidate_on_page(&mut self, page_index: usize) -> Option<String> {
         let candidate = self.visible_candidates().get(page_index)?.clone();
-        if let Some(commit) =
-            self.engine
-                .select_candidate(&self.composing, &candidate, self.page, page_index)
-        {
-            return self.apply_candidate_commit(commit);
+        Some(self.commit_candidate_at_page(page_index, candidate))
+    }
+
+    fn commit_candidate_or_raw_composition(&mut self, page_index: usize) -> String {
+        if let Some(candidate) = self.visible_candidates().get(page_index).cloned() {
+            return self.commit_candidate_at_page(page_index, candidate);
         }
-        let candidate = candidate.text;
+
+        let commit = self.composing.clone();
         self.clear_composition();
-        Some(candidate)
+        commit
     }
 
-    fn commit_candidate_or_raw_composition(&mut self, page_index: usize) -> Option<String> {
-        let Some(candidate) = self.visible_candidates().get(page_index).cloned() else {
-            return Some(self.commit_raw_composition());
-        };
-        if let Some(commit) =
-            self.engine
-                .select_candidate(&self.composing, &candidate, self.page, page_index)
+    fn commit_candidate_at_page(&mut self, page_index: usize, candidate: Candidate) -> String {
+        if let Some(selection) = self
+            .engine
+            .select_candidate(&self.composing, self.page, page_index, &candidate)
+            .filter(|selection| !selection.commit.is_empty())
         {
-            return self.apply_candidate_commit(commit);
+            let commit = selection.commit;
+            if selection.composing.is_empty() {
+                self.clear_composition();
+            } else {
+                self.composing = selection.composing;
+                self.candidates = selection.candidates;
+                self.page = 0;
+            }
+            return commit;
         }
-        let commit = candidate.text;
-        self.clear_composition();
-        Some(commit)
+
+        self.commit_candidate_by_consumed_len(candidate)
     }
 
-    fn apply_candidate_commit(&mut self, commit: CandidateCommit) -> Option<String> {
-        self.composing = commit.remaining_composing;
-        self.preedit = if commit.preedit.is_empty() {
-            self.composing.clone()
-        } else {
-            commit.preedit
+    fn commit_candidate_by_consumed_len(&mut self, candidate: Candidate) -> String {
+        let commit = candidate.text.clone();
+        let Some(consumed_len) = self
+            .engine
+            .candidate_consumed_len(&self.composing, &candidate)
+            .filter(|consumed_len| *consumed_len > 0)
+        else {
+            self.clear_composition();
+            return commit;
         };
-        self.page = commit.page;
-        self.candidates = commit.candidates;
-        if self.composing.is_empty() {
-            self.preedit.clear();
-            self.candidates.clear();
-            self.page = 0;
-        }
-        commit.text
-    }
 
-    fn display_composing(&self) -> String {
-        if self.preedit.is_empty() {
-            self.composing.clone()
-        } else {
-            self.preedit.clone()
+        let consumed_len = consumed_len.min(self.composing.len());
+        if consumed_len >= self.composing.len() || !self.composing.is_char_boundary(consumed_len) {
+            self.clear_composition();
+            return commit;
         }
+
+        self.composing = self.composing[consumed_len..].to_string();
+        self.refresh_candidates();
+        commit
     }
 
     fn commit_raw_composition(&mut self) -> String {
@@ -1069,9 +1047,23 @@ impl<E: ChineseEngine> InputiaCore<E> {
         }
     }
 
-    fn page_count(&self) -> usize {
+    fn ensure_candidates_for_page(&mut self, page: usize) -> bool {
+        if self.composing.is_empty() {
+            return false;
+        }
+
         let page_size = self.settings.candidate_page_size.max(1);
-        self.candidates.len().div_ceil(page_size)
+        let start = page * page_size;
+        let minimum_count = (page + 1) * page_size;
+        if self.candidates.len() >= minimum_count {
+            return true;
+        }
+
+        let expanded = self.engine.candidates_up_to(&self.composing, minimum_count);
+        if expanded.len() > self.candidates.len() {
+            self.candidates = expanded;
+        }
+        self.candidates.len() > start
     }
 
     fn translate_punctuation(&self, ch: char) -> String {
@@ -1150,6 +1142,86 @@ fn strongest_candidate_source(term: &MemoryTerm) -> CandidateSource {
     source
 }
 
+fn sort_ranked_candidates(composing: &str, candidates: Vec<Candidate>) -> Vec<Candidate> {
+    let expected_chars = estimated_composing_chars(composing);
+    let phrase_guard = expected_chars
+        .filter(|expected| *expected >= 2)
+        .filter(|_| {
+            candidates
+                .iter()
+                .any(|candidate| cjk_char_count(&candidate.text) >= 2)
+        });
+
+    let mut indexed = candidates.into_iter().enumerate().collect::<Vec<_>>();
+    indexed.sort_by(|(left_index, left), (right_index, right)| {
+        if let Some(expected_chars) = phrase_guard {
+            let left_intent = composition_intent_score(expected_chars, &left.text);
+            let right_intent = composition_intent_score(expected_chars, &right.text);
+            return right_intent
+                .cmp(&left_intent)
+                .then_with(|| right.final_score().cmp(&left.final_score()))
+                .then_with(|| left_index.cmp(right_index));
+        }
+
+        right
+            .final_score()
+            .cmp(&left.final_score())
+            .then_with(|| left.text.cmp(&right.text))
+            .then_with(|| left_index.cmp(right_index))
+    });
+    indexed
+        .into_iter()
+        .map(|(_, candidate)| candidate)
+        .collect()
+}
+
+fn estimated_composing_chars(composing: &str) -> Option<usize> {
+    if composing.contains('\'') {
+        let count = composing
+            .split('\'')
+            .filter(|part| !part.is_empty())
+            .count();
+        return (count >= 2).then_some(count);
+    }
+
+    if composing.len() >= 4 && composing.chars().all(|ch| ch.is_ascii_alphabetic()) {
+        return Some(composing.len().div_ceil(2));
+    }
+
+    None
+}
+
+fn composition_intent_score(expected_chars: usize, text: &str) -> i32 {
+    let char_count = cjk_char_count(text);
+    if char_count < 2 {
+        return 0;
+    }
+
+    let coverage = char_count.min(expected_chars) as i32;
+    let distance = expected_chars.abs_diff(char_count) as i32;
+    let exact_bonus = if char_count == expected_chars { 600 } else { 0 };
+    10_000 + coverage * 1_000 - distance * 250 + exact_bonus
+}
+
+fn cjk_char_count(text: &str) -> usize {
+    text.chars().filter(|ch| is_cjk_unified(*ch)).count()
+}
+
+fn is_cjk_unified(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xF900..=0xFAFF
+            | 0x20000..=0x2A6DF
+            | 0x2A700..=0x2B73F
+            | 0x2B740..=0x2B81F
+            | 0x2B820..=0x2CEAF
+            | 0x2CEB0..=0x2EBEF
+            | 0x30000..=0x3134F
+    )
+}
+
 #[cfg(feature = "sqlite-memory")]
 fn source_counts(source: &MemorySource) -> (i64, i64, i64) {
     match source {
@@ -1170,6 +1242,7 @@ fn open_read_only(path: impl AsRef<Path>) -> rusqlite::Result<rusqlite::Connecti
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     #[derive(Default)]
     struct StubEngine;
@@ -1179,6 +1252,11 @@ mod tests {
 
     #[derive(Default)]
     struct SegmentingEngine;
+
+    #[derive(Default)]
+    struct RecoveringCandidateEngine {
+        calls: Cell<usize>,
+    }
 
     impl ChineseEngine for StubEngine {
         fn candidates(&self, composing: &str) -> Vec<Candidate> {
@@ -1210,15 +1288,13 @@ mod tests {
     impl ChineseEngine for SegmentingEngine {
         fn candidates(&self, composing: &str) -> Vec<Candidate> {
             match composing {
-                "nillem" => [
-                    Candidate::new("segment:0", "你"),
-                    Candidate::new("segment:1", "尼"),
+                "nilllema" => [
+                    Candidate::new("long-0", "你"),
+                    Candidate::new("long-1", "你来了吗"),
                 ]
                 .into_iter()
                 .collect(),
-                "llem" => [Candidate::new("segment:remaining:0", "来了吗")]
-                    .into_iter()
-                    .collect(),
+                "lllema" => [Candidate::new("rest-0", "来了吗")].into_iter().collect(),
                 _ => Vec::new(),
             }
         }
@@ -1226,20 +1302,47 @@ mod tests {
         fn select_candidate(
             &self,
             composing: &str,
-            candidate: &Candidate,
             _page: usize,
             _page_index: usize,
-        ) -> Option<CandidateCommit> {
-            match (composing, candidate.text.as_str()) {
-                ("nillem", "你") => Some(CandidateCommit::new(
-                    "你",
-                    "llem",
-                    0,
-                    self.candidates("llem"),
-                )),
-                ("llem", "来了吗") => Some(CandidateCommit::new("来了吗", "", 0, Vec::new())),
-                _ => None,
+            candidate: &Candidate,
+        ) -> Option<CandidateSelection> {
+            if composing == "nilllema" && candidate.text == "你" {
+                return Some(CandidateSelection {
+                    commit: "你".to_string(),
+                    composing: "lllema".to_string(),
+                    candidates: self.candidates("lllema"),
+                });
             }
+
+            None
+        }
+
+        fn candidate_consumed_len(&self, _composing: &str, candidate: &Candidate) -> Option<usize> {
+            Some(candidate.text.chars().count() * 2)
+        }
+    }
+
+    impl ChineseEngine for RecoveringCandidateEngine {
+        fn candidates(&self, composing: &str) -> Vec<Candidate> {
+            self.candidates_up_to(composing, 8)
+        }
+
+        fn candidates_up_to(&self, composing: &str, _minimum_count: usize) -> Vec<Candidate> {
+            if composing != "yh" {
+                return Vec::new();
+            }
+            let call = self.calls.get();
+            self.calls.set(call + 1);
+            let texts = if call == 0 {
+                vec!["样", "杨", "养", "阳", "羊"]
+            } else {
+                vec!["样", "杨", "养", "阳", "羊", "洋", "扬", "痒"]
+            };
+            texts
+                .into_iter()
+                .enumerate()
+                .map(|(index, text)| Candidate::new(format!("yh-{index}"), text))
+                .collect()
         }
     }
 
@@ -1372,6 +1475,27 @@ mod tests {
     }
 
     #[test]
+    fn short_transient_candidate_page_is_retried_before_display() {
+        let mut core = InputiaCore::new(
+            CoreSettings {
+                candidate_page_size: 8,
+                ..CoreSettings::default()
+            },
+            RecoveringCandidateEngine::default(),
+        );
+        core.handle_key(Key::Shift);
+
+        let outcome = feed(&mut core, "yh");
+
+        assert_eq!(outcome.snapshot.visible_candidates.len(), 8);
+        assert!(outcome
+            .snapshot
+            .visible_candidates
+            .iter()
+            .any(|candidate| candidate.text == "洋"));
+    }
+
+    #[test]
     fn backspace_updates_composition() {
         let mut core = core();
         core.handle_key(Key::Shift);
@@ -1402,20 +1526,20 @@ mod tests {
     }
 
     #[test]
-    fn space_commits_selected_segment_and_keeps_remaining_composition() {
+    fn space_keeps_remaining_composition_when_candidate_consumes_only_a_prefix() {
         let mut core = InputiaCore::new(CoreSettings::default(), SegmentingEngine);
         core.handle_key(Key::Shift);
-        feed(&mut core, "nillem");
+        feed(&mut core, "nilllema");
 
-        let first = core.handle_key(Key::Space);
+        let first_commit = core.handle_key(Key::Space);
+        assert_eq!(first_commit.commit.as_deref(), Some("你"));
+        assert_eq!(first_commit.snapshot.composing, "lllema");
+        assert_eq!(first_commit.snapshot.visible_candidates[0].text, "来了吗");
 
-        assert_eq!(first.commit.as_deref(), Some("你"));
-        assert_eq!(first.snapshot.composing, "llem");
-        assert_eq!(first.snapshot.visible_candidates[0].text, "来了吗");
-
-        let remaining = core.handle_key(Key::Space);
-        assert_eq!(remaining.commit.as_deref(), Some("来了吗"));
-        assert_eq!(remaining.snapshot.composing, "");
+        let rest_commit = core.handle_key(Key::Space);
+        assert_eq!(rest_commit.commit.as_deref(), Some("来了吗"));
+        assert_eq!(rest_commit.snapshot.composing, "");
+        assert!(rest_commit.snapshot.visible_candidates.is_empty());
     }
 
     #[test]
@@ -1621,40 +1745,26 @@ mod tests {
     }
 
     #[test]
-    fn memory_ranking_preserves_engine_order_without_memory_score() {
-        let memory = LocalMemory::new(AppPolicy::default());
-
-        let ranked = memory.rank_candidates(vec![
-            Candidate::new("engine-0", "乙"),
-            Candidate::new("engine-1", "甲"),
-            Candidate::new("engine-2", "丁"),
-        ]);
-
-        assert_eq!(
-            ranked
-                .iter()
-                .map(|candidate| candidate.text.as_str())
-                .collect::<Vec<_>>(),
-            vec!["乙", "甲", "丁"]
-        );
-    }
-
-    #[test]
-    fn memory_does_not_promote_single_character_over_long_engine_candidate() {
+    fn long_composition_keeps_phrase_candidates_ahead_of_single_character_memory() {
         let context = AppContext::new("com.apple.TextEdit");
         let mut memory = LocalMemory::new(AppPolicy::default());
         for _ in 0..20 {
             memory.learn(MemorySource::Typed, "你", &context);
         }
 
-        let ranked = memory.rank_candidates(vec![
-            Candidate::new("rime:0", "你来了吗"),
-            Candidate::new("rime:1", "你"),
-            Candidate::new("rime:2", "你来"),
-        ]);
+        let ranked = memory.rank_candidates_for_composing(
+            "nilllema",
+            vec![
+                Candidate::new("long-0", "你来了吗"),
+                Candidate::new("long-1", "你来了"),
+                Candidate::new("long-2", "你"),
+            ],
+        );
 
         assert_eq!(ranked[0].text, "你来了吗");
-        assert!(ranked.iter().any(|candidate| candidate.text == "你"));
+        assert_eq!(ranked[1].text, "你来了");
+        assert_eq!(ranked[2].text, "你");
+        assert!(ranked[2].memory_score > 0);
     }
 
     #[test]
@@ -1781,6 +1891,36 @@ mod tests {
 
         assert_eq!(ranked[0].text, "泥");
         assert!(ranked[0].memory_score > ranked[1].memory_score);
+    }
+
+    #[cfg(feature = "sqlite-memory")]
+    #[test]
+    fn sqlite_memory_keeps_long_phrase_candidates_ahead_of_single_character_memory() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let db_path = tempdir.path().join("inputia_memory.db");
+        let context = AppContext::new("com.apple.TextEdit");
+
+        {
+            let mut memory = SqliteMemory::open(&db_path, AppPolicy::default()).unwrap();
+            for _ in 0..20 {
+                memory.learn(MemorySource::Typed, "你", &context).unwrap();
+            }
+        }
+
+        let memory = SqliteMemory::open(&db_path, AppPolicy::default()).unwrap();
+        let ranked = memory
+            .rank_candidates_for_composing(
+                "nilllema",
+                vec![
+                    Candidate::new("long-0", "你来了吗"),
+                    Candidate::new("long-1", "你"),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(ranked[0].text, "你来了吗");
+        assert_eq!(ranked[1].text, "你");
+        assert!(ranked[1].memory_score > 0);
     }
 
     #[cfg(feature = "sqlite-memory")]

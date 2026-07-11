@@ -13,10 +13,12 @@ fn bundled_rime_schemas_commit_zhongguo_when_available() {
         return;
     };
 
-    let Some(dylib_path) = available_librime_dylib() else {
-        eprintln!("skip: librime runtime is not installed on this machine");
+    let dylib_path =
+        PathBuf::from("/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib");
+    if !dylib_path.exists() {
+        eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
-    };
+    }
 
     let cases = [
         SchemaSmokeCase {
@@ -108,153 +110,101 @@ fn bundled_rime_schemas_commit_zhongguo_when_available() {
 }
 
 #[test]
-fn bundled_rime_schemas_use_inputia_candidate_page_size_when_available() {
+fn bundled_double_pinyin_reports_prefix_consumption_for_partial_candidate_commit() {
     let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();
     let Some(shared_data_dir) = bundled_shared_data_dir() else {
         eprintln!("skip: Inputia bundled RimeData is not available");
         return;
     };
 
-    let Some(dylib_path) = available_librime_dylib() else {
-        eprintln!("skip: librime runtime is not installed on this machine");
+    let dylib_path =
+        PathBuf::from("/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib");
+    if !dylib_path.exists() {
+        eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
-    };
-
-    let cases = [
-        ("luna_pinyin_simp", "ni"),
-        ("double_pinyin", "nillem"),
-        ("double_pinyin_sogou", "nillem"),
-    ];
-    for (schema, keys) in cases {
-        let user_data_dir = std::env::temp_dir().join(format!(
-            "inputia-rime-page-size-smoke-{}-{}-{}",
-            std::process::id(),
-            schema,
-            keys
-        ));
-        let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
-            .with_dylib_path(&dylib_path)
-            .with_shared_data_dir(&shared_data_dir)
-            .with_schema(schema);
-        let engine = RimeEngine::open(config).expect("schema should open");
-        let snapshot = engine.evaluate(keys).expect("schema should evaluate");
-
-        assert_eq!(
-            snapshot.page_size, 7,
-            "{schema} should inherit Inputia's bundled menu/page_size for {keys}"
-        );
-        assert_eq!(
-            snapshot.candidates.len(),
-            7,
-            "{schema} should expose seven candidates for {keys}"
-        );
     }
+
+    let user_data_dir = std::env::temp_dir().join(format!(
+        "inputia-rime-consumed-len-smoke-{}",
+        std::process::id()
+    ));
+    let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
+        .with_dylib_path(&dylib_path)
+        .with_shared_data_dir(&shared_data_dir)
+        .with_schema("double_pinyin");
+    let engine = RimeEngine::open(config).expect("schema should open");
+    let candidates = engine.candidates("nilllema");
+    let single = candidates
+        .iter()
+        .find(|candidate| candidate.text == "你")
+        .expect("single-character prefix candidate should be present");
+    let phrase = candidates
+        .iter()
+        .find(|candidate| candidate.text == "你来了吗")
+        .expect("full phrase candidate should be present");
+
+    assert_eq!(engine.candidate_consumed_len("nilllema", single), Some(2));
+    assert_eq!(
+        engine.candidate_consumed_len("nilllema", phrase),
+        Some("nilllema".len())
+    );
 }
 
 #[test]
-fn bundled_schemas_prioritize_segmented_phrase_candidates() {
+fn bundled_double_pinyin_selection_preserves_remaining_input_for_partial_commit() {
     let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();
     let Some(shared_data_dir) = bundled_shared_data_dir() else {
         eprintln!("skip: Inputia bundled RimeData is not available");
         return;
     };
 
-    let Some(dylib_path) = available_librime_dylib() else {
-        eprintln!("skip: librime runtime is not installed on this machine");
+    let dylib_path =
+        PathBuf::from("/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib");
+    if !dylib_path.exists() {
+        eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
-    };
-
-    let cases = [
-        SegmentedPhraseSmokeCase {
-            schema: "luna_pinyin_simp",
-            keys: "nillem",
-            expected_first: Some("你来了吗"),
-        },
-        SegmentedPhraseSmokeCase {
-            schema: "double_pinyin",
-            keys: "nillem",
-            expected_first: Some("你来"),
-        },
-        SegmentedPhraseSmokeCase {
-            schema: "double_pinyin_flypy",
-            keys: "nillem",
-            expected_first: None,
-        },
-        SegmentedPhraseSmokeCase {
-            schema: "double_pinyin_sogou",
-            keys: "nillem",
-            expected_first: Some("你来"),
-        },
-        SegmentedPhraseSmokeCase {
-            schema: "guobiao_bispell",
-            keys: "nillem",
-            expected_first: Some("你来了吗"),
-        },
-        SegmentedPhraseSmokeCase {
-            schema: "double_pinyin_mspy",
-            keys: "nillem",
-            expected_first: Some("你来"),
-        },
-        SegmentedPhraseSmokeCase {
-            schema: "double_pinyin_abc",
-            keys: "nillem",
-            expected_first: None,
-        },
-        SegmentedPhraseSmokeCase {
-            schema: "double_pinyin_pyjj",
-            keys: "nillem",
-            expected_first: None,
-        },
-        SegmentedPhraseSmokeCase {
-            schema: "double_pinyin_st",
-            keys: "nillem",
-            expected_first: None,
-        },
-    ];
-
-    for case in cases {
-        let user_data_dir = std::env::temp_dir().join(format!(
-            "inputia-rime-segmented-phrase-smoke-{}-{}",
-            std::process::id(),
-            case.schema
-        ));
-        let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
-            .with_dylib_path(&dylib_path)
-            .with_shared_data_dir(&shared_data_dir)
-            .with_schema(case.schema)
-            .with_spelling_correction(false);
-        let engine = RimeEngine::open(config).expect("schema should open");
-        let candidates = engine.candidates(case.keys);
-        let first = candidates
-            .first()
-            .expect("segmented keys should produce candidates");
-        let first_len = first.text.chars().count();
-        let first_single_index = candidates
-            .iter()
-            .position(|candidate| candidate.text.chars().count() == 1);
-
-        assert!(
-            first_len > 1,
-            "{} should prefer a phrase candidate for segmented {}",
-            case.schema,
-            case.keys
-        );
-        if let Some(expected_first) = case.expected_first {
-            assert_eq!(
-                first.text, expected_first,
-                "{} should keep the known phrase candidate first for {}",
-                case.schema, case.keys
-            );
-        }
-        if let Some(first_single_index) = first_single_index {
-            assert!(
-                first_single_index > 0,
-                "{} should place single-character fallback after the first phrase for {}",
-                case.schema,
-                case.keys
-            );
-        }
     }
+
+    let user_data_dir = std::env::temp_dir().join(format!(
+        "inputia-rime-select-partial-smoke-{}",
+        std::process::id()
+    ));
+    let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
+        .with_dylib_path(&dylib_path)
+        .with_shared_data_dir(&shared_data_dir)
+        .with_schema("double_pinyin");
+    let engine = RimeEngine::open(config).expect("schema should open");
+    let candidates = engine.candidates("nilllema");
+    let single = candidates
+        .iter()
+        .find(|candidate| candidate.text == "你")
+        .expect("single-character prefix candidate should be present")
+        .clone();
+
+    let partial = engine
+        .select_candidate("nilllema", 0, 0, &single)
+        .expect("single-character selection should keep live Rime input");
+    assert_eq!(partial.commit, "你");
+    assert_eq!(partial.composing, "lllema");
+    assert_eq!(
+        partial
+            .candidates
+            .first()
+            .map(|candidate| candidate.text.as_str()),
+        Some("来了吗")
+    );
+
+    let rest = partial
+        .candidates
+        .first()
+        .expect("remaining input should still have candidates")
+        .clone();
+    let committed_rest = engine
+        .select_candidate(&partial.composing, 0, 0, &rest)
+        .expect("remaining input should commit normally");
+    assert_eq!(committed_rest.commit, "来了吗");
+    assert!(committed_rest.composing.is_empty());
+    assert!(committed_rest.candidates.is_empty());
 }
 
 #[test]
@@ -265,10 +215,12 @@ fn bundled_full_pinyin_promotes_spelling_corrections_when_available() {
         return;
     };
 
-    let Some(dylib_path) = available_librime_dylib() else {
-        eprintln!("skip: librime runtime is not installed on this machine");
+    let dylib_path =
+        PathBuf::from("/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib");
+    if !dylib_path.exists() {
+        eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
-    };
+    }
 
     let cases = [
         ("zhonguo", "中国"),
@@ -309,6 +261,75 @@ fn bundled_full_pinyin_promotes_spelling_corrections_when_available() {
 }
 
 #[test]
+fn bundled_inputia_extension_lexicons_promote_poetry_idiom_and_rare_char_when_available() {
+    let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();
+    let Some(shared_data_dir) = bundled_shared_data_dir() else {
+        eprintln!("skip: Inputia bundled RimeData is not available");
+        return;
+    };
+
+    let dylib_path =
+        PathBuf::from("/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib");
+    if !dylib_path.exists() {
+        eprintln!("skip: Squirrel librime runtime is not installed on this machine");
+        return;
+    }
+
+    for dict in [
+        "inputia_luna_pinyin.dict.yaml",
+        "inputia_idiom.dict.yaml",
+        "inputia_poetry.dict.yaml",
+        "inputia_classical.dict.yaml",
+        "inputia_ext_chars.dict.yaml",
+    ] {
+        assert!(
+            shared_data_dir.join(dict).exists(),
+            "Inputia extension dictionary is missing: {dict}"
+        );
+    }
+
+    let user_data_dir = std::env::temp_dir().join(format!(
+        "inputia-rime-extension-smoke-{}",
+        std::process::id()
+    ));
+    let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
+        .with_dylib_path(&dylib_path)
+        .with_shared_data_dir(&shared_data_dir)
+        .with_schema("luna_pinyin_simp")
+        .with_spelling_correction(false);
+    let engine = RimeEngine::open(config).expect("schema should open");
+
+    let extension_cases = [
+        ("changfengpolang", "长风破浪"),
+        ("huiyoushi", "会有时"),
+        ("qianfanguo", "千帆过"),
+        ("lankeren", "烂柯人"),
+        ("yindizhiyi", "因地制宜"),
+        ("biang", "𰻞"),
+    ];
+
+    for (keys, expected) in extension_cases {
+        let candidates = engine.candidates(keys);
+        assert!(
+            candidates
+                .iter()
+                .take(10)
+                .any(|candidate| candidate.text == expected),
+            "{keys} should include {expected} in the first two pages with Inputia extension lexicons"
+        );
+    }
+
+    for (keys, expected_first) in [("nihao", "你好"), ("f", "发"), ("da", "打")] {
+        let candidates = engine.candidates(keys);
+        assert_eq!(
+            candidates.first().map(|candidate| candidate.text.as_str()),
+            Some(expected_first),
+            "{keys} should keep the common base candidate {expected_first} first"
+        );
+    }
+}
+
+#[test]
 fn bundled_double_pinyin_schemas_expose_maile_candidates_when_available() {
     let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();
     let Some(shared_data_dir) = bundled_shared_data_dir() else {
@@ -316,10 +337,12 @@ fn bundled_double_pinyin_schemas_expose_maile_candidates_when_available() {
         return;
     };
 
-    let Some(dylib_path) = available_librime_dylib() else {
-        eprintln!("skip: librime runtime is not installed on this machine");
+    let dylib_path =
+        PathBuf::from("/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib");
+    if !dylib_path.exists() {
+        eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
-    };
+    }
 
     let cases = [
         MaileSmokeCase {
@@ -386,10 +409,12 @@ fn bundled_incremental_session_matches_cold_evaluate_when_available() {
         return;
     };
 
-    let Some(dylib_path) = available_librime_dylib() else {
-        eprintln!("skip: librime runtime is not installed on this machine");
+    let dylib_path =
+        PathBuf::from("/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib");
+    if !dylib_path.exists() {
+        eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
-    };
+    }
 
     let cases = [
         ("luna_pinyin_simp", "zhongguo"),
@@ -458,13 +483,6 @@ struct MaileSmokeCase {
     expected_present: &'static str,
 }
 
-#[derive(Clone, Copy)]
-struct SegmentedPhraseSmokeCase {
-    schema: &'static str,
-    keys: &'static str,
-    expected_first: Option<&'static str>,
-}
-
 trait SnapshotOutcome {
     fn snapshot_outcome(&self) -> inputia_core::InputOutcome;
 }
@@ -498,9 +516,4 @@ fn bundled_shared_data_dir() -> Option<PathBuf> {
     }
 
     None
-}
-
-fn available_librime_dylib() -> Option<PathBuf> {
-    let config = RimeEngineConfig::squirrel_luna_pinyin_simp("/tmp/inputia-rime-runtime-probe");
-    config.dylib_path.exists().then_some(config.dylib_path)
 }

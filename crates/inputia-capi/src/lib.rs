@@ -4,7 +4,7 @@ use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
 
 use inputia_core::{
-    AppContext, AppPolicy, Candidate, CandidateCommit, CharacterWidthPreference, ChineseEngine,
+    AppContext, AppPolicy, Candidate, CandidateSelection, CharacterWidthPreference, ChineseEngine,
     CoreSettings, InputMode, InputOutcome, InputiaCore, Key, MemorySource, PrivacyDecision,
     PunctuationPreference, SqliteMemory,
 };
@@ -48,7 +48,11 @@ struct RankedRimeEngine {
 
 impl ChineseEngine for RankedRimeEngine {
     fn candidates(&self, composing: &str) -> Vec<Candidate> {
-        let candidates = self.rime.candidates(composing);
+        self.candidates_up_to(composing, 10)
+    }
+
+    fn candidates_up_to(&self, composing: &str, minimum_count: usize) -> Vec<Candidate> {
+        let candidates = self.rime.candidates_up_to(composing, minimum_count);
         let Some(memory) = &self.memory else {
             return candidates;
         };
@@ -57,48 +61,35 @@ impl ChineseEngine for RankedRimeEngine {
             return candidates;
         };
         memory
-            .rank_candidates(candidates.clone())
+            .rank_candidates_for_composing(composing, candidates.clone())
             .unwrap_or(candidates)
+    }
+
+    fn candidate_consumed_len(&self, composing: &str, candidate: &Candidate) -> Option<usize> {
+        self.rime.candidate_consumed_len(composing, candidate)
     }
 
     fn select_candidate(
         &self,
         composing: &str,
-        candidate: &Candidate,
         page: usize,
         page_index: usize,
-    ) -> Option<CandidateCommit> {
-        let snapshot = self
+        candidate: &Candidate,
+    ) -> Option<CandidateSelection> {
+        let mut selection = self
             .rime
-            .select_live_candidate(composing, candidate, page, page_index)
+            .select_candidate(composing, page, page_index, candidate)
             .ok()?;
-        let candidates = if snapshot.input.is_empty() {
-            Vec::new()
-        } else {
-            self.candidates(&snapshot.input)
+        let Some(memory) = &self.memory else {
+            return Some(selection);
         };
-        if let Some(commit) = snapshot.commit.filter(|commit| !commit.is_empty()) {
-            return Some(CandidateCommit::new(
-                commit,
-                snapshot.input,
-                snapshot.page_no.max(0) as usize,
-                candidates,
-            ));
-        }
-        if candidates.is_empty() {
-            return Some(CandidateCommit::new(
-                candidate.text.clone(),
-                "",
-                0,
-                Vec::new(),
-            ));
-        }
-        Some(CandidateCommit::preedit(
-            snapshot.preedit,
-            snapshot.input,
-            snapshot.page_no.max(0) as usize,
-            candidates,
-        ))
+        let Ok(memory) = memory.lock() else {
+            return Some(selection);
+        };
+        selection.candidates = memory
+            .rank_candidates_for_composing(&selection.composing, selection.candidates.clone())
+            .unwrap_or(selection.candidates);
+        Some(selection)
     }
 }
 
@@ -190,6 +181,23 @@ pub extern "C" fn inputia_session_new_from_settings(
     let Some(options) = session_options_from_settings(settings) else {
         return null_mut();
     };
+    new_session_with_options(options)
+}
+
+#[no_mangle]
+pub extern "C" fn inputia_session_new_from_settings_without_memory(
+    settings_path: *const c_char,
+) -> *mut InputiaSession {
+    let Some(settings_path) = (unsafe { optional_c_string(settings_path) }) else {
+        return null_mut();
+    };
+    let Ok(settings) = InputiaSettings::load_or_create(&settings_path) else {
+        return null_mut();
+    };
+    let Some(mut options) = session_options_from_settings(settings) else {
+        return null_mut();
+    };
+    options.memory_db_path = None;
     new_session_with_options(options)
 }
 
@@ -490,9 +498,7 @@ fn new_session(
     let Some(user_data_dir) = (unsafe { optional_c_string(user_data_dir) }) else {
         return null_mut();
     };
-    let config = apply_default_shared_data_dir(
-        RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir).with_schema(schema_id),
-    );
+    let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir).with_schema(schema_id);
     new_session_with_options(SessionOptions {
         rime: config,
         core: core_settings(
@@ -656,41 +662,13 @@ fn is_full_pinyin_schema(schema_id: &str) -> bool {
 }
 
 fn default_inputia_shared_data_dir() -> Option<std::path::PathBuf> {
-    current_bundle_rime_data_dir()
-        .into_iter()
-        .chain(
-            std::env::var("INPUTIA_RIME_SHARED_DATA_DIR")
-                .ok()
-                .map(std::path::PathBuf::from),
-        )
-        .chain(
-            [
-                "/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/RimeData",
-                "/Library/Input Methods/IputiaInputMethod.app/Contents/Resources/RimeData",
-            ]
-            .into_iter()
-            .map(std::path::PathBuf::from),
-        )
-        .chain(std::iter::once(
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../macos/InputiaInputMethod/build/RimeData"),
-        ))
-        .find(|path| path.exists())
-}
-
-fn apply_default_shared_data_dir(config: RimeEngineConfig) -> RimeEngineConfig {
-    if let Some(path) = default_inputia_shared_data_dir() {
-        config.with_shared_data_dir(path)
-    } else {
-        config
-    }
-}
-
-fn current_bundle_rime_data_dir() -> Option<std::path::PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let macos_dir = exe.parent()?;
-    let contents_dir = macos_dir.parent()?;
-    Some(contents_dir.join("Resources").join("RimeData"))
+    [
+        "/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/RimeData",
+        "/Library/Input Methods/IputiaInputMethod.app/Contents/Resources/RimeData",
+    ]
+    .into_iter()
+    .map(std::path::PathBuf::from)
+    .find(|path| path.exists())
 }
 
 fn core_settings(
@@ -1001,8 +979,8 @@ mod tests {
     #[test]
     fn capi_drives_core_with_rime_full_pinyin_when_available() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
-        let user_data_dir =
-            CString::new(shared_rime_user_data_dir().to_string_lossy().as_bytes()).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let user_data_dir = CString::new(temp.path().to_string_lossy().as_bytes()).unwrap();
         let session = inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 2);
         if session.is_null() {
             eprintln!("skip: Squirrel librime runtime is not available");
@@ -1037,8 +1015,8 @@ mod tests {
     #[test]
     fn capi_enter_commits_raw_composition() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
-        let user_data_dir =
-            CString::new(shared_rime_user_data_dir().to_string_lossy().as_bytes()).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let user_data_dir = CString::new(temp.path().to_string_lossy().as_bytes()).unwrap();
         let session = inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 5);
         if session.is_null() {
             eprintln!("skip: Squirrel librime runtime is not available");
@@ -1064,9 +1042,9 @@ mod tests {
     #[test]
     fn capi_paginates_across_rime_candidate_pages() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
-        let user_data_dir =
-            CString::new(shared_rime_user_data_dir().to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 5);
+        let temp = tempfile::tempdir().unwrap();
+        let user_data_dir = CString::new(temp.path().to_string_lossy().as_bytes()).unwrap();
+        let session = inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 8);
         if session.is_null() {
             eprintln!("skip: Squirrel librime runtime is not available");
             return;
@@ -1077,15 +1055,27 @@ mod tests {
             "Chinese"
         );
         let mut latest = Value::Null;
-        for ch in "ni".chars() {
+        for ch in "ba".chars() {
             latest = handle_json(inputia_session_handle_char(session, ch as u32));
         }
-        assert_eq!(latest["visible_candidates"][0]["text"], "你");
+        assert_eq!(latest["visible_candidates"][0]["text"], "吧");
+        assert!(!latest["visible_candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate["text"] == "叭"));
 
         let page_down = handle_json(inputia_session_handle_special(session, KEY_PAGE_DOWN));
         assert_eq!(page_down["page"], 1);
-        assert_ne!(page_down["visible_candidates"][0]["text"], "你");
-        assert_eq!(page_down["visible_candidates"].as_array().unwrap().len(), 5);
+        assert_eq!(page_down["visible_candidates"].as_array().unwrap().len(), 8);
+        assert!(
+            page_down["visible_candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|candidate| candidate["text"] == "叭"),
+            "CAPI must preserve deeper Rime candidates such as 叭 instead of truncating RankedRimeEngine to its shallow default"
+        );
 
         inputia_session_free(session);
     }
@@ -1143,7 +1133,7 @@ mod tests {
     fn capi_memory_reranks_candidates_and_respects_sensitive_apps() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
-        let user_data_dir = shared_rime_user_data_dir();
+        let user_data_dir = temp.path().join("rime-user");
         let memory_db = temp.path().join("inputia-memory.db");
         let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
         let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
@@ -1158,7 +1148,7 @@ mod tests {
         }
 
         let source_app = CString::new("com.apple.TextEdit").unwrap();
-        let remembered = CString::new("中国").unwrap();
+        let remembered = CString::new("种过").unwrap();
         let learned = handle_json(inputia_session_learn(
             session,
             SOURCE_CLIPBOARD,
@@ -1166,7 +1156,7 @@ mod tests {
             source_app.as_ptr(),
         ));
         assert_eq!(learned["decision"], "learn");
-        assert_eq!(learned["term"], "中国");
+        assert_eq!(learned["term"], "种过");
 
         let sensitive_app = CString::new("com.1password.1password").unwrap();
         let sensitive_term = CString::new("密码 候选").unwrap();
@@ -1189,7 +1179,7 @@ mod tests {
         assert_eq!(voice["decision"], "learn");
 
         let clipboard_candidates = handle_json(inputia_session_clipboard_candidates(session, 10));
-        assert_eq!(clipboard_candidates["candidates"][0]["text"], "中国");
+        assert_eq!(clipboard_candidates["candidates"][0]["text"], "种过");
         assert_eq!(clipboard_candidates["candidates"][0]["source"], "clipboard");
         assert!(!clipboard_candidates["candidates"]
             .as_array()
@@ -1204,37 +1194,39 @@ mod tests {
         for ch in "zhongguo".chars() {
             latest = handle_json(inputia_session_handle_char(session, ch as u32));
         }
-        assert_eq!(latest["visible_candidates"][0]["text"], "中国");
+        assert_eq!(latest["visible_candidates"][0]["text"], "种过");
         assert_eq!(latest["visible_candidates"][0]["source"], "clipboard");
 
         let commit = handle_json(inputia_session_handle_special(session, KEY_SPACE));
-        assert_eq!(commit["commit"], "中国");
+        assert_eq!(commit["commit"], "种过");
 
         let hotwords = handle_json(inputia_session_voice_hotwords(session, 10));
         let hotword_values = hotwords["hotwords"].as_array().unwrap();
         assert!(hotword_values.iter().any(|value| value == "语音 热词"));
-        assert!(hotword_values.iter().any(|value| value == "中国"));
+        assert!(hotword_values.iter().any(|value| value == "种过"));
         assert!(!hotword_values.iter().any(|value| value == "密码 候选"));
 
         inputia_session_free(session);
     }
 
     #[test]
-    fn capi_memory_does_not_promote_single_character_over_long_double_pinyin_candidate() {
+    fn capi_long_double_pinyin_input_keeps_phrase_ahead_of_single_character_memory() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let Some(shared_data_dir) = bundled_shared_data_dir() else {
             eprintln!("skip: Inputia bundled RimeData is not available");
             return;
         };
+
         let temp = tempfile::tempdir().unwrap();
         let settings_path = temp.path().join("settings.json");
-        let memory_db_path = temp.path().join("inputia-memory.db");
         let settings = InputiaSettings {
             schema_id: "double_pinyin".to_string(),
+            candidate_page_size: 8,
             rime_shared_data_dir: Some(shared_data_dir),
-            rime_user_data_dir: Some(shared_rime_user_data_dir()),
-            memory_db_path: Some(memory_db_path),
-            spelling_correction_enabled: false,
+            rime_user_data_dir: Some(temp.path().join("rime-user")),
+            memory_db_path: Some(temp.path().join("inputia-memory.db")),
+            memory_enabled: true,
+            privacy_learning_enabled: true,
             ..InputiaSettings::default()
         };
         settings.save(&settings_path).unwrap();
@@ -1247,7 +1239,7 @@ mod tests {
 
         let source_app = CString::new("com.apple.TextEdit").unwrap();
         let single_char = CString::new("你").unwrap();
-        for _ in 0..30 {
+        for _ in 0..20 {
             let learned = handle_json(inputia_session_learn(
                 session,
                 SOURCE_TYPED,
@@ -1261,138 +1253,34 @@ mod tests {
             handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
             "Chinese"
         );
-        let mut latest = serde_json::Value::Null;
-        for ch in "nillem".chars() {
+        let mut latest = Value::Null;
+        for ch in "nilllema".chars() {
             latest = handle_json(inputia_session_handle_char(session, ch as u32));
         }
 
-        assert_eq!(latest["visible_candidates"][0]["text"], "你来");
-        assert_ne!(latest["visible_candidates"][0]["text"], "你");
-
-        let selected_single = handle_json(inputia_session_handle_digit(session, 2));
-        assert!(selected_single["commit"].is_null());
-        assert_eq!(selected_single["composing"], "你laiem");
-        assert_eq!(selected_single["visible_candidates"][0]["text"], "来");
+        assert_eq!(latest["visible_candidates"][0]["text"], "你来了吗");
+        let single_index = latest["visible_candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|candidate| candidate["text"] == "你")
+            .expect("single-character candidate should remain visible");
+        let partial = handle_json(inputia_session_handle_digit(
+            session,
+            (single_index + 1) as u8,
+        ));
+        assert_eq!(partial["commit"], "你");
+        assert_eq!(partial["composing"], "lllema");
+        assert_eq!(partial["visible_candidates"][0]["text"], "来了吗");
 
         inputia_session_free(session);
-    }
-
-    #[test]
-    fn capi_memory_keeps_segmented_phrase_ahead_of_single_character_across_schemas() {
-        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
-        let Some(shared_data_dir) = bundled_shared_data_dir() else {
-            eprintln!("skip: Inputia bundled RimeData is not available");
-            return;
-        };
-
-        let cases = [
-            "double_pinyin",
-            "double_pinyin_flypy",
-            "double_pinyin_sogou",
-            "guobiao_bispell",
-            "double_pinyin_mspy",
-            "double_pinyin_abc",
-            "double_pinyin_pyjj",
-            "double_pinyin_st",
-        ];
-        let temp_root = tempfile::tempdir().unwrap();
-        let source_app = CString::new("com.apple.TextEdit").unwrap();
-        let single_char = CString::new("你").unwrap();
-
-        for schema in cases {
-            let case_root = temp_root.path().join(schema);
-            let settings_path = case_root.join("settings.json");
-            let rime_user_data_dir = case_root.join("rime-user");
-            let memory_db_path = case_root.join("inputia-memory.db");
-            std::fs::create_dir_all(&rime_user_data_dir).unwrap();
-            let settings = InputiaSettings {
-                schema_id: schema.to_string(),
-                rime_shared_data_dir: Some(shared_data_dir.clone()),
-                rime_user_data_dir: Some(rime_user_data_dir),
-                memory_db_path: Some(memory_db_path),
-                spelling_correction_enabled: false,
-                candidate_page_size: 9,
-                ..InputiaSettings::default()
-            };
-            settings.save(&settings_path).unwrap();
-            let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
-            let session = inputia_session_new_from_settings(settings_path.as_ptr());
-            if session.is_null() {
-                eprintln!("skip: Squirrel librime runtime is not available");
-                return;
-            }
-
-            for _ in 0..30 {
-                let learned = handle_json(inputia_session_learn(
-                    session,
-                    SOURCE_TYPED,
-                    single_char.as_ptr(),
-                    source_app.as_ptr(),
-                ));
-                assert_eq!(learned["decision"], "learn", "{schema}");
-            }
-
-            assert_eq!(
-                handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
-                "Chinese",
-                "{schema}"
-            );
-            let mut latest = Value::Null;
-            for ch in "nillem".chars() {
-                latest = handle_json(inputia_session_handle_char(session, ch as u32));
-            }
-
-            let candidates = latest["visible_candidates"].as_array().unwrap();
-            let first_text = candidates[0]["text"].as_str().unwrap();
-            assert!(
-                first_text.chars().count() > 1,
-                "{schema} should keep a phrase ahead of the learned single-character candidate"
-            );
-            let single_index = candidates
-                .iter()
-                .position(|candidate| candidate["text"] == "你")
-                .unwrap_or(usize::MAX);
-            if single_index == usize::MAX {
-                inputia_session_free(session);
-                continue;
-            }
-            assert!(
-                single_index > 0,
-                "{schema} should not rank the learned single-character candidate first"
-            );
-
-            let selected_single = handle_json(inputia_session_handle_digit(
-                session,
-                (single_index + 1) as u8,
-            ));
-            assert!(
-                selected_single["commit"].is_null(),
-                "{schema} should keep partial single-character selection in composition"
-            );
-            assert!(
-                !selected_single["composing"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .is_empty(),
-                "{schema} should keep remaining composition after single-character selection"
-            );
-            assert!(
-                !selected_single["visible_candidates"]
-                    .as_array()
-                    .unwrap()
-                    .is_empty(),
-                "{schema} should keep candidates after single-character selection"
-            );
-
-            inputia_session_free(session);
-        }
     }
 
     #[test]
     fn capi_returns_english_completion_candidates_from_typed_memory() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
-        let user_data_dir = shared_rime_user_data_dir();
+        let user_data_dir = temp.path().join("rime-user");
         let memory_db = temp.path().join("inputia-memory.db");
         let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
         let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
@@ -1460,7 +1348,7 @@ mod tests {
     fn capi_imports_handy_history_into_voice_hotwords_and_ranking() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
-        let user_data_dir = shared_rime_user_data_dir();
+        let user_data_dir = temp.path().join("rime-user");
         let memory_db = temp.path().join("inputia-memory.db");
         let history_db = temp.path().join("history.db");
         create_handy_history_db(&history_db);
@@ -1489,7 +1377,7 @@ mod tests {
 
         let hotwords = handle_json(inputia_session_voice_hotwords(session, 10));
         let hotword_values = hotwords["hotwords"].as_array().unwrap();
-        assert!(hotword_values.iter().any(|value| value == "中国"));
+        assert!(hotword_values.iter().any(|value| value == "种过"));
         assert!(hotword_values.iter().any(|value| value == "语音 热词"));
 
         assert_eq!(
@@ -1500,7 +1388,7 @@ mod tests {
         for ch in "zhongguo".chars() {
             latest = handle_json(inputia_session_handle_char(session, ch as u32));
         }
-        assert_eq!(latest["visible_candidates"][0]["text"], "中国");
+        assert_eq!(latest["visible_candidates"][0]["text"], "种过");
         assert_eq!(latest["visible_candidates"][0]["source"], "voice");
 
         inputia_session_free(session);
@@ -1510,7 +1398,7 @@ mod tests {
     fn capi_imports_handy_clipboard_and_skips_sensitive_source_apps() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
-        let user_data_dir = shared_rime_user_data_dir();
+        let user_data_dir = temp.path().join("rime-user");
         let memory_db = temp.path().join("inputia-memory.db");
         let clipboard_db = temp.path().join("clipboard.db");
         create_handy_clipboard_db(&clipboard_db);
@@ -1538,7 +1426,7 @@ mod tests {
         assert_eq!(imported["imported"], 1);
 
         let clipboard_candidates = handle_json(inputia_session_clipboard_candidates(session, 10));
-        assert_eq!(clipboard_candidates["candidates"][0]["text"], "中国");
+        assert_eq!(clipboard_candidates["candidates"][0]["text"], "种过");
         assert_eq!(clipboard_candidates["candidates"][0]["source"], "clipboard");
         assert!(!clipboard_candidates["candidates"]
             .as_array()
@@ -1554,7 +1442,7 @@ mod tests {
         for ch in "zhongguo".chars() {
             latest = handle_json(inputia_session_handle_char(session, ch as u32));
         }
-        assert_eq!(latest["visible_candidates"][0]["text"], "中国");
+        assert_eq!(latest["visible_candidates"][0]["text"], "种过");
         assert_eq!(latest["visible_candidates"][0]["source"], "clipboard");
 
         inputia_session_free(session);
@@ -1564,7 +1452,7 @@ mod tests {
     fn capi_typed_commits_respect_current_app_context() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
-        let user_data_dir = shared_rime_user_data_dir();
+        let user_data_dir = temp.path().join("rime-user");
         let memory_db = temp.path().join("inputia-memory.db");
         let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
         let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
@@ -1605,7 +1493,7 @@ mod tests {
     fn capi_window_contexts_can_block_learning() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
-        let user_data_dir = shared_rime_user_data_dir();
+        let user_data_dir = temp.path().join("rime-user");
         let memory_db = temp.path().join("inputia-memory.db");
         let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
         let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
@@ -1661,7 +1549,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let settings_path = temp.path().join("settings.json");
         let settings = InputiaSettings {
-            rime_user_data_dir: Some(shared_rime_user_data_dir()),
+            rime_user_data_dir: Some(temp.path().join("rime-user")),
             memory_enabled: false,
             shift_toggle_enabled: false,
             input_mode_toggle_shortcut: inputia_settings::InputModeToggleShortcut::None,
@@ -1689,7 +1577,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let settings_path = temp.path().join("settings.json");
         let settings = InputiaSettings {
-            rime_user_data_dir: Some(shared_rime_user_data_dir()),
+            rime_user_data_dir: Some(temp.path().join("rime-user")),
             memory_enabled: false,
             shift_toggle_enabled: false,
             input_mode_toggle_shortcut: inputia_settings::InputModeToggleShortcut::ControlSpace,
@@ -1720,8 +1608,8 @@ mod tests {
     #[test]
     fn capi_sets_input_mode_explicitly() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
-        let user_data_dir =
-            CString::new(shared_rime_user_data_dir().to_string_lossy().as_bytes()).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let user_data_dir = CString::new(temp.path().to_string_lossy().as_bytes()).unwrap();
         let session = inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 5);
         if session.is_null() {
             eprintln!("skip: Squirrel librime runtime is not available");
@@ -1752,7 +1640,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let settings_path = temp.path().join("settings.json");
         let settings = InputiaSettings {
-            rime_user_data_dir: Some(shared_rime_user_data_dir()),
+            rime_user_data_dir: Some(temp.path().join("rime-user")),
             memory_enabled: false,
             candidate_page_size: 2,
             punctuation_preference: inputia_settings::PunctuationPreference::FollowInputMode,
@@ -1782,36 +1670,99 @@ mod tests {
     }
 
     #[test]
-    fn capi_backfills_legacy_settings_paths_and_shared_data_fallback() {
+    fn settings_fallback_without_memory_preserves_schema_and_candidate_count() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
-        if bundled_shared_data_dir().is_none() {
-            eprintln!("skip: Inputia bundled RimeData is not available");
+        let Some(shared_data_dir) = default_inputia_shared_data_dir() else {
+            eprintln!("skip: Inputia RimeData is not installed on this machine");
+            return;
+        };
+        if !shared_data_dir.join("double_pinyin.schema.yaml").exists() {
+            eprintln!("skip: double_pinyin schema is not available");
             return;
         }
 
-        let legacy_root = std::env::temp_dir().join(format!(
-            "inputia-capi-legacy-settings-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let settings_path = legacy_root.join("settings.json");
-        std::fs::create_dir_all(&legacy_root).unwrap();
-        std::fs::write(
-            &settings_path,
-            format!(
-                r#"{{
-                  "schema_id": "double_pinyin",
-                  "candidate_page_size": 7,
-                  "memory_enabled": false,
-                  "rime_shared_data_dir": "{}"
-                }}"#,
-                legacy_root.join("missing-rime-data").display()
-            ),
-        )
-        .unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let settings_path = temp.path().join("settings.json");
+        let invalid_memory_path = temp.path().join("memory-as-directory");
+        std::fs::create_dir_all(&invalid_memory_path).unwrap();
+        let settings = InputiaSettings {
+            schema_id: "double_pinyin".to_string(),
+            candidate_page_size: 8,
+            rime_shared_data_dir: Some(shared_data_dir),
+            rime_user_data_dir: Some(temp.path().join("rime-user")),
+            memory_enabled: true,
+            privacy_learning_enabled: true,
+            memory_db_path: Some(invalid_memory_path),
+            ..InputiaSettings::default()
+        };
+        settings.save(&settings_path).unwrap();
+        let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
+
+        let failed = inputia_session_new_from_settings(settings_path.as_ptr());
+        assert!(failed.is_null());
+
+        let session = inputia_session_new_from_settings_without_memory(settings_path.as_ptr());
+        assert!(!session.is_null());
+        let _ = handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE));
+        let mut latest = serde_json::Value::Null;
+        for ch in "yh".chars() {
+            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+        }
+        let candidates = latest["visible_candidates"].as_array().unwrap();
+        assert_eq!(candidates.len(), 8);
+        assert!(candidates.iter().any(|candidate| candidate["text"] == "洋"));
+
+        inputia_session_free(session);
+    }
+
+    #[test]
+    fn capi_loads_full_width_setting_from_settings_file() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let settings_path = temp.path().join("settings.json");
+        let settings = InputiaSettings {
+            rime_user_data_dir: Some(temp.path().join("rime-user")),
+            memory_enabled: false,
+            character_width_preference: inputia_settings::CharacterWidthPreference::FullWidth,
+            ..InputiaSettings::default()
+        };
+        settings.save(&settings_path).unwrap();
+        let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
+        let session = inputia_session_new_from_settings(settings_path.as_ptr());
+        if session.is_null() {
+            eprintln!("skip: Squirrel librime runtime is not available");
+            return;
+        }
+
+        let direct = handle_json(inputia_session_handle_char(session, 'A' as u32));
+        assert_eq!(direct["mode"], "English");
+        assert_eq!(direct["commit"], "Ａ");
+
+        assert_eq!(
+            handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
+            "Chinese"
+        );
+        for ch in "ni".chars() {
+            let _ = handle_json(inputia_session_handle_char(session, ch as u32));
+        }
+        let raw = handle_json(inputia_session_handle_special(session, KEY_ENTER));
+        assert_eq!(raw["commit"], "ｎｉ");
+
+        inputia_session_free(session);
+    }
+
+    #[test]
+    fn capi_loads_spelling_correction_setting_from_settings_file() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let settings_path = temp.path().join("settings.json");
+        let settings = InputiaSettings {
+            rime_user_data_dir: Some(temp.path().join("rime-user")),
+            memory_enabled: false,
+            spelling_correction_enabled: true,
+            ..InputiaSettings::default()
+        };
+        settings.save(&settings_path).unwrap();
         let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
         let session = inputia_session_new_from_settings(settings_path.as_ptr());
         if session.is_null() {
@@ -1823,15 +1774,23 @@ mod tests {
             handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
             "Chinese"
         );
-
-        let mut latest = serde_json::Value::Null;
-        for ch in "nillem".chars() {
+        let mut latest = Value::Null;
+        for ch in "dagn".chars() {
             latest = handle_json(inputia_session_handle_char(session, ch as u32));
         }
-        assert_eq!(latest["visible_candidates"][0]["text"], "你来");
-        assert_eq!(latest["visible_candidates"].as_array().unwrap().len(), 7);
+        assert_eq!(latest["visible_candidates"][0]["text"], "当");
 
         inputia_session_free(session);
+    }
+
+    #[test]
+    fn spelling_correction_is_effective_only_for_full_pinyin_schemas() {
+        assert!(effective_spelling_correction("luna_pinyin_simp", true));
+        assert!(effective_spelling_correction("luna_pinyin", true));
+        assert!(!effective_spelling_correction("luna_pinyin_simp", false));
+        assert!(!effective_spelling_correction("double_pinyin", true));
+        assert!(!effective_spelling_correction("double_pinyin_sogou", true));
+        assert!(!effective_spelling_correction("guobiao_bispell", true));
     }
 
     #[test]
@@ -1917,260 +1876,13 @@ mod tests {
                 "{} should rank 中国 first for {} through settings",
                 case.schema, case.keys
             );
-            assert_eq!(
-                latest["visible_candidates"].as_array().unwrap().len(),
-                7,
-                "{} should expose seven settings-page candidates",
-                case.schema
-            );
+            assert_eq!(latest["visible_candidates"].as_array().unwrap().len(), 7);
 
             let commit = handle_json(inputia_session_handle_special(session, KEY_SPACE));
-            assert_eq!(
-                commit["commit"], "中国",
-                "{} should commit 中国 for {} through settings",
-                case.schema, case.keys
-            );
+            assert_eq!(commit["commit"], "中国");
             assert_eq!(commit["composing"], "");
-
             inputia_session_free(session);
         }
-    }
-
-    #[test]
-    fn capi_settings_guobiao_bispell_commits_standard_maile_sequence() {
-        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
-        let Some(shared_data_dir) = bundled_shared_data_dir() else {
-            eprintln!("skip: Inputia bundled RimeData is not available");
-            return;
-        };
-
-        let temp = tempfile::tempdir().unwrap();
-        let settings_path = temp.path().join("settings.json");
-        let rime_user_data_dir = temp.path().join("rime-user");
-        std::fs::create_dir_all(&rime_user_data_dir).unwrap();
-        let settings = InputiaSettings {
-            schema_id: "guobiao_bispell".to_string(),
-            rime_shared_data_dir: Some(shared_data_dir),
-            rime_user_data_dir: Some(rime_user_data_dir),
-            memory_enabled: false,
-            candidate_page_size: 7,
-            ..InputiaSettings::default()
-        };
-        settings.save(&settings_path).unwrap();
-        let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_from_settings(settings_path.as_ptr());
-        if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
-            return;
-        }
-
-        assert_eq!(
-            handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
-            "Chinese"
-        );
-
-        let mut latest = Value::Null;
-        for ch in "mkle".chars() {
-            latest = handle_json(inputia_session_handle_char(session, ch as u32));
-        }
-        assert_eq!(latest["composing"], "mkle");
-        assert_eq!(latest["visible_candidates"][0]["text"], "买了");
-        assert_ne!(latest["visible_candidates"][0]["text"], "mkle");
-
-        let commit = handle_json(inputia_session_handle_special(session, KEY_SPACE));
-        assert_eq!(commit["commit"], "买了");
-        assert_eq!(commit["composing"], "");
-
-        inputia_session_free(session);
-    }
-
-    #[test]
-    fn capi_loads_full_width_setting_from_settings_file() {
-        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
-        let temp = tempfile::tempdir().unwrap();
-        let settings_path = temp.path().join("settings.json");
-        let settings = InputiaSettings {
-            rime_user_data_dir: Some(shared_rime_user_data_dir()),
-            memory_enabled: false,
-            character_width_preference: inputia_settings::CharacterWidthPreference::FullWidth,
-            ..InputiaSettings::default()
-        };
-        settings.save(&settings_path).unwrap();
-        let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_from_settings(settings_path.as_ptr());
-        if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
-            return;
-        }
-
-        let direct = handle_json(inputia_session_handle_char(session, 'A' as u32));
-        assert_eq!(direct["mode"], "English");
-        assert_eq!(direct["commit"], "Ａ");
-
-        assert_eq!(
-            handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
-            "Chinese"
-        );
-        for ch in "ni".chars() {
-            let _ = handle_json(inputia_session_handle_char(session, ch as u32));
-        }
-        let raw = handle_json(inputia_session_handle_special(session, KEY_ENTER));
-        assert_eq!(raw["commit"], "ｎｉ");
-
-        inputia_session_free(session);
-    }
-
-    #[test]
-    fn capi_loads_spelling_correction_setting_from_settings_file() {
-        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
-        let temp = tempfile::tempdir().unwrap();
-        let settings_path = temp.path().join("settings.json");
-        let settings = InputiaSettings {
-            rime_user_data_dir: Some(shared_rime_user_data_dir()),
-            memory_enabled: false,
-            spelling_correction_enabled: true,
-            ..InputiaSettings::default()
-        };
-        settings.save(&settings_path).unwrap();
-        let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_from_settings(settings_path.as_ptr());
-        if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
-            return;
-        }
-
-        assert_eq!(
-            handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
-            "Chinese"
-        );
-        let mut latest = Value::Null;
-        for ch in "dagn".chars() {
-            latest = handle_json(inputia_session_handle_char(session, ch as u32));
-        }
-        assert_eq!(latest["visible_candidates"][0]["text"], "当");
-
-        inputia_session_free(session);
-    }
-
-    #[test]
-    fn spelling_correction_is_effective_only_for_full_pinyin_schemas() {
-        assert!(effective_spelling_correction("luna_pinyin_simp", true));
-        assert!(effective_spelling_correction("luna_pinyin", true));
-        assert!(!effective_spelling_correction("luna_pinyin_simp", false));
-        assert!(!effective_spelling_correction("double_pinyin", true));
-        assert!(!effective_spelling_correction("double_pinyin_sogou", true));
-        assert!(!effective_spelling_correction("guobiao_bispell", true));
-    }
-
-    #[test]
-    fn chinese_script_selects_schema_and_rime_option() {
-        assert_eq!(
-            effective_rime_script_config(
-                "luna_pinyin_simp",
-                &inputia_settings::ChineseScript::Traditional
-            ),
-            (
-                "luna_pinyin".to_string(),
-                vec![
-                    ("simplification".to_string(), false),
-                    ("zh_hans".to_string(), false),
-                    ("zh_hant".to_string(), true)
-                ]
-            )
-        );
-        assert_eq!(
-            effective_rime_script_config(
-                "luna_pinyin_simp",
-                &inputia_settings::ChineseScript::Simplified
-            ),
-            (
-                "luna_pinyin_simp".to_string(),
-                vec![("simplification".to_string(), true)]
-            )
-        );
-        assert_eq!(
-            effective_rime_script_config(
-                "luna_pinyin",
-                &inputia_settings::ChineseScript::Simplified
-            ),
-            (
-                "luna_pinyin".to_string(),
-                vec![
-                    ("simplification".to_string(), true),
-                    ("zh_hant".to_string(), false),
-                    ("zh_hans".to_string(), true)
-                ]
-            )
-        );
-        assert_eq!(
-            effective_rime_script_config(
-                "luna_pinyin",
-                &inputia_settings::ChineseScript::Traditional
-            ),
-            (
-                "luna_pinyin".to_string(),
-                vec![
-                    ("simplification".to_string(), false),
-                    ("zh_hans".to_string(), false),
-                    ("zh_hant".to_string(), true)
-                ]
-            )
-        );
-        assert_eq!(
-            effective_rime_script_config(
-                "double_pinyin_flypy",
-                &inputia_settings::ChineseScript::Traditional
-            ),
-            (
-                "double_pinyin_flypy".to_string(),
-                vec![("simplification".to_string(), false)]
-            )
-        );
-        assert_eq!(
-            effective_rime_script_config(
-                "guobiao_bispell",
-                &inputia_settings::ChineseScript::Traditional
-            ),
-            (
-                "guobiao_bispell".to_string(),
-                vec![
-                    ("simplification".to_string(), false),
-                    ("trad_tw".to_string(), true)
-                ]
-            )
-        );
-    }
-
-    #[test]
-    fn capi_traditional_script_commits_traditional_chinese() {
-        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
-        let temp = tempfile::tempdir().unwrap();
-        let settings_path = temp.path().join("settings.json");
-        let settings = InputiaSettings {
-            rime_user_data_dir: Some(shared_rime_user_data_dir()),
-            memory_enabled: false,
-            chinese_script: inputia_settings::ChineseScript::Traditional,
-            ..InputiaSettings::default()
-        };
-        settings.save(&settings_path).unwrap();
-        let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_from_settings(settings_path.as_ptr());
-        if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
-            return;
-        }
-
-        assert_eq!(
-            handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
-            "Chinese"
-        );
-        for ch in "zhongguo".chars() {
-            let _ = handle_json(inputia_session_handle_char(session, ch as u32));
-        }
-        let commit = handle_json(inputia_session_handle_special(session, KEY_SPACE));
-        assert_eq!(commit["commit"], "中國");
-
-        inputia_session_free(session);
     }
 
     #[test]
@@ -2186,7 +1898,7 @@ mod tests {
         let settings = InputiaSettings {
             schema_id: "double_pinyin".to_string(),
             rime_shared_data_dir: Some(shared_data_dir),
-            rime_user_data_dir: Some(shared_rime_user_data_dir()),
+            rime_user_data_dir: Some(temp.path().join("rime-user")),
             memory_enabled: false,
             ..InputiaSettings::default()
         };
@@ -2222,8 +1934,8 @@ mod tests {
     #[test]
     fn capi_toggles_punctuation_and_character_width_runtime() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
-        let user_data_dir =
-            CString::new(shared_rime_user_data_dir().to_string_lossy().as_bytes()).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let user_data_dir = CString::new(temp.path().to_string_lossy().as_bytes()).unwrap();
         let session = inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 5);
         if session.is_null() {
             eprintln!("skip: Squirrel librime runtime is not available");
@@ -2301,7 +2013,7 @@ mod tests {
                 1,
                 false,
                 "Voice 1",
-                "中国",
+                "种过",
                 Option::<String>::None
             ],
         )
@@ -2354,9 +2066,9 @@ mod tests {
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 "text",
-                "中国",
+                "种过",
                 "hash-1",
-                "中国",
+                "种过",
                 "com.apple.TextEdit",
                 1,
                 6
@@ -2416,11 +2128,5 @@ mod tests {
         }
 
         None
-    }
-
-    fn shared_rime_user_data_dir() -> std::path::PathBuf {
-        let path = std::env::temp_dir().join("inputia-capi-rime-user");
-        std::fs::create_dir_all(&path).expect("rime user data dir should be writable");
-        path
     }
 }

@@ -233,6 +233,7 @@ fn build_prompt(transcription: &str, custom_words: &[String]) -> CustomWordsProm
         "Only replace mistaken spans in text with exact entries from custom_words.",
         "Do not polish, reorder, add, delete, or alter any unrelated text.",
         "Do not output reasoning, markdown, code fences, or explanations.",
+        "Correct near-homophone mistakes across Latin spelling and CJK transliteration when the source span clearly names a custom word.",
         "For each replacement, from must be copied from source_text before any replacement.",
         "The assistant response already starts with {\"replacements\":; continue that JSON object only.",
         "Return only strict JSON: {\"replacements\":[{\"from\":\"...\",\"to\":\"...\"}]}",
@@ -261,6 +262,20 @@ fn build_prompt(transcription: &str, custom_words: &[String]) -> CustomWordsProm
                 "text": "武青在天津的西北边。",
                 "output": {
                     "replacements": [{"from": "武青", "to": "武清"}]
+                }
+            },
+            {
+                "custom_words": ["ollama"],
+                "text": "我希望先接一下Olama吧。",
+                "output": {
+                    "replacements": [{"from": "Olama", "to": "ollama"}]
+                }
+            },
+            {
+                "custom_words": ["ollama"],
+                "text": "我希望先接一下欧拉玛吧。",
+                "output": {
+                    "replacements": [{"from": "欧拉玛", "to": "ollama"}]
                 }
             }
         ]
@@ -604,7 +619,7 @@ pub(crate) fn validate_model_response(
                 replacement.from
             ));
         }
-        rebuilt = rebuilt.replacen(&replacement.from, &replacement.to, 1);
+        rebuilt = rebuilt.replace(&replacement.from, &replacement.to);
     }
 
     if payload.text != rebuilt {
@@ -703,6 +718,52 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.as_deref(), Some("我申请了臺灣大學"));
+    }
+
+    #[test]
+    fn accepts_latin_custom_word_spelling_correction() {
+        let result = validate_model_response(
+            "我希望先接一下Olama吧。",
+            &words(&["ollama"]),
+            r#"{"text":"我希望先接一下ollama吧。","replacements":[{"from":"Olama","to":"ollama"}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(result.as_deref(), Some("我希望先接一下ollama吧。"));
+    }
+
+    #[test]
+    fn accepts_cjk_transliteration_to_latin_custom_word() {
+        let result = validate_model_response(
+            "我希望先接一下欧拉玛吧。",
+            &words(&["ollama"]),
+            r#"{"text":"我希望先接一下ollama吧。","replacements":[{"from":"欧拉玛","to":"ollama"}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(result.as_deref(), Some("我希望先接一下ollama吧。"));
+    }
+
+    #[test]
+    fn accepts_replacing_every_occurrence_of_declared_span() {
+        let result = validate_model_response(
+            "欧拉玛和欧拉玛都要改。",
+            &words(&["ollama"]),
+            r#"{"text":"ollama和ollama都要改。","replacements":[{"from":"欧拉玛","to":"ollama"}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(result.as_deref(), Some("ollama和ollama都要改。"));
+    }
+
+    #[test]
+    fn prompt_teaches_latin_and_transliteration_corrections() {
+        let prompt = build_prompt("我希望先接一下欧拉玛吧。", &words(&["ollama"]));
+
+        assert!(prompt.system.contains("CJK transliteration"));
+        assert!(prompt.user.contains("\"from\":\"Olama\""));
+        assert!(prompt.user.contains("\"from\":\"欧拉玛\""));
+        assert!(prompt.user.contains("\"to\":\"ollama\""));
     }
 
     #[test]

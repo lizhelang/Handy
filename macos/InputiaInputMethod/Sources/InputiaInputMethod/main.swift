@@ -6,6 +6,16 @@ private struct InputiaAppContext: Equatable {
   let windowTitle: String?
 }
 
+private enum InputiaSecureDirectPolicy {
+  private static let secureBundleIds: Set<String> = [
+    "com.apple.SecurityAgent",
+  ]
+
+  static func shouldUseSecureDirectMode(context: InputiaAppContext) -> Bool {
+    secureBundleIds.contains(context.bundleId)
+  }
+}
+
 private let fallbackBundleIdentifier = "com.inputia.inputmethod.Inputia"
 private let connectionName = "com.inputia.inputmethod.Inputia_Connection"
 private let emptyReplacementRange = InputiaHostTextPolicy.replacementRange
@@ -20,6 +30,12 @@ private let keyCodeTab: UInt16 = 48
 private let keyCodePeriod: UInt16 = 47
 private let keyCodeDownArrow: UInt16 = 125
 private let keyCodeUpArrow: UInt16 = 126
+
+private struct InputiaExpandedCandidateEntry {
+  let text: String
+  let page: Int
+  let pageIndex: Int
+}
 
 private func inputiaDebugLog(_ message: String) {
   guard let path = ProcessInfo.processInfo.environment["INPUTIA_DEBUG_EVENTS"] else {
@@ -40,6 +56,17 @@ private func inputiaDebugLog(_ message: String) {
   _ = try? file.write(contentsOf: data)
 }
 
+private func isCurrentInputiaSourceSelected() -> Bool {
+  let source = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+  guard
+    let rawSourceID = TISGetInputSourceProperty(source, kTISPropertyInputSourceID)
+  else {
+    return false
+  }
+  let sourceID = Unmanaged<CFString>.fromOpaque(rawSourceID).takeUnretainedValue() as String
+  return sourceID.hasPrefix(fallbackBundleIdentifier)
+}
+
 @objc(NSManualApplication)
 final class NSManualApplication: NSApplication {}
 
@@ -57,6 +84,8 @@ final class InputiaApplicationDelegate: NSObject, NSApplicationDelegate, NSWindo
 enum InputiaHost {
   static var candidatePanel: InputiaCandidatePanel?
   static var settingsWindowController: InputiaSettingsWindowController?
+  static weak var activeInputController: InputiaInputController?
+  static var modifierMonitor: Any?
 }
 
 @objc(InputiaInputController)
@@ -64,75 +93,24 @@ final class InputiaInputController: IMKInputController {
   private let bridge = InputiaRustBridge.makeDefault()
   private var latestCandidates: [String] = []
   private var latestComposing = ""
+  private var expandedCandidates: [String] = []
+  private var expandedCandidateEntries: [InputiaExpandedCandidateEntry] = []
+  private var expandedActiveRowIndex = 0
   private var recallCandidates: [String] = []
   private var englishCompletionPrefix = ""
   private var englishCompletionCandidates: [String] = []
   private var candidatePanelExpanded = false
   private var lastModifiers = NSEvent.ModifierFlags()
+  private var lastGlobalModifiers = NSEvent.ModifierFlags()
   private var shiftKeyDownWithoutOtherKey = false
+  private var globalShiftKeyDownWithoutOtherKey = false
+  private var lastShiftToggleTime = Date.distantPast
   private var cachedAppContext: InputiaAppContext?
   private var cachedAppContextTime = Date.distantPast
   private var pushedAppContext: InputiaAppContext?
-  private var cachedSensitiveContext: InputiaAppContext?
-  private var cachedSensitiveDecision = false
   private var lastSettingsReloadCheck = Date.distantPast
   private let appContextRefreshInterval: TimeInterval = 0.75
   private let settingsReloadInterval: TimeInterval = 0.5
-
-  override func inputText(_ string: String!, client sender: Any!) -> Bool {
-    guard
-      let string,
-      !string.isEmpty,
-      let client = sender as? IMKTextInput
-    else {
-      return false
-    }
-
-    if latestComposing.isEmpty,
-      InputiaShortcutClassifier.isInputTextEnter(string) || string == " "
-    {
-      clearEnglishCompletion()
-      return false
-    }
-
-    if shouldPassThroughSensitiveClient(client) {
-      return false
-    }
-    updateAppContext(client: client)
-    var handled = false
-    for character in string {
-      let outcome: InputiaBridgeOutcome
-      switch InputiaInputTextRouter.action(
-        for: character,
-        hasComposing: !latestComposing.isEmpty
-      ) {
-      case .passthrough:
-        return handled
-      case .enter:
-        let previousComposing = latestComposing
-        let previousCandidates = latestCandidates
-        outcome = bridge.enter()
-        let shouldPassThroughNewline = InputiaHostTextPolicy.shouldPassThroughNewlineAfterRawFallbackCommit(
-          previousComposing: previousComposing,
-          candidates: previousCandidates,
-          committedText: outcome.commit
-        )
-        handled = apply(outcome, client: client) || handled
-        if shouldPassThroughNewline {
-          return false
-        }
-        updateEnglishCompletionAfterCharacter(character, outcome: outcome, client: client)
-        continue
-      case .space:
-        outcome = bridge.space()
-      case .character(let routedCharacter):
-        outcome = bridge.handle(character: routedCharacter)
-      }
-      handled = apply(outcome, client: client) || handled
-      updateEnglishCompletionAfterCharacter(character, outcome: outcome, client: client)
-    }
-    return handled
-  }
 
   override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
     guard
@@ -142,7 +120,7 @@ final class InputiaInputController: IMKInputController {
       return false
     }
 
-    if shouldPassThroughSensitiveClient(client) {
+    if shouldUseSecureDirectMode(client) {
       return false
     }
     updateAppContext(client: client)
@@ -161,78 +139,11 @@ final class InputiaInputController: IMKInputController {
     Int(NSEvent.EventTypeMask(arrayLiteral: .keyDown, .flagsChanged).rawValue)
   }
 
-  override func didCommand(by aSelector: Selector!, client sender: Any!) -> Bool {
-    guard
-      let aSelector,
-      let client = sender as? IMKTextInput
-    else {
-      return false
-    }
-
-    if shouldPassThroughSensitiveClient(client) {
-      return false
-    }
-    updateAppContext(client: client)
-
-    let selectorName = NSStringFromSelector(aSelector)
-    if InputiaHostTextPolicy.shouldPassThroughAppCommand(selectorName: selectorName) {
-      clearEnglishCompletion()
-      return false
-    }
-    if InputiaHostTextPolicy.shouldPassThroughNewlineCommand(
-      selectorName: selectorName,
-      hasComposing: !latestComposing.isEmpty
-    ) {
-      clearEnglishCompletion()
-      return false
-    }
-
-    switch selectorName {
-    case "insertNewline:", "insertLineBreak:":
-      let previousComposing = latestComposing
-      let previousCandidates = latestCandidates
-      let outcome = bridge.enter()
-      let shouldPassThroughNewline = InputiaHostTextPolicy.shouldPassThroughNewlineAfterRawFallbackCommit(
-        previousComposing: previousComposing,
-        candidates: previousCandidates,
-        committedText: outcome.commit
-      )
-      let handled = apply(outcome, client: client)
-      return shouldPassThroughNewline ? false : handled
-    case "deleteBackward:":
-      guard !latestComposing.isEmpty else {
-        return false
-      }
-      let outcome = bridge.backspace()
-      let handled = apply(outcome, client: client)
-      updateEnglishCompletionAfterBackspace(outcome: outcome, client: client)
-      return handled
-    case "cancelOperation:":
-      guard !latestComposing.isEmpty || !englishCompletionCandidates.isEmpty else {
-        return false
-      }
-      clearEnglishCompletion()
-      return apply(bridge.escape(), client: client)
-    case "insertTab:":
-      return commitFirstEnglishCompletion(client: client)
-    case "moveDown:":
-      return handleCandidateNavigation(.expandOrNextPage, client: client)
-    case "moveUp:":
-      return handleCandidateNavigation(.previousPage, client: client)
-    case "pageDown:":
-      return handleCandidatePageDown(client: client)
-    case "pageUp:":
-      return handleCandidatePageUp(client: client)
-    default:
-      return false
-    }
-  }
-
   override func candidates(_ sender: Any!) -> [Any]! {
-    InputiaHostTextPolicy.candidatesForPanel(
-      composing: latestComposing,
-      candidates: latestCandidates
-    )
+    // Inputia draws its own compact candidate popup. Returning candidate data
+    // here makes InputMethodKit show the system IMKCandidates window as well,
+    // which follows the user's accent color and can grow into an oversized bar.
+    []
   }
 
   override func menu() -> NSMenu! {
@@ -333,6 +244,12 @@ final class InputiaInputController: IMKInputController {
       _ = apply(bridge.enter(), client: client())
       return
     }
+    if candidatePanelExpanded,
+      let entry = expandedCandidateEntries.first(where: { $0.text == selected })
+    {
+      _ = commitExpandedCandidate(entry, client: client())
+      return
+    }
     guard let index = latestCandidates.firstIndex(of: selected) else {
       return
     }
@@ -369,6 +286,9 @@ final class InputiaInputController: IMKInputController {
     latestCandidates = []
     englishCompletionPrefix = ""
     englishCompletionCandidates = []
+    expandedCandidates = []
+    expandedCandidateEntries = []
+    expandedActiveRowIndex = 0
     candidatePanelExpanded = false
     InputiaHost.candidatePanel?.hide()
   }
@@ -379,16 +299,65 @@ final class InputiaInputController: IMKInputController {
   }
 
   override func activateServer(_ sender: Any!) {
+    InputiaHost.activeInputController = self
     if let client = sender as? IMKTextInput {
-      if shouldPassThroughSensitiveClient(client) {
+      if shouldUseSecureDirectMode(client) {
         return
       }
       updateAppContext(client: client, forceRefresh: true)
+      resetToChineseModeOnActivationIfNeeded(client: client)
     }
   }
 
   override func deactivateServer(_ sender: Any!) {
     commitComposition(sender)
+    if InputiaHost.activeInputController === self {
+      InputiaHost.activeInputController = nil
+    }
+  }
+
+  func handleGlobalFlagsChanged(_ event: NSEvent) {
+    guard isCurrentInputiaSourceSelected() else {
+      globalShiftKeyDownWithoutOtherKey = false
+      lastGlobalModifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+      return
+    }
+
+    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    let hadShift = lastGlobalModifiers.contains(.shift)
+    let hasShift = modifiers.contains(.shift)
+    let hasBlockingModifier = modifiers.contains(.command)
+      || modifiers.contains(.control)
+      || modifiers.contains(.option)
+    let shortcut = bridge.inputModeToggleShortcut()
+
+    inputiaDebugLog(
+      "globalFlagsChanged keyCode=\(event.keyCode) last=\(lastGlobalModifiers.rawValue) current=\(modifiers.rawValue) hadShift=\(hadShift) hasShift=\(hasShift) blocking=\(hasBlockingModifier) shortcut=\(shortcut) armed=\(globalShiftKeyDownWithoutOtherKey)"
+    )
+
+    if !hadShift && hasShift {
+      globalShiftKeyDownWithoutOtherKey = InputiaShortcutClassifier.shouldArmShiftInputModeToggle(
+        shortcut: shortcut,
+        modifiers: modifiers
+      )
+    } else if hadShift && !hasShift {
+      defer {
+        globalShiftKeyDownWithoutOtherKey = false
+        lastGlobalModifiers = modifiers
+      }
+      if InputiaShortcutClassifier.isShiftInputModeToggleRelease(
+        shortcut: shortcut,
+        hadShift: hadShift,
+        hasShift: hasShift,
+        hasBlockingModifier: hasBlockingModifier,
+        armed: globalShiftKeyDownWithoutOtherKey
+      ) {
+        _ = toggleInputModeFromShift(client: nil, source: "global")
+      }
+      return
+    }
+
+    lastGlobalModifiers = modifiers
   }
 
   private func handleFlagsChanged(_ event: NSEvent, client: IMKTextInput) -> Bool {
@@ -422,7 +391,7 @@ final class InputiaInputController: IMKInputController {
         hasBlockingModifier: hasBlockingModifier,
         armed: shiftKeyDownWithoutOtherKey
       ) {
-        return apply(bridge.toggleInputMode(), client: client)
+        return toggleInputModeFromShift(client: client, source: "local")
       }
     }
 
@@ -430,18 +399,33 @@ final class InputiaInputController: IMKInputController {
     return false
   }
 
+  private func toggleInputModeFromShift(client: IMKTextInput?, source: String) -> Bool {
+    let now = Date()
+    guard now.timeIntervalSince(lastShiftToggleTime) >= 0.18 else {
+      inputiaDebugLog("shiftToggleDeduped source=\(source)")
+      return true
+    }
+    lastShiftToggleTime = now
+    clearEnglishCompletion()
+    inputiaDebugLog("shiftToggle source=\(source)")
+    return apply(bridge.toggleInputMode(), client: client)
+  }
+
+  private func resetToChineseModeOnActivationIfNeeded(client: IMKTextInput) {
+    guard latestComposing.isEmpty, bridge.latestOutcome.mode == "English" else {
+      return
+    }
+    clearEnglishCompletion()
+    let outcome = bridge.setChineseMode()
+    inputiaDebugLog("activateResetChinese bundle=\(client.bundleIdentifier() ?? "unknown")")
+    _ = apply(outcome, client: client)
+  }
+
   private func handleKeyDown(_ event: NSEvent, client: IMKTextInput) -> Bool {
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     inputiaDebugLog(
       "keyDown keyCode=\(event.keyCode) modifiers=\(modifiers.rawValue) chars=\(event.characters ?? "") charsIgnoring=\(event.charactersIgnoringModifiers ?? "")"
     )
-    if InputiaShortcutClassifier.shouldPassThroughKeyDown(
-      keyCode: event.keyCode,
-      modifiers: modifiers
-    ) {
-      shiftKeyDownWithoutOtherKey = false
-      return false
-    }
     if isScriptToggleShortcut(event, modifiers: modifiers) {
       shiftKeyDownWithoutOtherKey = false
       clearEnglishCompletion()
@@ -523,6 +507,9 @@ final class InputiaInputController: IMKInputController {
       }
       return shouldPassThroughNewline ? false : handled
     case keyCodeSpace:
+      if candidatePanelExpanded, expandedActiveRowIndex > 0 {
+        return commitExpandedCandidate(columnIndex: 0, client: client)
+      }
       let outcome = bridge.space()
       let handled = apply(outcome, client: client)
       if outcome.mode == "English" && !outcome.consumed {
@@ -541,6 +528,10 @@ final class InputiaInputController: IMKInputController {
 
     if isDisplayedRawCompositionSelection(event, modifiers: modifiers) {
       return apply(bridge.enter(), client: client)
+    }
+
+    if let columnIndex = expandedCandidateDigitColumn(event, modifiers: modifiers) {
+      return commitExpandedCandidate(columnIndex: columnIndex, client: client)
     }
 
     var handled = false
@@ -578,9 +569,9 @@ final class InputiaInputController: IMKInputController {
           markedRange: client.markedRange()
         )
       )
-      if InputiaHostTextPolicy.shouldContinueCompositionAfterCommit(
-        nextComposing: outcome.composing,
-        committedText: commit
+      if InputiaHostTextPolicy.shouldContinueMarkedTextAfterCommit(
+        committedText: outcome.commit,
+        nextComposing: outcome.composing
       ) {
         setMarkedComposition(outcome.composing, client: client)
         updateCandidateWindow(client: client)
@@ -616,8 +607,14 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func syncHostState(with outcome: InputiaBridgeOutcome) {
+    let compositionChanged = latestComposing != outcome.composing
     latestComposing = outcome.composing
     latestCandidates = outcome.candidates
+    if compositionChanged || !candidatePanelExpanded {
+      expandedCandidates = []
+      expandedCandidateEntries = []
+      expandedActiveRowIndex = 0
+    }
     if outcome.mode != "English" {
       englishCompletionPrefix = ""
       englishCompletionCandidates = []
@@ -646,14 +643,32 @@ final class InputiaInputController: IMKInputController {
     case .expandOrNextPage:
       guard candidatePanelExpanded else {
         candidatePanelExpanded = true
+        expandedActiveRowIndex = 0
+        refreshExpandedCandidates()
         updateCandidateWindow(client: client)
         inputiaDebugLog("candidatePanelExpanded")
         return true
       }
+      if moveExpandedActiveRow(by: 1, client: client) {
+        return true
+      }
       return handleCandidatePageDown(client: client)
     case .previousPage:
+      if candidatePanelExpanded,
+        let previousRow = InputiaExpandedCandidateGridNavigation.previousRow(
+          currentRow: expandedActiveRowIndex
+        )
+      {
+        expandedActiveRowIndex = previousRow
+        updateCandidateWindow(client: client)
+        inputiaDebugLog("candidatePanelActiveRow=\(expandedActiveRowIndex)")
+        return true
+      }
       if candidatePanelExpanded, bridge.latestOutcome.page == 0 {
         candidatePanelExpanded = false
+        expandedCandidates = []
+        expandedCandidateEntries = []
+        expandedActiveRowIndex = 0
         updateCandidateWindow(client: client)
         inputiaDebugLog("candidatePanelCollapsed")
         return true
@@ -667,7 +682,14 @@ final class InputiaInputController: IMKInputController {
       return false
     }
     candidatePanelExpanded = true
+    expandedCandidates = []
+    expandedCandidateEntries = []
+    expandedActiveRowIndex = 0
     let handled = apply(bridge.pageDown(), client: client)
+    if !latestComposing.isEmpty {
+      refreshExpandedCandidates()
+      updateCandidateWindow(client: client)
+    }
     return handled || !latestComposing.isEmpty
   }
 
@@ -676,8 +698,178 @@ final class InputiaInputController: IMKInputController {
       return false
     }
     candidatePanelExpanded = true
+    expandedCandidates = []
+    expandedCandidateEntries = []
+    expandedActiveRowIndex = 0
     let handled = apply(bridge.pageUp(), client: client)
+    if !latestComposing.isEmpty {
+      refreshExpandedCandidates()
+      updateCandidateWindow(client: client)
+    }
     return handled || !latestComposing.isEmpty
+  }
+
+  private func refreshExpandedCandidates(targetCount: Int = 40) {
+    guard candidatePanelExpanded, !latestComposing.isEmpty else {
+      expandedCandidates = []
+      expandedCandidateEntries = []
+      expandedActiveRowIndex = 0
+      return
+    }
+    expandedCandidateEntries = collectExpandedCandidateEntries(targetCount: targetCount)
+    expandedCandidates = expandedCandidateEntries.map(\.text)
+    clampExpandedActiveRow()
+  }
+
+  private func collectExpandedCandidateEntries(targetCount: Int) -> [InputiaExpandedCandidateEntry] {
+    var collected: [InputiaExpandedCandidateEntry] = []
+    var seen = Set<String>()
+
+    func appendUnique(_ candidates: [String], page: Int) {
+      for (pageIndex, candidate) in candidates.enumerated() where collected.count < targetCount {
+        guard InputiaCandidateTextSupport.canDisplay(candidate) else {
+          continue
+        }
+        if seen.insert(candidate).inserted {
+          collected.append(
+            InputiaExpandedCandidateEntry(text: candidate, page: page, pageIndex: pageIndex)
+          )
+        }
+      }
+    }
+
+    appendUnique(latestCandidates, page: bridge.latestOutcome.page)
+
+    let originalPage = bridge.latestOutcome.page
+    var lastPage = originalPage
+    var movedPages = 0
+
+    while collected.count < targetCount {
+      let outcome = bridge.pageDown()
+      guard outcome.ok, outcome.composing == latestComposing, outcome.page > lastPage else {
+        break
+      }
+      movedPages += 1
+      lastPage = outcome.page
+      let beforeCount = collected.count
+      appendUnique(outcome.candidates, page: outcome.page)
+      if collected.count == beforeCount && outcome.candidates.isEmpty {
+        break
+      }
+    }
+
+    for _ in 0..<movedPages {
+      _ = bridge.pageUp()
+    }
+
+    return collected
+  }
+
+  private func expandedColumnCount() -> Int {
+    max(1, InputiaHostTextPolicy.candidatesForPanel(
+      composing: latestComposing,
+      candidates: latestCandidates
+    ).count)
+  }
+
+  private func expandedRowCount() -> Int {
+    InputiaExpandedCandidateGridNavigation.rowCount(
+      candidateCount: expandedCandidateEntries.count,
+      columnCount: expandedColumnCount()
+    )
+  }
+
+  private func clampExpandedActiveRow() {
+    expandedActiveRowIndex = InputiaExpandedCandidateGridNavigation.clampedRow(
+      expandedActiveRowIndex,
+      candidateCount: expandedCandidateEntries.count,
+      columnCount: expandedColumnCount()
+    )
+  }
+
+  private func moveExpandedActiveRow(by delta: Int, client: IMKTextInput) -> Bool {
+    guard candidatePanelExpanded, !expandedCandidateEntries.isEmpty, delta != 0 else {
+      return false
+    }
+    let columns = expandedColumnCount()
+    let nextRow: Int?
+    if delta > 0 {
+      nextRow = InputiaExpandedCandidateGridNavigation.nextRow(
+        currentRow: expandedActiveRowIndex,
+        candidateCount: expandedCandidateEntries.count,
+        columnCount: columns
+      )
+    } else {
+      nextRow = InputiaExpandedCandidateGridNavigation.previousRow(currentRow: expandedActiveRowIndex)
+    }
+    guard let nextRow else {
+      return false
+    }
+    expandedActiveRowIndex = nextRow
+    updateCandidateWindow(client: client)
+    inputiaDebugLog("candidatePanelActiveRow=\(expandedActiveRowIndex)")
+    return true
+  }
+
+  private func expandedCandidateDigitColumn(
+    _ event: NSEvent,
+    modifiers: NSEvent.ModifierFlags
+  ) -> Int? {
+    guard candidatePanelExpanded, !expandedCandidateEntries.isEmpty else {
+      return nil
+    }
+    guard !modifiers.contains(.command),
+      !modifiers.contains(.control),
+      !modifiers.contains(.option),
+      !modifiers.contains(.shift)
+    else {
+      return nil
+    }
+    guard
+      let raw = event.charactersIgnoringModifiers,
+      raw.count == 1,
+      let digit = Int(raw),
+      (1...9).contains(digit)
+    else {
+      return nil
+    }
+    return digit - 1
+  }
+
+  private func commitExpandedCandidate(columnIndex: Int, client: IMKTextInput?) -> Bool {
+    let index = expandedActiveRowIndex * expandedColumnCount() + columnIndex
+    guard expandedCandidateEntries.indices.contains(index) else {
+      return false
+    }
+    return commitExpandedCandidate(expandedCandidateEntries[index], client: client)
+  }
+
+  private func commitExpandedCandidate(_ entry: InputiaExpandedCandidateEntry, client: IMKTextInput?) -> Bool {
+    guard moveBridgeToPage(entry.page) else {
+      return false
+    }
+    return apply(bridge.chooseCandidate(atZeroBasedIndex: entry.pageIndex), client: client)
+  }
+
+  private func moveBridgeToPage(_ targetPage: Int) -> Bool {
+    var guardCount = 0
+    while bridge.latestOutcome.page < targetPage, guardCount < 32 {
+      let previousPage = bridge.latestOutcome.page
+      let outcome = bridge.pageDown()
+      guard outcome.ok, outcome.page > previousPage else {
+        return false
+      }
+      guardCount += 1
+    }
+    while bridge.latestOutcome.page > targetPage, guardCount < 64 {
+      let previousPage = bridge.latestOutcome.page
+      let outcome = bridge.pageUp()
+      guard outcome.ok, outcome.page < previousPage || previousPage == 0 else {
+        return false
+      }
+      guardCount += 1
+    }
+    return bridge.latestOutcome.page == targetPage
   }
 
   private func setMarkedComposition(_ composing: String, client: IMKTextInput) {
@@ -786,6 +978,9 @@ final class InputiaInputController: IMKInputController {
     latestComposing = ""
     latestCandidates = candidates
     candidatePanelExpanded = false
+    expandedCandidates = []
+    expandedCandidateEntries = []
+    expandedActiveRowIndex = 0
 
     var inputRect = NSRect.zero
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
@@ -837,6 +1032,9 @@ final class InputiaInputController: IMKInputController {
     latestCandidates = []
     latestComposing = ""
     candidatePanelExpanded = false
+    expandedCandidates = []
+    expandedCandidateEntries = []
+    expandedActiveRowIndex = 0
     InputiaHost.candidatePanel?.hide()
   }
 
@@ -889,6 +1087,9 @@ final class InputiaInputController: IMKInputController {
     englishCompletionCandidates = candidates
     latestCandidates = candidates
     candidatePanelExpanded = false
+    expandedCandidates = []
+    expandedCandidateEntries = []
+    expandedActiveRowIndex = 0
 
     var inputRect = NSRect.zero
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
@@ -945,6 +1146,9 @@ final class InputiaInputController: IMKInputController {
     englishCompletionCandidates = []
     if latestComposing.isEmpty && recallCandidates.isEmpty {
       latestCandidates = []
+      expandedCandidates = []
+      expandedCandidateEntries = []
+      expandedActiveRowIndex = 0
       candidatePanelExpanded = false
       InputiaHost.candidatePanel?.hide()
     }
@@ -980,6 +1184,9 @@ final class InputiaInputController: IMKInputController {
     latestComposing = ""
     englishCompletionPrefix = ""
     englishCompletionCandidates = []
+    expandedCandidates = []
+    expandedCandidateEntries = []
+    expandedActiveRowIndex = 0
     candidatePanelExpanded = false
     _ = bridge.escape()
     InputiaHost.candidatePanel?.hide()
@@ -993,14 +1200,23 @@ final class InputiaInputController: IMKInputController {
       composing: latestComposing,
       candidates: latestCandidates
     )
-    if displayedCandidates.isEmpty {
+    let panelCandidates = candidatePanelExpanded && !expandedCandidates.isEmpty
+      ? expandedCandidates
+      : displayedCandidates
+    if panelCandidates.isEmpty {
       panel.hide()
       return
     }
 
     var inputRect = NSRect.zero
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
-    panel.show(candidates: displayedCandidates, near: inputRect, expanded: candidatePanelExpanded)
+    panel.show(
+      candidates: panelCandidates,
+      near: inputRect,
+      expanded: candidatePanelExpanded,
+      primaryCandidateCount: displayedCandidates.count,
+      activeRowIndex: expandedActiveRowIndex
+    )
   }
 
   private func updateAppContext(client: IMKTextInput, forceRefresh: Bool = false) {
@@ -1014,23 +1230,14 @@ final class InputiaInputController: IMKInputController {
     pushedAppContext = context
   }
 
-  private func shouldPassThroughSensitiveClient(_ client: IMKTextInput) -> Bool {
+  private func shouldUseSecureDirectMode(_ client: IMKTextInput) -> Bool {
     reloadSettingsIfDue(client: client)
     let context = appContext(for: client)
-    let isSensitive: Bool
-    if cachedSensitiveContext == context {
-      isSensitive = cachedSensitiveDecision
-    } else {
-      isSensitive = bridge.isSensitiveApp(bundleId: context.bundleId, windowTitle: context.windowTitle)
-      cachedSensitiveContext = context
-      cachedSensitiveDecision = isSensitive
-    }
-
-    guard isSensitive else {
+    guard InputiaSecureDirectPolicy.shouldUseSecureDirectMode(context: context) else {
       return false
     }
     clearInputState(client: client)
-    inputiaDebugLog("sensitivePassthrough bundle=\(context.bundleId) window=\(context.windowTitle ?? "")")
+    inputiaDebugLog("secureDirectPassthrough bundle=\(context.bundleId) window=\(context.windowTitle ?? "")")
     if pushedAppContext != context {
       _ = bridge.setAppContext(bundleId: context.bundleId, windowTitle: context.windowTitle)
       pushedAppContext = context
@@ -1039,7 +1246,7 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func appContext(for client: IMKTextInput, forceRefresh: Bool = false) -> InputiaAppContext {
-    let bundleId = client.bundleIdentifier() ?? "unknown"
+    let bundleId = resolvedBundleIdentifier(for: client)
     let now = Date()
     if
       !forceRefresh,
@@ -1059,6 +1266,22 @@ final class InputiaInputController: IMKInputController {
     return context
   }
 
+  private func resolvedBundleIdentifier(for client: IMKTextInput) -> String {
+    if let clientBundleId = client.bundleIdentifier()?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !clientBundleId.isEmpty,
+      clientBundleId != "unknown"
+    {
+      return clientBundleId
+    }
+    if let frontmostBundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier?
+      .trimmingCharacters(in: .whitespacesAndNewlines),
+      !frontmostBundleId.isEmpty
+    {
+      return frontmostBundleId
+    }
+    return "unknown"
+  }
+
   private func reloadSettingsIfDue(client: IMKTextInput? = nil, force: Bool = false) {
     let now = Date()
     guard force || now.timeIntervalSince(lastSettingsReloadCheck) >= settingsReloadInterval else {
@@ -1067,7 +1290,6 @@ final class InputiaInputController: IMKInputController {
     lastSettingsReloadCheck = now
     if bridge.reloadSettingsIfNeeded() {
       clearInputState(client: client)
-      cachedSensitiveContext = nil
       pushedAppContext = nil
     }
   }
@@ -1127,6 +1349,9 @@ struct InputiaInputMethodApp {
       let resolvedBundleIdentifier = bundle.bundleIdentifier ?? fallbackBundleIdentifier
       server = IMKServer(name: resolvedConnectionName, bundleIdentifier: resolvedBundleIdentifier)
       InputiaHost.candidatePanel = InputiaCandidatePanel()
+      InputiaHost.modifierMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { event in
+        InputiaHost.activeInputController?.handleGlobalFlagsChanged(event)
+      }
       NSLog("Inputia baseline IMK server started: bundle=\(resolvedBundleIdentifier), connection=\(resolvedConnectionName)")
 
       let app = NSApplication.shared
@@ -1205,17 +1430,8 @@ final class InputiaInputMethodDiagnostics {
     case "--disable-input-source":
       diagnostics.disable()
       return true
-    case "--disable-all-inputia-sources":
-      diagnostics.disableAllInputiaSources()
-      return true
     case "--select-input-source":
       diagnostics.select()
-      return true
-    case "--normalize-hitoolbox":
-      diagnostics.normalizeHIToolbox()
-      return true
-    case "--clear-input-source-preferences":
-      diagnostics.clearInputSourcePreferences()
       return true
     case "--dump-input-source":
       diagnostics.dumpInputSource(includeAllInstalled: true)
@@ -1313,7 +1529,7 @@ final class InputiaInputMethodDiagnostics {
   }
 
   private func bridgeDefaultChineseSelfCheck() {
-    let bridge = InputiaRustBridge.temporaryDefaultChineseForDiagnostics()
+    let bridge = InputiaRustBridge.makeDefault()
     printBridgeSelfCheck(name: "bridgeDefaultChineseSelfCheck", outcomes: bridge.debugDefaultChineseSelfCheck())
   }
 
@@ -1361,264 +1577,6 @@ final class InputiaInputMethodDiagnostics {
       charactersIgnoringModifiers: "v",
       modifiers: [.control, .shift, .command]
     )
-    let scriptToggle = InputiaShortcutClassifier.isScriptToggle(
-      charactersIgnoringModifiers: "s",
-      modifiers: [.control, .shift],
-      shortcut: "control_shift_s"
-    )
-    let scriptToggleWithCommand = InputiaShortcutClassifier.isScriptToggle(
-      charactersIgnoringModifiers: "s",
-      modifiers: [.control, .shift, .command],
-      shortcut: "control_shift_s"
-    )
-    let scriptToggleWhenDisabled = InputiaShortcutClassifier.isScriptToggle(
-      charactersIgnoringModifiers: "s",
-      modifiers: [.control, .shift],
-      shortcut: "none"
-    )
-    let commandlessShortcutNotForcedThrough = !InputiaShortcutClassifier.shouldPassThroughCommandShortcut(
-      modifiers: [.control, .shift]
-    )
-    let commandShortcutPassThroughChecks: [(String, Bool)] = [
-      (
-        "commandCPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandVPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandShiftVPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command, .shift])
-      ),
-      (
-        "commandOptionVPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command, .option])
-      ),
-      (
-        "commandOptionShiftVPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command, .option, .shift])
-      ),
-      (
-        "commandControlVPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command, .control])
-      ),
-      (
-        "commandXPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandZPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandShiftZPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command, .shift])
-      ),
-      (
-        "commandAPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandSPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandOPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandWPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandQPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandFPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandGPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandHPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandMPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandPPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandTPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandNPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandDPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandEPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandIPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandRPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandJPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandKPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandYPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandCommaPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandTabPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandSpacePassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandNumberPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandBracketPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandArrowPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandDeletePassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command])
-      ),
-      (
-        "commandControlQPassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command, .control])
-      ),
-      (
-        "commandShift3PassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command, .shift])
-      ),
-      (
-        "commandShift4PassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command, .shift])
-      ),
-      (
-        "commandShift5PassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command, .shift])
-      ),
-      (
-        "commandOptionEscapePassThrough",
-        InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: [.command, .option])
-      ),
-    ]
-    let commonAppleCommandShortcutSetPassesThrough = commandShortcutPassThroughChecks.allSatisfy { $0.1 }
-    let officialAppleCommandKeyDownChecks: [(String, Bool)] = [
-      ("appleCommandCKeyDownPassThrough", 8, NSEvent.ModifierFlags.command),
-      ("appleCommandVKeyDownPassThrough", 9, NSEvent.ModifierFlags.command),
-      ("appleCommandXKeyDownPassThrough", 7, NSEvent.ModifierFlags.command),
-      ("appleCommandZKeyDownPassThrough", 6, NSEvent.ModifierFlags.command),
-      ("appleCommandShiftZKeyDownPassThrough", 6, [.command, .shift]),
-      ("appleCommandAKeyDownPassThrough", 0, NSEvent.ModifierFlags.command),
-      ("appleCommandFKeyDownPassThrough", 3, NSEvent.ModifierFlags.command),
-      ("appleCommandGKeyDownPassThrough", 5, NSEvent.ModifierFlags.command),
-      ("appleCommandShiftGKeyDownPassThrough", 5, [.command, .shift]),
-      ("appleCommandHKeyDownPassThrough", 4, NSEvent.ModifierFlags.command),
-      ("appleCommandOptionHKeyDownPassThrough", 4, [.command, .option]),
-      ("appleCommandMKeyDownPassThrough", 46, NSEvent.ModifierFlags.command),
-      ("appleCommandOptionMKeyDownPassThrough", 46, [.command, .option]),
-      ("appleCommandNKeyDownPassThrough", 45, NSEvent.ModifierFlags.command),
-      ("appleCommandOKeyDownPassThrough", 31, NSEvent.ModifierFlags.command),
-      ("appleCommandPKeyDownPassThrough", 35, NSEvent.ModifierFlags.command),
-      ("appleCommandSKeyDownPassThrough", 1, NSEvent.ModifierFlags.command),
-      ("appleCommandWKeyDownPassThrough", 13, NSEvent.ModifierFlags.command),
-      ("appleCommandQKeyDownPassThrough", 12, NSEvent.ModifierFlags.command),
-      ("appleCommandBKeyDownPassThrough", 11, NSEvent.ModifierFlags.command),
-      ("appleCommandIKeyDownPassThrough", 34, NSEvent.ModifierFlags.command),
-      ("appleCommandUKeyDownPassThrough", 32, NSEvent.ModifierFlags.command),
-      ("appleCommandKKeyDownPassThrough", 40, NSEvent.ModifierFlags.command),
-      ("appleCommandLKeyDownPassThrough", 37, NSEvent.ModifierFlags.command),
-      ("appleCommandCommaKeyDownPassThrough", 43, NSEvent.ModifierFlags.command),
-      ("appleCommandSlashKeyDownPassThrough", 44, NSEvent.ModifierFlags.command),
-      ("appleCommandShiftSlashKeyDownPassThrough", 44, [.command, .shift]),
-      ("appleCommandTabKeyDownPassThrough", 48, NSEvent.ModifierFlags.command),
-      ("appleCommandSpaceKeyDownPassThrough", 49, NSEvent.ModifierFlags.command),
-      ("appleCommandBacktickKeyDownPassThrough", 50, NSEvent.ModifierFlags.command),
-      ("appleCommandLeftBracketKeyDownPassThrough", 33, NSEvent.ModifierFlags.command),
-      ("appleCommandRightBracketKeyDownPassThrough", 30, NSEvent.ModifierFlags.command),
-      ("appleCommandEqualKeyDownPassThrough", 24, NSEvent.ModifierFlags.command),
-      ("appleCommandMinusKeyDownPassThrough", 27, NSEvent.ModifierFlags.command),
-      ("appleCommandDeleteKeyDownPassThrough", 51, NSEvent.ModifierFlags.command),
-      ("appleCommandControlQKeyDownPassThrough", 12, [.command, .control]),
-      ("appleCommandShift3KeyDownPassThrough", 20, [.command, .shift]),
-      ("appleCommandShift4KeyDownPassThrough", 21, [.command, .shift]),
-      ("appleCommandShift5KeyDownPassThrough", 23, [.command, .shift]),
-      ("appleCommandOptionEscapeKeyDownPassThrough", 53, [.command, .option]),
-    ].map { name, keyCode, modifiers in
-      (
-        name,
-        InputiaShortcutClassifier.shouldPassThroughKeyDown(
-          keyCode: UInt16(keyCode),
-          modifiers: modifiers
-        )
-      )
-    }
-    let officialAppleCommandKeyDownSetPassesThrough = officialAppleCommandKeyDownChecks.allSatisfy { $0.1 }
-    let representativeKeyCodes: [UInt16] = [
-      0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-      11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-      21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-      31, 32, 33, 34, 35, 37, 38, 40, 43, 44,
-      45, 46, 47, 48, 49, 50, 51, 53, 76, 116,
-      121, 123, 124, 125, 126,
-    ]
-    let commandModifierVariants: [NSEvent.ModifierFlags] = [
-      .command,
-      [.command, .shift],
-      [.command, .option],
-      [.command, .control],
-      [.command, .option, .shift],
-      [.command, .control, .shift],
-      [.command, .control, .option],
-      [.command, .control, .option, .shift],
-    ]
-    let anyCommandModifiedKeyPassesThrough = representativeKeyCodes.allSatisfy { keyCode in
-      commandModifierVariants.allSatisfy { modifiers in
-        InputiaShortcutClassifier.shouldPassThroughKeyDown(keyCode: keyCode, modifiers: modifiers)
-      }
-    }
-    let allCommandModifierVariantsPassThrough = commandModifierVariants.allSatisfy { modifiers in
-      InputiaShortcutClassifier.shouldPassThroughCommandShortcut(modifiers: modifiers)
-    }
     let shiftInputModeArmsWhenConfigured = InputiaShortcutClassifier.shouldArmShiftInputModeToggle(
       shortcut: "shift",
       modifiers: [.shift]
@@ -1703,6 +1661,15 @@ final class InputiaInputMethodDiagnostics {
       " ",
       hasComposing: false
     )
+    let securityAgentUsesSecureDirect = InputiaSecureDirectPolicy.shouldUseSecureDirectMode(
+      context: InputiaAppContext(bundleId: "com.apple.SecurityAgent", windowTitle: nil)
+    )
+    let unknownDoesNotUseSecureDirect = !InputiaSecureDirectPolicy.shouldUseSecureDirectMode(
+      context: InputiaAppContext(bundleId: "unknown", windowTitle: nil)
+    )
+    let regularAppDoesNotUseSecureDirect = !InputiaSecureDirectPolicy.shouldUseSecureDirectMode(
+      context: InputiaAppContext(bundleId: "com.openai.chat", windowTitle: nil)
+    )
 
     let ok = punctuationToggle
       && !punctuationWithShift
@@ -1712,15 +1679,6 @@ final class InputiaInputMethodDiagnostics {
       && !characterWidthPlainSpace
       && clipboardRecall
       && !clipboardWithCommand
-      && scriptToggle
-      && !scriptToggleWithCommand
-      && !scriptToggleWhenDisabled
-      && commandlessShortcutNotForcedThrough
-      && commandShortcutPassThroughChecks.allSatisfy { $0.1 }
-      && commonAppleCommandShortcutSetPassesThrough
-      && officialAppleCommandKeyDownSetPassesThrough
-      && anyCommandModifiedKeyPassesThrough
-      && allCommandModifierVariantsPassThrough
       && shiftInputModeArmsWhenConfigured
       && !shiftInputModeRejectedWhenDisabled
       && shiftInputModeReleaseTogglesWhenArmed
@@ -1739,6 +1697,9 @@ final class InputiaInputMethodDiagnostics {
       && !inputTextLetterIsNotEnter
       && inputTextSpaceHandledWhenComposing
       && !inputTextSpacePassesThroughWithoutComposing
+      && securityAgentUsesSecureDirect
+      && unknownDoesNotUseSecureDirect
+      && regularAppDoesNotUseSecureDirect
 
     print("hostShortcutSelfCheck=\(ok)")
     print("ctrlPeriodPunctuation=\(punctuationToggle)")
@@ -1749,20 +1710,6 @@ final class InputiaInputMethodDiagnostics {
     print("plainSpaceRejected=\(!characterWidthPlainSpace)")
     print("ctrlShiftVClipboardRecall=\(clipboardRecall)")
     print("ctrlShiftCommandVRejected=\(!clipboardWithCommand)")
-    print("ctrlShiftSScriptToggle=\(scriptToggle)")
-    print("ctrlShiftCommandSScriptToggleRejected=\(!scriptToggleWithCommand)")
-    print("scriptToggleRejectedWhenDisabled=\(!scriptToggleWhenDisabled)")
-    print("commandlessShortcutNotForcedThrough=\(commandlessShortcutNotForcedThrough)")
-    print("commonAppleCommandShortcutSetPassesThrough=\(commonAppleCommandShortcutSetPassesThrough)")
-    print("officialAppleCommandKeyDownSetPassesThrough=\(officialAppleCommandKeyDownSetPassesThrough)")
-    print("anyCommandModifiedKeyPassesThrough=\(anyCommandModifiedKeyPassesThrough)")
-    print("allCommandModifierVariantsPassThrough=\(allCommandModifierVariantsPassThrough)")
-    for (name, result) in commandShortcutPassThroughChecks {
-      print("\(name)=\(result)")
-    }
-    for (name, result) in officialAppleCommandKeyDownChecks {
-      print("\(name)=\(result)")
-    }
     print("shiftInputModeArmsWhenConfigured=\(shiftInputModeArmsWhenConfigured)")
     print("shiftInputModeRejectedWhenDisabled=\(!shiftInputModeRejectedWhenDisabled)")
     print("shiftInputModeReleaseTogglesWhenArmed=\(shiftInputModeReleaseTogglesWhenArmed)")
@@ -1781,6 +1728,9 @@ final class InputiaInputMethodDiagnostics {
     print("inputTextLetterIsNotEnter=\(!inputTextLetterIsNotEnter)")
     print("inputTextSpaceHandledWhenComposing=\(inputTextSpaceHandledWhenComposing)")
     print("inputTextSpacePassesThroughWithoutComposing=\(!inputTextSpacePassesThroughWithoutComposing)")
+    print("securityAgentUsesSecureDirect=\(securityAgentUsesSecureDirect)")
+    print("unknownDoesNotUseSecureDirect=\(unknownDoesNotUseSecureDirect)")
+    print("regularAppDoesNotUseSecureDirect=\(regularAppDoesNotUseSecureDirect)")
   }
 
   private func printBridgeSelfCheck(name: String, outcomes: [InputiaBridgeOutcome]) {
@@ -1805,11 +1755,9 @@ final class InputiaInputMethodDiagnostics {
       return
     }
 
-    if let enabledSource = primaryInputModeSource(includeAllInstalled: false) {
+    if let enabledSource = inputSource(includeAllInstalled: false) {
       print("enabledSourceAlreadyPresent=true")
       printSource(enabledSource)
-    } else {
-      print("enabledSourceAlreadyPresent=false")
     }
 
     if let parentSource = inputSource(inputSourceID: bundleIdentifier, includeAllInstalled: true) {
@@ -1827,7 +1775,7 @@ final class InputiaInputMethodDiagnostics {
     print("enableModeStatus=\(status)")
     printSource(source)
 
-    if let enabledSource = primaryInputModeSource(includeAllInstalled: false) {
+    if let enabledSource = inputSource(includeAllInstalled: false) {
       print("enabledListSourceFound=true")
       printSource(enabledSource)
     } else {
@@ -1847,129 +1795,20 @@ final class InputiaInputMethodDiagnostics {
       print("disableStatus=\(status)")
       printSource(source)
     }
-
-    if let parentSource = inputSource(inputSourceID: bundleIdentifier, includeAllInstalled: true) {
-      let status = TISDisableInputSource(parentSource)
-      print("disableParentStatus=\(status)")
-      printSource(parentSource)
-    }
-  }
-
-  private func disableAllInputiaSources() {
-    guard let unmanagedSourceList = TISCreateInputSourceList(nil, true) else {
-      print("disableAllInputiaSourcesFound=false")
-      return
-    }
-    let sourceList = unmanagedSourceList.takeRetainedValue() as! [TISInputSource]
-    let sources = sourceList
-      .filter { source in
-        let bundleID = stringProperty(source, key: kTISPropertyBundleID) ?? ""
-        let sourceID = stringProperty(source, key: kTISPropertyInputSourceID) ?? ""
-        let modeID = stringProperty(source, key: kTISPropertyInputModeID) ?? ""
-        return inputiaBundlePrefixes.contains { prefix in
-          bundleID.hasPrefix(prefix) || sourceID.hasPrefix(prefix) || modeID.hasPrefix(prefix)
-        }
-      }
-      .sorted { lhs, rhs in
-        let lhsID = stringProperty(lhs, key: kTISPropertyInputSourceID) ?? ""
-        let rhsID = stringProperty(rhs, key: kTISPropertyInputSourceID) ?? ""
-        return lhsID < rhsID
-      }
-    guard !sources.isEmpty else {
-      print("disableAllInputiaSourcesFound=false")
-      print("disableAllInputiaSourcesCount=0")
-      return
-    }
-    print("disableAllInputiaSourcesFound=true")
-    print("disableAllInputiaSourcesCount=\(sources.count)")
-    for source in sources.reversed() {
-      let status = TISDisableInputSource(source)
-      print("disableAllStatus=\(status)")
-      printSource(source)
-    }
   }
 
   private func select() {
-    enable()
-    if let enabledSource = primaryInputModeSource(includeAllInstalled: false) {
-      print("inputSourceFoundInEnabledList=true")
-      printSource(enabledSource)
-    } else {
-      print("inputSourceFoundInEnabledList=false")
+    if selectableInputModeSource(includeAllInstalled: false) == nil {
+      enable()
     }
-    guard let source = primaryInputModeSource(includeAllInstalled: true) else {
-      print("inputSourceFoundInInstalledList=false")
+    guard let source = selectableInputModeSource(includeAllInstalled: false) else {
+      print("inputSourceFoundInEnabledList=false")
       return
     }
 
     let status = TISSelectInputSource(source)
     print("selectStatus=\(status)")
     printSource(source)
-    let expectedID = stringProperty(source, key: kTISPropertyInputSourceID) ?? ""
-    let currentSource = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
-    let currentID = stringProperty(currentSource, key: kTISPropertyInputSourceID) ?? ""
-    print("selectExpectedID=\(expectedID)")
-    print("selectCurrentID=\(currentID)")
-    print("selectCurrentMatchesTarget=\(currentID == expectedID)")
-  }
-
-  private func normalizeHIToolbox() {
-    let targetModeID = inputModeIdentifiers.first ?? "\(bundleIdentifier).Main"
-    let enabledBefore = preferenceArray(forKey: "AppleEnabledInputSources")
-    let selectedBefore = preferenceArray(forKey: "AppleSelectedInputSources")
-    let historyBefore = preferenceArray(forKey: "AppleInputSourceHistory")
-    let thirdPartyBefore = preferenceArray(
-      forKey: "AppleEnabledThirdPartyInputSources",
-      domain: inputSourcesDomain
-    )
-
-    print("hitoolboxNormalizeTargetModeID=\(targetModeID)")
-    print("hitoolboxNormalizeEnabledBefore=\(enabledBefore.count)")
-    print("hitoolboxNormalizeEnabledAfter=\(enabledBefore.count)")
-    print("hitoolboxNormalizeSelectedBefore=\(selectedBefore.count)")
-    print("hitoolboxNormalizeSelectedAfter=\(selectedBefore.count)")
-    print("hitoolboxNormalizeHistoryBefore=\(historyBefore.count)")
-    print("hitoolboxNormalizeHistoryAfter=\(historyBefore.count)")
-    print("thirdPartyEnabledBefore=\(thirdPartyBefore.count)")
-    print("thirdPartyEnabledAfter=\(thirdPartyBefore.count)")
-    print("hitoolboxNormalizeSkipped=true reason=manual-hitoolbox-write-disabled")
-    print("hitoolboxNormalizeRequiredAction=enable-via-system-settings-or-fix-user-preference-service")
-    print("hitoolboxNormalize=true")
-  }
-
-  private func clearInputSourcePreferences() {
-    let hitoolboxEnabledBefore = preferenceArray(forKey: "AppleEnabledInputSources", domain: hitoolboxDomain)
-    let hitoolboxSelectedBefore = preferenceArray(forKey: "AppleSelectedInputSources", domain: hitoolboxDomain)
-    let hitoolboxHistoryBefore = preferenceArray(forKey: "AppleInputSourceHistory", domain: hitoolboxDomain)
-    let thirdPartyBefore = preferenceArray(
-      forKey: "AppleEnabledThirdPartyInputSources",
-      domain: inputSourcesDomain
-    )
-
-    let hitoolboxEnabledAfter = deduplicatedPreferenceEntries(
-      hitoolboxEnabledBefore.filter { !isInputiaPreferenceEntry($0) }
-    )
-    let hitoolboxSelectedAfter = deduplicatedPreferenceEntries(
-      hitoolboxSelectedBefore.filter { !isInputiaPreferenceEntry($0) }
-    )
-    let hitoolboxHistoryAfter = deduplicatedPreferenceEntries(
-      hitoolboxHistoryBefore.filter { !isInputiaPreferenceEntry($0) }
-    )
-    let thirdPartyAfter = deduplicatedPreferenceEntries(
-      thirdPartyBefore.filter { !isInputiaPreferenceEntry($0) }
-    )
-
-    print("inputSourcePreferencesClear=false")
-    print("inputSourcePreferencesClearSkipped=true reason=manual-hitoolbox-write-disabled")
-    print("inputSourcePreferencesClearRequiredAction=remove-inputia-via-system-settings-if-needed")
-    print("hitoolboxEnabledBefore=\(hitoolboxEnabledBefore.count)")
-    print("hitoolboxEnabledWouldAfter=\(hitoolboxEnabledAfter.count)")
-    print("hitoolboxSelectedBefore=\(hitoolboxSelectedBefore.count)")
-    print("hitoolboxSelectedWouldAfter=\(hitoolboxSelectedAfter.count)")
-    print("hitoolboxHistoryBefore=\(hitoolboxHistoryBefore.count)")
-    print("hitoolboxHistoryWouldAfter=\(hitoolboxHistoryAfter.count)")
-    print("thirdPartyEnabledBefore=\(thirdPartyBefore.count)")
-    print("thirdPartyEnabledWouldAfter=\(thirdPartyAfter.count)")
   }
 
   private func dumpInputSource(includeAllInstalled: Bool) {
@@ -2038,24 +1877,9 @@ final class InputiaInputMethodDiagnostics {
     [bundleIdentifier] + inputModeIdentifiers
   }
 
-  private var expectedTISIconPath: String {
-    Bundle.main.bundleURL
-      .appendingPathComponent("Contents/Resources/inputia.pdf")
-      .standardizedFileURL
-      .path
-  }
-
-  private var hitoolboxDomain: CFString {
-    "com.apple.HIToolbox" as CFString
-  }
-
-  private var inputSourcesDomain: CFString {
-    "com.apple.inputsources" as CFString
-  }
-
   private func inputSource(includeAllInstalled: Bool) -> TISInputSource? {
     inputModeIdentifiers.lazy
-      .compactMap { self.inputSource(inputSourceID: $0, includeAllInstalled: includeAllInstalled) }
+      .compactMap { self.inputModeSource(inputModeID: $0, includeAllInstalled: includeAllInstalled) }
       .first
       ?? self.inputSource(inputSourceID: bundleIdentifier, includeAllInstalled: includeAllInstalled)
   }
@@ -2068,14 +1892,32 @@ final class InputiaInputMethodDiagnostics {
 
   private func inputModeSources(includeAllInstalled: Bool) -> [TISInputSource] {
     inputModeIdentifiers.compactMap { inputSourceID in
-      inputSource(inputSourceID: inputSourceID, includeAllInstalled: includeAllInstalled)
+      inputModeSource(inputModeID: inputSourceID, includeAllInstalled: includeAllInstalled)
     }
   }
 
   private func primaryInputModeSource(includeAllInstalled: Bool) -> TISInputSource? {
     inputModeIdentifiers.lazy
-      .compactMap { self.inputSource(inputSourceID: $0, includeAllInstalled: includeAllInstalled) }
+      .compactMap { self.inputModeSource(inputModeID: $0, includeAllInstalled: includeAllInstalled) }
       .first
+  }
+
+  private func selectableInputModeSource(includeAllInstalled: Bool) -> TISInputSource? {
+    inputModeSources(includeAllInstalled: includeAllInstalled)
+      .first { boolProperty($0, key: kTISPropertyInputSourceIsSelectCapable) == true }
+  }
+
+  private func inputModeSource(inputModeID: String, includeAllInstalled: Bool) -> TISInputSource? {
+    let properties = NSMutableDictionary()
+    properties.setValue(inputModeID, forKey: kTISPropertyInputModeID as String)
+    guard let unmanagedSourceList = TISCreateInputSourceList(properties, includeAllInstalled) else {
+      return nil
+    }
+
+    let sourceList = unmanagedSourceList.takeRetainedValue() as! [TISInputSource]
+    return sourceList.first { source in
+      stringProperty(source, key: kTISPropertyInputModeID) == inputModeID
+    }
   }
 
   private func inputSource(inputSourceID: String, includeAllInstalled: Bool) -> TISInputSource? {
@@ -2086,12 +1928,9 @@ final class InputiaInputMethodDiagnostics {
     }
 
     let sourceList = unmanagedSourceList.takeRetainedValue() as! [TISInputSource]
-    let matchingSources = sourceList.filter { source in
+    return sourceList.first { source in
       stringProperty(source, key: kTISPropertyInputSourceID) == inputSourceID
     }
-    return matchingSources.first { source in
-      urlProperty(source, key: kTISPropertyIconImageURL) == expectedTISIconPath
-    } ?? matchingSources.first
   }
 
   private func matchingSources(sourceList: [TISInputSource], matchingPrefix prefix: String) -> [TISInputSource] {
@@ -2107,187 +1946,6 @@ final class InputiaInputMethodDiagnostics {
         let rhsID = stringProperty(rhs, key: kTISPropertyInputSourceID) ?? ""
         return lhsID < rhsID
       }
-  }
-
-  private func preferenceArray(forKey key: String) -> [[String: Any]] {
-    preferenceArray(forKey: key, domain: hitoolboxDomain)
-  }
-
-  private func preferenceArray(forKey key: String, domain: CFString) -> [[String: Any]] {
-    if let value = CFPreferencesCopyValue(
-      key as CFString,
-      domain,
-      kCFPreferencesCurrentUser,
-      kCFPreferencesAnyHost
-    ) {
-      let entries = preferenceEntries(from: value)
-      if !entries.isEmpty {
-        return entries
-      }
-    }
-    if
-      CFEqual(domain, hitoolboxDomain),
-      let diskEntries = hitoolboxPreferenceArrayFromPlist(forKey: key),
-      !diskEntries.isEmpty
-    {
-      return diskEntries
-    }
-    if let value = CFPreferencesCopyValue(
-      key as CFString,
-      domain,
-      kCFPreferencesCurrentUser,
-      kCFPreferencesAnyHost
-    ) {
-      return preferenceEntries(from: value)
-    }
-    guard let appValue = CFPreferencesCopyAppValue(key as CFString, domain) else {
-      return []
-    }
-    return preferenceEntries(from: appValue)
-  }
-
-  private func hitoolboxPreferenceArrayFromPlist(forKey key: String) -> [[String: Any]]? {
-    guard let preferences = readHIToolboxPreferencePlist() else {
-      return nil
-    }
-    let entries = preferenceEntries(from: preferences[key])
-    return entries.isEmpty ? nil : entries
-  }
-
-  private func preferenceEntries(from value: Any?) -> [[String: Any]] {
-    guard let value else {
-      return []
-    }
-    if let entries = value as? [[String: Any]] {
-      return entries
-    }
-    if let array = value as? [Any] {
-      return array.compactMap { preferenceEntry(from: $0) }
-    }
-    if let array = value as? NSArray {
-      return array.compactMap { preferenceEntry(from: $0) }
-    }
-    return []
-  }
-
-  private func preferenceEntry(from value: Any) -> [String: Any]? {
-    if let entry = value as? [String: Any] {
-      return entry
-    }
-    if let entry = value as? [AnyHashable: Any] {
-      var normalized: [String: Any] = [:]
-      for (key, value) in entry {
-        normalized[String(describing: key)] = value
-      }
-      return normalized
-    }
-    guard let entry = value as? NSDictionary else {
-      return nil
-    }
-
-    var normalized: [String: Any] = [:]
-    for (key, value) in entry {
-      normalized[String(describing: key)] = value
-    }
-    return normalized
-  }
-
-  private func readHIToolboxPreferencePlist() -> [String: Any]? {
-    guard let preferencesURL = hitoolboxPreferenceURL() else {
-      return nil
-    }
-    guard
-      FileManager.default.fileExists(atPath: preferencesURL.path),
-      let data = try? Data(contentsOf: preferencesURL),
-      let existing = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)
-    else {
-      return nil
-    }
-    return stringKeyedDictionary(from: existing)
-  }
-
-  private func stringKeyedDictionary(from value: Any) -> [String: Any]? {
-    if let dictionary = value as? [String: Any] {
-      return dictionary
-    }
-    if let dictionary = value as? [AnyHashable: Any] {
-      var normalized: [String: Any] = [:]
-      for (key, value) in dictionary {
-        normalized[String(describing: key)] = value
-      }
-      return normalized
-    }
-    guard let dictionary = value as? NSDictionary else {
-      return nil
-    }
-
-    var normalized: [String: Any] = [:]
-    for (key, value) in dictionary {
-      normalized[String(describing: key)] = value
-    }
-    return normalized
-  }
-
-  private func hitoolboxPreferenceURL() -> URL? {
-    let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
-    guard !home.isEmpty else {
-      return nil
-    }
-    return URL(fileURLWithPath: home)
-      .appendingPathComponent("Library/Preferences/com.apple.HIToolbox.plist")
-  }
-
-  private func inputiaParentPreferenceEntry() -> [String: Any] {
-    [
-      "Bundle ID": bundleIdentifier,
-      "InputSourceKind": "Keyboard Input Method",
-    ]
-  }
-
-  private func inputiaModePreferenceEntry(modeID: String) -> [String: Any] {
-    [
-      "Bundle ID": bundleIdentifier,
-      "Input Mode": modeID,
-      "InputSourceKind": "Input Mode",
-    ]
-  }
-
-  private func isInputiaPreferenceEntry(_ entry: [String: Any]) -> Bool {
-    let bundleID = entry["Bundle ID"] as? String ?? ""
-    let modeID = entry["Input Mode"] as? String ?? ""
-    return inputiaBundlePrefixes.contains { prefix in
-      bundleID.hasPrefix(prefix) || modeID.hasPrefix(prefix)
-    }
-  }
-
-  private var inputiaBundlePrefixes: [String] {
-    [
-      bundleIdentifier,
-      "com.inputia.inputmethod.Inputia",
-      "com.iputia.inputmethod.Iputia",
-      "dev.inputia.inputmethod.Inputia",
-    ]
-  }
-
-  private func deduplicatedPreferenceEntries(_ entries: [[String: Any]]) -> [[String: Any]] {
-    var seen = Set<String>()
-    var result: [[String: Any]] = []
-    for entry in entries {
-      let key = preferenceEntryKey(entry)
-      if seen.insert(key).inserted {
-        result.append(entry)
-      }
-    }
-    return result
-  }
-
-  private func preferenceEntryKey(_ entry: [String: Any]) -> String {
-    let kind = entry["InputSourceKind"] as? String ?? ""
-    let bundleID = entry["Bundle ID"] as? String ?? ""
-    let modeID = entry["Input Mode"] as? String ?? ""
-    let layoutName = entry["KeyboardLayout Name"] as? String ?? ""
-    let layoutID = entry["KeyboardLayout ID"].map { "\($0)" } ?? ""
-    return [kind, bundleID, modeID, layoutName, layoutID].joined(separator: "|")
   }
 
   private func printSource(_ source: TISInputSource) {

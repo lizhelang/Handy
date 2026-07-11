@@ -17,8 +17,8 @@ use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_specta::Event;
 use transcribe_cpp::{
-    Backend, Feature, Model, ModelOptions, RunExtension, RunOptions, Session, StreamOptions, Task,
-    WhisperRunOptions,
+    Backend, Error as TranscribeCppError, Feature, Model, ModelOptions, RunExtension, RunOptions,
+    Session, StreamOptions, Task, WhisperRunOptions,
 };
 use transcribe_rs::{
     onnx::{
@@ -35,6 +35,11 @@ use transcribe_rs::{
 
 const STREAM_PERF_LOG_INTERVAL: Duration = Duration::from_secs(5);
 const STREAM_FINALIZE_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
+const TRANSCRIBE_SAMPLE_RATE: usize = 16_000;
+const QWEN_ASR_SEGMENT_SECONDS: usize = 25;
+const QWEN_ASR_MIN_SEGMENT_SECONDS: usize = 6;
+const QWEN_ASR_SEGMENT_SAMPLES: usize = TRANSCRIBE_SAMPLE_RATE * QWEN_ASR_SEGMENT_SECONDS;
+const QWEN_ASR_MIN_SEGMENT_SAMPLES: usize = TRANSCRIBE_SAMPLE_RATE * QWEN_ASR_MIN_SEGMENT_SECONDS;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ModelStateEvent {
@@ -1246,12 +1251,7 @@ impl TranscriptionManager {
                             run_options.family.is_some()
                         );
 
-                        session
-                            .run(&audio, &run_options)
-                            .map(|t| t.text)
-                            .map_err(|e| {
-                                anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
-                            })
+                        transcribe_cpp_text(session, &audio, &run_options)
                     }
                     LoadedEngine::Parakeet(parakeet_engine) => {
                         let params = ParakeetParams {
@@ -1611,6 +1611,165 @@ fn post_process_transcription_text(
     )
 }
 
+fn transcribe_cpp_text(
+    session: &mut Session,
+    audio: &[f32],
+    run_options: &RunOptions,
+) -> Result<String> {
+    let model_arch = session.model().arch();
+    if should_segment_transcribe_cpp_audio(&model_arch, audio.len()) {
+        info!(
+            "transcribe-cpp model arch='{}' will transcribe {:.2}s audio in {:.0}s segments",
+            model_arch,
+            audio.len() as f64 / TRANSCRIBE_SAMPLE_RATE as f64,
+            QWEN_ASR_SEGMENT_SECONDS as f64
+        );
+        return transcribe_cpp_segmented_text(
+            session,
+            audio,
+            run_options,
+            QWEN_ASR_SEGMENT_SAMPLES,
+            QWEN_ASR_MIN_SEGMENT_SAMPLES,
+        );
+    }
+
+    transcribe_cpp_run_text(session, audio, run_options).map_err(transcribe_cpp_anyhow)
+}
+
+fn should_segment_transcribe_cpp_audio(model_arch: &str, audio_len: usize) -> bool {
+    model_arch == "qwen3_asr" && audio_len > QWEN_ASR_SEGMENT_SAMPLES
+}
+
+fn transcribe_cpp_segmented_text(
+    session: &mut Session,
+    audio: &[f32],
+    run_options: &RunOptions,
+    segment_samples: usize,
+    min_segment_samples: usize,
+) -> Result<String> {
+    let mut chunks = Vec::new();
+    for (start, end) in chunk_ranges(audio.len(), segment_samples) {
+        let chunk = transcribe_cpp_segment_text(
+            session,
+            &audio[start..end],
+            run_options,
+            min_segment_samples,
+        )?;
+        chunks.push(chunk);
+    }
+    Ok(join_transcript_chunks(chunks))
+}
+
+fn transcribe_cpp_segment_text(
+    session: &mut Session,
+    audio: &[f32],
+    run_options: &RunOptions,
+    min_segment_samples: usize,
+) -> Result<String> {
+    match transcribe_cpp_run_text(session, audio, run_options) {
+        Ok(text) => Ok(text),
+        Err(err)
+            if can_retry_transcribe_cpp_by_splitting(&err) && audio.len() > min_segment_samples =>
+        {
+            let mid = audio.len() / 2;
+            warn!(
+                "transcribe-cpp segment hit a decode limit for {:.2}s audio; retrying as two {:.2}s segments",
+                audio.len() as f64 / TRANSCRIBE_SAMPLE_RATE as f64,
+                mid as f64 / TRANSCRIBE_SAMPLE_RATE as f64
+            );
+            let left = transcribe_cpp_segment_text(
+                session,
+                &audio[..mid],
+                run_options,
+                min_segment_samples,
+            )?;
+            let right = transcribe_cpp_segment_text(
+                session,
+                &audio[mid..],
+                run_options,
+                min_segment_samples,
+            )?;
+            Ok(join_transcript_chunks(vec![left, right]))
+        }
+        Err(err) => {
+            if let Some(partial) = transcribe_cpp_partial_text(&err) {
+                warn!(
+                    "transcribe-cpp returned a truncated segment below the split threshold; using partial transcript"
+                );
+                return Ok(partial);
+            }
+            Err(transcribe_cpp_anyhow(err))
+        }
+    }
+}
+
+fn transcribe_cpp_run_text(
+    session: &mut Session,
+    audio: &[f32],
+    run_options: &RunOptions,
+) -> std::result::Result<String, TranscribeCppError> {
+    session
+        .run(audio, run_options)
+        .map(|transcript| transcript.text)
+}
+
+fn can_retry_transcribe_cpp_by_splitting(error: &TranscribeCppError) -> bool {
+    matches!(
+        error,
+        TranscribeCppError::InputTooLong(_) | TranscribeCppError::OutputTruncated { .. }
+    )
+}
+
+fn transcribe_cpp_partial_text(error: &TranscribeCppError) -> Option<String> {
+    error
+        .partial()
+        .map(|partial| partial.text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+fn transcribe_cpp_anyhow(error: TranscribeCppError) -> anyhow::Error {
+    anyhow::anyhow!("transcribe-cpp transcription failed: {}", error)
+}
+
+fn chunk_ranges(total_len: usize, chunk_len: usize) -> Vec<(usize, usize)> {
+    if total_len == 0 || chunk_len == 0 {
+        return Vec::new();
+    }
+
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    while start < total_len {
+        let end = (start + chunk_len).min(total_len);
+        ranges.push((start, end));
+        start = end;
+    }
+    ranges
+}
+
+fn join_transcript_chunks(chunks: Vec<String>) -> String {
+    let mut joined = String::new();
+    for chunk in chunks {
+        let chunk = chunk.trim();
+        if chunk.is_empty() {
+            continue;
+        }
+        if should_insert_transcript_space(joined.chars().last(), chunk.chars().next()) {
+            joined.push(' ');
+        }
+        joined.push_str(chunk);
+    }
+    joined
+}
+
+fn should_insert_transcript_space(previous: Option<char>, next: Option<char>) -> bool {
+    match (previous, next) {
+        (Some(previous), Some(next)) => {
+            previous.is_ascii_alphanumeric() && next.is_ascii_alphanumeric()
+        }
+        _ => false,
+    }
+}
+
 /// Decide a transcribe-cpp run's task + translation target from settings.
 ///
 /// "Translate to English" only fires where the model advertises translation.
@@ -1926,6 +2085,40 @@ mod tests {
         assert!(matches!(plan.task, Task::Transcribe));
         assert_eq!(plan.language.as_deref(), Some("es"));
         assert_eq!(plan.target_language, None);
+    }
+
+    #[test]
+    fn should_segment_only_long_qwen3_asr_audio() {
+        assert!(!should_segment_transcribe_cpp_audio(
+            "qwen3_asr",
+            QWEN_ASR_SEGMENT_SAMPLES
+        ));
+        assert!(should_segment_transcribe_cpp_audio(
+            "qwen3_asr",
+            QWEN_ASR_SEGMENT_SAMPLES + 1
+        ));
+        assert!(!should_segment_transcribe_cpp_audio(
+            "whisper",
+            QWEN_ASR_SEGMENT_SAMPLES + 1
+        ));
+    }
+
+    #[test]
+    fn chunk_ranges_cover_audio_without_overlap() {
+        assert_eq!(chunk_ranges(0, 10), Vec::<(usize, usize)>::new());
+        assert_eq!(chunk_ranges(25, 10), vec![(0, 10), (10, 20), (20, 25)]);
+    }
+
+    #[test]
+    fn join_transcript_chunks_preserves_cjk_and_spaces_latin_words() {
+        assert_eq!(
+            join_transcript_chunks(vec!["先接一下".to_string(), "ollama吧".to_string()]),
+            "先接一下ollama吧"
+        );
+        assert_eq!(
+            join_transcript_chunks(vec!["hello".to_string(), "world".to_string()]),
+            "hello world"
+        );
     }
 
     #[test]

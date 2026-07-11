@@ -44,13 +44,22 @@ struct InputiaHostTextPolicySelfCheck {
       "reload:",
       "stopLoading:",
     ].map { selectorName in
-      ("appCommand\(selectorName.dropLast())PassesThrough", InputiaHostTextPolicy.shouldPassThroughAppCommand(selectorName: selectorName))
+      (
+        "appCommand\(selectorName.dropLast())PassesThrough",
+        InputiaHostTextPolicy.shouldPassThroughAppCommand(selectorName: selectorName)
+      )
     }
     let checks: [(String, Bool)] = [
       ("replacementRangeLocationIsNSNotFound", range.location == NSNotFound),
       ("replacementRangeLengthIsNSNotFound", range.length == NSNotFound),
-      ("recallClipboardMenuHasNoCommandKeyEquivalent", InputiaHostTextPolicy.recallClipboardMenuKeyEquivalent.isEmpty),
-      ("settingsMenuHasNoCommandKeyEquivalent", InputiaHostTextPolicy.settingsMenuKeyEquivalent.isEmpty),
+      (
+        "recallClipboardMenuHasNoCommandKeyEquivalent",
+        InputiaHostTextPolicy.recallClipboardMenuKeyEquivalent.isEmpty
+      ),
+      (
+        "settingsMenuHasNoCommandKeyEquivalent",
+        InputiaHostTextPolicy.settingsMenuKeyEquivalent.isEmpty
+      ),
       (
         "rawComposingFallbackCandidate",
         InputiaHostTextPolicy.candidatesForPanel(composing: "ni", candidates: []) == ["ni"]
@@ -96,24 +105,24 @@ struct InputiaHostTextPolicySelfCheck {
         )
       ),
       (
-        "partialCommitContinuesComposition",
-        InputiaHostTextPolicy.shouldContinueCompositionAfterCommit(
-          nextComposing: "laiem",
-          committedText: "你"
+        "partialCandidateCommitContinuesMarkedText",
+        InputiaHostTextPolicy.shouldContinueMarkedTextAfterCommit(
+          committedText: "你",
+          nextComposing: "lllema"
         )
       ),
       (
-        "emptyCommitDoesNotContinueComposition",
-        !InputiaHostTextPolicy.shouldContinueCompositionAfterCommit(
-          nextComposing: "laiem",
-          committedText: nil
+        "fullCandidateCommitDoesNotContinueMarkedText",
+        !InputiaHostTextPolicy.shouldContinueMarkedTextAfterCommit(
+          committedText: "你来了吗",
+          nextComposing: ""
         )
       ),
       (
-        "finalCommitDoesNotContinueComposition",
-        !InputiaHostTextPolicy.shouldContinueCompositionAfterCommit(
-          nextComposing: "",
-          committedText: "你"
+        "emptyCommitDoesNotContinueMarkedText",
+        !InputiaHostTextPolicy.shouldContinueMarkedTextAfterCommit(
+          committedText: "",
+          nextComposing: "lllema"
         )
       ),
       (
@@ -145,17 +154,17 @@ struct InputiaHostTextPolicySelfCheck {
         )
       ),
       (
-        "emptyLineBreakCommandPassesThrough",
-        InputiaHostTextPolicy.shouldPassThroughNewlineCommand(
-          selectorName: "insertLineBreak:",
-          hasComposing: false
-        )
-      ),
-      (
         "composingNewlineCommandIsHandled",
         !InputiaHostTextPolicy.shouldPassThroughNewlineCommand(
           selectorName: "insertNewline:",
           hasComposing: true
+        )
+      ),
+      (
+        "emptyLineBreakCommandPassesThrough",
+        InputiaHostTextPolicy.shouldPassThroughNewlineCommand(
+          selectorName: "insertLineBreak:",
+          hasComposing: false
         )
       ),
       (

@@ -130,45 +130,107 @@ fn build_final_response(
     custom_words: &[String],
     raw: &str,
 ) -> Result<String, String> {
-    let payload: ModelReplacementResponse = serde_json::from_str(raw.trim())
-        .map_err(|err| format!("model response is not replacements JSON: {err}; raw={raw:?}"))?;
-
-    if payload.replacements.len() > MAX_REPLACEMENTS {
-        return Err(format!(
-            "too many replacements: {}",
-            payload.replacements.len()
-        ));
-    }
-
+    let replacements = parse_model_replacements(raw)?;
     let allowed_words = custom_words
         .iter()
         .map(String::as_str)
         .collect::<HashSet<_>>();
     let mut rebuilt = source_text.to_string();
-    for replacement in &payload.replacements {
-        if replacement.from.is_empty() {
-            return Err("replacement.from is empty".to_string());
+    let mut accepted = Vec::new();
+
+    for replacement in replacements {
+        if accepted.len() >= MAX_REPLACEMENTS {
+            break;
         }
-        if !allowed_words.contains(replacement.to.as_str()) {
-            return Err(format!(
-                "replacement.to '{}' is not in custom_words",
-                replacement.to
-            ));
+        if replacement.from.is_empty()
+            || replacement.from == replacement.to
+            || !allowed_words.contains(replacement.to.as_str())
+            || !rebuilt.contains(&replacement.from)
+        {
+            continue;
         }
-        if !rebuilt.contains(&replacement.from) {
-            return Err(format!(
-                "replacement.from '{}' does not occur in the current text",
-                replacement.from
-            ));
-        }
-        rebuilt = rebuilt.replacen(&replacement.from, &replacement.to, 1);
+
+        rebuilt = rebuilt.replace(&replacement.from, &replacement.to);
+        accepted.push(replacement);
     }
 
     serde_json::to_string(&FinalCorrectionResponse {
         text: rebuilt,
-        replacements: payload.replacements,
+        replacements: accepted,
     })
     .map_err(|err| format!("failed to encode final correction response: {err}"))
+}
+
+fn parse_model_replacements(raw: &str) -> Result<Vec<ModelReplacement>, String> {
+    match serde_json::from_str::<ModelReplacementResponse>(raw.trim()) {
+        Ok(payload) => Ok(payload.replacements),
+        Err(strict_err) => {
+            let recovered = recover_replacements_from_partial_json(raw);
+            if recovered.is_empty() {
+                Err(format!(
+                    "model response is not replacements JSON: {strict_err}; raw={raw:?}"
+                ))
+            } else {
+                Ok(recovered)
+            }
+        }
+    }
+}
+
+fn recover_replacements_from_partial_json(raw: &str) -> Vec<ModelReplacement> {
+    let Some(array_start) = raw.find('[') else {
+        return Vec::new();
+    };
+
+    let mut replacements = Vec::new();
+    let mut object_start = None;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (relative_idx, ch) in raw[array_start..].char_indices() {
+        let idx = array_start + relative_idx;
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    object_start = Some(idx);
+                }
+                depth += 1;
+            }
+            '}' => {
+                if depth == 0 {
+                    continue;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(start) = object_start.take() {
+                        let end = idx + ch.len_utf8();
+                        if let Ok(replacement) =
+                            serde_json::from_str::<ModelReplacement>(&raw[start..end])
+                        {
+                            replacements.push(replacement);
+                        }
+                    }
+                }
+            }
+            ']' if depth == 0 => break,
+            _ => {}
+        }
+    }
+
+    replacements
 }
 
 fn qwen_backend() -> Result<&'static LlamaBackend, String> {
@@ -236,10 +298,13 @@ fn run_qwen_generation(
     let threads = std::thread::available_parallelism()
         .map(|count| count.get().min(8) as i32)
         .unwrap_or(4);
+    let prompt_batch_tokens = u32::try_from(prompt_tokens.len()).unwrap_or(QWEN_CONTEXT_TOKENS);
+    let batch_tokens = QWEN_BATCH_TOKENS.max(prompt_batch_tokens);
+    let ubatch_tokens = QWEN_BATCH_TOKENS.min(batch_tokens);
     let context_params = LlamaContextParams::default()
         .with_n_ctx(NonZeroU32::new(QWEN_CONTEXT_TOKENS))
-        .with_n_batch(QWEN_BATCH_TOKENS)
-        .with_n_ubatch(QWEN_BATCH_TOKENS)
+        .with_n_batch(batch_tokens)
+        .with_n_ubatch(ubatch_tokens)
         .with_n_threads(threads)
         .with_n_threads_batch(threads);
     let mut context = model
@@ -377,4 +442,49 @@ fn exit_without_destructors() -> ! {
 #[cfg(not(unix))]
 fn exit_without_destructors() -> ! {
     std::process::exit(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn final_response_recovers_valid_replacement_from_partial_json() {
+        let raw = r#"{"replacements":[{"from":"欧拉玛","to":"ollama"},{"from":""#;
+        let output =
+            build_final_response("我希望先接一下欧拉玛吧。", &["ollama".to_string()], raw).unwrap();
+
+        assert_eq!(
+            output,
+            r#"{"text":"我希望先接一下ollama吧。","replacements":[{"from":"欧拉玛","to":"ollama"}]}"#
+        );
+    }
+
+    #[test]
+    fn final_response_replaces_every_occurrence_of_valid_span() {
+        let raw = r#"{"replacements":[{"from":"欧拉玛","to":"ollama"}]}"#;
+        let output =
+            build_final_response("欧拉玛和欧拉玛都要改。", &["ollama".to_string()], raw).unwrap();
+
+        assert_eq!(
+            output,
+            r#"{"text":"ollama和ollama都要改。","replacements":[{"from":"欧拉玛","to":"ollama"}]}"#
+        );
+    }
+
+    #[test]
+    fn final_response_skips_replacements_that_are_not_safe() {
+        let raw = r#"{"replacements":[{"from":"欧拉玛","to":"ollama"},{"from":"openai","to":"OpenAI"},{"from":"ollama","to":"ollama"}]}"#;
+        let output = build_final_response(
+            "我希望先接一下欧拉玛吧。",
+            &["ollama".to_string(), "OpenAI".to_string()],
+            raw,
+        )
+        .unwrap();
+
+        assert_eq!(
+            output,
+            r#"{"text":"我希望先接一下ollama吧。","replacements":[{"from":"欧拉玛","to":"ollama"}]}"#
+        );
+    }
 }

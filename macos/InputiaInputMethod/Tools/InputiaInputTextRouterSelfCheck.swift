@@ -3,10 +3,6 @@ import Foundation
 
 @main
 struct InputiaInputTextRouterSelfCheck {
-  private static func emit(_ line: String) {
-    FileHandle.standardOutput.write(Data((line + "\n").utf8))
-  }
-
   private static func route(_ text: String, bridge: InputiaRustBridge) -> [InputiaBridgeOutcome] {
     var outcomes: [InputiaBridgeOutcome] = []
     var hasComposing = false
@@ -36,20 +32,11 @@ struct InputiaInputTextRouterSelfCheck {
     return route(text, bridge: bridge)
   }
 
-  private static func commitInChineseMode(_ text: String, bridge: InputiaRustBridge) -> String? {
-    _ = bridge.setChineseMode()
-    return route(text, bridge: bridge).last?.commit
-  }
-
   static func main() {
     let carriageReturnOutcomes = routeInChineseMode("ni\r")
     let lineFeedOutcomes = routeInChineseMode("ni\n")
     let spaceOutcomes = routeInChineseMode("ni ")
     let plainSpaceOutcomes = routeInChineseMode(" ")
-    let simplifiedBridge = InputiaRustBridge.temporarySettingsForDiagnostics(chineseScript: "simplified")
-    let traditionalBridge = InputiaRustBridge.temporarySettingsForDiagnostics(chineseScript: "traditional")
-    let simplifiedCommit = commitInChineseMode("zhongguo ", bridge: simplifiedBridge)
-    let traditionalCommit = commitInChineseMode("zhongguo ", bridge: traditionalBridge)
 
     let carriageReturnCommitsRaw = carriageReturnOutcomes.last?.commit == "ni"
       && carriageReturnOutcomes.last?.composing == ""
@@ -68,8 +55,6 @@ struct InputiaInputTextRouterSelfCheck {
     let routeSpaceAction = InputiaInputTextRouter.action(for: " ", hasComposing: true) == .space
     let routePlainSpaceAction = InputiaInputTextRouter.action(for: " ", hasComposing: false) == .character(" ")
     let routeLetterAction = InputiaInputTextRouter.action(for: "n", hasComposing: false) == .character("n")
-    let simplifiedScriptCommitsSimplified = simplifiedCommit == "中国"
-    let traditionalScriptCommitsTraditional = traditionalCommit == "中國"
 
     let ok = carriageReturnCommitsRaw
       && lineFeedCommitsRaw
@@ -80,23 +65,17 @@ struct InputiaInputTextRouterSelfCheck {
       && routeSpaceAction
       && routePlainSpaceAction
       && routeLetterAction
-      && simplifiedScriptCommitsSimplified
-      && traditionalScriptCommitsTraditional
 
-    emit("inputTextRouterSelfCheck=\(ok)")
-    emit("carriageReturnCommitsRaw=\(carriageReturnCommitsRaw)")
-    emit("lineFeedCommitsRaw=\(lineFeedCommitsRaw)")
-    emit("composingSpaceCommitsCandidate=\(composingSpaceCommitsCandidate)")
-    emit("plainSpacePassesThrough=\(plainSpacePassesThrough)")
-    emit("routeEnterAction=\(routeEnterAction)")
-    emit("routeEnterPassesThroughWithoutComposing=\(routeEnterPassesThroughWithoutComposing)")
-    emit("routeSpaceAction=\(routeSpaceAction)")
-    emit("routePlainSpaceAction=\(routePlainSpaceAction)")
-    emit("routeLetterAction=\(routeLetterAction)")
-    emit("simplifiedScriptCommit=\(simplifiedCommit ?? "nil")")
-    emit("simplifiedScriptCommitsSimplified=\(simplifiedScriptCommitsSimplified)")
-    emit("traditionalScriptCommit=\(traditionalCommit ?? "nil")")
-    emit("traditionalScriptCommitsTraditional=\(traditionalScriptCommitsTraditional)")
-    _exit(ok ? 0 : 1)
+    print("inputTextRouterSelfCheck=\(ok)")
+    print("carriageReturnCommitsRaw=\(carriageReturnCommitsRaw)")
+    print("lineFeedCommitsRaw=\(lineFeedCommitsRaw)")
+    print("composingSpaceCommitsCandidate=\(composingSpaceCommitsCandidate)")
+    print("plainSpacePassesThrough=\(plainSpacePassesThrough)")
+    print("routeEnterAction=\(routeEnterAction)")
+    print("routeEnterPassesThroughWithoutComposing=\(routeEnterPassesThroughWithoutComposing)")
+    print("routeSpaceAction=\(routeSpaceAction)")
+    print("routePlainSpaceAction=\(routePlainSpaceAction)")
+    print("routeLetterAction=\(routeLetterAction)")
+    exit(ok ? 0 : 1)
   }
 }

@@ -1,13 +1,12 @@
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::fmt;
-use std::mem::ManuallyDrop;
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut, NonNull};
 use std::sync::{Mutex, OnceLock};
 
-use inputia_core::{Candidate, CandidateCommit, CandidateSource, ChineseEngine};
+use inputia_core::{Candidate, CandidateSelection, CandidateSource, ChineseEngine};
 use libloading::Library;
 
 type Bool = c_int;
@@ -16,13 +15,12 @@ type UnusedFn = Option<unsafe extern "C" fn()>;
 
 const FALSE: Bool = 0;
 const TRUE: Bool = 1;
-const MAX_CANDIDATE_PAGES: usize = 2;
+const INITIAL_CANDIDATE_TARGET: usize = 10;
+const RIME_CANDIDATE_PAGE_SCAN_GUARD: usize = 256;
 const DEFAULT_SQUIRREL_DYLIB: &str =
     "/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib";
 const DEFAULT_SQUIRREL_SHARED_DATA: &str =
     "/Library/Input Methods/Squirrel.app/Contents/SharedSupport";
-const HOMEBREW_ARM64_DYLIB: &str = "/opt/homebrew/lib/librime.1.dylib";
-const HOMEBREW_INTEL_DYLIB: &str = "/usr/local/lib/librime.1.dylib";
 
 fn bool_to_rime(value: bool) -> Bool {
     if value {
@@ -45,7 +43,7 @@ pub struct RimeEngineConfig {
 impl RimeEngineConfig {
     pub fn squirrel_luna_pinyin_simp(user_data_dir: impl Into<PathBuf>) -> Self {
         Self {
-            dylib_path: default_librime_dylib_path(),
+            dylib_path: PathBuf::from(DEFAULT_SQUIRREL_DYLIB),
             shared_data_dir: PathBuf::from(DEFAULT_SQUIRREL_SHARED_DATA),
             user_data_dir: user_data_dir.into(),
             schema_id: "luna_pinyin_simp".to_string(),
@@ -74,42 +72,16 @@ impl RimeEngineConfig {
         self
     }
 
-    pub fn with_simplification(mut self, enabled: bool) -> Self {
-        self.output_options = vec![("simplification".to_string(), enabled)];
-        self
-    }
-
-    pub fn with_output_option(mut self, option: Option<String>) -> Self {
-        self.output_options = option.into_iter().map(|name| (name, true)).collect();
-        self
-    }
-
     pub fn with_output_options(mut self, options: Vec<(String, bool)>) -> Self {
         self.output_options = options;
         self
     }
 }
 
-fn default_librime_dylib_path() -> PathBuf {
-    [
-        DEFAULT_SQUIRREL_DYLIB,
-        HOMEBREW_ARM64_DYLIB,
-        HOMEBREW_INTEL_DYLIB,
-    ]
-    .into_iter()
-    .map(PathBuf::from)
-    .find(|path| path.exists())
-    .unwrap_or_else(|| PathBuf::from(DEFAULT_SQUIRREL_DYLIB))
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RimeSnapshot {
     pub schema_id: String,
-    pub input: String,
     pub preedit: String,
-    pub cursor_pos: i32,
-    pub sel_start: i32,
-    pub sel_end: i32,
     pub page_no: i32,
     pub page_size: i32,
     pub is_last_page: bool,
@@ -119,7 +91,7 @@ pub struct RimeSnapshot {
 }
 
 pub struct RimeEngine {
-    _library: ManuallyDrop<Library>,
+    _library: Library,
     api: NonNull<RimeApi>,
     config: RimeEngineConfig,
     cstrings: RimeCStringConfig,
@@ -151,7 +123,7 @@ impl RimeEngine {
             .collect::<Result<Vec<_>>>()?;
 
         let engine = Self {
-            _library: ManuallyDrop::new(library),
+            _library: library,
             api,
             config,
             cstrings,
@@ -216,41 +188,72 @@ impl RimeEngine {
         self.snapshot(live_session.session_id)
     }
 
-    pub fn select_live_candidate(
+    pub fn select_candidate(
         &self,
         composing: &str,
+        _page: usize,
+        _page_index: usize,
         candidate: &Candidate,
-        page: usize,
-        page_index: usize,
-    ) -> Result<RimeSnapshot> {
+    ) -> Result<CandidateSelection> {
         let _guard = self
             .evaluation_lock
             .lock()
             .map_err(|_| Error::LockPoisoned)?;
+        let address = rime_candidate_address(&candidate.id, &self.config.schema_id).ok_or(
+            Error::Rime("candidate does not carry a selectable Rime address"),
+        )?;
         let api = self.api();
         let mut live_session = self.live_session.lock().map_err(|_| Error::LockPoisoned)?;
         let live_session = self.ensure_live_session(api, &mut live_session)?;
 
-        self.prepare_live_input(api, live_session, composing)?;
-        let selected = if let Some(global_index) = rime_candidate_global_index(candidate) {
-            let select_candidate = required(api.select_candidate, "select_candidate")?;
-            unsafe { select_candidate(live_session.session_id, global_index) }
-        } else {
-            self.prepare_live_page(api, live_session, page)?;
-            let select_candidate_on_current_page = required(
-                api.select_candidate_on_current_page,
-                "select_candidate_on_current_page",
-            )?;
-            unsafe { select_candidate_on_current_page(live_session.session_id, page_index) }
-        };
-        if selected == FALSE {
-            return Err(Error::Rime("failed to select candidate"));
+        self.clear_live_session_composition(api, live_session)?;
+        match address {
+            RimeCandidateAddress::CurrentPage { page, page_index } => {
+                let select_key = candidate_select_key(page_index).ok_or(Error::Rime(
+                    "candidate page index is not selectable by digit",
+                ))?;
+                let key_sequence = selection_key_sequence(composing, page, select_key);
+                self.simulate_key_sequence(api, live_session.session_id, &key_sequence)?;
+            }
+            RimeCandidateAddress::Global { index } => {
+                self.simulate_key_sequence(api, live_session.session_id, composing)?;
+                let select_candidate = required(api.select_candidate, "select_candidate")?;
+                if unsafe { select_candidate(live_session.session_id, index) } == FALSE {
+                    return Err(Error::Rime("failed to select candidate"));
+                }
+            }
         }
 
-        let snapshot = self.snapshot(live_session.session_id)?;
-        live_session.input = snapshot.input.clone();
-        live_session.page = snapshot.page_no.max(0) as usize;
-        Ok(snapshot)
+        let commit = candidate.text.clone();
+        let get_input = required(api.get_input, "get_input")?;
+        let rime_input = unsafe { c_string(get_input(live_session.session_id)) };
+        let remaining = remaining_input_after_candidate_selection(
+            &self.config.schema_id,
+            composing,
+            candidate,
+            &rime_input,
+        )
+        .ok_or(Error::Rime(
+            "failed to infer remaining input after selection",
+        ))?;
+
+        self.clear_live_session_composition(api, live_session)?;
+        if !remaining.is_empty() {
+            self.simulate_key_sequence(api, live_session.session_id, &remaining)?;
+        }
+        live_session.input = remaining.clone();
+        live_session.page = 0;
+        let candidates = if remaining.is_empty() {
+            Vec::new()
+        } else {
+            self.snapshot(live_session.session_id)?.candidates
+        };
+
+        Ok(CandidateSelection {
+            commit,
+            composing: remaining,
+            candidates,
+        })
     }
 
     fn initialize(&self) -> Result<()> {
@@ -295,11 +298,6 @@ impl RimeEngine {
         let get_current_schema = required(api.get_current_schema, "get_current_schema")?;
         let get_context = required(api.get_context, "get_context")?;
         let free_context = required(api.free_context, "free_context")?;
-        let input = unsafe {
-            api.get_input
-                .map(|get_input| c_string(get_input(session_id)))
-                .unwrap_or_default()
-        };
 
         let mut schema_buffer = [0_i8; 128];
         let schema_id = if unsafe {
@@ -319,11 +317,7 @@ impl RimeEngine {
         let snapshot = unsafe {
             let snapshot = RimeSnapshot {
                 schema_id: schema_id.clone(),
-                input,
                 preedit: c_string(context.composition.preedit),
-                cursor_pos: context.composition.cursor_pos,
-                sel_start: context.composition.sel_start,
-                sel_end: context.composition.sel_end,
                 page_no: context.menu.page_no,
                 page_size: context.menu.page_size,
                 is_last_page: context.menu.is_last_page != FALSE,
@@ -469,43 +463,64 @@ impl RimeEngine {
 
 impl ChineseEngine for RimeEngine {
     fn candidates(&self, composing: &str) -> Vec<Candidate> {
+        self.candidates_up_to(composing, INITIAL_CANDIDATE_TARGET)
+    }
+
+    fn candidates_up_to(&self, composing: &str, minimum_count: usize) -> Vec<Candidate> {
         let mut candidates = Vec::new();
         let mut seen_texts = HashSet::new();
+        let minimum_count = minimum_count.max(1);
 
         if self.config.spelling_correction {
             for correction in spelling_correction_variants(composing) {
-                self.append_candidates(&correction, true, &mut candidates, &mut seen_texts);
+                self.append_candidates_until(
+                    &correction,
+                    true,
+                    minimum_count,
+                    &mut candidates,
+                    &mut seen_texts,
+                );
+                if candidates.len() >= minimum_count {
+                    return candidates;
+                }
             }
         }
-        let preedit = self.append_candidates(composing, false, &mut candidates, &mut seen_texts);
-        promote_phrase_candidates_for_segmented_preedit(preedit.as_deref(), &mut candidates);
+        self.append_candidates_until(
+            composing,
+            false,
+            minimum_count,
+            &mut candidates,
+            &mut seen_texts,
+        );
 
         candidates
+    }
+
+    fn candidate_consumed_len(&self, composing: &str, candidate: &Candidate) -> Option<usize> {
+        candidate_consumed_len(&self.config.schema_id, composing, candidate)
     }
 
     fn select_candidate(
         &self,
         composing: &str,
-        candidate: &Candidate,
         page: usize,
         page_index: usize,
-    ) -> Option<CandidateCommit> {
-        self.select_live_candidate(composing, candidate, page, page_index)
-            .ok()
-            .and_then(|snapshot| rime_snapshot_commit(snapshot, candidate))
+        candidate: &Candidate,
+    ) -> Option<CandidateSelection> {
+        RimeEngine::select_candidate(self, composing, page, page_index, candidate).ok()
     }
 }
 
 impl RimeEngine {
-    fn append_candidates(
+    fn append_candidates_until(
         &self,
         composing: &str,
         corrected: bool,
+        minimum_count: usize,
         candidates: &mut Vec<Candidate>,
         seen_texts: &mut HashSet<String>,
-    ) -> Option<String> {
-        let mut first_preedit = None;
-        for page in 0..MAX_CANDIDATE_PAGES {
+    ) {
+        for page in 0..RIME_CANDIDATE_PAGE_SCAN_GUARD {
             let snapshot = if corrected {
                 let key_sequence = paged_key_sequence(composing, page);
                 self.evaluate(&key_sequence)
@@ -513,23 +528,28 @@ impl RimeEngine {
                 self.evaluate_incremental(composing, page)
             };
             let Ok(snapshot) = snapshot else {
-                return first_preedit;
+                return;
             };
-            if first_preedit.is_none() {
-                first_preedit = Some(snapshot.preedit.clone());
-            }
 
             if snapshot.candidates.is_empty() {
                 break;
             }
 
+            let mut added_candidates = 0;
             for mut candidate in snapshot.candidates {
+                if !is_valid_candidate_text(&candidate.text) {
+                    continue;
+                }
                 if !seen_texts.insert(candidate.text.clone()) {
                     continue;
                 }
+                added_candidates += 1;
                 let global_index = candidates.len();
+                let existing_id = candidate.id.clone();
                 candidate.id = if corrected {
                     format!("rime-correction:{}:{global_index}", snapshot.schema_id)
+                } else if existing_id.starts_with("rime:") {
+                    existing_id
                 } else {
                     format!("rime:{}:{global_index}", snapshot.schema_id)
                 };
@@ -540,88 +560,11 @@ impl RimeEngine {
                 candidates.push(candidate);
             }
 
-            if snapshot.is_last_page {
+            if candidates.len() >= minimum_count || snapshot.is_last_page || added_candidates == 0 {
                 break;
             }
         }
-        first_preedit
     }
-}
-
-fn promote_phrase_candidates_for_segmented_preedit(
-    preedit: Option<&str>,
-    candidates: &mut Vec<Candidate>,
-) {
-    let Some(preedit) = preedit else {
-        return;
-    };
-    if preedit.split_whitespace().count() < 2 {
-        return;
-    }
-    let Some(first_normal_index) = candidates
-        .iter()
-        .position(|candidate| candidate.id.starts_with("rime:"))
-    else {
-        return;
-    };
-    let normal_candidates = candidates.split_off(first_normal_index);
-    let mut phrase_candidates = Vec::new();
-    let mut other_candidates = Vec::new();
-    for candidate in normal_candidates {
-        if candidate.text.chars().count() > 1 {
-            phrase_candidates.push(candidate);
-        } else {
-            other_candidates.push(candidate);
-        }
-    }
-    if phrase_candidates.is_empty() || other_candidates.is_empty() {
-        candidates.extend(phrase_candidates);
-        candidates.extend(other_candidates);
-        return;
-    }
-
-    candidates.extend(phrase_candidates);
-    candidates.extend(other_candidates);
-    for (index, candidate) in candidates.iter_mut().enumerate() {
-        candidate.base_score = 1_000 - index as i32;
-    }
-}
-
-fn rime_snapshot_commit(
-    snapshot: RimeSnapshot,
-    fallback_candidate: &Candidate,
-) -> Option<CandidateCommit> {
-    if let Some(commit) = snapshot.commit.filter(|commit| !commit.is_empty()) {
-        return Some(CandidateCommit::new(
-            commit,
-            snapshot.input,
-            snapshot.page_no.max(0) as usize,
-            snapshot.candidates,
-        ));
-    }
-
-    if snapshot.candidates.is_empty() {
-        return Some(CandidateCommit::new(
-            fallback_candidate.text.clone(),
-            "",
-            0,
-            Vec::new(),
-        ));
-    }
-
-    Some(CandidateCommit::preedit(
-        snapshot.preedit,
-        snapshot.input,
-        snapshot.page_no.max(0) as usize,
-        snapshot.candidates,
-    ))
-}
-
-fn rime_candidate_global_index(candidate: &Candidate) -> Option<usize> {
-    if !candidate.id.starts_with("rime:") {
-        return None;
-    }
-    candidate.id.rsplit(':').next()?.parse().ok()
 }
 
 fn paged_key_sequence(composing: &str, page: usize) -> String {
@@ -630,6 +573,143 @@ fn paged_key_sequence(composing: &str, page: usize) -> String {
         key_sequence.push_str("{Page_Down}");
     }
     key_sequence
+}
+
+fn is_valid_candidate_text(text: &str) -> bool {
+    !text.is_empty()
+        && text.chars().all(|ch| {
+            let value = ch as u32;
+            ch != '\u{fffd}'
+                && !ch.is_control()
+                && !(0xe000..=0xf8ff).contains(&value)
+                && !(0xf0000..=0xffffd).contains(&value)
+                && !(0x100000..=0x10fffd).contains(&value)
+                && !(0xfdd0..=0xfdef).contains(&value)
+                && value & 0xffff != 0xfffe
+                && value & 0xffff != 0xffff
+        })
+}
+
+fn candidate_consumed_len(
+    schema_id: &str,
+    composing: &str,
+    candidate: &Candidate,
+) -> Option<usize> {
+    if composing.is_empty() {
+        return None;
+    }
+
+    let char_count = cjk_char_count(&candidate.text);
+    if char_count == 0 {
+        return None;
+    }
+
+    if composing.contains('\'') {
+        return consumed_len_for_delimited_composition(composing, char_count);
+    }
+
+    if is_double_pinyin_schema(schema_id) {
+        return Some((char_count * 2).min(composing.len()));
+    }
+
+    None
+}
+
+fn consumed_len_for_delimited_composition(composing: &str, char_count: usize) -> Option<usize> {
+    let mut consumed_parts = 0;
+    let mut consumed_len = 0;
+    for part in composing.split_inclusive('\'') {
+        consumed_len += part.len();
+        if part.trim_matches('\'').is_empty() {
+            continue;
+        }
+        consumed_parts += 1;
+        if consumed_parts == char_count {
+            return Some(consumed_len);
+        }
+    }
+    Some(composing.len())
+}
+
+fn is_double_pinyin_schema(schema_id: &str) -> bool {
+    schema_id == "double_pinyin"
+        || schema_id == "guobiao_bispell"
+        || schema_id.starts_with("double_pinyin_")
+}
+
+fn cjk_char_count(text: &str) -> usize {
+    text.chars().filter(|ch| is_cjk_unified(*ch)).count()
+}
+
+fn is_cjk_unified(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xF900..=0xFAFF
+            | 0x20000..=0x2A6DF
+            | 0x2A700..=0x2B73F
+            | 0x2B740..=0x2B81F
+            | 0x2B820..=0x2CEAF
+            | 0x2CEB0..=0x2EBEF
+            | 0x30000..=0x3134F
+    )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RimeCandidateAddress {
+    CurrentPage { page: usize, page_index: usize },
+    Global { index: usize },
+}
+
+fn rime_candidate_address(id: &str, schema_id: &str) -> Option<RimeCandidateAddress> {
+    let mut parts = id.split(':');
+    if parts.next()? != "rime" || parts.next()? != schema_id {
+        return None;
+    }
+    let global_index = parts.next()?.parse::<usize>().ok()?;
+    let Some(page) = parts.next() else {
+        return Some(RimeCandidateAddress::Global {
+            index: global_index,
+        });
+    };
+    let page = page.parse::<usize>().ok()?;
+    let page_index = parts.next()?.parse::<usize>().ok()?;
+    Some(RimeCandidateAddress::CurrentPage { page, page_index })
+}
+
+fn candidate_select_key(page_index: usize) -> Option<char> {
+    if page_index < 9 {
+        Some(char::from(b'1' + page_index as u8))
+    } else {
+        None
+    }
+}
+
+fn selection_key_sequence(composing: &str, page: usize, select_key: char) -> String {
+    let mut sequence = paged_key_sequence(composing, page);
+    sequence.push(select_key);
+    sequence
+}
+
+fn remaining_input_after_candidate_selection(
+    schema_id: &str,
+    composing: &str,
+    candidate: &Candidate,
+    rime_input: &str,
+) -> Option<String> {
+    if rime_input.len() < composing.len() && composing.ends_with(rime_input) {
+        return Some(rime_input.to_string());
+    }
+
+    let consumed_len = candidate_consumed_len(schema_id, composing, candidate)?;
+    if consumed_len == 0
+        || consumed_len > composing.len()
+        || !composing.is_char_boundary(consumed_len)
+    {
+        return None;
+    }
+    Some(composing[consumed_len..].to_string())
 }
 
 fn spelling_correction_variants(input: &str) -> Vec<String> {
@@ -716,6 +796,7 @@ impl Drop for RimeEngine {
 struct RimeRuntimeSignature {
     dylib_path: PathBuf,
     shared_data_dir: PathBuf,
+    user_data_dir: PathBuf,
 }
 
 impl From<&RimeEngineConfig> for RimeRuntimeSignature {
@@ -723,6 +804,7 @@ impl From<&RimeEngineConfig> for RimeRuntimeSignature {
         Self {
             dylib_path: config.dylib_path.clone(),
             shared_data_dir: config.shared_data_dir.clone(),
+            user_data_dir: config.user_data_dir.clone(),
         }
     }
 }
@@ -750,17 +832,8 @@ fn release_rime_runtime(api: &RimeApi, config: &RimeEngineConfig) {
         return;
     }
 
-    if state.active_count > 1 {
-        state.active_count -= 1;
-        return;
-    }
-
-    if std::env::var("INPUTIA_RIME_FINALIZE_ON_DROP")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
-        state.active_count = 0;
+    state.active_count -= 1;
+    if state.active_count == 0 {
         if let Some(finalize) = api.finalize {
             unsafe { finalize() };
         }
@@ -777,14 +850,21 @@ unsafe fn copy_candidates(schema_id: &str, menu: &RimeMenu) -> Vec<Candidate> {
         return Vec::new();
     }
 
+    let page = menu.page_no.max(0) as usize;
+    let page_size = menu.page_size.max(1) as usize;
     (0..menu.num_candidates)
         .map(|index| {
             let raw_candidate = &*menu.candidates.add(index as usize);
             let text = c_string(raw_candidate.text);
-            let mut candidate = Candidate::new(format!("rime:{schema_id}:{index}"), text);
+            let page_index = index as usize;
+            let global_index = page * page_size + page_index;
+            let mut candidate = Candidate::new(
+                format!("rime:{schema_id}:{global_index}:{page}:{page_index}"),
+                text,
+            );
             candidate.annotation = c_string(raw_candidate.comment);
             candidate.source = CandidateSource::Engine;
-            candidate.base_score = 1_000 - index;
+            candidate.base_score = 1_000 - global_index as i32;
             candidate
         })
         .collect()
@@ -1006,8 +1086,8 @@ struct RimeApi {
     destroy_session: Option<unsafe extern "C" fn(RimeSessionId) -> Bool>,
     cleanup_stale_sessions: UnusedFn,
     cleanup_all_sessions: UnusedFn,
-    process_key: UnusedFn,
-    commit_composition: UnusedFn,
+    process_key: Option<unsafe extern "C" fn(RimeSessionId, c_int, c_int) -> Bool>,
+    commit_composition: Option<unsafe extern "C" fn(RimeSessionId) -> Bool>,
     clear_composition: Option<unsafe extern "C" fn(RimeSessionId)>,
     get_commit: Option<unsafe extern "C" fn(RimeSessionId, *mut RimeCommit) -> Bool>,
     free_commit: Option<unsafe extern "C" fn(*mut RimeCommit) -> Bool>,
@@ -1075,25 +1155,12 @@ mod tests {
 
         assert_eq!(config.schema_id, "luna_pinyin_simp");
         assert!(config.dylib_path.ends_with("librime.1.dylib"));
-        assert!(
-            config.shared_data_dir.ends_with("SharedSupport"),
-            "default shared data should remain Squirrel-shaped unless callers override it"
-        );
+        assert!(config.shared_data_dir.ends_with("SharedSupport"));
         assert!(config.spelling_correction);
         assert_eq!(
             config.user_data_dir,
             PathBuf::from("/tmp/inputia-rime-test")
         );
-    }
-
-    #[test]
-    fn default_librime_path_prefers_available_runtime_without_entering_core() {
-        let path = default_librime_dylib_path();
-
-        assert!(path.ends_with("librime.1.dylib"));
-        if Path::new(DEFAULT_SQUIRREL_DYLIB).exists() {
-            assert_eq!(path, PathBuf::from(DEFAULT_SQUIRREL_DYLIB));
-        }
     }
 
     #[test]
@@ -1106,67 +1173,11 @@ mod tests {
     }
 
     #[test]
-    fn segmented_preedit_promotes_phrases_before_single_characters() {
-        let mut candidates = vec![
-            Candidate::new("rime:double_pinyin:0", "你"),
-            Candidate::new("rime:double_pinyin:1", "尼"),
-            Candidate::new("rime:double_pinyin:2", "你来"),
-            Candidate::new("rime:double_pinyin:3", "你来了吗"),
-        ];
-
-        promote_phrase_candidates_for_segmented_preedit(Some("ni lai le ma"), &mut candidates);
-
-        assert_eq!(
-            candidates
-                .iter()
-                .map(|candidate| candidate.text.as_str())
-                .collect::<Vec<_>>(),
-            vec!["你来", "你来了吗", "你", "尼"]
-        );
-        assert_eq!(candidates[0].base_score, 1_000);
-        assert_eq!(candidates[1].base_score, 999);
-        assert_eq!(
-            candidates[1].id, "rime:double_pinyin:3",
-            "candidate id should continue to point at the original Rime global index"
-        );
-    }
-
-    #[test]
-    fn unsegmented_preedit_preserves_rime_order() {
-        let mut candidates = vec![
-            Candidate::new("rime:luna_pinyin_simp:0", "先"),
-            Candidate::new("rime:luna_pinyin_simp:1", "西安"),
-        ];
-
-        promote_phrase_candidates_for_segmented_preedit(Some("xian"), &mut candidates);
-
-        assert_eq!(
-            candidates
-                .iter()
-                .map(|candidate| candidate.text.as_str())
-                .collect::<Vec<_>>(),
-            vec!["先", "西安"]
-        );
-    }
-
-    #[test]
-    fn correction_candidates_stay_ahead_of_phrase_promotion() {
-        let mut candidates = vec![
-            Candidate::new("rime-correction:luna_pinyin_simp:0", "中国"),
-            Candidate::new("rime:luna_pinyin_simp:0", "中"),
-            Candidate::new("rime:luna_pinyin_simp:1", "中国"),
-        ];
-
-        promote_phrase_candidates_for_segmented_preedit(Some("zhong guo"), &mut candidates);
-
-        assert_eq!(
-            candidates
-                .iter()
-                .map(|candidate| candidate.text.as_str())
-                .collect::<Vec<_>>(),
-            vec!["中国", "中国", "中"]
-        );
-        assert!(candidates[0].id.starts_with("rime-correction:"));
-        assert_eq!(candidates[0].base_score, 1_000);
+    fn candidate_text_keeps_unicode_han_and_rejects_invalid_scalars() {
+        assert!(is_valid_candidate_text("逻辑𤓓𨱍𫗩𰻞"));
+        assert!(!is_valid_candidate_text("\u{e000}"));
+        assert!(!is_valid_candidate_text("\u{fffd}"));
+        assert!(!is_valid_candidate_text("候选\u{0007}"));
+        assert!(!is_valid_candidate_text("\u{fdd0}"));
     }
 }

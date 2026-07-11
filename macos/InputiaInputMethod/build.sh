@@ -38,11 +38,11 @@ export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 
 run_cargo() {
   if [[ -n "${CARGO:-}" ]]; then
-    "$CARGO" "$@"
+    /usr/bin/env -u MACOSX_DEPLOYMENT_TARGET "$CARGO" "$@"
   elif /usr/bin/command -v rustup >/dev/null 2>&1; then
-    rustup run "$RUST_TOOLCHAIN" cargo "$@"
+    /usr/bin/env -u MACOSX_DEPLOYMENT_TARGET rustup run "$RUST_TOOLCHAIN" cargo "$@"
   else
-    cargo "$@"
+    /usr/bin/env -u MACOSX_DEPLOYMENT_TARGET cargo "$@"
   fi
 }
 
@@ -106,6 +106,9 @@ if [[ ! -f "$CAPI_MANIFEST" ]]; then
   exit 1
 fi
 
+/bin/zsh "$ROOT_DIR/Tools/verify-imk-event-route.sh" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/main.swift"
+
 run_cargo build --release --manifest-path "$CAPI_MANIFEST"
 if [[ ! -f "$CAPI_LIB" ]]; then
   echo "missing inputia-capi staticlib: $CAPI_LIB" >&2
@@ -118,6 +121,7 @@ fi
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaInputTextRouter.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaShortcutClassifier.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExpandedCandidateGridNavigation.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceInputLauncher.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaCandidatePanel.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsWindow.swift" \
@@ -132,6 +136,8 @@ fi
 
 cp "$ROOT_DIR/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp -R "$ROOT_DIR/Resources/." "$RESOURCES_DIR/"
+/usr/bin/python3 "$ROOT_DIR/Tools/generate_inputia_icons.py" --resources-dir "$RESOURCES_DIR"
+/bin/rm -rf "$RESOURCES_DIR/RimeData"
 INPUTIA_RIME_DATA_BUILD_DIR="$RIME_DATA_BUILD_DIR" "$ROOT_DIR/prepare-rime-data.sh" >/dev/null
 cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
 /usr/bin/plutil -lint "$CONTENTS_DIR/Info.plist"
@@ -148,6 +154,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "$ROOT_DIR/Tools/InputiaShortcutSelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaInputTextRouter.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaShortcutClassifier.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExpandedCandidateGridNavigation.swift" \
   -target "$TARGET_TRIPLE" \
   -framework AppKit \
   -o "$BUILD_DIR/inputia-shortcut-self-check"
@@ -193,11 +200,12 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   -o "$BUILD_DIR/inputia-host-text-policy-self-check"
 
 /usr/bin/swiftc \
-  "$ROOT_DIR/Tools/InputiaCandidatePanelSelfCheck.swift" \
+  "$ROOT_DIR/Tools/InputiaCandidatePanelLayoutSelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaCandidatePanel.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExpandedCandidateGridNavigation.swift" \
   -target "$TARGET_TRIPLE" \
   -framework AppKit \
-  -o "$BUILD_DIR/inputia-candidate-panel-self-check"
+  -o "$BUILD_DIR/inputia-candidate-panel-layout-self-check"
 
 /usr/bin/swiftc \
   "$ROOT_DIR/Tools/InputiaSettingsWindowSelfCheck.swift" \
@@ -217,8 +225,16 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   -framework Foundation \
   -o "$BUILD_DIR/inputia-bridge-privacy-self-check"
 
+/usr/bin/swiftc \
+  "$ROOT_DIR/Tools/InputiaBridgeCandidateCountSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
+  "$CAPI_LIB" \
+  -target "$TARGET_TRIPLE" \
+  -framework Foundation \
+  -o "$BUILD_DIR/inputia-bridge-candidate-count-self-check"
+
 cp "$ROOT_DIR/SettingsLauncher/Info.plist" "$SETTINGS_CONTENTS_DIR/Info.plist"
-cp "$ROOT_DIR/Resources/Inputia.icns" "$SETTINGS_RESOURCES_DIR/Inputia.icns"
+cp "$RESOURCES_DIR/Inputia.icns" "$SETTINGS_RESOURCES_DIR/Inputia.icns"
 /usr/bin/plutil -lint "$SETTINGS_CONTENTS_DIR/Info.plist"
 
 /usr/bin/find "$APP_DIR" "$SETTINGS_APP_DIR" -type d -exec /bin/chmod 755 {} +

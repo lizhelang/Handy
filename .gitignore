@@ -29,10 +29,9 @@ dist-ssr
 .claude/
 
 /target/
-crates/*/target/
-spikes/*/target/
-macos/InputiaInputMethod/build/
-macos/InputiaInputMethod/dist/
+**/target/
+**/__pycache__/
+*.pyc
 recording_*
 .crush/
 

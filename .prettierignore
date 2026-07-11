@@ -12,6 +12,12 @@ target
 src-tauri/target
 src-tauri/gen
 
+# Inputia generated artifacts and Rime dictionary data
+macos/InputiaInputMethod/build
+macos/InputiaInputMethod/dist
+macos/InputiaInputMethod/Resources/RimeData
+crates/**/target
+
 # Generated files
 src/bindings.ts
 src-tauri/src/catalog/catalog.json

@@ -34,6 +34,11 @@ private func inputia_session_new_from_settings(
   _ settingsPath: UnsafePointer<CChar>
 ) -> UnsafeMutableRawPointer?
 
+@_silgen_name("inputia_session_new_from_settings_without_memory")
+private func inputia_session_new_from_settings_without_memory(
+  _ settingsPath: UnsafePointer<CChar>
+) -> UnsafeMutableRawPointer?
+
 @_silgen_name("inputia_session_free")
 private func inputia_session_free(_ session: UnsafeMutableRawPointer?)
 
@@ -215,51 +220,16 @@ final class InputiaRustBridge {
   static func temporaryForDiagnostics() -> InputiaRustBridge {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("InputiaBridgeSelfCheck-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
-    let settingsPath = root.appendingPathComponent("settings.json").path
-    writeSettings(
-      shiftToggleEnabled: true,
-      punctuationPreference: "english_in_chinese",
-      candidatePageSize: defaultCandidatePageSize,
-      rimeUserDataDir: root.appendingPathComponent("rime", isDirectory: true).path,
-      to: settingsPath
+    return InputiaRustBridge(
+      userDataDir: root.appendingPathComponent("rime", isDirectory: true).path,
+      memoryDbPath: root.appendingPathComponent("inputia_memory.db").path
     )
-    return InputiaRustBridge(settingsPath: settingsPath)
   }
 
   static func temporarySettingsForDiagnostics() -> InputiaRustBridge {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("InputiaSettingsSelfCheck-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
     return InputiaRustBridge(settingsPath: root.appendingPathComponent("settings.json").path)
-  }
-
-  static func temporarySettingsForDiagnostics(chineseScript: String) -> InputiaRustBridge {
-    let root = URL(fileURLWithPath: NSTemporaryDirectory())
-      .appendingPathComponent("InputiaSettingsSelfCheck-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
-    let safeScript = chineseScript == "traditional" ? "traditional" : "simplified"
-    let settingsPath = root.appendingPathComponent("settings-\(safeScript).json").path
-    writeSettings(
-      shiftToggleEnabled: true,
-      punctuationPreference: "english_in_chinese",
-      candidatePageSize: defaultCandidatePageSize,
-      chineseScript: safeScript,
-      rimeUserDataDir: root.appendingPathComponent("rime", isDirectory: true).path,
-      to: settingsPath
-    )
-    return InputiaRustBridge(settingsPath: settingsPath)
-  }
-
-  static func temporaryDefaultChineseForDiagnostics() -> InputiaRustBridge {
-    let root = URL(fileURLWithPath: NSTemporaryDirectory())
-      .appendingPathComponent("InputiaDefaultChineseSelfCheck-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
-    let settingsPath = root.appendingPathComponent("settings.json").path
-    writeSettings(
-      shiftToggleEnabled: true,
-      punctuationPreference: "english_in_chinese",
-      candidatePageSize: defaultCandidatePageSize,
-      rimeUserDataDir: root.appendingPathComponent("rime", isDirectory: true).path,
-      to: settingsPath
-    )
-    return InputiaRustBridge(settingsPath: settingsPath, startInChineseMode: true)
   }
 
   deinit {
@@ -385,7 +355,7 @@ final class InputiaRustBridge {
       shiftToggleEnabled: false,
       inputModeToggleShortcut: "none",
       punctuationPreference: "english_in_chinese",
-      candidatePageSize: defaultCandidatePageSize,
+      candidatePageSize: 7,
       to: settingsPath
     )
     bridge.reloadSettingsIfNeeded()
@@ -393,11 +363,45 @@ final class InputiaRustBridge {
     return outcomes
   }
 
+  static func debugCandidateCountFallbackSelfCheck(settingsPath: String) -> InputiaBridgeOutcome {
+    writeSettings(
+      shiftToggleEnabled: true,
+      punctuationPreference: "english_in_chinese",
+      candidatePageSize: 8,
+      to: settingsPath
+    )
+    let settingsURL = URL(fileURLWithPath: settingsPath)
+    if
+      let data = try? Data(contentsOf: settingsURL),
+      let object = try? JSONSerialization.jsonObject(with: data),
+      var dictionary = object as? [String: Any]
+    {
+      dictionary["schema_id"] = "double_pinyin"
+      let invalidMemoryURL = settingsURL.deletingLastPathComponent()
+        .appendingPathComponent("memory-as-directory", isDirectory: true)
+      try? FileManager.default.createDirectory(at: invalidMemoryURL, withIntermediateDirectories: true)
+      dictionary["memory_db_path"] = invalidMemoryURL.path
+      if let updated = try? JSONSerialization.data(
+        withJSONObject: dictionary,
+        options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+      ) {
+        try? updated.write(to: settingsURL, options: .atomic)
+      }
+    }
+
+    let bridge = InputiaRustBridge(settingsPath: settingsPath, startInChineseMode: true)
+    var outcome = bridge.latestOutcome
+    for character in "yh" {
+      outcome = bridge.handle(character: character)
+    }
+    return outcome
+  }
+
   static func debugClipboardPrivacySelfCheck(settingsPath: String) -> [String: Bool] {
     Self.writeSettings(
       shiftToggleEnabled: true,
       punctuationPreference: "english_in_chinese",
-      candidatePageSize: defaultCandidatePageSize,
+      candidatePageSize: 7,
       to: settingsPath
     )
     let bridge = InputiaRustBridge(settingsPath: settingsPath)
@@ -410,6 +414,15 @@ final class InputiaRustBridge {
         windowTitle: "Private Browsing - Bank Login"
       ),
     ]
+  }
+
+  func debugCandidatePageSizeSelfCheck() -> InputiaBridgeOutcome {
+    _ = setChineseMode()
+    var outcome = latestOutcome
+    for character in "ni" {
+      outcome = handle(character: character)
+    }
+    return outcome
   }
 
   func debugFullPinyinSelfCheck() -> [InputiaBridgeOutcome] {
@@ -429,15 +442,6 @@ final class InputiaRustBridge {
     }
     outcomes.append(space())
     return outcomes
-  }
-
-  func debugCandidatePageSizeSelfCheck() -> InputiaBridgeOutcome {
-    _ = setChineseMode()
-    var outcome = latestOutcome
-    for character in "ni" {
-      outcome = handle(character: character)
-    }
-    return outcome
   }
 
   func debugMemorySelfCheck() -> [InputiaBridgeOutcome] {
@@ -706,11 +710,14 @@ final class InputiaRustBridge {
       inputia_session_new_from_settings(pointer)
     }
     if session == nil {
-      NSLog("Inputia Rust bridge failed to initialize settings session; falling back to default paths")
-      return openDirectSession(
-        userDataDir: defaultUserDataDir(),
-        memoryDbPath: defaultMemoryDbPath()
-      )
+      NSLog("Inputia Rust bridge failed to initialize settings session; retrying without memory")
+      let fallback = settingsPath.withCString { pointer in
+        inputia_session_new_from_settings_without_memory(pointer)
+      }
+      if fallback == nil {
+        NSLog("Inputia Rust bridge failed to initialize settings session without memory")
+      }
+      return fallback
     }
     return session
   }
@@ -724,7 +731,7 @@ final class InputiaRustBridge {
     writeSettings(
       shiftToggleEnabled: true,
       punctuationPreference: "english_in_chinese",
-      candidatePageSize: defaultCandidatePageSize,
+      candidatePageSize: 7,
       to: path
     )
   }
@@ -931,7 +938,6 @@ final class InputiaRustBridge {
     candidatePageSize: Int,
     characterWidthPreference: String = "half_width",
     chineseScript: String = "simplified",
-    rimeUserDataDir: String? = nil,
     to path: String
   ) {
     let url = URL(fileURLWithPath: path)
@@ -941,6 +947,7 @@ final class InputiaRustBridge {
     )
     let shortcut = inputModeToggleShortcut ?? (shiftToggleEnabled ? "shift" : "none")
     var dictionary: [String: Any] = [
+      "candidate_font_size": 14,
       "candidate_page_size": candidatePageSize,
       "character_width_preference": characterWidthPreference,
       "chinese_script": chineseScript,
@@ -949,8 +956,7 @@ final class InputiaRustBridge {
       "memory_db_path": url.deletingLastPathComponent().appendingPathComponent("inputia_memory.db").path,
       "privacy_learning_enabled": true,
       "punctuation_preference": punctuationPreference,
-      "rime_user_data_dir": rimeUserDataDir
-        ?? url.deletingLastPathComponent().appendingPathComponent("rime").path,
+      "rime_user_data_dir": url.deletingLastPathComponent().appendingPathComponent("rime").path,
       "schema_id": "luna_pinyin_simp",
       "script_toggle_shortcut": "control_shift_s",
       "sensitive_bundle_ids": Self.defaultSensitiveBundleIds,

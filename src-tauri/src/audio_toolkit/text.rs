@@ -84,6 +84,50 @@ fn find_best_match<'a>(
     best_match.map(|m| (m, best_score))
 }
 
+fn apply_inline_alphanumeric_custom_words(
+    text: &str,
+    custom_words: &[String],
+    custom_words_nospace: &[String],
+    threshold: f64,
+) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut last_copied = 0;
+    let mut span_start = None;
+
+    for (idx, ch) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), '\0')))
+    {
+        if ch.is_ascii_alphanumeric() {
+            if span_start.is_none() {
+                span_start = Some(idx);
+            }
+            continue;
+        }
+
+        let Some(start) = span_start.take() else {
+            continue;
+        };
+
+        let span = &text[start..idx];
+        output.push_str(&text[last_copied..start]);
+
+        let candidate = build_ngram(&[span]);
+        if let Some((replacement, _score)) =
+            find_best_match(&candidate, custom_words, custom_words_nospace, threshold)
+        {
+            output.push_str(&preserve_case_pattern(span, replacement));
+        } else {
+            output.push_str(span);
+        }
+
+        last_copied = idx;
+    }
+
+    output.push_str(&text[last_copied..]);
+    output
+}
+
 /// Applies custom word corrections to transcribed text using fuzzy matching
 ///
 /// This function corrects words in the input text by finding the best matches
@@ -113,6 +157,12 @@ pub fn apply_custom_words(text: &str, custom_words: &[String], threshold: f64) -
         .map(|w| w.replace(' ', ""))
         .collect();
 
+    let text = apply_inline_alphanumeric_custom_words(
+        text,
+        custom_words,
+        &custom_words_nospace,
+        threshold,
+    );
     let words: Vec<&str> = text.split_whitespace().collect();
     let mut result = Vec::new();
     let mut i = 0;
@@ -337,6 +387,14 @@ mod tests {
         let custom_words = vec!["hello".to_string(), "world".to_string()];
         let result = apply_custom_words(text, &custom_words, 0.5);
         assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn test_apply_custom_words_embedded_latin_in_cjk_text() {
+        let text = "我希望先接一下Olama吧。";
+        let custom_words = vec!["ollama".to_string()];
+        let result = apply_custom_words(text, &custom_words, 0.18);
+        assert_eq!(result, "我希望先接一下Ollama吧。");
     }
 
     #[test]

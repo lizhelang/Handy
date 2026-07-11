@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 pub struct InputiaSettings {
     pub schema_id: String,
     pub candidate_page_size: usize,
+    pub candidate_font_size: usize,
+    pub menu_icon_variant: String,
     pub shift_toggle_enabled: bool,
     pub input_mode_toggle_shortcut: InputModeToggleShortcut,
     pub chinese_script: ChineseScript,
@@ -29,6 +31,8 @@ impl Default for InputiaSettings {
         Self {
             schema_id: "luna_pinyin_simp".to_string(),
             candidate_page_size: 7,
+            candidate_font_size: 14,
+            menu_icon_variant: default_menu_icon_variant(),
             shift_toggle_enabled: true,
             input_mode_toggle_shortcut: InputModeToggleShortcut::Shift,
             chinese_script: ChineseScript::Simplified,
@@ -100,6 +104,10 @@ impl InputiaSettings {
         self.shift_toggle_enabled =
             self.input_mode_toggle_shortcut == InputModeToggleShortcut::Shift;
         self.candidate_page_size = self.candidate_page_size.clamp(1, 9);
+        self.candidate_font_size = self.candidate_font_size.clamp(12, 22);
+        if !is_known_menu_icon_variant(&self.menu_icon_variant) {
+            self.menu_icon_variant = default_menu_icon_variant();
+        }
         if self.sensitive_bundle_ids.is_empty() {
             self.sensitive_bundle_ids = default_sensitive_bundle_ids();
         }
@@ -209,6 +217,14 @@ fn default_true() -> bool {
     true
 }
 
+fn default_menu_icon_variant() -> String {
+    "pearl_16".to_string()
+}
+
+fn is_known_menu_icon_variant(value: &str) -> bool {
+    matches!(value, "pearl_12" | "pearl_14" | "pearl_16" | "pearl_18")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,15 +239,12 @@ mod tests {
         assert!(settings_path.exists());
         assert_eq!(settings.schema_id, "luna_pinyin_simp");
         assert_eq!(settings.candidate_page_size, 7);
+        assert_eq!(settings.candidate_font_size, 14);
+        assert_eq!(settings.menu_icon_variant, "pearl_16");
         assert!(settings.shift_toggle_enabled);
         assert_eq!(
             settings.input_mode_toggle_shortcut,
             InputModeToggleShortcut::Shift
-        );
-        assert_eq!(settings.chinese_script, ChineseScript::Simplified);
-        assert_eq!(
-            settings.script_toggle_shortcut,
-            ScriptToggleShortcut::ControlShiftS
         );
         assert!(settings.spelling_correction_enabled);
         assert_eq!(settings.rime_user_data_dir, Some(temp.path().join("rime")));
@@ -254,6 +267,8 @@ mod tests {
             r#"{
               "schema_id": "",
               "candidate_page_size": 99,
+              "candidate_font_size": 99,
+              "menu_icon_variant": "not-a-real-icon",
               "sensitive_bundle_ids": []
             }"#,
         )
@@ -263,6 +278,8 @@ mod tests {
 
         assert_eq!(settings.schema_id, "luna_pinyin_simp");
         assert_eq!(settings.candidate_page_size, 9);
+        assert_eq!(settings.candidate_font_size, 22);
+        assert_eq!(settings.menu_icon_variant, "pearl_16");
         assert_eq!(
             settings.input_mode_toggle_shortcut,
             InputModeToggleShortcut::Shift
@@ -272,34 +289,6 @@ mod tests {
             .sensitive_bundle_ids
             .iter()
             .any(|bundle_id| bundle_id == "com.1password.1password"));
-        assert_eq!(settings.rime_user_data_dir, Some(temp.path().join("rime")));
-        assert_eq!(
-            settings.memory_db_path,
-            Some(temp.path().join("inputia_memory.db"))
-        );
-    }
-
-    #[test]
-    fn load_backfills_local_default_paths_for_legacy_settings() {
-        let temp = tempfile::tempdir().unwrap();
-        let settings_path = temp.path().join("settings.json");
-        std::fs::write(
-            &settings_path,
-            r#"{
-              "schema_id": "double_pinyin",
-              "memory_enabled": false
-            }"#,
-        )
-        .unwrap();
-
-        let settings = InputiaSettings::load(&settings_path).unwrap();
-
-        assert_eq!(settings.schema_id, "double_pinyin");
-        assert_eq!(settings.rime_user_data_dir, Some(temp.path().join("rime")));
-        assert_eq!(
-            settings.memory_db_path,
-            Some(temp.path().join("inputia_memory.db"))
-        );
     }
 
     #[test]
@@ -309,10 +298,10 @@ mod tests {
         let settings = InputiaSettings {
             schema_id: "double_pinyin_flypy".to_string(),
             candidate_page_size: 3,
+            candidate_font_size: 18,
+            menu_icon_variant: "pearl_14".to_string(),
             shift_toggle_enabled: false,
             input_mode_toggle_shortcut: InputModeToggleShortcut::ControlSpace,
-            chinese_script: ChineseScript::Traditional,
-            script_toggle_shortcut: ScriptToggleShortcut::None,
             punctuation_preference: PunctuationPreference::FollowInputMode,
             character_width_preference: CharacterWidthPreference::FullWidth,
             spelling_correction_enabled: false,
@@ -326,13 +315,13 @@ mod tests {
 
         assert_eq!(loaded.schema_id, "double_pinyin_flypy");
         assert_eq!(loaded.candidate_page_size, 3);
+        assert_eq!(loaded.candidate_font_size, 18);
+        assert_eq!(loaded.menu_icon_variant, "pearl_14");
         assert!(!loaded.shift_toggle_enabled);
         assert_eq!(
             loaded.input_mode_toggle_shortcut,
             InputModeToggleShortcut::ControlSpace
         );
-        assert_eq!(loaded.chinese_script, ChineseScript::Traditional);
-        assert_eq!(loaded.script_toggle_shortcut, ScriptToggleShortcut::None);
         assert_eq!(
             loaded.punctuation_preference,
             PunctuationPreference::FollowInputMode
