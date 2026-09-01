@@ -154,6 +154,7 @@
     "cancel": "Zrušit",
     "cancelDownload": "Zrušit stahování",
     "legacy": "Zastaralé",
+    "compatibilityCorrection": "Compatibility correction",
     "errors": {
       "checkStatus": "Failed to check model status",
       "loadModel": "Failed to load model",

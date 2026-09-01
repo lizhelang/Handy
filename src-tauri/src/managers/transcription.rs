@@ -1,6 +1,7 @@
 use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
+use crate::native_hotwords::QwenContextPlan;
 use crate::settings::{
     get_settings, AppSettings, ModelUnloadTimeout, OrtAcceleratorSetting,
     TranscribeAcceleratorSetting,
@@ -17,8 +18,8 @@ use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_specta::Event;
 use transcribe_cpp::{
-    Backend, Error as TranscribeCppError, Feature, Model, ModelOptions, RunExtension, RunOptions,
-    Session, StreamOptions, Task, WhisperRunOptions,
+    Backend, Error as TranscribeCppError, ExtSlot, Feature, Model, ModelOptions,
+    Qwen3AsrRunOptions, RunExtension, RunOptions, Session, StreamOptions, Task, WhisperRunOptions,
 };
 use transcribe_rs::{
     onnx::{
@@ -400,7 +401,6 @@ impl TranscriptionManager {
             let mut current_model = self.current_model_id.lock().unwrap();
             *current_model = None;
         }
-
         // Emit unloaded event
         let _ = self.app_handle.emit(
             "model-state-changed",
@@ -1065,7 +1065,7 @@ impl TranscriptionManager {
         let settings = get_settings(&self.app_handle);
         // Streaming models do not receive a decode prompt, so custom words
         // always go through the shared fuzzy post-correction path.
-        let filtered = post_process_transcription_text(raw, &settings, false);
+        let filtered = post_process_transcription_text(raw, &settings);
 
         self.maybe_unload_immediately("streaming transcription");
         Ok(Some(filtered))
@@ -1163,7 +1163,8 @@ impl TranscriptionManager {
         // with INVALID_ARG, so the whisper extension must be gated on the
         // arch, not on the feature (see #1601).
         let mut model_is_whisper = false;
-
+        let mut model_is_qwen3_asr = false;
+        let mut model_accepts_qwen_context = false;
         // Perform transcription with the appropriate engine.
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
         // which would make the app hang indefinitely on subsequent operations.
@@ -1200,13 +1201,20 @@ impl TranscriptionManager {
                 // feature while rejecting the whisper-kind run extension.
                 let model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
                 model_is_whisper = model.arch() == "whisper";
+                model_is_qwen3_asr = model.arch() == "qwen3_asr";
+                model_accepts_qwen_context = model_is_qwen3_asr
+                    && model.accepts_ext(
+                        ExtSlot::Run,
+                        transcribe_cpp::sys::TRANSCRIBE_EXT_KIND_QWEN3_ASR_RUN,
+                    );
                 model_supports_translate = caps.supports_translate;
                 model_languages = caps.languages;
                 debug!(
-                    "transcribe-cpp model '{}' on '{}': initial_prompt={}, translate={}, languages={:?}",
+                    "transcribe-cpp model '{}' on '{}': initial_prompt={}, qwen_context={}, translate={}, languages={:?}",
                     settings.selected_model,
                     model.backend(),
                     model_takes_initial_prompt,
+                    model_accepts_qwen_context,
                     model_supports_translate,
                     model_languages
                 );
@@ -1215,18 +1223,42 @@ impl TranscriptionManager {
             let transcribe_result = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
                 match &mut engine {
                     LoadedEngine::TranscribeCpp(session) => {
-                        // Custom words become the initial prompt ONLY for models
-                        // that accept one (whisper family). Attaching the
-                        // whisper run extension to a non-whisper arch is rejected
-                        // with INVALID_ARG, so skip it there and let the fuzzy
-                        // post-correction handle custom words instead.
-                        let family = if settings.custom_words.is_empty() || !model_is_whisper {
-                            None
-                        } else {
+                        // Whisper retains its existing initial-prompt behavior.
+                        // Qwen3-ASR instead receives every cleaned global term
+                        // in its native system-message context; the context is a
+                        // hint, never a forced dictionary. All other engines
+                        // keep the established post-correction fallback.
+                        let qwen_context_plan = model_is_qwen3_asr
+                            .then(|| QwenContextPlan::from_custom_words(&settings.custom_words))
+                            .filter(|plan| !plan.is_empty());
+                        // Keep the plan only when this exact Qwen session has
+                        // accepted the extension. The same value later scopes
+                        // echo removal to text produced by that injected context.
+                        let active_qwen_context = qwen_context_plan
+                            .as_ref()
+                            .filter(|_| model_accepts_qwen_context);
+
+                        let family = if !settings.custom_words.is_empty() && model_is_whisper {
                             Some(RunExtension::Whisper(WhisperRunOptions {
                                 initial_prompt: Some(settings.custom_words.join(", ")),
                                 ..Default::default()
                             }))
+                        } else if let Some(plan) = active_qwen_context {
+                            info!(
+                                "Qwen context 已应用: 词数={}, 版本={}",
+                                plan.word_count(),
+                                plan.version()
+                            );
+                            qwen_context_run_extension(plan, true)
+                        } else if let Some(plan) = qwen_context_plan.as_ref() {
+                            warn!(
+                                "Qwen context extension 未被运行时接受，回退到既有词表后处理: 词数={}, 版本={}",
+                                plan.word_count(),
+                                plan.version()
+                            );
+                            None
+                        } else {
+                            None
                         };
 
                         let run_plan = transcribe_cpp_run_plan(
@@ -1245,13 +1277,13 @@ impl TranscriptionManager {
                         };
 
                         debug!(
-                            "transcribe-cpp run: task={:?}, language={:?}, initial_prompt={}",
+                            "transcribe-cpp run: task={:?}, language={:?}, run_extension={}",
                             run_options.task,
                             run_options.language,
                             run_options.family.is_some()
                         );
 
-                        transcribe_cpp_text(session, &audio, &run_options)
+                        transcribe_cpp_text(session, &audio, &run_options, active_qwen_context)
                     }
                     LoadedEngine::Parakeet(parakeet_engine) => {
                         let params = ParakeetParams {
@@ -1378,11 +1410,9 @@ impl TranscriptionManager {
             }
         };
 
-        // Apply custom-word post-correction even when Whisper received the same
-        // words as an initial prompt. Prompting is a hint, not a guarantee, while
-        // the post-correction path is the shared fallback for non-Whisper,
-        // streaming, and missed Whisper corrections.
-        let filtered_result = post_process_transcription_text(result, &settings, model_is_whisper);
+        // Context is deliberately a hint rather than a forced dictionary, so
+        // every engine retains the shared deterministic correction fallback.
+        let filtered_result = post_process_transcription_text(result, &settings);
 
         let et = std::time::Instant::now();
         let translation_note = if settings.translate_to_english {
@@ -1589,11 +1619,7 @@ fn transcribe_cpp_run_plan(
     }
 }
 
-fn post_process_transcription_text(
-    raw: String,
-    settings: &AppSettings,
-    _custom_words_already_prompted: bool,
-) -> String {
+fn post_process_transcription_text(raw: String, settings: &AppSettings) -> String {
     let corrected = if !settings.custom_words.is_empty() {
         apply_custom_words(
             &raw,
@@ -1611,10 +1637,24 @@ fn post_process_transcription_text(
     )
 }
 
+fn qwen_context_run_extension(
+    plan: &QwenContextPlan,
+    model_accepts_qwen_context: bool,
+) -> Option<RunExtension> {
+    if !model_accepts_qwen_context || plan.is_empty() {
+        return None;
+    }
+
+    Some(RunExtension::Qwen3Asr(Qwen3AsrRunOptions {
+        context: plan.context().map(str::to_owned),
+    }))
+}
+
 fn transcribe_cpp_text(
     session: &mut Session,
     audio: &[f32],
     run_options: &RunOptions,
+    active_qwen_context: Option<&QwenContextPlan>,
 ) -> Result<String> {
     let model_arch = session.model().arch();
     if should_segment_transcribe_cpp_audio(&model_arch, audio.len()) {
@@ -1630,10 +1670,13 @@ fn transcribe_cpp_text(
             run_options,
             QWEN_ASR_SEGMENT_SAMPLES,
             QWEN_ASR_MIN_SEGMENT_SAMPLES,
+            active_qwen_context,
         );
     }
 
-    transcribe_cpp_run_text(session, audio, run_options).map_err(transcribe_cpp_anyhow)
+    transcribe_cpp_run_text(session, audio, run_options)
+        .map(|text| strip_qwen_context_echo(text, active_qwen_context))
+        .map_err(transcribe_cpp_anyhow)
 }
 
 fn should_segment_transcribe_cpp_audio(model_arch: &str, audio_len: usize) -> bool {
@@ -1646,28 +1689,57 @@ fn transcribe_cpp_segmented_text(
     run_options: &RunOptions,
     segment_samples: usize,
     min_segment_samples: usize,
+    active_qwen_context: Option<&QwenContextPlan>,
 ) -> Result<String> {
+    transcribe_cpp_segmented_text_with(
+        audio,
+        run_options,
+        segment_samples,
+        min_segment_samples,
+        |chunk, options| transcribe_cpp_run_text(session, chunk, options),
+        |text| strip_qwen_context_echo(text, active_qwen_context),
+    )
+}
+
+fn transcribe_cpp_segmented_text_with<F, S>(
+    audio: &[f32],
+    run_options: &RunOptions,
+    segment_samples: usize,
+    min_segment_samples: usize,
+    mut run_chunk: F,
+    mut sanitize_chunk: S,
+) -> Result<String>
+where
+    F: FnMut(&[f32], &RunOptions) -> std::result::Result<String, TranscribeCppError>,
+    S: FnMut(String) -> String,
+{
     let mut chunks = Vec::new();
     for (start, end) in chunk_ranges(audio.len(), segment_samples) {
-        let chunk = transcribe_cpp_segment_text(
-            session,
+        let chunk = transcribe_cpp_segment_text_with(
             &audio[start..end],
             run_options,
             min_segment_samples,
+            &mut run_chunk,
+            &mut sanitize_chunk,
         )?;
         chunks.push(chunk);
     }
     Ok(join_transcript_chunks(chunks))
 }
 
-fn transcribe_cpp_segment_text(
-    session: &mut Session,
+fn transcribe_cpp_segment_text_with<F, S>(
     audio: &[f32],
     run_options: &RunOptions,
     min_segment_samples: usize,
-) -> Result<String> {
-    match transcribe_cpp_run_text(session, audio, run_options) {
-        Ok(text) => Ok(text),
+    run_chunk: &mut F,
+    sanitize_chunk: &mut S,
+) -> Result<String>
+where
+    F: FnMut(&[f32], &RunOptions) -> std::result::Result<String, TranscribeCppError>,
+    S: FnMut(String) -> String,
+{
+    match run_chunk(audio, run_options) {
+        Ok(text) => Ok(sanitize_chunk(text)),
         Err(err)
             if can_retry_transcribe_cpp_by_splitting(&err) && audio.len() > min_segment_samples =>
         {
@@ -1677,17 +1749,19 @@ fn transcribe_cpp_segment_text(
                 audio.len() as f64 / TRANSCRIBE_SAMPLE_RATE as f64,
                 mid as f64 / TRANSCRIBE_SAMPLE_RATE as f64
             );
-            let left = transcribe_cpp_segment_text(
-                session,
+            let left = transcribe_cpp_segment_text_with(
                 &audio[..mid],
                 run_options,
                 min_segment_samples,
+                run_chunk,
+                sanitize_chunk,
             )?;
-            let right = transcribe_cpp_segment_text(
-                session,
+            let right = transcribe_cpp_segment_text_with(
                 &audio[mid..],
                 run_options,
                 min_segment_samples,
+                run_chunk,
+                sanitize_chunk,
             )?;
             Ok(join_transcript_chunks(vec![left, right]))
         }
@@ -1696,10 +1770,22 @@ fn transcribe_cpp_segment_text(
                 warn!(
                     "transcribe-cpp returned a truncated segment below the split threshold; using partial transcript"
                 );
-                return Ok(partial);
+                return Ok(sanitize_chunk(partial));
             }
             Err(transcribe_cpp_anyhow(err))
         }
+    }
+}
+
+/// Qwen 的回显防护只接收“本次已实际注入”的 context 计划。其他模型、
+/// 空词表及运行时拒绝 extension 的 Qwen 均传入 `None`，保持原始输出。
+fn strip_qwen_context_echo(text: String, active_qwen_context: Option<&QwenContextPlan>) -> String {
+    match active_qwen_context.and_then(|plan| plan.strip_trailing_echo(&text)) {
+        Some(cleaned) => {
+            debug!("Removed echoed Qwen context from transcription segment");
+            cleaned
+        }
+        None => text,
     }
 }
 
@@ -2125,7 +2211,7 @@ mod tests {
     fn post_process_transcription_text_keeps_english_fallback_after_prompt() {
         let settings = settings_with_custom_words(&["hello"]);
 
-        let result = post_process_transcription_text("helo world".to_string(), &settings, true);
+        let result = post_process_transcription_text("helo world".to_string(), &settings);
 
         assert_eq!(result, "hello world");
     }
@@ -2134,8 +2220,7 @@ mod tests {
     fn post_process_transcription_text_keeps_english_streaming_non_prompt_path() {
         let settings = settings_with_custom_words(&["ChargeBee"]);
 
-        let result =
-            post_process_transcription_text("using Charge B".to_string(), &settings, false);
+        let result = post_process_transcription_text("using Charge B".to_string(), &settings);
 
         assert_eq!(result, "using ChargeBee");
     }
@@ -2145,10 +2230,132 @@ mod tests {
         let mut settings = settings_with_custom_words(&["罗泽群"]);
         settings.app_language = "zh".to_string();
 
-        let result =
-            post_process_transcription_text("罗德群今天回家吗?".to_string(), &settings, false);
+        let result = post_process_transcription_text("罗德群今天回家吗?".to_string(), &settings);
 
         assert_eq!(result, "罗德群今天回家吗?");
+    }
+
+    #[test]
+    fn qwen_echo_guard_removes_a_complete_context_only_after_injection() {
+        let plan = QwenContextPlan::from_custom_words(&["Inputia".to_string()]);
+        let context = plan
+            .context()
+            .expect("custom words should create context")
+            .to_string();
+
+        let echoed = format!("正常转写。{context}");
+
+        assert_eq!(
+            strip_qwen_context_echo(echoed.clone(), Some(&plan)),
+            "正常转写。"
+        );
+        assert_eq!(strip_qwen_context_echo(echoed.clone(), None), echoed);
+    }
+
+    #[test]
+    fn qwen_echo_guard_removes_a_truncated_context_tail() {
+        let plan = QwenContextPlan::from_custom_words(&["Inputia".to_string()]);
+        let context = plan.context().expect("custom words should create context");
+        let partial_echo = context.chars().take(20).collect::<String>();
+
+        let result = strip_qwen_context_echo(
+            format!("第一段转写。第二段转写。{partial_echo}"),
+            Some(&plan),
+        );
+
+        assert_eq!(result, "第一段转写。第二段转写。");
+    }
+
+    #[test]
+    fn qwen_echo_guard_keeps_a_spoken_custom_word() {
+        let plan =
+            QwenContextPlan::from_custom_words(&["Inputia".to_string(), "罗泽群".to_string()]);
+
+        let result = strip_qwen_context_echo("我正在使用 Inputia。".to_string(), Some(&plan));
+
+        assert_eq!(result, "我正在使用 Inputia。");
+    }
+
+    #[test]
+    fn qwen_echo_guard_cleans_each_long_audio_segment_before_joining() {
+        let plan = QwenContextPlan::from_custom_words(&["Inputia".to_string()]);
+        let context = plan
+            .context()
+            .expect("custom words should create context")
+            .to_string();
+        let run_options = RunOptions::default();
+        let mut call_count = 0;
+
+        let text = transcribe_cpp_segmented_text_with(
+            &[0.0; 20],
+            &run_options,
+            10,
+            2,
+            |_, _| {
+                call_count += 1;
+                Ok(if call_count == 1 {
+                    format!("第一段转写。{context}")
+                } else {
+                    "第二段转写。".to_string()
+                })
+            },
+            |text| strip_qwen_context_echo(text, Some(&plan)),
+        )
+        .unwrap();
+
+        assert_eq!(text, "第一段转写。第二段转写。");
+    }
+
+    #[test]
+    fn qwen_context_extension_uses_cleaned_global_words_and_falls_back_when_rejected() {
+        let plan = QwenContextPlan::from_custom_words(&[
+            "Inputia".to_string(),
+            "罗泽群".to_string(),
+            "Inputia".to_string(),
+        ]);
+
+        let Some(RunExtension::Qwen3Asr(options)) = qwen_context_run_extension(&plan, true) else {
+            panic!("Qwen context should materialize when the model accepts it");
+        };
+        assert_eq!(
+            options.context.as_deref(),
+            Some("术语参考（仅作转写提示，未说勿写）：Inputia、罗泽群")
+        );
+        assert!(qwen_context_run_extension(&plan, false).is_none());
+    }
+
+    #[test]
+    fn qwen_context_run_options_are_reused_for_every_segment_and_recursive_retry() {
+        let plan = QwenContextPlan::from_custom_words(&["Inputia".to_string()]);
+        let run_options = RunOptions {
+            family: qwen_context_run_extension(&plan, true),
+            ..Default::default()
+        };
+        let expected_options = &run_options as *const RunOptions;
+        let mut seen_options = Vec::new();
+
+        let text = transcribe_cpp_segmented_text_with(
+            &[0.0; 20],
+            &run_options,
+            10,
+            2,
+            |chunk, options| {
+                seen_options.push(options as *const RunOptions);
+                if chunk.len() == 10 {
+                    Err(TranscribeCppError::InputTooLong("test split".to_string()))
+                } else {
+                    Ok("ok".to_string())
+                }
+            },
+            |text| text,
+        )
+        .unwrap();
+
+        assert_eq!(text, "ok ok ok ok");
+        assert_eq!(seen_options.len(), 6);
+        assert!(seen_options
+            .iter()
+            .all(|options| *options == expected_options));
     }
 }
 

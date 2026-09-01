@@ -164,6 +164,17 @@ struct Replacement {
     to: String,
 }
 
+/// 一个由“ASCII 代码词 + 中文后缀”词表项导出的受限纠错候选。
+/// `source` 是转写中紧贴同一中文后缀的一字中文近音片段，`target` 始终是
+/// 用户原始词表项。若 ASR 把前一字中文语法也吞进来源，`contextual_source`
+/// 只允许它引用该片段；纠错时会保留这一个上下文字。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CodeTermHomophoneCandidate {
+    source: String,
+    target: String,
+    contextual_source: Option<String>,
+}
+
 pub(crate) async fn correct_custom_words(
     app: &AppHandle,
     settings: &AppSettings,
@@ -201,6 +212,13 @@ fn correct_custom_words_with_runtime(
         return None;
     }
 
+    let code_term_candidates = code_term_homophone_candidates(transcription, &custom_words);
+    if let Some(corrected) =
+        correct_code_term_homophones_with_runtime(runtime, transcription, &code_term_candidates)
+    {
+        return Some(corrected);
+    }
+
     let prompt = build_prompt(transcription, &custom_words);
     debug!(
         "Starting self-managed custom-word correction prompt (system={} chars, user={} chars)",
@@ -222,6 +240,52 @@ fn correct_custom_words_with_runtime(
         Ok(None) => None,
         Err(err) => {
             debug!("Rejected custom-word model output: {}", err);
+            None
+        }
+    }
+}
+
+fn correct_code_term_homophones_with_runtime(
+    runtime: &dyn CustomWordsCorrectionRuntime,
+    transcription: &str,
+    candidates: &[CodeTermHomophoneCandidate],
+) -> Option<String> {
+    if candidates.is_empty() {
+        return None;
+    }
+
+    // The local 0.6B model follows the established custom-word JSON prompt
+    // more reliably than a second instruction format. Restricting its word
+    // list to these targets makes this call code-term-specific; the validator
+    // below still permits only the declared source/target pairs.
+    let mut target_words = Vec::new();
+    for candidate in candidates {
+        if !target_words.contains(&candidate.target) {
+            target_words.push(candidate.target.clone());
+        }
+    }
+    let prompt = build_prompt(transcription, &target_words);
+    debug!(
+        "Starting targeted code-term homophone correction: candidates={}, system={} chars, user={} chars",
+        candidates.len(),
+        prompt.system.len(),
+        prompt.user.len()
+    );
+
+    let raw = match runtime.generate(&prompt) {
+        Ok(Some(raw)) => raw,
+        Ok(None) => return None,
+        Err(err) => {
+            debug!("Code-term homophone correction skipped: {}", err);
+            return None;
+        }
+    };
+
+    match validate_code_term_model_response(transcription, candidates, &raw) {
+        Ok(Some(corrected)) => Some(corrected),
+        Ok(None) => None,
+        Err(err) => {
+            debug!("Rejected code-term homophone correction: {}", err);
             None
         }
     }
@@ -553,6 +617,67 @@ fn eligible_custom_words(custom_words: &[String]) -> Vec<String> {
         .collect()
 }
 
+fn code_term_homophone_candidates(
+    transcription: &str,
+    custom_words: &[String],
+) -> Vec<CodeTermHomophoneCandidate> {
+    let mut candidates = Vec::new();
+
+    for target in custom_words {
+        let target = target.trim();
+        let Some((code_prefix, chinese_suffix)) = split_code_term_suffix(target) else {
+            continue;
+        };
+        if !is_code_identifier(code_prefix) {
+            continue;
+        }
+
+        for (suffix_start, _) in transcription.match_indices(chinese_suffix) {
+            let Some(source_prefix) = transcription[..suffix_start].chars().next_back() else {
+                continue;
+            };
+            // A Latin code identifier already appears verbatim before the suffix;
+            // it is not a homophone candidate and must remain untouched.
+            if !is_cjk_char(source_prefix) {
+                continue;
+            }
+
+            let candidate = CodeTermHomophoneCandidate {
+                source: format!("{source_prefix}{chinese_suffix}"),
+                target: target.to_string(),
+                contextual_source: transcription[..suffix_start - source_prefix.len_utf8()]
+                    .chars()
+                    .next_back()
+                    .filter(|prefix| is_cjk_char(*prefix))
+                    .map(|prefix| format!("{prefix}{source_prefix}{chinese_suffix}")),
+            };
+            if !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        }
+    }
+
+    candidates
+}
+
+fn split_code_term_suffix(term: &str) -> Option<(&str, &str)> {
+    let suffix_start = term
+        .char_indices()
+        .find_map(|(index, ch)| is_cjk_char(ch).then_some(index))?;
+    let (code_prefix, chinese_suffix) = term.split_at(suffix_start);
+    (!code_prefix.is_empty()
+        && !chinese_suffix.is_empty()
+        && chinese_suffix.chars().all(is_cjk_char))
+    .then_some((code_prefix, chinese_suffix))
+}
+
+fn is_code_identifier(value: &str) -> bool {
+    value.chars().any(|ch| ch.is_ascii_alphanumeric())
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+}
+
 fn is_single_cjk_char(word: &str) -> bool {
     let mut chars = word.chars();
     let Some(first) = chars.next() else {
@@ -633,6 +758,62 @@ pub(crate) fn validate_model_response(
     Ok(Some(payload.text))
 }
 
+fn validate_code_term_model_response(
+    original: &str,
+    candidates: &[CodeTermHomophoneCandidate],
+    response: &str,
+) -> Result<Option<String>, String> {
+    let payload: CorrectionResponse = serde_json::from_str(response.trim())
+        .map_err(|err| format!("response is not strict JSON: {}", err))?;
+
+    if payload.replacements.len() > MAX_REPLACEMENTS {
+        return Err(format!(
+            "too many replacements: {}",
+            payload.replacements.len()
+        ));
+    }
+
+    let mut model_rebuilt = original.to_string();
+    let mut safe_rebuilt = original.to_string();
+    for replacement in &payload.replacements {
+        let Some(candidate) = candidates.iter().find(|candidate| {
+            candidate.target == replacement.to
+                && (candidate.source == replacement.from
+                    || candidate.contextual_source.as_deref() == Some(&replacement.from))
+        }) else {
+            return Err(format!(
+                "replacement '{} -> {}' is not a declared code-term candidate",
+                replacement.from, replacement.to
+            ));
+        };
+        if !model_rebuilt.contains(&replacement.from) || !safe_rebuilt.contains(&replacement.from) {
+            return Err(format!(
+                "replacement.from '{}' does not occur in the current text",
+                replacement.from
+            ));
+        }
+        model_rebuilt = model_rebuilt.replace(&replacement.from, &replacement.to);
+        let safe_replacement = candidate
+            .contextual_source
+            .as_deref()
+            .filter(|source| *source == replacement.from)
+            .and_then(|source| source.strip_suffix(&candidate.source))
+            .map(|prefix| format!("{prefix}{}", candidate.target))
+            .unwrap_or_else(|| candidate.target.clone());
+        safe_rebuilt = safe_rebuilt.replace(&replacement.from, &safe_replacement);
+    }
+
+    if payload.text != model_rebuilt {
+        return Err("response text changes content outside declared replacements".to_string());
+    }
+
+    if safe_rebuilt == original {
+        Ok(None)
+    } else {
+        Ok(Some(safe_rebuilt))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,6 +839,118 @@ mod tests {
         let mut settings = get_default_settings();
         settings.custom_words = words(items);
         settings
+    }
+
+    struct CodeTermRuntime;
+
+    impl CustomWordsCorrectionRuntime for CodeTermRuntime {
+        fn generate(&self, prompt: &CustomWordsPrompt) -> Result<Option<String>, String> {
+            if prompt.custom_words == ["main分支".to_string()]
+                && !prompt.user.contains("\"code_term_candidates\"")
+            {
+                return Ok(Some(
+                    r#"{"text":"然后我希望合并main分支了。","replacements":[{"from":"回命分支","to":"main分支"}]}"#
+                        .to_string(),
+                ));
+            }
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn extracts_a_short_chinese_homophone_before_a_code_term_suffix() {
+        let candidates = code_term_homophone_candidates(
+            "然后我希望合并回命分支了。",
+            &words(&["main分支", "罗泽群"]),
+        );
+
+        assert_eq!(
+            candidates,
+            vec![CodeTermHomophoneCandidate {
+                source: "命分支".to_string(),
+                target: "main分支".to_string(),
+                contextual_source: Some("回命分支".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn does_not_extract_candidates_for_plain_chinese_or_an_exact_code_term() {
+        assert!(
+            code_term_homophone_candidates("罗德群今天回家吗？", &words(&["罗泽群"])).is_empty()
+        );
+        assert!(code_term_homophone_candidates(
+            "然后我希望合并回main分支了。",
+            &words(&["main分支"]),
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn accepts_only_the_declared_code_term_homophone_pair() {
+        let candidates = vec![CodeTermHomophoneCandidate {
+            source: "命分支".to_string(),
+            target: "main分支".to_string(),
+            contextual_source: Some("回命分支".to_string()),
+        }];
+
+        let result = validate_code_term_model_response(
+            "然后我希望合并回命分支了。",
+            &candidates,
+            r#"{"text":"然后我希望合并回main分支了。","replacements":[{"from":"命分支","to":"main分支"}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(result.as_deref(), Some("然后我希望合并回main分支了。"));
+    }
+
+    #[test]
+    fn preserves_a_declared_chinese_context_prefix_around_a_code_term_homophone() {
+        let candidates = vec![CodeTermHomophoneCandidate {
+            source: "命分支".to_string(),
+            target: "main分支".to_string(),
+            contextual_source: Some("回命分支".to_string()),
+        }];
+
+        let result = validate_code_term_model_response(
+            "然后我希望合并回命分支了。",
+            &candidates,
+            r#"{"text":"然后我希望合并main分支了。","replacements":[{"from":"回命分支","to":"main分支"}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(result.as_deref(), Some("然后我希望合并回main分支了。"));
+    }
+
+    #[test]
+    fn rejects_an_undeclared_context_prefix_around_a_code_term_homophone() {
+        let candidates = vec![CodeTermHomophoneCandidate {
+            source: "命分支".to_string(),
+            target: "main分支".to_string(),
+            contextual_source: Some("回命分支".to_string()),
+        }];
+
+        let error = validate_code_term_model_response(
+            "然后我希望合并回命分支了。",
+            &candidates,
+            r#"{"text":"然后我希望main分支了。","replacements":[{"from":"合并回命分支","to":"main分支"}]}"#,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("not a declared code-term candidate"));
+    }
+
+    #[test]
+    fn targeted_code_term_prompt_repairs_the_reported_main_branch_error() {
+        let settings = settings_with_words(&["main分支", "罗泽群"]);
+
+        let result = correct_custom_words_with_runtime(
+            &CodeTermRuntime,
+            &settings,
+            "然后我希望合并回命分支了。",
+        );
+
+        assert_eq!(result.as_deref(), Some("然后我希望合并回main分支了。"));
     }
 
     #[test]
@@ -917,6 +1210,24 @@ mod tests {
         eprintln!("qwen raw place correction: {raw}");
         let result = validate_model_response("武青在天津的西北边。", &custom_words, &raw).unwrap();
         assert_eq!(result.as_deref(), Some("武清在天津的西北边。"));
+
+        let settings = settings_with_words(&["main分支"]);
+        let generic_prompt = build_prompt("然后我希望合并回命分支了。", &settings.custom_words);
+        let generic_raw = runtime
+            .generate(&generic_prompt)
+            .expect("helper should produce a generic response")
+            .expect("helper generic response should not be empty");
+        eprintln!("qwen raw generic code-term correction: {generic_raw}");
+        let candidates =
+            code_term_homophone_candidates("然后我希望合并回命分支了。", &settings.custom_words);
+        assert_eq!(candidates.len(), 1);
+        let result = validate_code_term_model_response(
+            "然后我希望合并回命分支了。",
+            &candidates,
+            &generic_raw,
+        )
+        .unwrap();
+        assert_eq!(result.as_deref(), Some("然后我希望合并回main分支了。"));
     }
 
     #[test]

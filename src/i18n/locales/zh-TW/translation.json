@@ -154,6 +154,7 @@
       "streaming": "在您說話時即時顯示轉錄"
     },
     "legacy": "舊版",
+    "compatibilityCorrection": "Compatibility correction",
     "errors": {
       "checkStatus": "檢查模型狀態失敗",
       "loadModel": "模型載入失敗",
