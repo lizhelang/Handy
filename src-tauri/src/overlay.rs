@@ -1,15 +1,10 @@
 use crate::input;
 use crate::settings;
 use crate::settings::{OverlayPosition, OverlayStyle};
+use log::debug;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
-
-#[cfg(not(target_os = "macos"))]
-use log::debug;
-
-#[cfg(not(target_os = "macos"))]
-use tauri::WebviewWindowBuilder;
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindowBuilder};
 
 #[cfg(target_os = "macos")]
 use tauri::WebviewUrl;
@@ -49,6 +44,14 @@ const OVERLAY_HEIGHT: f64 = 46.0;
 // Actual is 394x118, just a little extra
 const OVERLAY_STREAM_WIDTH: f64 = 400.0;
 const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
+const CLIPBOARD_OVERLAY_WIDTH: f64 = 400.0;
+const CLIPBOARD_OVERLAY_HEIGHT: f64 = 550.0;
+
+#[cfg(target_os = "macos")]
+static CLIPBOARD_OVERLAY_PINNED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+static CLIPBOARD_OVERLAY_FOCUSED: AtomicBool = AtomicBool::new(false);
 
 /// Overlay window size (logical) for a given UI state.
 fn overlay_dimensions(state: &str) -> (f64, f64) {
@@ -281,6 +284,324 @@ fn current_overlay_logical_size(window: &tauri::webview::WebviewWindow) -> Optio
     let size = window.inner_size().ok()?;
     let scale = window.scale_factor().ok()?;
     Some((size.width as f64 / scale, size.height as f64 / scale))
+}
+
+fn calculate_clipboard_overlay_position(app_handle: &AppHandle) -> Option<(f64, f64)> {
+    let monitor = get_monitor_with_cursor(app_handle)?;
+    let scale = monitor.scale_factor();
+    let monitor_x = monitor.position().x as f64 / scale;
+    let monitor_y = monitor.position().y as f64 / scale;
+    let monitor_width = monitor.size().width as f64 / scale;
+    let monitor_height = monitor.size().height as f64 / scale;
+
+    let x = monitor_x + (monitor_width - CLIPBOARD_OVERLAY_WIDTH) / 2.0;
+    let y = monitor_y + (monitor_height - CLIPBOARD_OVERLAY_HEIGHT) / 2.0;
+
+    Some((x.max(monitor_x), y.max(monitor_y)))
+}
+
+#[cfg(target_os = "macos")]
+fn run_clipboard_overlay_on_main_thread<F>(
+    app_handle: &AppHandle,
+    operation: &'static str,
+    action: F,
+) where
+    F: FnOnce(AppHandle) + Send + 'static,
+{
+    if tauri_nspanel::objc2::MainThreadMarker::new().is_some() {
+        action(app_handle.clone());
+        return;
+    }
+
+    let app_handle = app_handle.clone();
+    let main_app_handle = app_handle.clone();
+
+    if let Err(err) = app_handle.run_on_main_thread(move || action(main_app_handle)) {
+        debug!("Failed to schedule clipboard overlay {operation} on main thread: {err}");
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn create_clipboard_overlay(app_handle: &AppHandle) {
+    if app_handle.get_webview_window("clipboard_overlay").is_some() {
+        return;
+    }
+
+    let mut builder = WebviewWindowBuilder::new(
+        app_handle,
+        "clipboard_overlay",
+        tauri::WebviewUrl::App("/src/overlay/clipboard/index.html".into()),
+    )
+    .title("Clipboard")
+    .resizable(false)
+    .inner_size(CLIPBOARD_OVERLAY_WIDTH, CLIPBOARD_OVERLAY_HEIGHT)
+    .shadow(true)
+    .maximizable(false)
+    .minimizable(false)
+    .closable(true)
+    .accept_first_mouse(true)
+    .decorations(false)
+    .always_on_top(false)
+    .skip_taskbar(false)
+    .transparent(true)
+    .visible(false);
+
+    if let Some((x, y)) = calculate_clipboard_overlay_position(app_handle) {
+        builder = builder.position(x, y);
+    } else {
+        builder = builder.center();
+    }
+
+    if let Some(data_dir) = crate::portable::data_dir() {
+        builder = builder.data_directory(data_dir.join("webview"));
+    }
+
+    match builder.build() {
+        Ok(_) => debug!("Clipboard overlay window created successfully (hidden)"),
+        Err(e) => debug!("Failed to create clipboard overlay window: {}", e),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn create_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
+    if app_handle.get_webview_window("clipboard_overlay").is_some() {
+        return;
+    }
+
+    let clipboard_overlay_url = tauri::WebviewUrl::App("/src/overlay/clipboard/index.html".into());
+
+    let mut builder =
+        WebviewWindowBuilder::new(app_handle, "clipboard_overlay", clipboard_overlay_url)
+            .title("Clipboard")
+            .resizable(false)
+            .inner_size(CLIPBOARD_OVERLAY_WIDTH, CLIPBOARD_OVERLAY_HEIGHT)
+            .shadow(true)
+            .maximizable(false)
+            .minimizable(false)
+            .closable(true)
+            .accept_first_mouse(true)
+            .decorations(true)
+            .always_on_top(true)
+            .transparent(false)
+            .visible(true);
+
+    if let Some((x, y)) = calculate_clipboard_overlay_position(app_handle) {
+        builder = builder.position(x, y);
+    } else {
+        builder = builder.center();
+    }
+
+    if let Some(data_dir) = crate::portable::data_dir() {
+        builder = builder.data_directory(data_dir.join("webview"));
+    }
+
+    match builder.build() {
+        Ok(_) => debug!("Clipboard overlay window created successfully"),
+        Err(e) => debug!("Failed to create clipboard overlay window: {}", e),
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn create_clipboard_overlay(app_handle: &AppHandle) {
+    run_clipboard_overlay_on_main_thread(app_handle, "create", |app_handle| {
+        create_clipboard_overlay_on_main_thread(&app_handle);
+    });
+}
+
+#[cfg(target_os = "macos")]
+pub fn show_clipboard_overlay(app_handle: &AppHandle) {
+    run_clipboard_overlay_on_main_thread(app_handle, "show", |app_handle| {
+        show_clipboard_overlay_on_main_thread(&app_handle);
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn show_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
+    create_clipboard_overlay_on_main_thread(app_handle);
+
+    if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {
+        if let Some((x, y)) = calculate_clipboard_overlay_position(app_handle) {
+            if let Err(err) = overlay_window
+                .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
+            {
+                debug!("Failed to update clipboard overlay position: {err}");
+            }
+        }
+
+        match overlay_window.show() {
+            Ok(_) => {
+                #[cfg(debug_assertions)]
+                overlay_window.open_devtools();
+
+                if let Err(err) = overlay_window.set_focus() {
+                    debug!("Failed to focus clipboard overlay window: {err}");
+                }
+                if let Err(err) = overlay_window.set_always_on_top(true) {
+                    debug!("Failed to update clipboard overlay z-order: {err}");
+                }
+                CLIPBOARD_OVERLAY_FOCUSED.store(true, Ordering::Relaxed);
+                debug!("Clipboard overlay window shown");
+            }
+            Err(err) => debug!("Failed to show clipboard overlay window: {err}"),
+        }
+    } else {
+        debug!("Failed to find clipboard overlay window");
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn show_clipboard_overlay(app_handle: &AppHandle) {
+    create_clipboard_overlay(app_handle);
+
+    if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {
+        if let Some((x, y)) = calculate_clipboard_overlay_position(app_handle) {
+            let _ = overlay_window
+                .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
+        }
+        let _ = overlay_window.show();
+        let _ = overlay_window.set_focus();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn hide_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
+    if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {
+        if let Err(err) = overlay_window.hide() {
+            debug!("Failed to hide clipboard overlay window: {err}");
+        }
+    }
+
+    CLIPBOARD_OVERLAY_FOCUSED.store(false, Ordering::Relaxed);
+}
+
+#[cfg(target_os = "macos")]
+pub fn hide_clipboard_overlay(app_handle: &AppHandle) {
+    run_clipboard_overlay_on_main_thread(app_handle, "hide", |app_handle| {
+        hide_clipboard_overlay_on_main_thread(&app_handle);
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn hide_clipboard_overlay(app_handle: &AppHandle) {
+    if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {
+        if let Err(err) = overlay_window.hide() {
+            debug!("Failed to hide clipboard overlay window: {err}");
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn set_clipboard_overlay_pinned_on_main_thread(app_handle: &AppHandle, _pinned: bool) {
+    if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {
+        if let Err(err) = overlay_window.set_always_on_top(true) {
+            debug!("Failed to update clipboard overlay pinned state: {err}");
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn set_clipboard_overlay_pinned(app_handle: &AppHandle, pinned: bool) {
+    CLIPBOARD_OVERLAY_PINNED.store(pinned, Ordering::Relaxed);
+    run_clipboard_overlay_on_main_thread(app_handle, "pin", move |app_handle| {
+        set_clipboard_overlay_pinned_on_main_thread(&app_handle, pinned);
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_clipboard_overlay_pinned(app_handle: &AppHandle, pinned: bool) {
+    if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {
+        if let Err(err) = overlay_window.set_always_on_top(pinned) {
+            debug!("Failed to update clipboard overlay pinned state: {err}");
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn is_clipboard_overlay_visible_on_main_thread(app_handle: &AppHandle) -> bool {
+    app_handle
+        .get_webview_window("clipboard_overlay")
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+pub fn is_clipboard_overlay_visible(app_handle: &AppHandle) -> bool {
+    if tauri_nspanel::objc2::MainThreadMarker::new().is_some() {
+        return is_clipboard_overlay_visible_on_main_thread(app_handle);
+    }
+
+    false
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn is_clipboard_overlay_visible(app_handle: &AppHandle) -> bool {
+    app_handle
+        .get_webview_window("clipboard_overlay")
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+pub fn toggle_clipboard_overlay(app_handle: &AppHandle) {
+    run_clipboard_overlay_on_main_thread(app_handle, "toggle", |app_handle| {
+        if is_clipboard_overlay_visible_on_main_thread(&app_handle) {
+            hide_clipboard_overlay_on_main_thread(&app_handle);
+        } else {
+            show_clipboard_overlay_on_main_thread(&app_handle);
+        }
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn toggle_clipboard_overlay(app_handle: &AppHandle) {
+    if is_clipboard_overlay_visible(app_handle) {
+        hide_clipboard_overlay(app_handle);
+    } else {
+        show_clipboard_overlay(app_handle);
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn set_clipboard_overlay_focused(focused: bool) {
+    CLIPBOARD_OVERLAY_FOCUSED.store(focused, Ordering::Relaxed);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_clipboard_overlay_focused(_focused: bool) {}
+
+#[cfg(target_os = "macos")]
+pub fn hide_clipboard_overlay_if_unfocused(app_handle: &AppHandle) {
+    run_clipboard_overlay_on_main_thread(app_handle, "hide if unfocused", |app_handle| {
+        if CLIPBOARD_OVERLAY_FOCUSED.load(Ordering::Relaxed) {
+            return;
+        }
+
+        if CLIPBOARD_OVERLAY_PINNED.load(Ordering::Relaxed) {
+            return;
+        }
+
+        hide_clipboard_overlay_on_main_thread(&app_handle);
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn hide_clipboard_overlay_if_unfocused(app_handle: &AppHandle) {
+    let Some(window) = app_handle.get_webview_window("clipboard_overlay") else {
+        return;
+    };
+
+    if window.is_focused().unwrap_or(false) {
+        return;
+    }
+
+    match window.is_always_on_top() {
+        Ok(true) => {}
+        Ok(false) => hide_clipboard_overlay(app_handle),
+        Err(e) => {
+            log::error!("Failed to read clipboard overlay pinned state: {}", e);
+            hide_clipboard_overlay(app_handle);
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]

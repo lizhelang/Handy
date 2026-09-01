@@ -509,6 +509,14 @@ pub struct AppSettings {
     /// Experimental detector implementation. Silero remains the stable default.
     #[serde(default)]
     pub vad_backend: VadBackend,
+    #[serde(default)]
+    pub clipboard_enabled: bool,
+    #[serde(default = "default_clipboard_max_records")]
+    pub clipboard_max_records: usize,
+    #[serde(default)]
+    pub clipboard_hotkey_enabled: bool,
+    #[serde(default = "default_clipboard_hotkey")]
+    pub clipboard_hotkey: String,
     /// Which recording overlay to show: None / Minimal / Live. Streaming mode is
     /// not gated on this — that follows model capability. Migrated from the old
     /// `overlay_position` (position `none` → style `None`).
@@ -583,6 +591,14 @@ fn default_vad_enabled() -> bool {
 
 fn default_filler_word_removal_enabled() -> bool {
     true
+}
+
+fn default_clipboard_max_records() -> usize {
+    0
+}
+
+fn default_clipboard_hotkey() -> String {
+    "CmdOrCtrl+Shift+V".to_string()
 }
 
 fn default_debug_mode() -> bool {
@@ -969,6 +985,10 @@ pub fn get_default_settings() -> AppSettings {
         extra_recording_buffer_ms: 0,
         vad_enabled: default_vad_enabled(),
         vad_backend: VadBackend::default(),
+        clipboard_enabled: false,
+        clipboard_max_records: default_clipboard_max_records(),
+        clipboard_hotkey_enabled: false,
+        clipboard_hotkey: default_clipboard_hotkey(),
         overlay_style: default_overlay_style(),
     }
 }

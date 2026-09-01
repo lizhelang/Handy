@@ -16,7 +16,8 @@
     "postProcessing": "후처리",
     "history": "히스토리",
     "debug": "디버그",
-    "about": "정보"
+    "about": "정보",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "시작하려면 음성 인식 모델을 선택하세요",
@@ -398,6 +399,10 @@
       "fillerWordRemoval": {
         "title": "군더더기 표현 제거",
         "description": "전사에서 흔한 머뭇거림 표현을 제거합니다. 그대로 두려면 이 옵션을 끄세요."
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +632,75 @@
       "whatsNewUpdates": {
         "label": "새 소식 표시",
         "description": "Handy 업데이트 후 릴리스 노트를 표시합니다"
+      }
+    },
+    "clipboard": {
+      "title": "클립보드 관리자",
+      "searchPlaceholder": "클립보드 기록 검색...",
+      "filterAll": "전체",
+      "filterText": "텍스트",
+      "filterImage": "이미지",
+      "filterRichtext": "리치 텍스트",
+      "filterFiles": "파일",
+      "viewList": "목록",
+      "viewGrid": "그리드",
+      "sortNewest": "최신순",
+      "sortOldest": "오래된순",
+      "totalItems": "{{count}}개 항목",
+      "totalSize": "{{size}} 사용됨",
+      "emptyTitle": "클립보드가 비어 있습니다",
+      "emptyDescription": "복사하여 클립보드 기록 추적을 시작하세요.",
+      "clearHistory": "기록 지우기",
+      "clearConfirm": "확실합니까? 고정 및 즐겨찾기 항목을 제외한 모든 클립보드 항목이 삭제됩니다.",
+      "clearKeepPinned": "고정 및 즐겨찾기 항목 유지",
+      "deleteItem": "삭제",
+      "toggleFavorite": "즐겨찾기",
+      "unfavorite": "즐겨찾기에서 제거",
+      "togglePin": "고정",
+      "unpin": "고정 해제",
+      "preview": "미리보기",
+      "copyToClipboard": "클립보드에 복사",
+      "copied": "복사됨!",
+      "settings": {
+        "maxRecords": "최대 기록 수",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "클립보드 단축키",
+        "confirmMode": "확인 모드",
+        "confirmModeCopy": "클립보드에 복사",
+        "confirmModePaste": "즉시 붙여넣기",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "클립보드",
+        "search": "검색...",
+        "hint": "탐색 · Enter 복사 · Esc 닫기 · F 즐겨찾기",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },

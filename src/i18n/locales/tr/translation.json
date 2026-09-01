@@ -16,7 +16,8 @@
     "postProcessing": "Son İşlem",
     "history": "Geçmiş",
     "debug": "Hata Ayıklama",
-    "about": "Hakkında"
+    "about": "Hakkında",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "Başlamak için bir transkripsiyon modeli seçin",
@@ -398,6 +399,10 @@
       "fillerWordRemoval": {
         "title": "Dolgu Sözcüklerini Kaldır",
         "description": "Transkripsiyonlardaki yaygın duraksama sözcüklerini kaldırır. Bunları korumak için kapatın."
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +632,75 @@
       "whatsNewUpdates": {
         "label": "Yenilikleri Göster",
         "description": "Handy güncellemelerinden sonra sürüm notlarını göster"
+      }
+    },
+    "clipboard": {
+      "title": "Pano Yöneticisi",
+      "searchPlaceholder": "Pano geçmişinde ara...",
+      "filterAll": "Tümü",
+      "filterText": "Metin",
+      "filterImage": "Resimler",
+      "filterRichtext": "Zengin Metin",
+      "filterFiles": "Dosyalar",
+      "viewList": "Liste",
+      "viewGrid": "Izgara",
+      "sortNewest": "En yeniden en eskiye",
+      "sortOldest": "En eskiden en yeniye",
+      "totalItems": "{{count}} öğe",
+      "totalSize": "{{size}} kullanıldı",
+      "emptyTitle": "Pano boş",
+      "emptyDescription": "Pano geçmişinizi takip etmeye başlamak için bir şey kopyalayın.",
+      "clearHistory": "Geçmişi Temizle",
+      "clearConfirm": "Emin misiniz? Bu işlem sabitlenmiş ve favorilere eklenmiş öğeler hariç tüm pano öğelerini silecektir.",
+      "clearKeepPinned": "Sabitlenmiş ve favori öğeleri koru",
+      "deleteItem": "Sil",
+      "toggleFavorite": "Favorilere ekle",
+      "unfavorite": "Favorilerden çıkar",
+      "togglePin": "Sabitle",
+      "unpin": "Sabitlemeyi kaldır",
+      "preview": "Önizleme",
+      "copyToClipboard": "Panoya Kopyala",
+      "copied": "Kopyalandı!",
+      "settings": {
+        "maxRecords": "Maksimum Kayıt Sayısı",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "Pano Kısayolu",
+        "confirmMode": "Onay Modu",
+        "confirmModeCopy": "Panoya kopyala",
+        "confirmModePaste": "Hemen yapıştır",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "Pano",
+        "search": "Ara...",
+        "hint": "Gezin · Enter Kopyala · Esc Kapat · F Favori",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },

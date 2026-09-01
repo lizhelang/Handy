@@ -1,0 +1,154 @@
+#!/bin/zsh
+set -eu
+set -o pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$ROOT_DIR/build-artifact-lock.sh"
+APP_NAME="InputiaInputMethod.app"
+SETTINGS_APP_NAME="Inputia 设置.app"
+APP_DIR="$ROOT_DIR/build/$APP_NAME"
+SETTINGS_APP_DIR="$ROOT_DIR/build/$SETTINGS_APP_NAME"
+PKG_SCRIPTS_DIR="$ROOT_DIR/build/pkg-scripts"
+DIST_DIR="$ROOT_DIR/dist"
+PKG_ID="com.inputia.inputmethod.Inputia.pkg"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ROOT_DIR/Info.plist")"
+
+export COPYFILE_DISABLE=1
+
+detect_verification_processes() {
+  local process_list
+  if [[ -n "${INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST:-}" ]]; then
+    process_list="$INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST"
+  else
+    process_list="$(/bin/ps -axo pid=,command=)"
+  fi
+  printf '%s\n' "$process_list" |
+    /usr/bin/awk -v root="$ROOT_DIR" -v self="$$" -v owner="${INPUTIA_VERIFICATION_OWNER_PID:-}" '
+      $1 == self { next }
+      owner != "" && $1 == owner { next }
+      index($0, root) &&
+        $0 ~ /\/(dev-fast|install-check|release\/full-check|verify-nongui|post-install-regression|verify-system|verify-pkg|await-system-install|smoke-preflight|smoke-textedit|smoke-textedit-command-shortcuts|smoke-clipboard-recall|smoke-safari[^ ]*|diagnose-safari-input-source|gui-smoke-readiness|gui-smoke-suite|status|tis-readiness)\.sh( |$)/ {
+          print
+        }
+    '
+}
+
+require_no_verification_processes() {
+  local blocking_processes
+  blocking_processes="$(detect_verification_processes)"
+  if [[ -n "$blocking_processes" ]]; then
+    echo "buildPkgReady=false reason=verification-running"
+    printf '%s\n' "$blocking_processes" | /usr/bin/sed 's/^/buildPkgBlockingProcess: /'
+    exit 20
+  fi
+}
+
+require_pkg_sign_identity_if_requested() {
+  if [[ -z "${INPUTIA_PKG_SIGN_IDENTITY:-}" ]]; then
+    echo "buildPkgSignIdentityRequested=false"
+    return 0
+  fi
+
+  echo "buildPkgSignIdentityRequested=true"
+  echo "buildPkgSignIdentity=$INPUTIA_PKG_SIGN_IDENTITY"
+
+  if [[ "$INPUTIA_PKG_SIGN_IDENTITY" != Developer\ ID\ Installer:* ]]; then
+    echo "buildPkgSignIdentityValid=false reason=not-developer-id-installer"
+    echo "buildPkgReady=false reason=pkg-sign-identity-not-developer-id-installer"
+    echo "buildPkgRequiredAction=set-INPUTIA_PKG_SIGN_IDENTITY-to-developer-id-installer"
+    exit 22
+  fi
+
+  local identities
+  identities="$(/usr/bin/security find-identity -v 2>/dev/null || true)"
+  if ! /usr/bin/grep -F "$INPUTIA_PKG_SIGN_IDENTITY" <<<"$identities" >/dev/null; then
+    echo "buildPkgSignIdentityValid=false reason=missing-developer-id-installer-identity"
+    echo "buildPkgReady=false reason=missing-pkg-sign-identity"
+    echo "buildPkgRequiredAction=import-developer-id-installer-identity"
+    exit 21
+  fi
+
+  echo "buildPkgSignIdentityValid=true"
+}
+
+if [[ "${INPUTIA_BUILD_PKG_PREFLIGHT_SELF_CHECK:-0}" == "1" ]]; then
+  original_process_list="${INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST:-}"
+  INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST="123 /usr/bin/true"
+  clear_processes="$(detect_verification_processes)"
+  INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST="456 $ROOT_DIR/release/full-check.sh"
+  blocked_processes="$(detect_verification_processes)"
+  INPUTIA_BUILD_PKG_PROCESS_LIST_FOR_TEST="$original_process_list"
+  if [[ -z "$clear_processes" && -n "$blocked_processes" ]]; then
+    echo "buildPkgPreflightSelfCheck clear=true"
+    echo "buildPkgPreflightSelfCheck blocked=true"
+    echo "buildPkgPreflightSelfCheck=true"
+    exit 0
+  fi
+  echo "buildPkgPreflightSelfCheck=false"
+  exit 1
+fi
+
+inputia_build_artifact_acquire_lock buildPkg
+trap inputia_build_artifact_release_lock EXIT
+require_no_verification_processes
+require_pkg_sign_identity_if_requested
+
+/bin/zsh "$ROOT_DIR/build.sh" >/dev/null
+
+APP_CDHASH="$(/usr/bin/codesign -dv --verbose=4 "$APP_DIR" 2>&1 | /usr/bin/awk -F= '/^CDHash=/{print $2}')"
+APP_CDHASH_SHORT="$(/usr/bin/printf '%.12s' "$APP_CDHASH")"
+PKG_PATH="$DIST_DIR/InputiaInputMethod-v${VERSION}-${APP_CDHASH_SHORT}.pkg"
+LATEST_PKG_PATH="$DIST_DIR/InputiaInputMethod-latest.pkg"
+
+rm -rf "$PKG_SCRIPTS_DIR" "$DIST_DIR"
+mkdir -p "$PKG_SCRIPTS_DIR" "$DIST_DIR"
+cp "$ROOT_DIR/Packaging/scripts/postinstall" "$PKG_SCRIPTS_DIR/postinstall"
+chmod +x "$PKG_SCRIPTS_DIR/postinstall"
+COPYFILE_DISABLE=1 /usr/bin/tar -czf "$PKG_SCRIPTS_DIR/InputiaInputMethod.app.tar.gz" \
+  -C "$ROOT_DIR/build" \
+  "$APP_NAME"
+COPYFILE_DISABLE=1 /usr/bin/tar -czf "$PKG_SCRIPTS_DIR/InputiaSettings.app.tar.gz" \
+  -C "$ROOT_DIR/build" \
+  "$SETTINGS_APP_NAME"
+/usr/bin/xattr -cr "$PKG_SCRIPTS_DIR" >/dev/null 2>&1 || true
+
+/usr/bin/pkgbuild \
+  --nopayload \
+  --scripts "$PKG_SCRIPTS_DIR" \
+  --identifier "$PKG_ID" \
+  --version "$VERSION" \
+  --install-location "/" \
+  "$PKG_PATH"
+
+if [[ -n "${INPUTIA_PKG_SIGN_IDENTITY:-}" ]]; then
+  signed_pkg="$DIST_DIR/InputiaInputMethod-v${VERSION}-${APP_CDHASH_SHORT}-signed.pkg"
+  if ! /usr/bin/productsign --sign "$INPUTIA_PKG_SIGN_IDENTITY" "$PKG_PATH" "$signed_pkg"; then
+    echo "buildPkgSigned=false reason=productsign-failed"
+    exit 23
+  fi
+  mv "$signed_pkg" "$PKG_PATH"
+  if /usr/sbin/pkgutil --check-signature "$PKG_PATH" 2>&1 | /usr/bin/grep -F "Developer ID Installer:" >/dev/null; then
+    echo "buildPkgSigned=true"
+  else
+    echo "buildPkgSigned=false reason=signature-verification-failed"
+    exit 24
+  fi
+else
+  echo "buildPkgSigned=false reason=unsigned-local-package"
+fi
+
+/bin/cp "$PKG_PATH" "$LATEST_PKG_PATH"
+
+/usr/sbin/pkgutil --check-signature "$PKG_PATH" || true
+if /usr/sbin/pkgutil --payload-files "$PKG_PATH" | grep -q .; then
+  /usr/sbin/pkgutil --payload-files "$PKG_PATH" | sed -n '1,80p'
+else
+  echo "payloadFiles=0"
+fi
+echo "appCDHash=$APP_CDHASH"
+if [[ "${INPUTIA_SKIP_PKG_VERIFY:-0}" != "1" ]]; then
+  /bin/zsh "$ROOT_DIR/verify-pkg.sh" "$LATEST_PKG_PATH"
+else
+  echo "pkgVerificationSkipped=true"
+fi
+echo "$PKG_PATH"

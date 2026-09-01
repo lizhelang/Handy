@@ -16,7 +16,8 @@
     "postProcessing": "Постобработка",
     "history": "История",
     "debug": "Отстраняване",
-    "about": "За приложението"
+    "about": "За приложението",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "За да започнете, изберете модел за транскрипция",
@@ -398,6 +399,10 @@
       "fillerWordRemoval": {
         "title": "Премахване на думи паразити",
         "description": "Премахва често срещаните думи за колебание от транскрипциите. Изключете, за да ги запазите."
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +632,75 @@
       "whatsNewUpdates": {
         "label": "Показвай новостите",
         "description": "Показвай бележки към изданието след актуализации на Handy"
+      }
+    },
+    "clipboard": {
+      "title": "Мениджър на клипборда",
+      "searchPlaceholder": "Търсене в историята на клипборда...",
+      "filterAll": "Всички",
+      "filterText": "Текст",
+      "filterImage": "Изображения",
+      "filterRichtext": "Форматиран текст",
+      "filterFiles": "Файлове",
+      "viewList": "Списък",
+      "viewGrid": "Решетка",
+      "sortNewest": "Най-новите първо",
+      "sortOldest": "Най-старите първо",
+      "totalItems": "{{count}} елемента",
+      "totalSize": "{{size}} използвано",
+      "emptyTitle": "Клипбордът е празен",
+      "emptyDescription": "Копирайте нещо, за да започнете да проследявате историята на клипборда.",
+      "clearHistory": "Изчистване на историята",
+      "clearConfirm": "Сигурни ли сте? Това ще изтрие всички елементи от клипборда, с изключение на закачените и любимите.",
+      "clearKeepPinned": "Запазване на закачените и любимите елементи",
+      "deleteItem": "Изтриване",
+      "toggleFavorite": "Любимо",
+      "unfavorite": "Премахване от любими",
+      "togglePin": "Закачване",
+      "unpin": "Откачване",
+      "preview": "Преглед",
+      "copyToClipboard": "Копиране в клипборда",
+      "copied": "Копирано!",
+      "settings": {
+        "maxRecords": "Максимален брой записи",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "Бърз клавиш за клипборда",
+        "confirmMode": "Режим на потвърждение",
+        "confirmModeCopy": "Копиране в клипборда",
+        "confirmModePaste": "Незабавно поставяне",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "Клипборд",
+        "search": "Търсене...",
+        "hint": "Навигация · Enter Копиране · Esc Затвори · F Любимо",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },

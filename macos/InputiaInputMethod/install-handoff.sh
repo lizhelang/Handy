@@ -1,0 +1,207 @@
+#!/bin/zsh
+set -eu
+set -o pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
+BUILD_APP="$ROOT_DIR/build/InputiaInputMethod.app"
+SYSTEM_APP="/Library/Input Methods/InputiaInputMethod.app"
+PKG_PATH="$ROOT_DIR/dist/InputiaInputMethod-latest.pkg"
+HANDOFF_PATH="${INPUTIA_INSTALL_HANDOFF_PATH:-$ROOT_DIR/build/install-handoff.txt}"
+BUILD_LOG="${INPUTIA_INSTALL_HANDOFF_BUILD_LOG:-/tmp/inputia-install-handoff-build-pkg.log}"
+
+quote() {
+  /usr/bin/python3 - "$1" <<'PY'
+import shlex
+import sys
+
+print(shlex.quote(sys.argv[1]))
+PY
+}
+
+plist_value() {
+  local plist="$1"
+  local key="$2"
+  if [[ -f "$plist" ]]; then
+    /usr/libexec/PlistBuddy -c "Print :$key" "$plist" 2>/dev/null || true
+  fi
+}
+
+app_version() {
+  plist_value "$1/Contents/Info.plist" CFBundleVersion
+}
+
+app_cdhash() {
+  if [[ -d "$1" ]]; then
+    /usr/bin/codesign -dv --verbose=4 "$1" 2>&1 |
+      /usr/bin/awk -F= '/^CDHash=/{print $2}'
+  fi
+}
+
+sha256() {
+  if [[ -f "$1" ]]; then
+    /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'
+  fi
+}
+
+git_value() {
+  local fallback="$1"
+  shift
+  /usr/bin/git -C "$REPO_ROOT" "$@" 2>/dev/null || echo "$fallback"
+}
+
+git_dirty_state() {
+  if ! /usr/bin/git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo unknown
+    return
+  fi
+  if [[ -n "$(/usr/bin/git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" ]]; then
+    echo true
+  else
+    echo false
+  fi
+}
+
+admin_ready=false
+admin_reason=admin-required
+if [[ -w "/Library/Input Methods" && -w "/Applications" ]]; then
+  admin_ready=true
+  admin_reason=writable
+elif /usr/bin/sudo -n true >/dev/null 2>&1; then
+  admin_ready=true
+  admin_reason=sudo-noninteractive
+fi
+
+/bin/zsh "$ROOT_DIR/build-pkg.sh" >"$BUILD_LOG" 2>&1
+
+source_branch="$(git_value unknown rev-parse --abbrev-ref HEAD)"
+source_commit="$(git_value unknown rev-parse --short=12 HEAD)"
+source_upstream="$(git_value none rev-parse --abbrev-ref --symbolic-full-name '@{u}')"
+source_dirty="$(git_dirty_state)"
+build_version="$(app_version "$BUILD_APP")"
+build_cdhash="$(app_cdhash "$BUILD_APP")"
+system_version="$(app_version "$SYSTEM_APP")"
+system_cdhash="$(app_cdhash "$SYSTEM_APP")"
+pkg_sha256="$(sha256 "$PKG_PATH")"
+pkg_quoted="$(quote "$PKG_PATH")"
+repo_quoted="$(quote "$ROOT_DIR")"
+
+if [[ -n "$build_cdhash" && "$system_cdhash" == "$build_cdhash" ]]; then
+  system_matches_build=true
+else
+  system_matches_build=false
+fi
+
+terminal_installer_command="sudo /usr/sbin/installer -pkg $pkg_quoted -target /"
+open_installer_command="/usr/bin/open $pkg_quoted"
+install_check_command="cd $repo_quoted && ./install-check.sh"
+await_command="cd $repo_quoted && ./await-system-install.sh"
+
+install_check_output="$("$ROOT_DIR/install-check.sh" 2>&1 || true)"
+install_check_passed="$(/usr/bin/awk -F= '$1 == "installCheckPassed" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+install_check_block_reasons="$(/usr/bin/awk -F= '$1 == "installCheckBlockReasons" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+install_check_required_action="$(/usr/bin/awk -F= '$1 == "installCheckRequiredAction" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+install_check_required_actions="$(/usr/bin/awk -F= '$1 == "installCheckRequiredActions" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+settings_matches_build="$(/usr/bin/awk -F= '$1 == "settingsMatchesBuild" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+build_settings_version="$(/usr/bin/awk -F= '$1 == "buildSettingsVersion" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+build_settings_expected_host_cdhash="$(/usr/bin/awk -F= '$1 == "buildSettingsExpectedHostCDHash" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+system_settings_version="$(/usr/bin/awk -F= '$1 == "systemSettingsVersion" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+system_settings_expected_host_cdhash="$(/usr/bin/awk -F= '$1 == "systemSettingsExpectedHostCDHash" { print $2; found = 1; exit } END { if (!found) print "unknown" }' <<<"$install_check_output")"
+pkg_verification_passed="$(/usr/bin/awk -F= '$1 == "pkgVerificationPassed" { print $2; found = 1; exit } END { if (!found) print "unknown" }' "$BUILD_LOG")"
+repair_tis_duplicates_command="cd $repo_quoted && INPUTIA_REPAIR_TIS_DUPLICATES=1 ./repair-tis-duplicates.sh"
+if [[ ",$install_check_block_reasons," == *,tis-duplicate-matches,* ]]; then
+  repair_tis_duplicates_required=true
+else
+  repair_tis_duplicates_required=false
+fi
+
+/bin/mkdir -p "$(/usr/bin/dirname "$HANDOFF_PATH")"
+/bin/cat >"$HANDOFF_PATH" <<EOF
+Inputia 安装交接清单
+
+sourceBranch=$source_branch
+sourceCommit=$source_commit
+sourceUpstream=$source_upstream
+sourceDirty=$source_dirty
+packagePath=$PKG_PATH
+packageSHA256=$pkg_sha256
+pkgVerificationPassed=$pkg_verification_passed
+buildVersion=$build_version
+buildCDHash=$build_cdhash
+systemVersion=${system_version:-unknown}
+systemCDHash=${system_cdhash:-unknown}
+systemMatchesBuild=$system_matches_build
+buildSettingsVersion=$build_settings_version
+buildSettingsExpectedHostCDHash=$build_settings_expected_host_cdhash
+systemSettingsVersion=$system_settings_version
+systemSettingsExpectedHostCDHash=$system_settings_expected_host_cdhash
+settingsMatchesBuild=$settings_matches_build
+adminReady=$admin_ready
+adminReason=$admin_reason
+installCheckPassed=$install_check_passed
+installCheckBlockReasons=$install_check_block_reasons
+installCheckRequiredAction=$install_check_required_action
+installCheckRequiredActions=$install_check_required_actions
+repairTISDuplicatesRequired=$repair_tis_duplicates_required
+handoffOpensGUI=false
+handoffChangesSystemInputSource=false
+buildLog=$BUILD_LOG
+
+管理员终端安装：
+$terminal_installer_command
+
+打开 Installer 安装：
+$open_installer_command
+
+安装后等待/验证：
+$await_command
+$install_check_command
+
+重复 TIS 显式修复（仅当 installCheckBlockReasons 含 tis-duplicate-matches 时运行）：
+$repair_tis_duplicates_command
+
+安装后通过标准：
+systemMatchesBuild=true
+settingsMatchesBuild=true
+installCheckTISReady=true
+installCheckTISDuplicateMatches=false
+runningMatchesBuild=true
+installCheckBlockReasons=none
+installCheckRequiredAction=none
+installCheckRequiredActions=none
+installCheckPassed=true
+EOF
+
+echo "installHandoffReady=true"
+echo "installHandoffPath=$HANDOFF_PATH"
+echo "handoffOpensGUI=false"
+echo "handoffChangesSystemInputSource=false"
+echo "buildLog=$BUILD_LOG"
+echo "sourceBranch=$source_branch"
+echo "sourceCommit=$source_commit"
+echo "sourceUpstream=$source_upstream"
+echo "sourceDirty=$source_dirty"
+echo "packagePath=$PKG_PATH"
+echo "packageSHA256=$pkg_sha256"
+echo "pkgVerificationPassed=$pkg_verification_passed"
+echo "buildVersion=$build_version"
+echo "buildCDHash=$build_cdhash"
+echo "systemVersion=${system_version:-unknown}"
+echo "systemCDHash=${system_cdhash:-unknown}"
+echo "systemMatchesBuild=$system_matches_build"
+echo "buildSettingsVersion=$build_settings_version"
+echo "buildSettingsExpectedHostCDHash=$build_settings_expected_host_cdhash"
+echo "systemSettingsVersion=$system_settings_version"
+echo "systemSettingsExpectedHostCDHash=$system_settings_expected_host_cdhash"
+echo "settingsMatchesBuild=$settings_matches_build"
+echo "adminReady=$admin_ready reason=$admin_reason"
+echo "installCheckPassed=$install_check_passed"
+echo "installCheckBlockReasons=$install_check_block_reasons"
+echo "installCheckRequiredAction=$install_check_required_action"
+echo "installCheckRequiredActions=$install_check_required_actions"
+echo "repairTISDuplicatesRequired=$repair_tis_duplicates_required"
+echo "repairTISDuplicatesCommand=$repair_tis_duplicates_command"
+echo "terminalInstallerCommand=$terminal_installer_command"
+echo "openInstallerCommand=$open_installer_command"
+echo "awaitInstallCommand=$await_command"
+echo "installCheckCommand=$install_check_command"

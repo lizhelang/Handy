@@ -16,7 +16,8 @@
     "postProcessing": "עיבוד משלים",
     "history": "היסטוריה",
     "debug": "ניפוי שגיאות",
-    "about": "אודות"
+    "about": "אודות",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "כדי להתחיל, בחר מודל תמלול",
@@ -398,6 +399,10 @@
       "fillerWordRemoval": {
         "title": "הסרת מילות מילוי",
         "description": "מסיר מילות היסוס נפוצות מתמלולים. השבת כדי להשאיר אותן."
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +632,75 @@
       "whatsNewUpdates": {
         "label": "הצג מה חדש",
         "description": "הצג הערות גרסה לאחר עדכוני Handy"
+      }
+    },
+    "clipboard": {
+      "title": "מנהל הלוח",
+      "searchPlaceholder": "חיפוש בהיסטוריית הלוח...",
+      "filterAll": "הכל",
+      "filterText": "טקסט",
+      "filterImage": "תמונות",
+      "filterRichtext": "טקסט מעוצב",
+      "filterFiles": "קבצים",
+      "viewList": "רשימה",
+      "viewGrid": "רשת",
+      "sortNewest": "החדש ביותר תחילה",
+      "sortOldest": "הישן ביותר תחילה",
+      "totalItems": "{{count}} פריטים",
+      "totalSize": "{{size}} בשימוש",
+      "emptyTitle": "הלוח ריק",
+      "emptyDescription": "העתק משהו כדי להתחיל לעקוב אחר היסטוריית הלוח.",
+      "clearHistory": "נקה היסטוריה",
+      "clearConfirm": "האם אתה בטוח? זה ימחק את כל פריטי הלוח למעט מוצמדים ואהובים.",
+      "clearKeepPinned": "שמור פריטים מוצמדים ואהובים",
+      "deleteItem": "מחק",
+      "toggleFavorite": "מועדף",
+      "unfavorite": "הסר ממועדפים",
+      "togglePin": "הצמד",
+      "unpin": "בטל הצמדה",
+      "preview": "תצוגה מקדימה",
+      "copyToClipboard": "העתק ללוח",
+      "copied": "הועתק!",
+      "settings": {
+        "maxRecords": "מספר רשומות מקסימלי",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "קיצור דרך ללוח",
+        "confirmMode": "מצב אישור",
+        "confirmModeCopy": "העתק ללוח",
+        "confirmModePaste": "הדבק מיד",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "לוח",
+        "search": "חיפוש...",
+        "hint": "ניווט · Enter העתק · Esc סגור · F מועדף",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },

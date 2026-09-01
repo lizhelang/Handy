@@ -16,7 +16,8 @@
     "postProcessing": "Následné zpracování",
     "history": "Historie",
     "debug": "Ladění",
-    "about": "O aplikaci"
+    "about": "O aplikaci",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "Pro začátek vyberte model pro přepis",
@@ -398,6 +399,10 @@
       "fillerWordRemoval": {
         "title": "Odstranit výplňová slova",
         "description": "Odstraňuje běžná slova vyjadřující váhání z přepisů. Vypnutím je zachováte."
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +632,75 @@
       "whatsNewUpdates": {
         "label": "Zobrazovat novinky",
         "description": "Zobrazovat poznámky k vydání po aktualizacích Handy"
+      }
+    },
+    "clipboard": {
+      "title": "Správce schránky",
+      "searchPlaceholder": "Hledat v historii schránky...",
+      "filterAll": "Vše",
+      "filterText": "Text",
+      "filterImage": "Obrázky",
+      "filterRichtext": "Formátovaný text",
+      "filterFiles": "Soubory",
+      "viewList": "Seznam",
+      "viewGrid": "Mřížka",
+      "sortNewest": "Nejnovější první",
+      "sortOldest": "Nejstarší první",
+      "totalItems": "{{count}} položek",
+      "totalSize": "{{size}} použito",
+      "emptyTitle": "Schránka je prázdná",
+      "emptyDescription": "Zkopírujte něco pro zahájení sledování historie schránky.",
+      "clearHistory": "Vymazat historii",
+      "clearConfirm": "Opravdu? Tím se odstraní všechny položky schránky kromě připnutých a oblíbených.",
+      "clearKeepPinned": "Zachovat připnuté a oblíbené",
+      "deleteItem": "Smazat",
+      "toggleFavorite": "Oblíbené",
+      "unfavorite": "Odebrat z oblíbených",
+      "togglePin": "Připnout",
+      "unpin": "Odepnout",
+      "preview": "Náhled",
+      "copyToClipboard": "Kopírovat do schránky",
+      "copied": "Zkopírováno!",
+      "settings": {
+        "maxRecords": "Maximum záznamů",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "Klávesová zkratka schránky",
+        "confirmMode": "Režim potvrzení",
+        "confirmModeCopy": "Kopírovat do schránky",
+        "confirmModePaste": "Vložit okamžitě",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "Schránka",
+        "search": "Hledat...",
+        "hint": "Navigace · Enter Kopírovat · Esc Zavřít · F Oblíbené",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },

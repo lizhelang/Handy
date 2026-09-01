@@ -1,0 +1,21 @@
+[package]
+name = "inputia-capi"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[lib]
+name = "inputia_capi"
+path = "src/lib.rs"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+inputia-core = { path = "../inputia-core", features = ["sqlite-memory"] }
+inputia-rime = { path = "../inputia-rime" }
+inputia-settings = { path = "../inputia-settings" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+rusqlite = { version = "0.37", features = ["bundled"] }
+tempfile = "3"

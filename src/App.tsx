@@ -50,6 +50,13 @@ function App() {
   const hasCompletedPostOnboardingInit = useRef(false);
 
   useEffect(() => {
+    const sectionConfig = SECTIONS_CONFIG[currentSection];
+    if (sectionConfig && !sectionConfig.enabled(settings)) {
+      setCurrentSection("general");
+    }
+  }, [currentSection, settings]);
+
+  useEffect(() => {
     checkOnboardingStatus();
   }, []);
 
