@@ -41,7 +41,6 @@ use managers::model::ModelManager;
 use managers::transcription::TranscriptionManager;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
-use tauri::image::Image;
 pub use transcription_coordinator::TranscriptionCoordinator;
 
 use tauri::tray::TrayIconBuilder;
@@ -186,7 +185,7 @@ fn should_force_show_permissions_window(app: &AppHandle) -> bool {
     false
 }
 
-fn initialize_core_logic(app_handle: &AppHandle) {
+fn initialize_core_logic(app_handle: &AppHandle) -> tauri::Result<()> {
     // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
     // The frontend is responsible for calling the `initialize_enigo` command
     // after onboarding completes. This avoids triggering permission dialogs
@@ -253,16 +252,14 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // Choose the appropriate initial icon based on theme
     let initial_icon_path = tray::get_icon_path(initial_theme, tray::TrayIconState::Idle, false);
 
+    let initial_icon = tray::load_tray_icon(
+        app_handle
+            .path()
+            .resolve(initial_icon_path, tauri::path::BaseDirectory::Resource),
+    )?;
+
     let mut tray_builder = TrayIconBuilder::new()
-        .icon(
-            Image::from_path(
-                app_handle
-                    .path()
-                    .resolve(initial_icon_path, tauri::path::BaseDirectory::Resource)
-                    .unwrap(),
-            )
-            .unwrap(),
-        )
+        .icon(initial_icon)
         .tooltip(tray::tray_tooltip())
         .icon_as_template(true);
 
@@ -358,8 +355,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             }
             _ => {}
         })
-        .build(app_handle)
-        .unwrap();
+        .build(app_handle)?;
     app_handle.manage(tray);
 
     // Initialize tray menu with idle state
@@ -383,6 +379,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Create the recording overlay window (hidden by default)
     utils::create_recording_overlay(app_handle);
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -1031,7 +1029,7 @@ pub fn run(cli_args: CliArgs) {
             let app_handle = app.handle().clone();
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
 
-            initialize_core_logic(&app_handle);
+            initialize_core_logic(&app_handle)?;
 
             if let Some(migration) = startup_migration.as_mut() {
                 migration.complete()?;
