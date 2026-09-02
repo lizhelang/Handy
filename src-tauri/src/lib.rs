@@ -252,11 +252,7 @@ fn initialize_core_logic(app_handle: &AppHandle) -> tauri::Result<()> {
     // Choose the appropriate initial icon based on theme
     let initial_icon_path = tray::get_icon_path(initial_theme, tray::TrayIconState::Idle, false);
 
-    let initial_icon = tray::load_tray_icon(
-        app_handle
-            .path()
-            .resolve(initial_icon_path, tauri::path::BaseDirectory::Resource),
-    )?;
+    let initial_icon = tray::load_tray_icon_resource(app_handle, initial_icon_path)?;
 
     let mut tray_builder = TrayIconBuilder::new()
         .icon(initial_icon)

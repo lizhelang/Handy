@@ -28,6 +28,8 @@ use crate::tray_i18n::get_tray_translations;
 use log::{debug, error, info, trace, warn};
 use std::collections::HashMap;
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use std::path::{Component, Path};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 use tauri::image::Image;
@@ -268,10 +270,7 @@ fn sync_tray_with(app: &AppHandle, update: impl FnOnce(&mut TrayInner)) {
     // Decode the icon off the main thread, once per path, outside the lock.
     let needs_icon = !state.lock().icons.contains_key(desired.icon_path);
     let loaded_icon = if needs_icon {
-        match load_tray_icon(
-            app.path()
-                .resolve(desired.icon_path, tauri::path::BaseDirectory::Resource),
-        ) {
+        match load_tray_icon_resource(app, desired.icon_path) {
             Ok(image) => Some(image),
             Err(err) => {
                 error!("Failed to load tray icon '{}': {err}", desired.icon_path);
@@ -441,6 +440,67 @@ pub(crate) fn load_tray_icon(
 ) -> tauri::Result<Image<'static>> {
     let resolved_icon_path = resolved_icon_path?;
     Image::from_path(&resolved_icon_path).map(Image::to_owned)
+}
+
+pub(crate) fn load_tray_icon_resource(
+    app: &AppHandle,
+    icon_path: &str,
+) -> tauri::Result<Image<'static>> {
+    load_tray_icon(resolve_tray_icon_resource(app, icon_path))
+}
+
+fn resolve_tray_icon_resource(app: &AppHandle, icon_path: &str) -> tauri::Result<PathBuf> {
+    let resolved = app
+        .path()
+        .resolve(icon_path, tauri::path::BaseDirectory::Resource);
+
+    match resolved {
+        Ok(path) => Ok(path),
+        Err(primary_error) => {
+            #[cfg(target_os = "macos")]
+            if let Ok(executable) = std::env::current_exe() {
+                if let Some(path) = macos_bundle_resource_from_executable(&executable, icon_path) {
+                    warn!(
+                        "Tauri could not resolve tray resource '{}'; using canonical app-bundle path '{}'",
+                        icon_path,
+                        path.display()
+                    );
+                    return Ok(path);
+                }
+            }
+
+            Err(primary_error)
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_bundle_resource_from_executable(executable: &Path, relative: &str) -> Option<PathBuf> {
+    let relative = Path::new(relative);
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return None;
+    }
+
+    let executable = executable
+        .canonicalize()
+        .unwrap_or_else(|_| executable.to_path_buf());
+    let macos_dir = executable.parent()?;
+    let contents_dir = macos_dir.parent()?;
+
+    if macos_dir.file_name()? != "MacOS" || contents_dir.file_name()? != "Contents" {
+        return None;
+    }
+
+    let resources_dir = contents_dir.join("Resources").canonicalize().ok()?;
+    let resource = resources_dir.join(relative).canonicalize().ok()?;
+    (resource.is_file() && resource.starts_with(&resources_dir)).then_some(resource)
 }
 
 pub fn tray_tooltip() -> String {
@@ -681,6 +741,8 @@ pub fn copy_last_transcript(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    use super::macos_bundle_resource_from_executable;
     use super::{last_transcript_text, load_tray_icon, MenuInputs, TrayDesired, TrayIconState};
     use crate::managers::history::HistoryEntry;
 
@@ -733,6 +795,47 @@ mod tests {
         let dir = tempfile::tempdir().expect("failed to create tempdir");
         let missing = dir.path().join("does_not_exist.png");
         assert!(load_tray_icon(Ok(missing)).is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_bundle_resource_fallback_resolves_symlinked_app_path() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let app = dir.path().join("real/Handy.app");
+        let executable = app.join("Contents/MacOS/handy");
+        let icon = app.join("Contents/Resources/resources/tray_idle.png");
+        std::fs::create_dir_all(executable.parent().expect("missing executable parent"))
+            .expect("failed to create executable directory");
+        std::fs::create_dir_all(icon.parent().expect("missing icon parent"))
+            .expect("failed to create resource directory");
+        std::fs::write(&executable, b"binary").expect("failed to create executable");
+        std::fs::write(&icon, b"icon").expect("failed to create icon");
+
+        let alias = dir.path().join("Handy.app");
+        symlink(&app, &alias).expect("failed to create app symlink");
+        let aliased_executable = alias.join("Contents/MacOS/handy");
+
+        assert_eq!(
+            macos_bundle_resource_from_executable(&aliased_executable, "resources/tray_idle.png"),
+            Some(icon.canonicalize().expect("failed to canonicalize icon"))
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_bundle_resource_fallback_rejects_paths_outside_resources() {
+        let executable = std::path::PathBuf::from("/Applications/Handy.app/Contents/MacOS/handy");
+
+        assert_eq!(
+            macos_bundle_resource_from_executable(&executable, "../MacOS/handy"),
+            None
+        );
+        assert_eq!(
+            macos_bundle_resource_from_executable(&executable, "/tmp/tray_idle.png"),
+            None
+        );
     }
 
     #[test]
