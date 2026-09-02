@@ -7,7 +7,8 @@
     "model": "Modelo",
     "quit": "Salir",
     "cancel": "Cancelar",
-    "secureInputWarning": "⚠ Atajos bloqueados por Secure Input"
+    "secureInputWarning": "⚠ Atajos bloqueados por Secure Input",
+    "clipboardHistory": "Historial del portapapeles"
   },
   "sidebar": {
     "general": "General",
@@ -16,7 +17,8 @@
     "postProcessing": "Post proceso",
     "history": "Historial",
     "debug": "Depuración",
-    "about": "Acerca de"
+    "about": "Acerca de",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "Para comenzar, elige un modelo de transcripción",
@@ -398,6 +400,10 @@
       "fillerWordRemoval": {
         "title": "Eliminar muletillas",
         "description": "Elimina las muletillas más comunes de las transcripciones. Desactívalo para conservarlas."
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +633,75 @@
       "whatsNewUpdates": {
         "label": "Mostrar novedades",
         "description": "Mostrar notas de la versión después de las actualizaciones de Handy"
+      }
+    },
+    "clipboard": {
+      "title": "Gestor del portapapeles",
+      "searchPlaceholder": "Buscar en el historial del portapapeles...",
+      "filterAll": "Todo",
+      "filterText": "Texto",
+      "filterImage": "Imágenes",
+      "filterRichtext": "Texto enriquecido",
+      "filterFiles": "Archivos",
+      "viewList": "Lista",
+      "viewGrid": "Cuadrícula",
+      "sortNewest": "Más reciente primero",
+      "sortOldest": "Más antiguo primero",
+      "totalItems": "{{count}} elementos",
+      "totalSize": "{{size}} utilizado",
+      "emptyTitle": "El portapapeles está vacío",
+      "emptyDescription": "Copia algo para comenzar a rastrear el historial de tu portapapeles.",
+      "clearHistory": "Borrar historial",
+      "clearConfirm": "¿Estás seguro? Se eliminarán todos los elementos del portapapeles excepto los fijados y los marcados como favoritos.",
+      "clearKeepPinned": "Mantener elementos fijados y favoritos",
+      "deleteItem": "Eliminar",
+      "toggleFavorite": "Marcar como favorito",
+      "unfavorite": "Quitar de favoritos",
+      "togglePin": "Fijar",
+      "unpin": "Desfijar",
+      "preview": "Vista previa",
+      "copyToClipboard": "Copiar al portapapeles",
+      "copied": "¡Copiado!",
+      "settings": {
+        "maxRecords": "Número máximo de registros",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "Tecla de acceso rápido del portapapeles",
+        "confirmMode": "Modo de confirmación",
+        "confirmModeCopy": "Copiar al portapapeles",
+        "confirmModePaste": "Pegar inmediatamente",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "Portapapeles",
+        "search": "Buscar...",
+        "hint": "Navegación · Enter Copiar · Esc Cerrar · F Favorito",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },

@@ -7,7 +7,8 @@
     "model": "Model",
     "quit": "Quit",
     "cancel": "Cancel",
-    "secureInputWarning": "⚠ Shortcuts blocked by Secure Input"
+    "secureInputWarning": "⚠ Shortcuts blocked by Secure Input",
+    "clipboardHistory": "Clipboard History"
   },
   "sidebar": {
     "general": "General",
@@ -16,7 +17,8 @@
     "postProcessing": "Post Process",
     "history": "History",
     "debug": "Debug",
-    "about": "About"
+    "about": "About",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -398,6 +400,10 @@
       "fillerWordRemoval": {
         "title": "Remove Filler Words",
         "description": "Removes common hesitation words from transcriptions. Turn off to keep them."
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +633,75 @@
           "description": "High-performance tensor library for on-device machine learning inference",
           "details": "Handy's local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
+      }
+    },
+    "clipboard": {
+      "title": "Clipboard Manager",
+      "searchPlaceholder": "Search clipboard history...",
+      "filterAll": "All",
+      "filterText": "Text",
+      "filterImage": "Images",
+      "filterRichtext": "Rich Text",
+      "filterFiles": "Files",
+      "viewList": "List",
+      "viewGrid": "Grid",
+      "sortNewest": "Newest first",
+      "sortOldest": "Oldest first",
+      "totalItems": "{{count}} items",
+      "totalSize": "{{size}} used",
+      "emptyTitle": "Clipboard is empty",
+      "emptyDescription": "Copy something to start tracking your clipboard history.",
+      "clearHistory": "Clear History",
+      "clearConfirm": "Are you sure? This will delete all clipboard items except pinned and favorited ones.",
+      "clearKeepPinned": "Keep pinned and favorited items",
+      "deleteItem": "Delete",
+      "toggleFavorite": "Favorite",
+      "unfavorite": "Remove from favorites",
+      "togglePin": "Pin",
+      "unpin": "Unpin",
+      "preview": "Preview",
+      "copyToClipboard": "Copy to Clipboard",
+      "copied": "Copied!",
+      "settings": {
+        "maxRecords": "Maximum Records",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "Clipboard Hotkey",
+        "confirmMode": "Confirm Mode",
+        "confirmModeCopy": "Copy to clipboard",
+        "confirmModePaste": "Paste immediately",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "Clipboard",
+        "search": "Search...",
+        "hint": "Navigate · Enter Copy · Esc Close · F Favorite",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },

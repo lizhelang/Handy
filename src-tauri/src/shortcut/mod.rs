@@ -29,6 +29,17 @@ use crate::tray;
 
 // Note: Commands are accessed via shortcut::handy_keys:: in lib.rs
 
+pub(crate) fn binding_enabled(settings: &settings::AppSettings, id: &str) -> bool {
+    match id {
+        "cancel" => false,
+        "transcribe_with_post_process" => settings.post_process_enabled,
+        settings::CLIPBOARD_HISTORY_BINDING_ID => {
+            settings.clipboard_enabled && settings.clipboard_hotkey_enabled
+        }
+        _ => true,
+    }
+}
+
 /// Initialize shortcuts using the configured implementation
 pub fn init_shortcuts(app: &AppHandle) {
     let user_settings = settings::load_or_create_app_settings(app);
@@ -233,11 +244,12 @@ pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, Stri
 /// mid-capture. The "cancel" binding is untouched: it is managed dynamically
 /// by the recording lifecycle.
 pub fn suspend_all_shortcuts(app: &AppHandle) {
-    for (id, binding) in settings::get_bindings(app) {
-        if id == "cancel" {
+    let settings = get_settings(app);
+    for (id, binding) in &settings.bindings {
+        if !binding_enabled(&settings, id) {
             continue;
         }
-        if let Err(e) = unregister_shortcut(app, binding) {
+        if let Err(e) = unregister_shortcut(app, binding.clone()) {
             debug!(
                 "suspend_all_shortcuts: could not unregister '{}': {}",
                 id, e
@@ -252,10 +264,7 @@ pub fn suspend_all_shortcuts(app: &AppHandle) {
 pub fn resume_all_shortcuts(app: &AppHandle) {
     let settings = get_settings(app);
     for (id, binding) in &settings.bindings {
-        if id == "cancel" {
-            continue;
-        }
-        if id == "transcribe_with_post_process" && !settings.post_process_enabled {
+        if !binding_enabled(&settings, id) {
             continue;
         }
         if let Err(e) = register_shortcut(app, binding.clone()) {
@@ -382,7 +391,7 @@ pub fn get_keyboard_implementation(app: AppHandle) -> String {
 // ============================================================================
 
 /// Validate a shortcut for a specific implementation
-fn validate_shortcut_for_implementation(
+pub(crate) fn validate_shortcut_for_implementation(
     raw: &str,
     implementation: KeyboardImplementation,
 ) -> Result<(), String> {
@@ -409,17 +418,18 @@ fn parse_keyboard_implementation(s: &str) -> KeyboardImplementation {
 
 /// Unregister all shortcuts for the current implementation
 fn unregister_all_shortcuts(app: &AppHandle, implementation: KeyboardImplementation) {
-    let bindings = settings::get_bindings(app);
+    let settings = settings::get_settings(app);
 
-    for (id, binding) in bindings {
-        // Skip cancel shortcut as it's dynamically registered
-        if id == "cancel" {
+    for (id, binding) in &settings.bindings {
+        if !binding_enabled(&settings, id) {
             continue;
         }
 
         let result = match implementation {
-            KeyboardImplementation::Tauri => tauri_impl::unregister_shortcut(app, binding),
-            KeyboardImplementation::HandyKeys => handy_keys::unregister_shortcut(app, binding),
+            KeyboardImplementation::Tauri => tauri_impl::unregister_shortcut(app, binding.clone()),
+            KeyboardImplementation::HandyKeys => {
+                handy_keys::unregister_shortcut(app, binding.clone())
+            }
         };
 
         if let Err(e) = result {
@@ -441,13 +451,7 @@ fn register_all_shortcuts_for_implementation(
     let mut current_settings = settings::get_settings(app);
 
     for (id, default_binding) in &default_bindings {
-        // Skip cancel shortcut as it's dynamically registered
-        if id == "cancel" {
-            continue;
-        }
-
-        // Skip post-processing shortcut when the feature is disabled
-        if id == "transcribe_with_post_process" && !current_settings.post_process_enabled {
+        if !binding_enabled(&current_settings, id) {
             continue;
         }
 
@@ -1402,4 +1406,22 @@ pub async fn get_available_accelerators() -> crate::managers::transcription::Ava
     tauri::async_runtime::spawn_blocking(crate::managers::transcription::get_available_accelerators)
         .await
         .expect("get_available_accelerators panicked")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::binding_enabled;
+    use crate::settings::{get_default_settings, CLIPBOARD_HISTORY_BINDING_ID};
+
+    #[test]
+    fn clipboard_binding_requires_feature_and_hotkey_toggles() {
+        let mut settings = get_default_settings();
+        assert!(!binding_enabled(&settings, CLIPBOARD_HISTORY_BINDING_ID));
+
+        settings.clipboard_enabled = true;
+        assert!(!binding_enabled(&settings, CLIPBOARD_HISTORY_BINDING_ID));
+
+        settings.clipboard_hotkey_enabled = true;
+        assert!(binding_enabled(&settings, CLIPBOARD_HISTORY_BINDING_ID));
+    }
 }

@@ -7,7 +7,8 @@
     "model": "Modello",
     "quit": "Esci",
     "cancel": "Annulla",
-    "secureInputWarning": "⚠ Scorciatoie bloccate da Secure Input"
+    "secureInputWarning": "⚠ Scorciatoie bloccate da Secure Input",
+    "clipboardHistory": "Cronologia appunti"
   },
   "sidebar": {
     "general": "Generale",
@@ -16,7 +17,8 @@
     "postProcessing": "Post-Elaborazione",
     "history": "Cronologia",
     "debug": "Debug",
-    "about": "Informazioni"
+    "about": "Informazioni",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "Per cominciare, scegli un modello di riconoscimento vocale",
@@ -398,6 +400,10 @@
       "fillerWordRemoval": {
         "title": "Rimuovi le parole riempitive",
         "description": "Rimuove le parole di esitazione più comuni dalle trascrizioni. Disattiva per mantenerle."
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +633,75 @@
       "whatsNewUpdates": {
         "label": "Mostra novità",
         "description": "Mostra le note di rilascio dopo gli aggiornamenti di Handy"
+      }
+    },
+    "clipboard": {
+      "title": "Gestore degli appunti",
+      "searchPlaceholder": "Cerca nella cronologia degli appunti...",
+      "filterAll": "Tutto",
+      "filterText": "Testo",
+      "filterImage": "Immagini",
+      "filterRichtext": "Testo formattato",
+      "filterFiles": "File",
+      "viewList": "Elenco",
+      "viewGrid": "Griglia",
+      "sortNewest": "Più recente prima",
+      "sortOldest": "Meno recente prima",
+      "totalItems": "{{count}} elementi",
+      "totalSize": "{{size}} utilizzati",
+      "emptyTitle": "Gli appunti sono vuoti",
+      "emptyDescription": "Copia qualcosa per iniziare a tracciare la cronologia degli appunti.",
+      "clearHistory": "Cancella cronologia",
+      "clearConfirm": "Sei sicuro? Tutti gli elementi degli appunti verranno eliminati, tranne quelli fissati e aggiunti ai preferiti.",
+      "clearKeepPinned": "Mantieni elementi fissati e preferiti",
+      "deleteItem": "Elimina",
+      "toggleFavorite": "Aggiungi ai preferiti",
+      "unfavorite": "Rimuovi dai preferiti",
+      "togglePin": "Fissa",
+      "unpin": "Sblocca",
+      "preview": "Anteprima",
+      "copyToClipboard": "Copia negli appunti",
+      "copied": "Copiato!",
+      "settings": {
+        "maxRecords": "Numero massimo di registrazioni",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "Tasto rapido degli appunti",
+        "confirmMode": "Modalità di conferma",
+        "confirmModeCopy": "Copia negli appunti",
+        "confirmModePaste": "Incolla immediatamente",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "Appunti",
+        "search": "Cerca...",
+        "hint": "Navigazione · Enter Copia · Esc Chiudi · F Preferito",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },

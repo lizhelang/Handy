@@ -8,6 +8,7 @@ mod catalog;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod data_migration;
 mod helpers;
 mod input;
 mod llm_client;
@@ -32,6 +33,7 @@ use tauri_specta::{collect_commands, collect_events, Builder};
 
 use env_filter::Builder as EnvFilterBuilder;
 use managers::audio::AudioRecordingManager;
+use managers::clipboard::ClipboardManager;
 use managers::history::HistoryManager;
 use managers::model::ModelManager;
 use managers::transcription::TranscriptionManager;
@@ -203,6 +205,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     );
     let history_manager =
         Arc::new(HistoryManager::new(app_handle).expect("Failed to initialize history manager"));
+    let clipboard_manager = Arc::new(
+        ClipboardManager::new(app_handle).expect("Failed to initialize clipboard manager"),
+    );
 
     // Initialize the transcribe-cpp native backend (logging + backend module
     // registration) once, before any whisper model is loaded.
@@ -216,7 +221,13 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
+    app_handle.manage(clipboard_manager.clone());
     app_handle.manage(tray::TrayState::new());
+
+    let settings = settings::get_settings(app_handle);
+    if settings.clipboard_enabled {
+        clipboard_manager.start_monitoring();
+    }
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
@@ -300,6 +311,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             }
             "copy_last_transcript" => {
                 tray::copy_last_transcript(app);
+            }
+            "clipboard_history" => {
+                overlay::toggle_clipboard_overlay(app);
             }
             "unload_model" => {
                 let transcription_manager = app.state::<Arc<TranscriptionManager>>();
@@ -762,10 +776,31 @@ pub fn run(cli_args: CliArgs) {
             commands::history::retry_history_entry_transcription,
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
+            commands::clipboard::get_clipboard_items,
+            commands::clipboard::get_favorite_clipboard_items,
+            commands::clipboard::search_clipboard,
+            commands::clipboard::toggle_clipboard_favorite,
+            commands::clipboard::toggle_clipboard_pin,
+            commands::clipboard::update_clipboard_title,
+            commands::clipboard::delete_clipboard_item,
+            commands::clipboard::clear_clipboard_history,
+            commands::clipboard::copy_clipboard_to_system,
+            commands::clipboard::copy_clipboard_content_to_system,
+            commands::clipboard::set_clipboard_overlay_pinned,
+            commands::clipboard::hide_clipboard_overlay,
+            commands::clipboard::get_clipboard_stats,
+            commands::clipboard::get_clipboard_settings,
+            commands::clipboard::update_clipboard_settings,
+            commands::clipboard::change_clipboard_enabled_setting,
+            commands::clipboard::change_clipboard_max_records_setting,
+            commands::clipboard::change_clipboard_hotkey_enabled_setting,
+            commands::clipboard::change_clipboard_hotkey_setting,
+            commands::clipboard::toggle_clipboard_monitoring,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
             managers::history::HistoryUpdatePayload,
+            managers::clipboard::ClipboardUpdatePayload,
             managers::transcription::StreamTextEvent,
             managers::transcription::StreamPhaseEvent,
         ]);
@@ -888,6 +923,13 @@ pub fn run(cli_args: CliArgs) {
         .setup(move |app| {
             specta_builder.mount_events(app);
 
+            // Protect the user's existing Handy and Inputia data before any
+            // settings or manager schema migration can write to it. The guard
+            // restores the verified snapshot automatically if setup exits
+            // early; successful initialization writes a checksum-pinned marker
+            // so later launches do not repeat the multi-gigabyte backup.
+            let mut startup_migration = data_migration::prepare_startup_backup(app.handle())?;
+
             // Headless one-shot path (`--transcribe-file` / `--list-devices` /
             // `--list-models`): initialize only what transcription needs — the
             // store/paths plugins, the model + transcription managers, and the
@@ -908,6 +950,10 @@ pub fn run(cli_args: CliArgs) {
                 app_handle.manage(transcription_manager);
                 managers::transcription::init_transcribe_backend();
                 managers::transcription::apply_accelerator_settings(&app_handle);
+
+                if let Some(migration) = startup_migration.as_mut() {
+                    migration.complete()?;
+                }
 
                 let handle = app_handle.clone();
                 let args = cli_args.clone();
@@ -974,6 +1020,10 @@ pub fn run(cli_args: CliArgs) {
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
 
             initialize_core_logic(&app_handle);
+
+            if let Some(migration) = startup_migration.as_mut() {
+                migration.complete()?;
+            }
 
             // Secure Input monitor (macOS): detects stuck secure input that
             // silently blocks keyed shortcuts, warns the user, and activates
@@ -1044,6 +1094,17 @@ pub fn run(cli_args: CliArgs) {
                 log::info!("Theme changed to: {:?}", theme);
                 // Re-apply the current tray state with the new theme's icon set
                 utils::refresh_tray_icon(window.app_handle());
+            }
+            tauri::WindowEvent::Focused(true) if window.label() == "clipboard_overlay" => {
+                utils::set_clipboard_overlay_focused(true);
+            }
+            tauri::WindowEvent::Focused(false) if window.label() == "clipboard_overlay" => {
+                utils::set_clipboard_overlay_focused(false);
+                let app_handle = window.app_handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    utils::hide_clipboard_overlay_if_unfocused(&app_handle);
+                });
             }
             _ => {}
         })

@@ -7,7 +7,8 @@
     "model": "Modèle",
     "quit": "Quitter",
     "cancel": "Annuler",
-    "secureInputWarning": "⚠ Raccourcis bloqués par Secure Input"
+    "secureInputWarning": "⚠ Raccourcis bloqués par Secure Input",
+    "clipboardHistory": "Historique du presse-papiers"
   },
   "sidebar": {
     "general": "Général",
@@ -16,7 +17,8 @@
     "postProcessing": "Post-traitement",
     "history": "Historique",
     "debug": "Débogage",
-    "about": "À propos"
+    "about": "À propos",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "Pour commencer, choisissez un modèle de transcription",
@@ -398,6 +400,10 @@
       "fillerWordRemoval": {
         "title": "Supprimer les mots de remplissage",
         "description": "Supprime les hésitations courantes des transcriptions. Désactivez cette option pour les conserver."
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +633,75 @@
       "whatsNewUpdates": {
         "label": "Afficher les nouveautés",
         "description": "Afficher les notes de version après les mises à jour de Handy"
+      }
+    },
+    "clipboard": {
+      "title": "Gestionnaire du presse-papiers",
+      "searchPlaceholder": "Rechercher dans l'historique du presse-papiers...",
+      "filterAll": "Tout",
+      "filterText": "Texte",
+      "filterImage": "Images",
+      "filterRichtext": "Texte enrichi",
+      "filterFiles": "Fichiers",
+      "viewList": "Liste",
+      "viewGrid": "Grille",
+      "sortNewest": "Plus récent d'abord",
+      "sortOldest": "Plus ancien d'abord",
+      "totalItems": "{{count}} éléments",
+      "totalSize": "{{size}} utilisé",
+      "emptyTitle": "Le presse-papiers est vide",
+      "emptyDescription": "Copiez quelque chose pour commencer à suivre l'historique de votre presse-papiers.",
+      "clearHistory": "Effacer l'historique",
+      "clearConfirm": "Êtes-vous sûr ? Tous les éléments du presse-papiers seront supprimés, sauf ceux épinglés et mis en favoris.",
+      "clearKeepPinned": "Conserver les éléments épinglés et mis en favoris",
+      "deleteItem": "Supprimer",
+      "toggleFavorite": "Ajouter aux favoris",
+      "unfavorite": "Retirer des favoris",
+      "togglePin": "Épingler",
+      "unpin": "Désépingler",
+      "preview": "Aperçu",
+      "copyToClipboard": "Copier dans le presse-papiers",
+      "copied": "Copié !",
+      "settings": {
+        "maxRecords": "Nombre maximum d'enregistrements",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "Raccourci clavier du presse-papiers",
+        "confirmMode": "Mode de confirmation",
+        "confirmModeCopy": "Copier dans le presse-papiers",
+        "confirmModePaste": "Coller immédiatement",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "Presse-papiers",
+        "search": "Rechercher...",
+        "hint": "Navigation · Enter Copier · Esc Fermer · F Favori",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },

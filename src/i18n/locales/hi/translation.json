@@ -7,7 +7,8 @@
     "model": "मॉडल",
     "quit": "बाहर निकलें",
     "cancel": "रद्द करें",
-    "secureInputWarning": "⚠ Secure Input ने शॉर्टकट ब्लॉक किए हैं"
+    "secureInputWarning": "⚠ Secure Input ने शॉर्टकट ब्लॉक किए हैं",
+    "clipboardHistory": "Clipboard History"
   },
   "sidebar": {
     "general": "सामान्य",
@@ -16,7 +17,8 @@
     "postProcessing": "पोस्ट प्रोसेस",
     "history": "इतिहास",
     "debug": "डिबग",
-    "about": "के बारे में"
+    "about": "के बारे में",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "शुरू करने के लिए, एक ट्रांसक्रिप्शन मॉडल चुनें",
@@ -398,6 +400,10 @@
       "fillerWordRemoval": {
         "title": "फिलर शब्द हटाएं",
         "description": "ट्रांसक्रिप्शन से आम हिचकिचाहट वाले शब्द हटाता है। उन्हें बनाए रखने के लिए इसे बंद करें।"
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +633,75 @@
           "description": "डिवाइस पर ही मशीन लर्निंग इन्फ़रेंस के लिए हाई-परफ़ॉर्मेंस टेंसर लाइब्रेरी",
           "details": "Handy का लोकल स्पीच-टू-टेक्स्ट transcribe.cpp और ggml पर आधारित है. Georgi Gerganov और योगदान देने वालों के शानदार काम के लिए धन्यवाद."
         }
+      }
+    },
+    "clipboard": {
+      "title": "Clipboard Manager",
+      "searchPlaceholder": "Search clipboard history...",
+      "filterAll": "All",
+      "filterText": "Text",
+      "filterImage": "Images",
+      "filterRichtext": "Rich Text",
+      "filterFiles": "Files",
+      "viewList": "List",
+      "viewGrid": "Grid",
+      "sortNewest": "Newest first",
+      "sortOldest": "Oldest first",
+      "totalItems": "{{count}} items",
+      "totalSize": "{{size}} used",
+      "emptyTitle": "Clipboard is empty",
+      "emptyDescription": "Copy something to start tracking your clipboard history.",
+      "clearHistory": "Clear History",
+      "clearConfirm": "Are you sure? This will delete all clipboard items except pinned and favorited ones.",
+      "clearKeepPinned": "Keep pinned and favorited items",
+      "deleteItem": "Delete",
+      "toggleFavorite": "Favorite",
+      "unfavorite": "Remove from favorites",
+      "togglePin": "Pin",
+      "unpin": "Unpin",
+      "preview": "Preview",
+      "copyToClipboard": "Copy to Clipboard",
+      "copied": "Copied!",
+      "settings": {
+        "maxRecords": "Maximum Records",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "Clipboard Hotkey",
+        "confirmMode": "Confirm Mode",
+        "confirmModeCopy": "Copy to clipboard",
+        "confirmModePaste": "Paste immediately",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "Clipboard",
+        "search": "Search...",
+        "hint": "Navigate · Enter Copy · Esc Close · F Favorite",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },

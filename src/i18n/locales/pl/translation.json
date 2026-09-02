@@ -7,7 +7,8 @@
     "model": "Model",
     "quit": "Zamknij",
     "cancel": "Anuluj",
-    "secureInputWarning": "⚠ Skróty zablokowane przez Secure Input"
+    "secureInputWarning": "⚠ Skróty zablokowane przez Secure Input",
+    "clipboardHistory": "Historia schowka"
   },
   "sidebar": {
     "general": "Ogólne",
@@ -16,7 +17,8 @@
     "postProcessing": "Postproces",
     "history": "Historia",
     "debug": "Debugowanie",
-    "about": "O programie"
+    "about": "O programie",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "Aby rozpocząć, wybierz model transkrypcji",
@@ -398,6 +400,10 @@
       "fillerWordRemoval": {
         "title": "Usuń wyrazy wypełniające",
         "description": "Usuwa typowe słowa wyrażające wahanie z transkrypcji. Wyłącz, aby je zachować."
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +633,75 @@
       "whatsNewUpdates": {
         "label": "Pokaż nowości",
         "description": "Pokazuj informacje o wydaniu po aktualizacjach Handy"
+      }
+    },
+    "clipboard": {
+      "title": "Menedżer schowka",
+      "searchPlaceholder": "Szukaj w historii schowka...",
+      "filterAll": "Wszystko",
+      "filterText": "Tekst",
+      "filterImage": "Obrazy",
+      "filterRichtext": "Sformatowany tekst",
+      "filterFiles": "Pliki",
+      "viewList": "Lista",
+      "viewGrid": "Siatka",
+      "sortNewest": "Najnowsze pierwsze",
+      "sortOldest": "Najstarsze pierwsze",
+      "totalItems": "{{count}} elementów",
+      "totalSize": "{{size}} użyte",
+      "emptyTitle": "Schowek jest pusty",
+      "emptyDescription": "Skopiuj coś, aby rozpocząć śledzenie historii schowka.",
+      "clearHistory": "Wyczyść historię",
+      "clearConfirm": "Czy na pewno? To usunie wszystkie elementy schowka oprócz przypiętych i ulubionych.",
+      "clearKeepPinned": "Zachowaj przypięte i ulubione",
+      "deleteItem": "Usuń",
+      "toggleFavorite": "Ulubione",
+      "unfavorite": "Usuń z ulubionych",
+      "togglePin": "Przypnij",
+      "unpin": "Odepnij",
+      "preview": "Podgląd",
+      "copyToClipboard": "Kopiuj do schowka",
+      "copied": "Skopiowano!",
+      "settings": {
+        "maxRecords": "Maksymalna liczba rekordów",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "Skrót klawiszowy schowka",
+        "confirmMode": "Tryb potwierdzenia",
+        "confirmModeCopy": "Kopiuj do schowka",
+        "confirmModePaste": "Wklej natychmiast",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "Schowek",
+        "search": "Szukaj...",
+        "hint": "Nawigacja · Enter Kopiuj · Esc Zamknij · F Ulubione",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },

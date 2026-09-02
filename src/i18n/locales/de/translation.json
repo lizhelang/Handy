@@ -7,7 +7,8 @@
     "model": "Modell",
     "quit": "Beenden",
     "cancel": "Abbrechen",
-    "secureInputWarning": "⚠ Tastenkürzel durch Secure Input blockiert"
+    "secureInputWarning": "⚠ Tastenkürzel durch Secure Input blockiert",
+    "clipboardHistory": "Zwischenablageverlauf"
   },
   "sidebar": {
     "general": "Allgemein",
@@ -16,7 +17,8 @@
     "postProcessing": "Nachbearbeitung",
     "history": "Verlauf",
     "debug": "Debug",
-    "about": "Info"
+    "about": "Info",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "Wähle ein Transkriptionsmodell, um loszulegen",
@@ -398,6 +400,10 @@
       "fillerWordRemoval": {
         "title": "Füllwörter entfernen",
         "description": "Entfernt häufige Verzögerungslaute aus Transkriptionen. Deaktivieren Sie diese Option, um sie beizubehalten."
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +633,75 @@
       "whatsNewUpdates": {
         "label": "Neuerungen anzeigen",
         "description": "Versionshinweise nach Handy-Updates anzeigen"
+      }
+    },
+    "clipboard": {
+      "title": "Zwischenablage-Manager",
+      "searchPlaceholder": "Zwischenablageverlauf durchsuchen...",
+      "filterAll": "Alle",
+      "filterText": "Text",
+      "filterImage": "Bilder",
+      "filterRichtext": "Rich Text",
+      "filterFiles": "Dateien",
+      "viewList": "Liste",
+      "viewGrid": "Raster",
+      "sortNewest": "Neueste zuerst",
+      "sortOldest": "Älteste zuerst",
+      "totalItems": "{{count}} Elemente",
+      "totalSize": "{{size}} verwendet",
+      "emptyTitle": "Zwischenablage ist leer",
+      "emptyDescription": "Kopieren Sie etwas, um Ihren Zwischenablageverlauf zu beginnen.",
+      "clearHistory": "Verlauf löschen",
+      "clearConfirm": "Sind Sie sicher? Alle Zwischenablage-Elemente werden gelöscht, außer den fixierten und favorisierten.",
+      "clearKeepPinned": "Fixierte und favorisierte Elemente beibehalten",
+      "deleteItem": "Löschen",
+      "toggleFavorite": "Favorisieren",
+      "unfavorite": "Aus Favoriten entfernen",
+      "togglePin": "Fixieren",
+      "unpin": "Fixierung aufheben",
+      "preview": "Vorschau",
+      "copyToClipboard": "In Zwischenablage kopieren",
+      "copied": "Kopiert!",
+      "settings": {
+        "maxRecords": "Maximale Einträge",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "Zwischenablage-Hotkey",
+        "confirmMode": "Bestätigungsmodus",
+        "confirmModeCopy": "In Zwischenablage kopieren",
+        "confirmModePaste": "Sofort einfügen",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "Zwischenablage",
+        "search": "Suchen...",
+        "hint": "Navigation · Enter Kopieren · Esc Schließen · F Favorit",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },

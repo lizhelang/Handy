@@ -7,7 +7,8 @@
     "model": "Modell",
     "quit": "Avsluta",
     "cancel": "Avbryt",
-    "secureInputWarning": "⚠ Kortkommandon blockeras av Secure Input"
+    "secureInputWarning": "⚠ Kortkommandon blockeras av Secure Input",
+    "clipboardHistory": "Urklippshistorik"
   },
   "sidebar": {
     "general": "Allmänt",
@@ -16,7 +17,8 @@
     "postProcessing": "Efterbearbetning",
     "history": "Historik",
     "debug": "Felsökning",
-    "about": "Om"
+    "about": "Om",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "För att komma igång, välj en transkriptionsmodell",
@@ -398,6 +400,10 @@
       "fillerWordRemoval": {
         "title": "Ta bort utfyllnadsord",
         "description": "Tar bort vanliga tvekljud från transkriberingar. Stäng av för att behålla dem."
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +633,75 @@
       "whatsNewUpdates": {
         "label": "Visa nyheter",
         "description": "Visa versionsinformation efter Handy-uppdateringar"
+      }
+    },
+    "clipboard": {
+      "title": "Urklippshanterare",
+      "searchPlaceholder": "Sök i urklippshistorik...",
+      "filterAll": "Alla",
+      "filterText": "Text",
+      "filterImage": "Bilder",
+      "filterRichtext": "Rich Text",
+      "filterFiles": "Filer",
+      "viewList": "Lista",
+      "viewGrid": "Rutnät",
+      "sortNewest": "Nyaste först",
+      "sortOldest": "Äldsta först",
+      "totalItems": "{{count}} objekt",
+      "totalSize": "{{size}} använt",
+      "emptyTitle": "Urklippet är tomt",
+      "emptyDescription": "Kopiera något för att börja spåra din urklippshistorik.",
+      "clearHistory": "Rensa historik",
+      "clearConfirm": "Är du säker? Detta tar bort alla urklippsobjekt förutom fästa och favoritmarkerade.",
+      "clearKeepPinned": "Behåll fästa och favoritmarkerade objekt",
+      "deleteItem": "Ta bort",
+      "toggleFavorite": "Favorit",
+      "unfavorite": "Ta bort från favoriter",
+      "togglePin": "Fäst",
+      "unpin": "Lossa",
+      "preview": "Förhandsgranska",
+      "copyToClipboard": "Kopiera till urklipp",
+      "copied": "Kopierat!",
+      "settings": {
+        "maxRecords": "Maximalt antal poster",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "Urklippsgenväg",
+        "confirmMode": "Bekräftelseläge",
+        "confirmModeCopy": "Kopiera till urklipp",
+        "confirmModePaste": "Klistra in omedelbart",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "Urklipp",
+        "search": "Sök...",
+        "hint": "Navigera · Enter Kopiera · Esc Stäng · F Favorit",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },

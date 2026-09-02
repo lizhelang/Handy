@@ -1,12 +1,21 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Cog, FlaskConical, History, Info, Sparkles, Cpu } from "lucide-react";
+import {
+  ClipboardList,
+  Cog,
+  Cpu,
+  FlaskConical,
+  History,
+  Info,
+  Sparkles,
+} from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import HandyHand from "./icons/HandyHand";
 import { useSettings } from "../hooks/useSettings";
 import {
   GeneralSettings,
   AdvancedSettings,
+  ClipboardSettings,
   HistorySettings,
   DebugSettings,
   AboutSettings,
@@ -31,6 +40,13 @@ interface SectionConfig {
   enabled: (settings: any) => boolean;
 }
 
+type ClipboardFeatureSettings =
+  | {
+      clipboard_enabled?: boolean;
+    }
+  | null
+  | undefined;
+
 export const SECTIONS_CONFIG = {
   general: {
     labelKey: "sidebar.general",
@@ -43,6 +59,13 @@ export const SECTIONS_CONFIG = {
     icon: History,
     component: HistorySettings,
     enabled: () => true,
+  },
+  clipboard: {
+    labelKey: "sidebar.clipboard",
+    icon: ClipboardList,
+    component: ClipboardSettings,
+    enabled: (settings) =>
+      Boolean((settings as ClipboardFeatureSettings)?.clipboard_enabled),
   },
   models: {
     labelKey: "sidebar.models",

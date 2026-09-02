@@ -902,6 +902,18 @@ impl ShortcutAction for CancelAction {
     }
 }
 
+struct ClipboardHistoryAction;
+
+impl ShortcutAction for ClipboardHistoryAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        if crate::settings::get_settings(app).clipboard_enabled {
+            crate::overlay::toggle_clipboard_overlay(app);
+        }
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
 // Test Action
 struct TestAction;
 
@@ -943,6 +955,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         Arc::new(CancelAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
+        crate::settings::CLIPBOARD_HISTORY_BINDING_ID.to_string(),
+        Arc::new(ClipboardHistoryAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
         "test".to_string(),
         Arc::new(TestAction) as Arc<dyn ShortcutAction>,
     );
@@ -953,7 +969,7 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 mod tests {
     use super::{
         complete_unless_cancelled, is_blank_transcription, should_use_streaming_overlay,
-        strip_think_block,
+        strip_think_block, ACTION_MAP,
     };
     use crate::settings::OverlayStyle;
     use std::future;
@@ -961,6 +977,11 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn clipboard_history_binding_has_an_action() {
+        assert!(ACTION_MAP.contains_key(crate::settings::CLIPBOARD_HISTORY_BINDING_ID));
+    }
 
     #[test]
     fn blank_transcription_is_detected() {

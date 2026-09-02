@@ -150,6 +150,14 @@ const settingUpdaters: {
     commands.changeExternalScriptPathSetting(value as string | null),
   clipboard_handling: (value) =>
     commands.changeClipboardHandlingSetting(value as string),
+  clipboard_enabled: (value) =>
+    commands.changeClipboardEnabledSetting(value as boolean),
+  clipboard_max_records: (value) =>
+    commands.changeClipboardMaxRecordsSetting(value as number),
+  clipboard_hotkey_enabled: (value) =>
+    commands.changeClipboardHotkeyEnabledSetting(value as boolean),
+  clipboard_hotkey: (value) =>
+    commands.changeClipboardHotkeySetting(value as string),
   auto_submit: (value) => commands.changeAutoSubmitSetting(value as boolean),
   auto_submit_key: (value) =>
     commands.changeAutoSubmitKeySetting(value as string),

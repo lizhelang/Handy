@@ -509,6 +509,14 @@ pub struct AppSettings {
     /// Experimental detector implementation. Silero remains the stable default.
     #[serde(default)]
     pub vad_backend: VadBackend,
+    #[serde(default)]
+    pub clipboard_enabled: bool,
+    #[serde(default = "default_clipboard_max_records")]
+    pub clipboard_max_records: usize,
+    #[serde(default)]
+    pub clipboard_hotkey_enabled: bool,
+    #[serde(default = "default_clipboard_hotkey")]
+    pub clipboard_hotkey: String,
     /// Which recording overlay to show: None / Minimal / Live. Streaming mode is
     /// not gated on this — that follows model capability. Migrated from the old
     /// `overlay_position` (position `none` → style `None`).
@@ -520,7 +528,8 @@ fn default_model() -> String {
     "".to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 2;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 4;
+pub const CLIPBOARD_HISTORY_BINDING_ID: &str = "clipboard_history";
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -583,6 +592,21 @@ fn default_vad_enabled() -> bool {
 
 fn default_filler_word_removal_enabled() -> bool {
     true
+}
+
+fn default_clipboard_max_records() -> usize {
+    0
+}
+
+fn default_clipboard_hotkey() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        "command+shift+v".to_string()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "ctrl+shift+v".to_string()
+    }
 }
 
 fn default_debug_mode() -> bool {
@@ -896,6 +920,17 @@ pub fn get_default_settings() -> AppSettings {
             current_binding: default_post_process_shortcut.to_string(),
         },
     );
+    let clipboard_hotkey = default_clipboard_hotkey();
+    bindings.insert(
+        CLIPBOARD_HISTORY_BINDING_ID.to_string(),
+        ShortcutBinding {
+            id: CLIPBOARD_HISTORY_BINDING_ID.to_string(),
+            name: "Clipboard History".to_string(),
+            description: "Opens the local clipboard history overlay.".to_string(),
+            default_binding: clipboard_hotkey.clone(),
+            current_binding: clipboard_hotkey,
+        },
+    );
     bindings.insert(
         "cancel".to_string(),
         ShortcutBinding {
@@ -969,6 +1004,10 @@ pub fn get_default_settings() -> AppSettings {
         extra_recording_buffer_ms: 0,
         vad_enabled: default_vad_enabled(),
         vad_backend: VadBackend::default(),
+        clipboard_enabled: false,
+        clipboard_max_records: default_clipboard_max_records(),
+        clipboard_hotkey_enabled: false,
+        clipboard_hotkey: default_clipboard_hotkey(),
         overlay_style: default_overlay_style(),
     }
 }
@@ -1032,13 +1071,8 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
             updated = true;
         }
 
-        // Merge in any bindings added since this store was written.
-        for (key, value) in get_default_settings().bindings {
-            if let std::collections::hash_map::Entry::Vacant(entry) = settings.bindings.entry(key) {
-                debug!("Adding missing binding: {}", entry.key());
-                entry.insert(value);
-                updated = true;
-            }
+        if merge_missing_bindings(&mut settings) {
+            updated = true;
         }
 
         if updated {
@@ -1057,6 +1091,54 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
     }
 
     settings
+}
+
+fn merge_missing_bindings(settings: &mut AppSettings) -> bool {
+    let mut updated = false;
+    for (key, mut value) in get_default_settings().bindings {
+        if key == CLIPBOARD_HISTORY_BINDING_ID {
+            value.current_binding = normalize_clipboard_hotkey(&settings.clipboard_hotkey);
+        }
+        if let std::collections::hash_map::Entry::Vacant(entry) = settings.bindings.entry(key) {
+            debug!("Adding missing binding: {}", entry.key());
+            entry.insert(value);
+            updated = true;
+        }
+    }
+
+    if let Some(binding) = settings.bindings.get(CLIPBOARD_HISTORY_BINDING_ID) {
+        if settings.clipboard_hotkey != binding.current_binding {
+            settings.clipboard_hotkey = binding.current_binding.clone();
+            updated = true;
+        }
+    }
+
+    updated
+}
+
+fn normalize_clipboard_hotkey(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return default_clipboard_hotkey();
+    }
+
+    let mut parts = trimmed.split('+');
+    let Some(first) = parts.next() else {
+        return default_clipboard_hotkey();
+    };
+    if first.eq_ignore_ascii_case("cmdorctrl") {
+        let modifier = if cfg!(target_os = "macos") {
+            "command"
+        } else {
+            "ctrl"
+        };
+        return std::iter::once(modifier)
+            .chain(parts)
+            .collect::<Vec<_>>()
+            .join("+");
+    }
+
+    trimmed.to_string()
 }
 
 /// Rebuilds settings from a store value that failed to deserialize as a whole.
@@ -1155,6 +1237,11 @@ fn apply_settings_migrations(
         // transcribe.cpp 0.2 replaced integer registry indices with opaque
         // process-local handles. Clear every old index once.
         settings.transcribe_gpu_device = default_transcribe_gpu_device();
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+        updated = true;
+    }
+
+    if stored_schema_version < u64::from(CURRENT_SETTINGS_SCHEMA_VERSION) {
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
     }
@@ -1501,6 +1588,36 @@ mod tests {
             settings.settings_schema_version,
             CURRENT_SETTINGS_SCHEMA_VERSION
         );
+    }
+
+    #[test]
+    fn default_settings_include_clipboard_history_binding() {
+        let settings = get_default_settings();
+        let binding = &settings.bindings[CLIPBOARD_HISTORY_BINDING_ID];
+
+        assert_eq!(binding.current_binding, settings.clipboard_hotkey);
+        assert!(!settings.clipboard_enabled);
+        assert!(!settings.clipboard_hotkey_enabled);
+    }
+
+    #[test]
+    fn legacy_clipboard_hotkey_is_preserved_when_binding_is_added() {
+        let mut settings = get_default_settings();
+        settings.bindings.remove(CLIPBOARD_HISTORY_BINDING_ID);
+        settings.clipboard_hotkey = "CmdOrCtrl+Shift+B".to_string();
+
+        assert!(merge_missing_bindings(&mut settings));
+        let binding = &settings.bindings[CLIPBOARD_HISTORY_BINDING_ID];
+        let expected_modifier = if cfg!(target_os = "macos") {
+            "command"
+        } else {
+            "ctrl"
+        };
+        assert_eq!(
+            binding.current_binding,
+            format!("{expected_modifier}+Shift+B")
+        );
+        assert_eq!(settings.clipboard_hotkey, binding.current_binding);
     }
 
     #[cfg(not(target_os = "linux"))]

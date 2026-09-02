@@ -7,7 +7,8 @@
     "model": "Mô hình",
     "quit": "Thoát",
     "cancel": "Hủy",
-    "secureInputWarning": "⚠ Phím tắt bị Secure Input chặn"
+    "secureInputWarning": "⚠ Phím tắt bị Secure Input chặn",
+    "clipboardHistory": "Lịch sử clipboard"
   },
   "sidebar": {
     "general": "Chung",
@@ -16,7 +17,8 @@
     "postProcessing": "Xử lý sau",
     "history": "Lịch sử",
     "debug": "Gỡ lỗi",
-    "about": "Giới thiệu"
+    "about": "Giới thiệu",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "Để bắt đầu, hãy chọn một mô hình chuyển đổi giọng nói",
@@ -398,6 +400,10 @@
       "fillerWordRemoval": {
         "title": "Loại bỏ từ đệm",
         "description": "Loại bỏ các từ ngập ngừng phổ biến khỏi bản chép lời. Tắt để giữ lại các từ này."
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +633,75 @@
       "whatsNewUpdates": {
         "label": "Hiển thị điểm mới",
         "description": "Hiển thị ghi chú phát hành sau khi Handy cập nhật"
+      }
+    },
+    "clipboard": {
+      "title": "Trình quản lý clipboard",
+      "searchPlaceholder": "Tìm kiếm lịch sử clipboard...",
+      "filterAll": "Tất cả",
+      "filterText": "Văn bản",
+      "filterImage": "Hình ảnh",
+      "filterRichtext": "Văn bản định dạng",
+      "filterFiles": "Tệp",
+      "viewList": "Danh sách",
+      "viewGrid": "Lưới",
+      "sortNewest": "Mới nhất trước",
+      "sortOldest": "Cũ nhất trước",
+      "totalItems": "{{count}} mục",
+      "totalSize": "đã sử dụng {{size}}",
+      "emptyTitle": "Clipboard trống",
+      "emptyDescription": "Sao chép nội dung để bắt đầu theo dõi lịch sử clipboard của bạn.",
+      "clearHistory": "Xóa lịch sử",
+      "clearConfirm": "Bạn có chắc chắn? Thao tác này sẽ xóa tất cả các mục clipboard trừ các mục được ghim và yêu thích.",
+      "clearKeepPinned": "Giữ các mục được ghim và yêu thích",
+      "deleteItem": "Xóa",
+      "toggleFavorite": "Yêu thích",
+      "unfavorite": "Xóa khỏi yêu thích",
+      "togglePin": "Ghim",
+      "unpin": "Bỏ ghim",
+      "preview": "Xem trước",
+      "copyToClipboard": "Sao chép vào clipboard",
+      "copied": "Đã sao chép!",
+      "settings": {
+        "maxRecords": "Số bản ghi tối đa",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "Phím tắt clipboard",
+        "confirmMode": "Chế độ xác nhận",
+        "confirmModeCopy": "Sao chép vào clipboard",
+        "confirmModePaste": "Dán ngay lập tức",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "Clipboard",
+        "search": "Tìm kiếm...",
+        "hint": "Di chuyển · Enter Sao chép · Esc Đóng · F Yêu thích",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },

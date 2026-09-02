@@ -63,6 +63,7 @@ struct MenuInputs {
     downloaded_models: Vec<(String, String)>,
     locale: String,
     update_checks_enabled: bool,
+    clipboard_enabled: bool,
 }
 
 /// Complete description of what the tray should look like.
@@ -334,6 +335,7 @@ fn compute_desired(app: &AppHandle, icon_state: TrayIconState) -> TrayDesired {
             downloaded_models,
             locale: settings.app_language,
             update_checks_enabled: settings.update_checks_enabled,
+            clipboard_enabled: settings.clipboard_enabled,
         },
     }
 }
@@ -509,6 +511,13 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
         true,
         None::<&str>,
     )?;
+    let clipboard_history_i = MenuItem::with_id(
+        app,
+        "clipboard_history",
+        &strings.clipboard_history,
+        inputs.clipboard_enabled,
+        None::<&str>,
+    )?;
     let quit_i = MenuItem::with_id(app, "quit", &strings.quit, true, quit_accelerator)?;
     let separator = || PredefinedMenuItem::separator(app);
 
@@ -522,6 +531,7 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
                 &cancel_i,
                 &separator()?,
                 &copy_last_transcript_i,
+                &clipboard_history_i,
                 &separator()?,
                 &settings_i,
                 &check_updates_i,
@@ -560,6 +570,7 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
                 &version_i,
                 &separator()?,
                 &copy_last_transcript_i,
+                &clipboard_history_i,
                 &separator()?,
                 &model_submenu,
                 &unload_model_i,
@@ -694,6 +705,7 @@ mod tests {
             downloaded_models: vec![("small".to_string(), "Small".to_string())],
             locale: "en".to_string(),
             update_checks_enabled: true,
+            clipboard_enabled: true,
         }
     }
 

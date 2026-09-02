@@ -7,7 +7,8 @@
     "model": "Modelo",
     "quit": "Sair",
     "cancel": "Cancelar",
-    "secureInputWarning": "⚠ Atalhos bloqueados pelo Secure Input"
+    "secureInputWarning": "⚠ Atalhos bloqueados pelo Secure Input",
+    "clipboardHistory": "Histórico da área de transferência"
   },
   "sidebar": {
     "general": "Geral",
@@ -16,7 +17,8 @@
     "postProcessing": "Pós-Processamento",
     "history": "Histórico",
     "debug": "Depuração",
-    "about": "Sobre"
+    "about": "Sobre",
+    "clipboard": "Clipboard"
   },
   "onboarding": {
     "subtitle": "Para começar, escolha um modelo de transcrição",
@@ -398,6 +400,10 @@
       "fillerWordRemoval": {
         "title": "Remover palavras de preenchimento",
         "description": "Remove hesitações comuns das transcrições. Desative para mantê-las."
+      },
+      "clipboardFeature": {
+        "label": "Clipboard manager (experimental)",
+        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
       }
     },
     "postProcessing": {
@@ -627,6 +633,75 @@
       "whatsNewUpdates": {
         "label": "Mostrar novidades",
         "description": "Mostrar notas de versão após atualizações do Handy"
+      }
+    },
+    "clipboard": {
+      "title": "Gerenciador de Área de Transferência",
+      "searchPlaceholder": "Pesquisar histórico da área de transferência...",
+      "filterAll": "Todos",
+      "filterText": "Texto",
+      "filterImage": "Imagens",
+      "filterRichtext": "Texto formatado",
+      "filterFiles": "Arquivos",
+      "viewList": "Lista",
+      "viewGrid": "Grade",
+      "sortNewest": "Mais recentes primeiro",
+      "sortOldest": "Mais antigos primeiro",
+      "totalItems": "{{count}} itens",
+      "totalSize": "{{size}} usado",
+      "emptyTitle": "A área de transferência está vazia",
+      "emptyDescription": "Copie algo para começar a rastrear o histórico da área de transferência.",
+      "clearHistory": "Limpar histórico",
+      "clearConfirm": "Tem certeza? Isso excluirá todos os itens da área de transferência, exceto os fixados e favoritos.",
+      "clearKeepPinned": "Manter itens fixados e favoritos",
+      "deleteItem": "Excluir",
+      "toggleFavorite": "Favoritar",
+      "unfavorite": "Remover dos favoritos",
+      "togglePin": "Fixar",
+      "unpin": "Desafixar",
+      "preview": "Visualizar",
+      "copyToClipboard": "Copiar para a área de transferência",
+      "copied": "Copiado!",
+      "settings": {
+        "maxRecords": "Máximo de registros",
+        "maxRecordsDescription": "Set to unlimited to keep clipboard history without automatic pruning.",
+        "hotkey": "Tecla de atalho da área de transferência",
+        "confirmMode": "Modo de confirmação",
+        "confirmModeCopy": "Copiar para a área de transferência",
+        "confirmModePaste": "Colar imediatamente",
+        "unlimitedRecords": "Unlimited"
+      },
+      "overlay": {
+        "title": "Área de transferência",
+        "search": "Pesquisar...",
+        "hint": "Navegar · Enter Copiar · Esc Fechar · F Favoritar",
+        "caseSensitiveShort": "Aa",
+        "wholeWordShort": "W",
+        "panelSettings": "Settings",
+        "panelHelp": "Help",
+        "panelAbout": "About",
+        "statTotal": "Total",
+        "statFavorites": "Favorites",
+        "statPinned": "Pinned",
+        "statItems": "Items",
+        "statLimit": "Limit",
+        "statHotkey": "Hotkey",
+        "clearUnpinned": "Clear unpinned",
+        "clearAll": "Clear all",
+        "keyEnter": "Enter",
+        "keyEscape": "Esc",
+        "helpMove": "Move selection",
+        "helpCopy": "Copy selected item",
+        "helpFavorite": "Favorite selected item",
+        "helpDelete": "Delete selected item",
+        "helpEscape": "Clear search or leave panel",
+        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "editTitle": "Edit title",
+        "titlePlaceholder": "Add a title",
+        "pinToTop": "Pin to top",
+        "caseSensitive": "Case sensitive",
+        "wholeWord": "Whole word",
+        "unlimited": "Unlimited"
       }
     }
   },
