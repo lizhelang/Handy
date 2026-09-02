@@ -169,7 +169,10 @@ impl Drop for MigrationLock {
 
 impl StartupMigration {
     pub fn complete(&mut self) -> Result<()> {
-        verify_backup(&self.outcome)?;
+        anyhow::ensure!(
+            self.outcome.manifest.status == MigrationBackupStatus::Verified,
+            "startup migration cannot complete before its backup is verified"
+        );
         let (_, manifest_sha256) = file_fingerprint(&self.outcome.manifest_path)?;
         let marker = StartupMigrationMarker {
             migration_id: STARTUP_MIGRATION_ID.to_string(),
@@ -992,6 +995,37 @@ mod tests {
             fs::read(handy_root.join("settings_store.json")).unwrap(),
             b"kept"
         );
+    }
+
+    #[test]
+    #[ignore = "requires explicit real Handy data paths"]
+    fn real_data_startup_backup_is_verified_before_cutover() {
+        let handy_root = PathBuf::from(
+            std::env::var_os("HANDY_REAL_DATA_ROOT")
+                .expect("HANDY_REAL_DATA_ROOT must point at the existing app data"),
+        );
+        let inputia_root = std::env::var_os("HANDY_REAL_INPUTIA_ROOT").map(PathBuf::from);
+        let backup_root = handy_root
+            .join("migration_backups")
+            .join(STARTUP_MIGRATION_ID);
+        let lock_root = handy_root.join("migration_locks");
+
+        let migration = prepare_startup_backup_for_paths(
+            &handy_root,
+            inputia_root.as_deref(),
+            &backup_root,
+            &lock_root,
+        )
+        .unwrap();
+
+        if let Some(mut migration) = migration {
+            assert!(!migration.outcome.manifest.entries.is_empty());
+            eprintln!("verifiedBackupDir={}", migration.backup_dir().display());
+            migration.complete().unwrap();
+        } else {
+            verify_startup_marker(&backup_root.join("complete.json")).unwrap();
+            eprintln!("verifiedBackupMarker={}", backup_root.display());
+        }
     }
 
     fn create_sample_database(db_path: &Path) {
