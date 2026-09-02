@@ -1,0 +1,18 @@
+# Rime dictionary
+# encoding: utf-8
+#
+# Inputia wrapper dictionary.  It imports the upstream luna_pinyin table
+# and appends Inputia's local extension dictionaries without modifying
+# luna_pinyin.dict.yaml.
+---
+name: inputia_luna_pinyin
+version: "2026.07.09"
+sort: by_weight
+use_preset_vocabulary: true
+import_tables:
+  - luna_pinyin
+  - inputia_idiom
+  - inputia_poetry
+  - inputia_classical
+  - inputia_ext_chars
+...

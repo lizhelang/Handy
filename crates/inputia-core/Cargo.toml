@@ -1,0 +1,19 @@
+[package]
+name = "inputia-core"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[lib]
+name = "inputia_core"
+path = "src/lib.rs"
+
+[features]
+default = []
+sqlite-memory = ["dep:rusqlite"]
+
+[dependencies]
+rusqlite = { version = "0.37", features = ["bundled"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"
