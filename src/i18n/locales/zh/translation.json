@@ -154,7 +154,8 @@
     },
     "cancel": "取消",
     "cancelDownload": "取消下载",
-    "legacy": "旧版"
+    "legacy": "旧版",
+    "compatibilityCorrection": "Compatibility correction"
   },
   "settings": {
     "modelSettings": {
@@ -436,6 +437,20 @@
           "placeholderWithOptions": "搜索或选择模型",
           "placeholderNoOptions": "输入模型名称",
           "refreshModels": "刷新模型"
+        },
+        "local": {
+          "providerLabel": "本地",
+          "loadError": "加载本地后处理模型失败。",
+          "selectError": "选择本地后处理模型失败。",
+          "model": {
+            "title": "本地模型",
+            "description": "Handy 使用这个自管理的 Qwen GGUF 模型，在转录后修正自定义词汇。",
+            "loading": "正在加载本地模型…",
+            "noModels": "未找到本地模型",
+            "rescan": "重新扫描本地模型",
+            "active": "活跃",
+            "missing": "未找到本地 Qwen 模型。请确认 Handy 的自定义词后处理模型已安装。"
+          }
         }
       },
       "prompts": {

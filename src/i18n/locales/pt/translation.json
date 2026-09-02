@@ -154,7 +154,8 @@
     },
     "cancel": "Cancelar",
     "cancelDownload": "Cancelar download",
-    "legacy": "Legado"
+    "legacy": "Legado",
+    "compatibilityCorrection": "Compatibility correction"
   },
   "settings": {
     "modelSettings": {
@@ -436,6 +437,20 @@
           "placeholderWithOptions": "Buscar ou selecionar um modelo",
           "placeholderNoOptions": "Digite o nome de um modelo",
           "refreshModels": "Atualizar modelos"
+        },
+        "local": {
+          "providerLabel": "Local",
+          "loadError": "Failed to load local post-processing models.",
+          "selectError": "Failed to select local post-processing model.",
+          "model": {
+            "title": "Local Model",
+            "description": "Handy uses this self-managed Qwen GGUF model to correct custom words after transcription.",
+            "loading": "Loading local models...",
+            "noModels": "No local models found",
+            "rescan": "Rescan local models",
+            "active": "Active",
+            "missing": "Local Qwen model not found. Make sure Handy's custom-word post-processing model is installed."
+          }
         }
       },
       "prompts": {

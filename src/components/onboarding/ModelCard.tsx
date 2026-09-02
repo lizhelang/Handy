@@ -185,6 +185,11 @@ const ModelCard: React.FC<ModelCardProps> = ({
             {isLegacySource(model) && (
               <Badge variant="secondary">{t("modelSelector.legacy")}</Badge>
             )}
+            {status === "active" && (
+              <Badge variant="secondary">
+                {t("modelSelector.compatibilityCorrection")}
+              </Badge>
+            )}
             {status === "switching" && (
               <Badge variant="secondary">
                 <Loader2 className="w-3 h-3 mr-1 animate-spin" />

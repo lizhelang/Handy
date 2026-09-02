@@ -154,7 +154,8 @@
       "translate": "翻譯為英語",
       "streaming": "在您說話時即時顯示轉錄"
     },
-    "legacy": "舊版"
+    "legacy": "舊版",
+    "compatibilityCorrection": "Compatibility correction"
   },
   "settings": {
     "modelSettings": {
@@ -436,6 +437,20 @@
           "placeholderWithOptions": "搜尋或選擇模型",
           "placeholderNoOptions": "輸入模型名稱",
           "refreshModels": "重新整理模型"
+        },
+        "local": {
+          "providerLabel": "本機",
+          "loadError": "載入本機後處理模型失敗。",
+          "selectError": "選擇本機後處理模型失敗。",
+          "model": {
+            "title": "本機模型",
+            "description": "Handy 使用這個自管理的 Qwen GGUF 模型，在轉錄後修正自訂詞彙。",
+            "loading": "正在載入本機模型…",
+            "noModels": "未找到本機模型",
+            "rescan": "重新掃描本機模型",
+            "active": "啟用中",
+            "missing": "未找到本機 Qwen 模型。請確認 Handy 的自訂詞後處理模型已安裝。"
+          }
         }
       },
       "prompts": {

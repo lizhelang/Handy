@@ -4,6 +4,7 @@ use crate::audio_toolkit::{
 };
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
+use crate::native_hotwords::QwenContextPlan;
 use crate::settings::{
     get_settings, AppSettings, ModelUnloadTimeout, OrtAcceleratorSetting,
     TranscribeAcceleratorSetting,
@@ -20,8 +21,8 @@ use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_specta::Event;
 use transcribe_cpp::{
-    Backend, Feature, Model, ModelOptions, RunExtension, RunOptions, Session, StreamOptions, Task,
-    WhisperRunOptions,
+    Backend, ExtSlot, Feature, Model, ModelOptions, Qwen3AsrRunOptions, RunExtension, RunOptions,
+    Session, StreamOptions, Task, WhisperRunOptions,
 };
 use transcribe_rs::{
     onnx::{
@@ -1229,13 +1230,14 @@ impl TranscriptionManager {
         // run extension and the fuzzy-correction skip are gated on
         // `model_is_whisper` instead, since non-whisper archs can advertise
         // the feature while rejecting the whisper-kind extension.
-        let mut model_takes_initial_prompt = false;
         // Whether the loaded model is actually whisper-family (arch string).
         // Non-whisper archs (e.g. Voxtral Small) can advertise
         // Feature::InitialPrompt yet reject the whisper-kind run extension
         // with INVALID_ARG, so the whisper extension must be gated on the
         // arch, not on the feature (see #1601).
         let mut model_is_whisper = false;
+        let mut model_is_qwen3_asr = false;
+        let mut model_accepts_qwen_context = false;
 
         // Perform transcription with the appropriate engine.
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
@@ -1275,15 +1277,22 @@ impl TranscriptionManager {
             if let LoadedEngine::TranscribeCpp(session) = &engine {
                 let model = session.model();
                 let caps = model.capabilities();
-                model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
+                let model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
                 model_is_whisper = model.arch() == "whisper";
+                model_is_qwen3_asr = model.arch() == "qwen3_asr";
+                model_accepts_qwen_context = model_is_qwen3_asr
+                    && model.accepts_ext(
+                        ExtSlot::Run,
+                        transcribe_cpp::sys::TRANSCRIBE_EXT_KIND_QWEN3_ASR_RUN,
+                    );
                 model_supports_translate = caps.supports_translate;
                 model_languages = caps.languages;
                 debug!(
-                    "transcribe-cpp model '{}' on '{}': initial_prompt={}, translate={}, languages={:?}",
+                    "transcribe-cpp model '{}' on '{}': initial_prompt={}, qwen_context={}, translate={}, languages={:?}",
                     settings.selected_model,
                     model.backend(),
                     model_takes_initial_prompt,
+                    model_accepts_qwen_context,
                     model_supports_translate,
                     model_languages
                 );
@@ -1292,18 +1301,34 @@ impl TranscriptionManager {
             let transcribe_result = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
                 match &mut engine {
                     LoadedEngine::TranscribeCpp(session) => {
-                        // Custom words become the initial prompt ONLY for models
-                        // that accept one (whisper family). Attaching the
-                        // whisper run extension to a non-whisper arch is rejected
-                        // with INVALID_ARG, so skip it there and let the fuzzy
-                        // post-correction handle custom words instead.
-                        let family = if settings.custom_words.is_empty() || !model_is_whisper {
-                            None
-                        } else {
+                        let qwen_context_plan = model_is_qwen3_asr
+                            .then(|| QwenContextPlan::from_custom_words(&settings.custom_words))
+                            .filter(|plan| !plan.is_empty());
+                        let active_qwen_context = qwen_context_plan
+                            .as_ref()
+                            .filter(|_| model_accepts_qwen_context);
+
+                        let family = if !settings.custom_words.is_empty() && model_is_whisper {
                             Some(RunExtension::Whisper(WhisperRunOptions {
                                 initial_prompt: Some(settings.custom_words.join(", ")),
                                 ..Default::default()
                             }))
+                        } else if let Some(plan) = active_qwen_context {
+                            info!(
+                                "Applied Qwen context: words={}, version={}",
+                                plan.word_count(),
+                                plan.version()
+                            );
+                            qwen_context_run_extension(plan, true)
+                        } else if let Some(plan) = qwen_context_plan.as_ref() {
+                            warn!(
+                                "Qwen context extension was rejected; using deterministic correction fallback: words={}, version={}",
+                                plan.word_count(),
+                                plan.version()
+                            );
+                            None
+                        } else {
+                            None
                         };
 
                         let run_plan = transcribe_cpp_run_plan(
@@ -1324,7 +1349,7 @@ impl TranscriptionManager {
                         };
 
                         debug!(
-                            "transcribe-cpp run: task={:?}, language={:?}, initial_prompt={}",
+                            "transcribe-cpp run: task={:?}, language={:?}, run_extension={}",
                             run_options.task,
                             run_options.language,
                             run_options.family.is_some()
@@ -1336,7 +1361,7 @@ impl TranscriptionManager {
                                 // Whisper's audio-based LID (auto mode only;
                                 // `None` when a language hint was passed).
                                 model_detected_language = t.language;
-                                t.text
+                                strip_qwen_context_echo(t.text, active_qwen_context)
                             })
                             .map_err(|e| {
                                 anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
@@ -1478,15 +1503,13 @@ impl TranscriptionManager {
             (text, output_language, model_languages)
         };
 
-        // Apply fuzzy word correction if custom words are configured — UNLESS the
-        // words were already handed to the model as an initial prompt (whisper
-        // family). We don't pass a prompt to non-whisper models (it requires the
-        // whisper-kind run extension), so they still get fuzzy correction here,
-        // same as the ONNX engines.
+        // Prompts and native context are recognition hints, not forced
+        // dictionaries. Keep the deterministic correction fallback for every
+        // engine so a missed term still follows the user's custom-word policy.
         let filtered_result = post_process_transcription_text(
             result,
             &settings,
-            model_is_whisper,
+            false,
             &output_language,
             &model_languages,
         );
@@ -1753,6 +1776,29 @@ fn transcribe_cpp_run_plan(
         task,
         language,
         target_language,
+    }
+}
+
+fn qwen_context_run_extension(
+    plan: &QwenContextPlan,
+    model_accepts_qwen_context: bool,
+) -> Option<RunExtension> {
+    if !model_accepts_qwen_context || plan.is_empty() {
+        return None;
+    }
+
+    Some(RunExtension::Qwen3Asr(Qwen3AsrRunOptions {
+        context: plan.context().map(str::to_owned),
+    }))
+}
+
+fn strip_qwen_context_echo(text: String, active_qwen_context: Option<&QwenContextPlan>) -> String {
+    match active_qwen_context.and_then(|plan| plan.strip_trailing_echo(&text)) {
+        Some(cleaned) => {
+            debug!("Removed echoed Qwen context from transcription output");
+            cleaned
+        }
+        None => text,
     }
 }
 
@@ -2470,6 +2516,52 @@ mod tests {
         assert!(matches!(plan.task, Task::Transcribe));
         assert_eq!(plan.language.as_deref(), Some("es"));
         assert_eq!(plan.target_language, None);
+    }
+
+    #[test]
+    fn qwen_echo_guard_only_removes_the_injected_context_tail() {
+        let plan = QwenContextPlan::from_custom_words(&["Inputia".to_string()]);
+        let context = plan.context().unwrap().to_string();
+        let echoed = format!("正常转写。{context}");
+
+        assert_eq!(
+            strip_qwen_context_echo(echoed.clone(), Some(&plan)),
+            "正常转写。"
+        );
+        assert_eq!(strip_qwen_context_echo(echoed.clone(), None), echoed);
+        assert_eq!(
+            strip_qwen_context_echo("我正在使用 Inputia。".to_string(), Some(&plan)),
+            "我正在使用 Inputia。"
+        );
+    }
+
+    #[test]
+    fn qwen_echo_guard_removes_a_truncated_context_tail() {
+        let plan = QwenContextPlan::from_custom_words(&["Inputia".to_string()]);
+        let partial_echo = plan.context().unwrap().chars().take(20).collect::<String>();
+
+        assert_eq!(
+            strip_qwen_context_echo(format!("第一段。第二段。{partial_echo}"), Some(&plan)),
+            "第一段。第二段。"
+        );
+    }
+
+    #[test]
+    fn qwen_context_extension_uses_cleaned_global_words() {
+        let plan = QwenContextPlan::from_custom_words(&[
+            " Inputia ".to_string(),
+            "罗泽群".to_string(),
+            "Inputia".to_string(),
+        ]);
+
+        let Some(RunExtension::Qwen3Asr(options)) = qwen_context_run_extension(&plan, true) else {
+            panic!("Qwen context should materialize when the model accepts it");
+        };
+        assert_eq!(
+            options.context.as_deref(),
+            Some("术语参考（仅作转写提示，未说勿写）：Inputia、罗泽群")
+        );
+        assert!(qwen_context_run_extension(&plan, false).is_none());
     }
 }
 

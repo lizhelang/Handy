@@ -6,6 +6,71 @@
   ],
   "models": [
     {
+      "id": "handy-computer/Qwen3-ASR-1.7B-gguf",
+      "revision": "92282af1610a2db19d66f2bef1e260f5deca782d",
+      "slug": "Qwen3-ASR-1.7B",
+      "name": "Qwen3-ASR 1.7B",
+      "architecture": "qwen3_asr",
+      "family": "qwen3",
+      "parameters": "2.0B",
+      "description": "Accurate multilingual transcription with terminology context",
+      "base_model": "Qwen/Qwen3-ASR-1.7B",
+      "license": "apache-2.0",
+      "language_count": 30,
+      "languages": ["zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it", "ko", "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv", "da", "fi", "pl", "cs", "fil", "fa", "el", "ro", "hu", "mk"],
+      "capabilities": {
+        "streaming": false,
+        "translate": false,
+        "lang_detect": true,
+        "timestamps": "none"
+      },
+      "speed_score": 38,
+      "accuracy_score": 90,
+      "files": [
+        {"filename": "Qwen3-ASR-1.7B-Q4_K_M.gguf", "quant": "Q4_K_M", "size_bytes": 1319830496, "sha256": "b7afe3674f653fa84f712ed2440353c6e7cf7f93697fef76b05a26538b24844e"},
+        {"filename": "Qwen3-ASR-1.7B-Q5_K_M.gguf", "quant": "Q5_K_M", "size_bytes": 1517290464, "sha256": "034c557fe92ff8fcd9a9c041cbdaad347be0a86a58d3a348f63cf3f0180879d0"},
+        {"filename": "Qwen3-ASR-1.7B-Q6_K.gguf", "quant": "Q6_K", "size_bytes": 1692554208, "sha256": "c75a961b7134a6c952d89797865cb0d0376876185aee04ef6d12c31c2952e4e1"},
+        {"filename": "Qwen3-ASR-1.7B-Q8_0.gguf", "quant": "Q8_0", "size_bytes": 2185030624, "sha256": "9a0d81792dfea2d5f278b8a63deb3ea6e02139ce42c2301f32ea19c4f77526b7"},
+        {"filename": "Qwen3-ASR-1.7B-BF16.gguf", "quant": "BF16", "size_bytes": 4083087904, "sha256": "57db745f8ec3ad2ea391b0205661e7d74f76158877a33f151e4d4624ed2b7cc9"},
+        {"filename": "Qwen3-ASR-1.7B-F16.gguf", "quant": "F16", "size_bytes": 4091390944, "sha256": "edb09c29b8f73822c639168d5ef72aa2dccdf8b4e48fc4b8518885352ff62c71"}
+      ],
+      "default_quant": "Q5_K_M",
+      "recommended": true,
+      "recommended_rank": 1
+    },
+    {
+      "id": "handy-computer/whisper-large-v3-gguf",
+      "revision": "e3e29bee6389c7da4a141406f07bb80ddac5337c",
+      "slug": "whisper-large-v3",
+      "name": "Whisper Large v3",
+      "architecture": "whisper",
+      "family": "whisper",
+      "parameters": "1.5B",
+      "description": "Accurate multilingual transcription with translation support",
+      "base_model": "openai/whisper-large-v3",
+      "license": "apache-2.0",
+      "language_count": 100,
+      "languages": ["en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar", "sv", "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta", "no", "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn", "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su", "yue"],
+      "capabilities": {
+        "streaming": false,
+        "translate": true,
+        "lang_detect": true,
+        "timestamps": "segment"
+      },
+      "speed_score": 23,
+      "accuracy_score": 89,
+      "files": [
+        {"filename": "whisper-large-v3-Q4_K_M.gguf", "quant": "Q4_K_M", "size_bytes": 997303008, "sha256": "6fe933811cec4cd3159debc46520ecd3aac6c7e322ece2ac61fcfdab184e1fe0"},
+        {"filename": "whisper-large-v3-Q5_K_M.gguf", "quant": "Q5_K_M", "size_bytes": 1161143008, "sha256": "6053d0fd69a0fd48b8fea5ea7a52b9e0cde389343566fa30e453a1b2b258dc38"},
+        {"filename": "whisper-large-v3-Q6_K.gguf", "quant": "Q6_K", "size_bytes": 1297130208, "sha256": "88e6dc60bd0538da145a50c19f4778e4a106fe28713adeeca43163215ee02805"},
+        {"filename": "whisper-large-v3-Q8_0.gguf", "quant": "Q8_0", "size_bytes": 1668741440, "sha256": "2fa1a5f179f8a511a53e2108db270aa4af3ce08cd976af4180e2854666bb4ba3"},
+        {"filename": "whisper-large-v3-F16.gguf", "quant": "F16", "size_bytes": 3107236640, "sha256": "e633ab1d74b0e98f4f57daedaee34291297dbbf01389bda3d890766600c1c584"}
+      ],
+      "default_quant": "Q5_K_M",
+      "recommended": true,
+      "recommended_rank": 2
+    },
+    {
       "id": "handy-computer/parakeet-unified-en-0.6b-gguf",
       "revision": "7e948f21b7bdbac698d3318db9d350f1096f3b6c",
       "slug": "parakeet-unified-en-0.6b",
@@ -35,8 +100,8 @@
         {"filename": "parakeet-unified-en-0.6b-F32.gguf", "quant": "F32", "size_bytes": 2473323520, "sha256": "81d3a8c7676324a4dae977dac0f5900dc1468755fdf3b5369261bb759f17fdf3"}
       ],
       "default_quant": "Q8_0",
-      "recommended": true,
-      "recommended_rank": 1
+      "recommended": false,
+      "recommended_rank": 3
     },
     {
       "id": "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf",
@@ -68,8 +133,8 @@
         {"filename": "nemotron-3.5-asr-streaming-0.6b-F32.gguf", "quant": "F32", "size_bytes": 2552277984, "sha256": "fbbc82e8e1084301a670fbc4d79c69c0c8980da506352fd83e74a182f38f5b78"}
       ],
       "default_quant": "Q8_0",
-      "recommended": true,
-      "recommended_rank": 2
+      "recommended": false,
+      "recommended_rank": 4
     },
     {
       "id": "handy-computer/canary-180m-flash-gguf",
@@ -101,8 +166,8 @@
         {"filename": "canary-180m-flash-F32.gguf", "quant": "F32", "size_bytes": 756498112, "sha256": "f42fce02dc5279545cd540f0e5d51e36b9335b69e11fd98de6e08cc1250fd7ad"}
       ],
       "default_quant": "Q8_0",
-      "recommended": true,
-      "recommended_rank": 3
+      "recommended": false,
+      "recommended_rank": 5
     },
     {
       "id": "handy-computer/cohere-transcribe-03-2026-gguf",
@@ -134,41 +199,8 @@
         {"filename": "cohere-transcribe-03-2026-F16.gguf", "quant": "F16", "size_bytes": 4106644992, "sha256": "65ea095ba78ed938a613cc950da0599b29e16bb5a22a968d7b1fd99d71f13784"}
       ],
       "default_quant": "Q5_K_M",
-      "recommended": true,
-      "recommended_rank": 4
-    },
-    {
-      "id": "handy-computer/whisper-medium-gguf",
-      "revision": "ec78f06fded51aa82cde751678b78f76f78c8b7f",
-      "slug": "whisper-medium",
-      "name": "Whisper Medium",
-      "architecture": "whisper",
-      "family": "whisper",
-      "parameters": "764M",
-      "description": "Broadest language, but may run a bit slow",
-      "base_model": "openai/whisper-medium",
-      "license": "apache-2.0",
-      "language_count": 99,
-      "languages": ["en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar", "sv", "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta", "no", "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn", "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su"],
-      "capabilities": {
-        "streaming": false,
-        "translate": true,
-        "lang_detect": true,
-        "timestamps": "segment"
-      },
-      "speed_score": 42,
-      "accuracy_score": 84,
-      "files": [
-        {"filename": "whisper-medium-Q4_K_M.gguf", "quant": "Q4_K_M", "size_bytes": 504102848, "sha256": "6c9cad9c41d1fa0fcc624898f7ee3485b66127627878081a5655c6f6f3ce20ab"},
-        {"filename": "whisper-medium-Q5_K_M.gguf", "quant": "Q5_K_M", "size_bytes": 582746048, "sha256": "4e2a8904a866b3aa7ef70d7640ec6abc5f0a05524cd950ea4b66ace12122bf53"},
-        {"filename": "whisper-medium-Q6_K.gguf", "quant": "Q6_K", "size_bytes": 648019904, "sha256": "8718bafef4f595b5cacd9d9409fb7e19ce99b1afe4c6a450198d692fa58bd380"},
-        {"filename": "whisper-medium-Q8_0.gguf", "quant": "Q8_0", "size_bytes": 831538144, "sha256": "09e6a65e7de377aa5b10bae24608bc6f8ca2ed04b3993ef10d4a02bcd9a82adf"},
-        {"filename": "whisper-medium-F16.gguf", "quant": "F16", "size_bytes": 1541931424, "sha256": "62338e5194cb9ccc6734adf6f42694805a98a158028b2022e39ec060559bd517"},
-        {"filename": "whisper-medium-F32.gguf", "quant": "F32", "size_bytes": 3057437088, "sha256": "d716aa436e8d1d3164898d1fd6f4bde0f7cbbb7059b8c276b18f78cbca2faf6b"}
-      ],
-      "default_quant": "Q8_0",
-      "recommended": true,
-      "recommended_rank": 5
+      "recommended": false,
+      "recommended_rank": 6
     },
     {
       "id": "handy-computer/Voxtral-Mini-4B-Realtime-2602-gguf",
@@ -231,6 +263,39 @@
         {"filename": "parakeet-tdt-0.6b-v3-Q8_0.gguf", "quant": "Q8_0", "size_bytes": 739508576, "sha256": "5859f77944efcd8eafa23a6350731960b2b55b2203df51f319665c807d802cc7"},
         {"filename": "parakeet-tdt-0.6b-v3-F16.gguf", "quant": "F16", "size_bytes": 1255869856, "sha256": "d9ec7e2c39da7b4fec3e01e71e82c7f7bbe97741e08c0c054091bf3d520a41d3"},
         {"filename": "parakeet-tdt-0.6b-v3-F32.gguf", "quant": "F32", "size_bytes": 2508435616, "sha256": "bbd36acd8c6fbb817e658e3acc9f75002cb6a74932c687e74fefccfcc7b9f47e"}
+      ],
+      "default_quant": "Q8_0",
+      "recommended": false,
+      "recommended_rank": 7
+    },
+    {
+      "id": "handy-computer/whisper-medium-gguf",
+      "revision": "ec78f06fded51aa82cde751678b78f76f78c8b7f",
+      "slug": "whisper-medium",
+      "name": "Whisper Medium",
+      "architecture": "whisper",
+      "family": "whisper",
+      "parameters": "764M",
+      "description": "Broadest language, but may run a bit slow",
+      "base_model": "openai/whisper-medium",
+      "license": "apache-2.0",
+      "language_count": 99,
+      "languages": ["en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar", "sv", "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta", "no", "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn", "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su"],
+      "capabilities": {
+        "streaming": false,
+        "translate": true,
+        "lang_detect": true,
+        "timestamps": "segment"
+      },
+      "speed_score": 42,
+      "accuracy_score": 84,
+      "files": [
+        {"filename": "whisper-medium-Q4_K_M.gguf", "quant": "Q4_K_M", "size_bytes": 504102848, "sha256": "6c9cad9c41d1fa0fcc624898f7ee3485b66127627878081a5655c6f6f3ce20ab"},
+        {"filename": "whisper-medium-Q5_K_M.gguf", "quant": "Q5_K_M", "size_bytes": 582746048, "sha256": "4e2a8904a866b3aa7ef70d7640ec6abc5f0a05524cd950ea4b66ace12122bf53"},
+        {"filename": "whisper-medium-Q6_K.gguf", "quant": "Q6_K", "size_bytes": 648019904, "sha256": "8718bafef4f595b5cacd9d9409fb7e19ce99b1afe4c6a450198d692fa58bd380"},
+        {"filename": "whisper-medium-Q8_0.gguf", "quant": "Q8_0", "size_bytes": 831538144, "sha256": "09e6a65e7de377aa5b10bae24608bc6f8ca2ed04b3993ef10d4a02bcd9a82adf"},
+        {"filename": "whisper-medium-F16.gguf", "quant": "F16", "size_bytes": 1541931424, "sha256": "62338e5194cb9ccc6734adf6f42694805a98a158028b2022e39ec060559bd517"},
+        {"filename": "whisper-medium-F32.gguf", "quant": "F32", "size_bytes": 3057437088, "sha256": "d716aa436e8d1d3164898d1fd6f4bde0f7cbbb7059b8c276b18f78cbca2faf6b"}
       ],
       "default_quant": "Q8_0",
       "recommended": false,
@@ -301,39 +366,6 @@
       "default_quant": "Q8_0",
       "recommended": false,
       "recommended_rank": 9
-    },
-    {
-      "id": "handy-computer/Fun-ASR-MLT-Nano-2512-gguf",
-      "revision": "0b8f9c7bc545a219658aeb1dd4eeaa55d1cf89f3",
-      "slug": "Fun-ASR-MLT-Nano-2512",
-      "name": "Fun-ASR Nano Multilingual",
-      "architecture": "funasr_nano",
-      "family": "fun",
-      "parameters": "985M",
-      "description": "A tiny multilingual model",
-      "base_model": "FunAudioLLM/Fun-ASR-MLT-Nano-2512",
-      "license": "other",
-      "language_count": 31,
-      "languages": ["zh", "en", "yue", "ja", "ko", "vi", "id", "th", "ms", "tl", "ar", "hi", "bg", "hr", "cs", "da", "nl", "et", "fi", "el", "hu", "ga", "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "sv"],
-      "capabilities": {
-        "streaming": false,
-        "translate": false,
-        "lang_detect": false,
-        "timestamps": "none"
-      },
-      "speed_score": 68,
-      "accuracy_score": 89,
-      "files": [
-        {"filename": "Fun-ASR-MLT-Nano-2512-Q4_K_M.gguf", "quant": "Q4_K_M", "size_bytes": 556975168, "sha256": "9232584a27a7dcbcaf13640de8f9c2e7375178ea11e587f90a5328ecf06d58a1"},
-        {"filename": "Fun-ASR-MLT-Nano-2512-Q5_K_M.gguf", "quant": "Q5_K_M", "size_bytes": 631129152, "sha256": "5906267c6067d254a2681f40d9eac70c4291ae14fb58ffea4c4cd22a307517ec"},
-        {"filename": "Fun-ASR-MLT-Nano-2512-Q6_K.gguf", "quant": "Q6_K", "size_bytes": 690744384, "sha256": "e4ca67cbcb9b12c828b2afbadc871a8128ea3e73890d2747c687b1fac0ac6934"},
-        {"filename": "Fun-ASR-MLT-Nano-2512-Q8_0.gguf", "quant": "Q8_0", "size_bytes": 891271232, "sha256": "d12476d8d9f2baa0ebf738fa955fa05ed33a654f1567289033a810c45d9d9002"},
-        {"filename": "Fun-ASR-MLT-Nano-2512-BF16.gguf", "quant": "BF16", "size_bytes": 1667504192, "sha256": "dcacaf5eb69651e4e3f1f79e9bdd16be518cf5f9ecaf023dada9c5aa891bde4b"},
-        {"filename": "Fun-ASR-MLT-Nano-2512-F16.gguf", "quant": "F16", "size_bytes": 1667504192, "sha256": "ffd1e5258f2cfbc05dc3e467b570a32d5671a6511bcd070cd72f08657108213d"}
-      ],
-      "default_quant": "Q8_0",
-      "recommended": false,
-      "recommended_rank": 10
     },
     {
       "id": "handy-computer/canary-1b-flash-gguf",
@@ -497,39 +529,6 @@
         {"filename": "cohere-transcribe-arabic-07-2026-F16.gguf", "quant": "F16", "size_bytes": 4106644896, "sha256": "c8a37345c10d1cb3b85d7d1779905e63051f39694bd6fdd5002d9434c09226fc"}
       ],
       "default_quant": "Q5_K_M",
-      "recommended": false,
-      "recommended_rank": null
-    },
-    {
-      "id": "handy-computer/Fun-ASR-Nano-2512-gguf",
-      "revision": "30360f003f99929c1e25c3f6222d02eccb04663c",
-      "slug": "Fun-ASR-Nano-2512",
-      "name": "Fun-ASR Nano",
-      "architecture": "funasr_nano",
-      "family": "fun",
-      "parameters": "985M",
-      "description": "3-language speech-to-text.",
-      "base_model": "FunAudioLLM/Fun-ASR-Nano-2512",
-      "license": "other",
-      "language_count": 3,
-      "languages": ["zh", "en", "ja"],
-      "capabilities": {
-        "streaming": false,
-        "translate": false,
-        "lang_detect": false,
-        "timestamps": "none"
-      },
-      "speed_score": 73,
-      "accuracy_score": 89,
-      "files": [
-        {"filename": "Fun-ASR-Nano-2512-Q4_K_M.gguf", "quant": "Q4_K_M", "size_bytes": 556974848, "sha256": "444885fb7a16211a721e265dfe08c31b31e81fb9e2c4f21ab1079210cd038408"},
-        {"filename": "Fun-ASR-Nano-2512-Q5_K_M.gguf", "quant": "Q5_K_M", "size_bytes": 631128832, "sha256": "68de7b48ba46b739254fb57486edf7023943cb0af63767ab795d58d6e482096c"},
-        {"filename": "Fun-ASR-Nano-2512-Q6_K.gguf", "quant": "Q6_K", "size_bytes": 690744064, "sha256": "894153c04fee18f982823e67b9be6ffd83a9e245f92419b3e8170e26c818273b"},
-        {"filename": "Fun-ASR-Nano-2512-Q8_0.gguf", "quant": "Q8_0", "size_bytes": 891270912, "sha256": "681caef6df15a2c0e153b40ca7fe4087fdf65751fa5e6fe605d8a75dff969e61"},
-        {"filename": "Fun-ASR-Nano-2512-BF16.gguf", "quant": "BF16", "size_bytes": 1667503872, "sha256": "ee183ddfeb19847e3ee7b80ffcbbae48173330dc167b07955b898a7705c68159"},
-        {"filename": "Fun-ASR-Nano-2512-F16.gguf", "quant": "F16", "size_bytes": 1667503872, "sha256": "d754b627ebe8386e565ca9aabc87906d7530d73d2981ec7106fbcc3932febc16"}
-      ],
-      "default_quant": "Q8_0",
       "recommended": false,
       "recommended_rank": null
     },
@@ -1710,39 +1709,6 @@
       "recommended_rank": null
     },
     {
-      "id": "handy-computer/Qwen3-ASR-1.7B-gguf",
-      "revision": "92282af1610a2db19d66f2bef1e260f5deca782d",
-      "slug": "Qwen3-ASR-1.7B",
-      "name": "Qwen3-ASR 1.7B",
-      "architecture": "qwen3_asr",
-      "family": "qwen3",
-      "parameters": "2.0B",
-      "description": "30-language speech-to-text with auto language detection.",
-      "base_model": "Qwen/Qwen3-ASR-1.7B",
-      "license": "apache-2.0",
-      "language_count": 30,
-      "languages": ["zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it", "ko", "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv", "da", "fi", "pl", "cs", "fil", "fa", "el", "ro", "hu", "mk"],
-      "capabilities": {
-        "streaming": false,
-        "translate": false,
-        "lang_detect": true,
-        "timestamps": "none"
-      },
-      "speed_score": 38,
-      "accuracy_score": 90,
-      "files": [
-        {"filename": "Qwen3-ASR-1.7B-Q4_K_M.gguf", "quant": "Q4_K_M", "size_bytes": 1319830496, "sha256": "b7afe3674f653fa84f712ed2440353c6e7cf7f93697fef76b05a26538b24844e"},
-        {"filename": "Qwen3-ASR-1.7B-Q5_K_M.gguf", "quant": "Q5_K_M", "size_bytes": 1517290464, "sha256": "034c557fe92ff8fcd9a9c041cbdaad347be0a86a58d3a348f63cf3f0180879d0"},
-        {"filename": "Qwen3-ASR-1.7B-Q6_K.gguf", "quant": "Q6_K", "size_bytes": 1692554208, "sha256": "c75a961b7134a6c952d89797865cb0d0376876185aee04ef6d12c31c2952e4e1"},
-        {"filename": "Qwen3-ASR-1.7B-Q8_0.gguf", "quant": "Q8_0", "size_bytes": 2185030624, "sha256": "9a0d81792dfea2d5f278b8a63deb3ea6e02139ce42c2301f32ea19c4f77526b7"},
-        {"filename": "Qwen3-ASR-1.7B-BF16.gguf", "quant": "BF16", "size_bytes": 4083087904, "sha256": "57db745f8ec3ad2ea391b0205661e7d74f76158877a33f151e4d4624ed2b7cc9"},
-        {"filename": "Qwen3-ASR-1.7B-F16.gguf", "quant": "F16", "size_bytes": 4091390944, "sha256": "edb09c29b8f73822c639168d5ef72aa2dccdf8b4e48fc4b8518885352ff62c71"}
-      ],
-      "default_quant": "Q5_K_M",
-      "recommended": false,
-      "recommended_rank": null
-    },
-    {
       "id": "handy-computer/SenseVoiceSmall-gguf",
       "revision": "4a08b8e900b38a977e32eb08d5d0697d6e72ba04",
       "slug": "SenseVoiceSmall",
@@ -2198,38 +2164,6 @@
         {"filename": "whisper-large-v2-Q8_0.gguf", "quant": "Q8_0", "size_bytes": 1667964224, "sha256": "704603cff0f82ddd7f7f51045e12e5c8f85a37a9edec72ab10fd8ede32220702"},
         {"filename": "whisper-large-v2-F16.gguf", "quant": "F16", "size_bytes": 3106458208, "sha256": "c8ffa39202367b896cdf642cd28c28fb9ac4d90f7f12795a219952c70bc63f04"},
         {"filename": "whisper-large-v2-F32.gguf", "quant": "F32", "size_bytes": 6175245408, "sha256": "eed42074ca931551b6bb9c80e658bb0d646c80da06acb03a49cb6326d2a57ced"}
-      ],
-      "default_quant": "Q5_K_M",
-      "recommended": false,
-      "recommended_rank": null
-    },
-    {
-      "id": "handy-computer/whisper-large-v3-gguf",
-      "revision": "e3e29bee6389c7da4a141406f07bb80ddac5337c",
-      "slug": "whisper-large-v3",
-      "name": "Whisper Large v3",
-      "architecture": "whisper",
-      "family": "whisper",
-      "parameters": "1.5B",
-      "description": "100-language speech-to-text with translation, auto language detection, segment-level timestamps.",
-      "base_model": "openai/whisper-large-v3",
-      "license": "apache-2.0",
-      "language_count": 100,
-      "languages": ["en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar", "sv", "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta", "no", "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn", "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su", "yue"],
-      "capabilities": {
-        "streaming": false,
-        "translate": true,
-        "lang_detect": true,
-        "timestamps": "segment"
-      },
-      "speed_score": 23,
-      "accuracy_score": 89,
-      "files": [
-        {"filename": "whisper-large-v3-Q4_K_M.gguf", "quant": "Q4_K_M", "size_bytes": 997303008, "sha256": "6fe933811cec4cd3159debc46520ecd3aac6c7e322ece2ac61fcfdab184e1fe0"},
-        {"filename": "whisper-large-v3-Q5_K_M.gguf", "quant": "Q5_K_M", "size_bytes": 1161143008, "sha256": "6053d0fd69a0fd48b8fea5ea7a52b9e0cde389343566fa30e453a1b2b258dc38"},
-        {"filename": "whisper-large-v3-Q6_K.gguf", "quant": "Q6_K", "size_bytes": 1297130208, "sha256": "88e6dc60bd0538da145a50c19f4778e4a106fe28713adeeca43163215ee02805"},
-        {"filename": "whisper-large-v3-Q8_0.gguf", "quant": "Q8_0", "size_bytes": 1668741440, "sha256": "2fa1a5f179f8a511a53e2108db270aa4af3ce08cd976af4180e2854666bb4ba3"},
-        {"filename": "whisper-large-v3-F16.gguf", "quant": "F16", "size_bytes": 3107236640, "sha256": "e633ab1d74b0e98f4f57daedaee34291297dbbf01389bda3d890766600c1c584"}
       ],
       "default_quant": "Q5_K_M",
       "recommended": false,

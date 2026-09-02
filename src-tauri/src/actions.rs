@@ -7,7 +7,10 @@ use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
-use crate::settings::{get_settings, AppSettings, OverlayStyle, APPLE_INTELLIGENCE_PROVIDER_ID};
+use crate::settings::{
+    get_settings, AppSettings, OverlayStyle, APPLE_INTELLIGENCE_PROVIDER_ID,
+    LOCAL_POST_PROCESS_PROVIDER_ID,
+};
 use crate::shortcut;
 use crate::tray::{set_tray_state, TrayIconState};
 use crate::utils::{
@@ -81,8 +84,30 @@ fn strip_think_block(s: &str) -> &str {
 
 /// Build a system prompt from the user's prompt template.
 /// Removes `${output}` placeholder since the transcription is sent as the user message.
-fn build_system_prompt(prompt_template: &str) -> String {
-    prompt_template.replace("${output}", "").trim().to_string()
+fn format_custom_words_for_prompt(custom_words: &[String]) -> String {
+    let words = custom_words
+        .iter()
+        .map(|word| word.trim())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    serde_json::to_string(&words).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn render_prompt_template(
+    prompt_template: &str,
+    transcription: &str,
+    custom_words: &[String],
+) -> String {
+    prompt_template.replace("${output}", transcription).replace(
+        "${custom_words}",
+        &format_custom_words_for_prompt(custom_words),
+    )
+}
+
+fn build_system_prompt(prompt_template: &str, custom_words: &[String]) -> String {
+    render_prompt_template(prompt_template, "", custom_words)
+        .trim()
+        .to_string()
 }
 
 /// Returns `true` when a transcription has no meaningful content to
@@ -118,7 +143,11 @@ fn should_use_streaming_overlay(style: OverlayStyle, is_streaming: bool) -> bool
     style == OverlayStyle::Live && is_streaming
 }
 
-async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
+async fn post_process_transcription(
+    app: &AppHandle,
+    settings: &AppSettings,
+    transcription: &str,
+) -> Option<String> {
     if is_blank_transcription(transcription) {
         debug!("Post-processing skipped because the transcription is empty");
         return None;
@@ -131,6 +160,10 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
             return None;
         }
     };
+
+    if provider.id == LOCAL_POST_PROCESS_PROVIDER_ID {
+        return crate::custom_words_model::correct_custom_words(app, settings, transcription).await;
+    }
 
     let model = settings
         .post_process_models
@@ -193,7 +226,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     if provider.supports_structured_output {
         debug!("Using structured outputs for provider '{}'", provider.id);
 
-        let system_prompt = build_system_prompt(&prompt);
+        let system_prompt = build_system_prompt(&prompt, &settings.custom_words);
         let user_content = transcription.to_string();
 
         // Handle Apple Intelligence separately since it uses native Swift APIs
@@ -308,7 +341,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     }
 
     // Legacy mode: Replace ${output} variable in the prompt with the actual text
-    let processed_prompt = prompt.replace("${output}", transcription);
+    let processed_prompt = render_prompt_template(&prompt, transcription, &settings.custom_words);
     debug!("Processed prompt length: {} chars", processed_prompt.len());
 
     match crate::llm_client::send_chat_completion(
@@ -439,8 +472,24 @@ pub(crate) async fn process_transcription_output(
         final_text = converted_text;
     }
 
+    let local_provider_selected = post_process
+        && settings
+            .active_post_process_provider()
+            .is_some_and(|provider| provider.id == LOCAL_POST_PROCESS_PROVIDER_ID);
+    if !local_provider_selected {
+        if let Some(corrected_text) =
+            crate::custom_words_model::correct_custom_words(app, &settings, &final_text).await
+        {
+            if corrected_text != final_text {
+                post_processed_text = Some(corrected_text.clone());
+                final_text = corrected_text;
+            }
+        }
+    }
+
     if post_process {
-        if let Some(processed_text) = post_process_transcription(&settings, &final_text).await {
+        if let Some(processed_text) = post_process_transcription(app, &settings, &final_text).await
+        {
             post_processed_text = Some(processed_text.clone());
             final_text = processed_text;
 
@@ -968,8 +1017,8 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 #[cfg(test)]
 mod tests {
     use super::{
-        complete_unless_cancelled, is_blank_transcription, should_use_streaming_overlay,
-        strip_think_block, ACTION_MAP,
+        complete_unless_cancelled, is_blank_transcription, render_prompt_template,
+        should_use_streaming_overlay, strip_think_block, ACTION_MAP,
     };
     use crate::settings::OverlayStyle;
     use std::future;
@@ -981,6 +1030,17 @@ mod tests {
     #[test]
     fn clipboard_history_binding_has_an_action() {
         assert!(ACTION_MAP.contains_key(crate::settings::CLIPBOARD_HISTORY_BINDING_ID));
+    }
+
+    #[test]
+    fn custom_words_placeholder_is_rendered_as_json() {
+        let rendered = render_prompt_template(
+            "words=${custom_words}\ntext=${output}",
+            "hello",
+            &[" Inputia ".to_string(), "罗泽群".to_string()],
+        );
+
+        assert_eq!(rendered, "words=[\"Inputia\",\"罗泽群\"]\ntext=hello");
     }
 
     #[test]

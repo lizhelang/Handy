@@ -116,6 +116,7 @@ impl MigrationLock {
         Ok(Self { path })
     }
 
+    #[cfg(test)]
     pub fn path(&self) -> &Path {
         &self.path
     }

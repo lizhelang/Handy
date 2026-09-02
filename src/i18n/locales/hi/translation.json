@@ -154,7 +154,8 @@
       "translation": "अंग्रेज़ी में अनुवाद कर सकता है",
       "translate": "अनुवाद करें",
       "streaming": "बोलते समय लाइव ट्रांसक्रिप्शन दिखाता है"
-    }
+    },
+    "compatibilityCorrection": "Compatibility correction"
   },
   "settings": {
     "modelSettings": {
@@ -436,6 +437,20 @@
           "placeholderWithOptions": "मॉडल खोजें या चुनें",
           "placeholderNoOptions": "मॉडल का नाम लिखें",
           "refreshModels": "मॉडल रीफ़्रेश करें"
+        },
+        "local": {
+          "providerLabel": "Local",
+          "loadError": "Failed to load local post-processing models.",
+          "selectError": "Failed to select local post-processing model.",
+          "model": {
+            "title": "Local Model",
+            "description": "Handy uses this self-managed Qwen GGUF model to correct custom words after transcription.",
+            "loading": "Loading local models...",
+            "noModels": "No local models found",
+            "rescan": "Rescan local models",
+            "active": "Active",
+            "missing": "Local Qwen model not found. Make sure Handy's custom-word post-processing model is installed."
+          }
         }
       },
       "prompts": {

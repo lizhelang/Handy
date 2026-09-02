@@ -9,6 +9,7 @@ type PostProcessProviderState = {
   selectedProviderId: string;
   selectedProvider: PostProcessProvider | undefined;
   isCustomProvider: boolean;
+  isLocalProvider: boolean;
   isAppleProvider: boolean;
   appleIntelligenceUnavailable: boolean;
   baseUrl: string;
@@ -29,6 +30,7 @@ type PostProcessProviderState = {
 };
 
 const APPLE_PROVIDER_ID = "apple_intelligence";
+const LOCAL_PROVIDER_ID = "local";
 
 export const usePostProcessProviderState = (): PostProcessProviderState => {
   const {
@@ -96,7 +98,10 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
       // a previous provider/base_url can persist and silently 404 at runtime.
       // Skip when the provider isn't configured yet (no API key / empty base URL)
       // to avoid unnecessary backend errors.
-      if (providerId !== APPLE_PROVIDER_ID) {
+      if (
+        providerId !== APPLE_PROVIDER_ID &&
+        providerId !== LOCAL_PROVIDER_ID
+      ) {
         const provider = providers.find((p) => p.id === providerId);
         const apiKey = settings?.post_process_api_keys?.[providerId] ?? "";
         const hasBaseUrl = (provider?.base_url ?? "").trim() !== "";
@@ -164,7 +169,7 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
   );
 
   const handleRefreshModels = useCallback(() => {
-    if (isAppleProvider) return;
+    if (isAppleProvider || selectedProviderId === LOCAL_PROVIDER_ID) return;
     void fetchPostProcessModels(selectedProviderId);
   }, [fetchPostProcessModels, isAppleProvider, selectedProviderId]);
 
@@ -206,6 +211,7 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
   );
 
   const isCustomProvider = selectedProvider?.id === "custom";
+  const isLocalProvider = selectedProvider?.id === LOCAL_PROVIDER_ID;
 
   // No automatic fetching - user must click refresh button
 
@@ -214,6 +220,7 @@ export const usePostProcessProviderState = (): PostProcessProviderState => {
     selectedProviderId,
     selectedProvider,
     isCustomProvider,
+    isLocalProvider,
     isAppleProvider,
     appleIntelligenceUnavailable,
     baseUrl,

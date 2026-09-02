@@ -43,19 +43,24 @@ def acc_from_wer(wer):
 # badge / onboarding subset — independent of rank, so a model can rank high
 # without carrying the recommended tag.
 CURATION = {
-    "parakeet-unified-en-0.6b":        {"rank": 1, "rec": True, "desc": "Fast, accurate live English transcription"},
-    "nemotron-3.5-asr-streaming-0.6b": {"rank": 2, "rec": True, "desc": "Live multilingual transcription across 28 languages"},
-    "canary-180m-flash":               {"rank": 3, "rec": True, "desc": "Tiny and instant, runs well on any hardware"},
-    "cohere-transcribe-03-2026":       {"rank": 4, "rec": True, "desc": "Highest accuracy, 14 languages, slower"},
-    "whisper-medium":                  {"rank": 5, "rec": True, "desc": "Broadest language, but may run a bit slow"},
+    "Qwen3-ASR-1.7B":                  {"rank": 1, "rec": True, "desc": "Accurate multilingual transcription with terminology context"},
+    "whisper-large-v3":                {"rank": 2, "rec": True, "desc": "Accurate multilingual transcription with translation support"},
+    "parakeet-unified-en-0.6b":        {"rank": 3, "desc": "Fast, accurate live English transcription"},
+    "nemotron-3.5-asr-streaming-0.6b": {"rank": 4, "desc": "Live multilingual transcription across 28 languages"},
+    "canary-180m-flash":               {"rank": 5, "desc": "Tiny and instant, runs well on any hardware"},
+    "cohere-transcribe-03-2026":       {"rank": 6, "desc": "Highest accuracy, 14 languages, slower"},
+    "whisper-medium":                  {"rank": 7, "desc": "Broadest language, but may run a bit slow"},
     # ranked (sorted high) but NOT tagged recommended
     "Voxtral-Mini-4B-Realtime-2602":   {"rank": 6, "desc": "Live multilingual, excellent on powerful machines"},
     "parakeet-tdt-0.6b-v3":            {"rank": 7, "desc": "Fast and accurate. Supports 25 European languages"},
     "parakeet-tdt-0.6b-v2":            {"rank": 8, "desc": "English only. The best model for English speakers"},
     "Qwen3-ASR-0.6B":                  {"rank": 9, "desc": "Excellent multilingual model"},
-    "Fun-ASR-MLT-Nano-2512":           {"rank": 10, "desc": "A tiny multilingual model"},
     # description-only (unranked, not recommended) — carried over from the legacy .bin entry
     "Breeze-ASR-25":                   {"desc": "Optimized for Taiwanese Mandarin. Code-switching support."},
+    # These models stay hidden until their Handy integration passes the same
+    # runtime and data-safety gates as the supported catalog families.
+    "Fun-ASR-MLT-Nano-2512":           {"hidden": True},
+    "Fun-ASR-Nano-2512":               {"hidden": True},
     # Sortformer emits speaker segments only; Handy's catalog is for models
     # that produce transcription text.
     "diar_streaming_sortformer_4spk-v2.1": {"hidden": True},
@@ -70,6 +75,7 @@ OVERRIDES = {
 ARCH = ["whisper","moonshine-streaming","moonshine","parakeet","canary-qwen","canary","voxtral",
         "granite-speech","granite","qwen3","gigaam","sensevoice","cohere","fun-asr","nemotron","medasr",
         "moss","sortformer"]
+EXCLUDED_FAMILIES = {"fun"}
 ACR = {"asr":"ASR","ctc":"CTC","rnnt":"RNNT","tdt":"TDT","nar":"NAR","mlt":"MLT"}
 SCALAR = {0:("<B",1),1:("<b",1),2:("<H",2),3:("<h",2),4:("<I",4),5:("<i",4),
           6:("<f",4),7:("<?",1),10:("<Q",8),11:("<q",8),12:("<d",8)}
@@ -259,7 +265,42 @@ def build(repo):
         "recommended_rank": cur.get("rank"),          # editorial sort position (independent)
     }
 
+def apply_curation(models):
+    curated = []
+    for model in models:
+        cur = CURATION.get(model["slug"], {})
+        if model.get("family") in EXCLUDED_FAMILIES or cur.get("hidden"):
+            continue
+        if cur.get("desc"):
+            model["description"] = cur["desc"]
+        model["recommended"] = bool(cur.get("rec"))
+        model["recommended_rank"] = cur.get("rank")
+        curated.append(model)
+    curated.sort(key=lambda m: (not m["recommended"], m["recommended_rank"] or 1e9,
+                                m["family"], -(m["speed_score"] or 0), m["slug"]))
+    return curated
+
+def render_catalog(catalog):
+    text = json.dumps(catalog, indent=2, ensure_ascii=False)
+    text = re.sub(r'"languages": \[(.*?)\]',
+                  lambda m: '"languages": [' + ", ".join(re.findall(r'"[^"]*"', m.group(1))) + ']',
+                  text, flags=re.S)
+    text = re.sub(r'\{\s+("filename":.*?"sha256": "[0-9a-f]{64}")\s+\}',
+                  lambda m: "{" + re.sub(r",\s+", ", ", m.group(1)) + "}",
+                  text, flags=re.S)
+    return text
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--curate-existing":
+        out = sys.argv[2]
+        with open(out) as source:
+            catalog = json.load(source)
+        catalog["models"] = apply_curation(catalog["models"])
+        with open(out, "w") as target:
+            target.write(render_catalog(catalog))
+        print(f"curated {out}: {len(catalog['models'])} models", file=sys.stderr)
+        return
+
     repos = [m.id for m in api.list_models(author=ORG, limit=500)]
     models = []
     failures = []
@@ -268,31 +309,25 @@ def main():
         for f in as_completed(futs):
             try:
                 m = f.result()
-                if not CURATION.get(m["slug"], {}).get("hidden"): models.append(m)
+                if (
+                    m["family"] not in EXCLUDED_FAMILIES
+                    and not CURATION.get(m["slug"], {}).get("hidden")
+                ):
+                    models.append(m)
             except Exception as e:
                 failures.append((futs[f], e))
                 print(f"!! {futs[f]}: {e}", file=sys.stderr)
     if failures:
         print(f"catalog generation failed for {len(failures)} repo(s)", file=sys.stderr)
         raise SystemExit(1)
-    models.sort(key=lambda m: (not m["recommended"], m["recommended_rank"] or 1e9,
-                               m["family"], -(m["speed_score"] or 0), m["slug"]))
+    models = apply_curation(models)
     catalog = {
         "catalog_version": CATALOG_VERSION,
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         "mirrors": MIRRORS,
         "models": models,
     }
-    text = json.dumps(catalog, indent=2, ensure_ascii=False)
-    # print each `languages` array on a single line for readability
-    text = re.sub(r'"languages": \[(.*?)\]',
-                  lambda m: '"languages": [' + ", ".join(re.findall(r'"[^"]*"', m.group(1))) + ']',
-                  text, flags=re.S)
-    # one line per `files[]` entry: a file is one diff line, so schema additions
-    # and hash changes don't cascade into per-key comma churn
-    text = re.sub(r'\{\s+("filename":.*?"sha256": "[0-9a-f]{64}")\s+\}',
-                  lambda m: "{" + re.sub(r",\s+", ", ", m.group(1)) + "}",
-                  text, flags=re.S)
+    text = render_catalog(catalog)
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "catalog.json")
     open(out, "w").write(text)
     print(f"wrote {out}: {len(models)} models, {os.path.getsize(out)/1024:.1f} KB", file=sys.stderr)

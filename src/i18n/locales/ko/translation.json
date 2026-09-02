@@ -154,7 +154,8 @@
       "translate": "영어로 번역",
       "streaming": "말하는 동안 실시간으로 음성 인식 결과를 표시"
     },
-    "legacy": "레거시"
+    "legacy": "레거시",
+    "compatibilityCorrection": "Compatibility correction"
   },
   "settings": {
     "modelSettings": {
@@ -436,6 +437,20 @@
           "placeholderWithOptions": "모델 검색 또는 선택",
           "placeholderNoOptions": "모델 이름 입력",
           "refreshModels": "모델 새로고침"
+        },
+        "local": {
+          "providerLabel": "Local",
+          "loadError": "Failed to load local post-processing models.",
+          "selectError": "Failed to select local post-processing model.",
+          "model": {
+            "title": "Local Model",
+            "description": "Handy uses this self-managed Qwen GGUF model to correct custom words after transcription.",
+            "loading": "Loading local models...",
+            "noModels": "No local models found",
+            "rescan": "Rescan local models",
+            "active": "Active",
+            "missing": "Local Qwen model not found. Make sure Handy's custom-word post-processing model is installed."
+          }
         }
       },
       "prompts": {

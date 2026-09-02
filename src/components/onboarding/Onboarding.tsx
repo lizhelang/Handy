@@ -33,9 +33,9 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
 
   // Curate the download list: legacy (.bin/ONNX) downloads are deprecated and
   // never shown here (they still appear in the compatible section if already on
-  // disk). The catalog arrives rank-sorted, so the first two recommended models
-  // are the featured picks — currently Parakeet Unified (English) and Nemotron
-  // Streaming (multilingual). Everything else hides behind "Show all".
+  // disk). The catalog arrives rank-sorted, so the product-whitelisted Qwen3-ASR
+  // 1.7B and Whisper Large v3 models are the featured picks. Everything else
+  // hides behind "Show all".
   const { downloadable, topPicks, otherRecommended, rest } = useMemo(() => {
     const downloadable = models.filter(
       (m: ModelInfo) => !m.is_downloaded && !isLegacySource(m),

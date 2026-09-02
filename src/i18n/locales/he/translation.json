@@ -154,7 +154,8 @@
       "translate": "תרגם לאנגלית",
       "streaming": "מציג תמלול חי תוך כדי דיבור"
     },
-    "legacy": "מדור קודם"
+    "legacy": "מדור קודם",
+    "compatibilityCorrection": "Compatibility correction"
   },
   "settings": {
     "modelSettings": {
@@ -436,6 +437,20 @@
           "placeholderWithOptions": "חפש או בחר מודל",
           "placeholderNoOptions": "הקלד שם מודל",
           "refreshModels": "רענן מודלים"
+        },
+        "local": {
+          "providerLabel": "Local",
+          "loadError": "Failed to load local post-processing models.",
+          "selectError": "Failed to select local post-processing model.",
+          "model": {
+            "title": "Local Model",
+            "description": "Handy uses this self-managed Qwen GGUF model to correct custom words after transcription.",
+            "loading": "Loading local models...",
+            "noModels": "No local models found",
+            "rescan": "Rescan local models",
+            "active": "Active",
+            "missing": "Local Qwen model not found. Make sure Handy's custom-word post-processing model is installed."
+          }
         }
       },
       "prompts": {

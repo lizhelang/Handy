@@ -402,13 +402,6 @@ fn create_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
 }
 
 #[cfg(target_os = "macos")]
-pub fn create_clipboard_overlay(app_handle: &AppHandle) {
-    run_clipboard_overlay_on_main_thread(app_handle, "create", |app_handle| {
-        create_clipboard_overlay_on_main_thread(&app_handle);
-    });
-}
-
-#[cfg(target_os = "macos")]
 pub fn show_clipboard_overlay(app_handle: &AppHandle) {
     run_clipboard_overlay_on_main_thread(app_handle, "show", |app_handle| {
         show_clipboard_overlay_on_main_thread(&app_handle);
@@ -544,10 +537,10 @@ pub fn is_clipboard_overlay_visible(app_handle: &AppHandle) -> bool {
 #[cfg(target_os = "macos")]
 pub fn toggle_clipboard_overlay(app_handle: &AppHandle) {
     run_clipboard_overlay_on_main_thread(app_handle, "toggle", |app_handle| {
-        if is_clipboard_overlay_visible_on_main_thread(&app_handle) {
-            hide_clipboard_overlay_on_main_thread(&app_handle);
+        if is_clipboard_overlay_visible(&app_handle) {
+            hide_clipboard_overlay(&app_handle);
         } else {
-            show_clipboard_overlay_on_main_thread(&app_handle);
+            show_clipboard_overlay(&app_handle);
         }
     });
 }

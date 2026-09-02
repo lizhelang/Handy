@@ -528,6 +528,49 @@ pub struct ModelManager {
     is_rescanning: Arc<AtomicBool>,
 }
 
+fn safe_unpack_tar_gz(archive_path: &Path, destination: &Path) -> Result<()> {
+    let tar_gz = File::open(archive_path)?;
+    let tar = GzDecoder::new(tar_gz);
+    let mut archive = Archive::new(tar);
+
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let entry_path = entry.path()?.into_owned();
+        validate_archive_entry_path(&entry_path)?;
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_symlink() || entry_type.is_hard_link() {
+            return Err(anyhow::anyhow!(
+                "model archive links are not permitted: {}",
+                entry_path.display()
+            ));
+        }
+        if !entry.unpack_in(destination)? {
+            return Err(anyhow::anyhow!(
+                "model archive entry escaped extraction directory: {}",
+                entry_path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_archive_entry_path(path: &Path) -> Result<()> {
+    if path.as_os_str().is_empty() {
+        return Err(anyhow::anyhow!("model archive contains an empty path"));
+    }
+    for component in path.components() {
+        if matches!(
+            component,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        ) {
+            return Err(anyhow::anyhow!("model archive contains an unsafe path"));
+        }
+    }
+    Ok(())
+}
+
 impl ModelManager {
     pub fn new(app_handle: &AppHandle) -> Result<Self> {
         // Create models directory in app data
@@ -1162,7 +1205,14 @@ impl ModelManager {
     pub fn get_available_models(&self) -> Vec<ModelInfo> {
         let mut list: Vec<ModelInfo> = {
             let models = self.available_models.lock().unwrap();
-            models.values().cloned().collect()
+            models
+                .values()
+                .cloned()
+                .map(|mut model| {
+                    model.is_recommended = crate::catalog::is_product_recommended(&model.id);
+                    model
+                })
+                .collect()
         };
         // Stable, reasonable order: catalog editorial rank first (lower = higher
         // priority), then any other recommended model, then by accuracy, speed,
@@ -1918,12 +1968,11 @@ impl ModelManager {
         // whole download. Each attempt resumes from the `.sync.part`
         // committed-offset marker, so a retry only re-fetches what the failed
         // attempt hadn't finished.
-        // Start moderately parallel for normal-network throughput, then stay
-        // sequential after the first failure. Eight simultaneous connections
-        // were all reset on an affected network in #1579, while one stream
-        // succeeded; four is a less aggressive fast path, and every retry uses
-        // the known-compatible request pattern.
-        const ATTEMPT_STREAMS: [usize; 4] = [4, 1, 1, 1];
+        // Stay sequential on every attempt. Earlier parallel chunk transfers
+        // could report 100% while leaving an invalid `.sync.part`; retries,
+        // watchdog cancellation and mirror fallback retain resilience without
+        // reintroducing that corruption mode.
+        const ATTEMPT_STREAMS: [usize; 4] = [1, 1, 1, 1];
         let mut attempt: usize = 1;
         let hf_error = loop {
             let stream_count = ATTEMPT_STREAMS[attempt - 1];
@@ -2272,13 +2321,8 @@ impl ModelManager {
             // Create temporary extraction directory
             fs::create_dir_all(&temp_extract_dir)?;
 
-            // Open the downloaded tar.gz file
-            let tar_gz = File::open(&partial_path)?;
-            let tar = GzDecoder::new(tar_gz);
-            let mut archive = Archive::new(tar);
-
             // Extract to the temporary directory first
-            archive.unpack(&temp_extract_dir).map_err(|e| {
+            safe_unpack_tar_gz(&partial_path, &temp_extract_dir).map_err(|e| {
                 let error_msg = format!("Failed to extract archive: {}", e);
                 // Clean up failed extraction
                 let _ = fs::remove_dir_all(&temp_extract_dir);
@@ -2592,8 +2636,50 @@ impl ModelManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flate2::{write::GzEncoder, Compression};
     use std::io::Write;
     use tempfile::TempDir;
+
+    #[test]
+    fn compressed_model_archive_rejects_path_traversal() {
+        let temp = TempDir::new().unwrap();
+        let archive_path = temp.path().join("unsafe.tar.gz");
+        write_raw_tar_gz_with_entry(&archive_path, "../outside.txt", b"blocked");
+        let destination = temp.path().join("destination");
+        fs::create_dir_all(&destination).unwrap();
+
+        let error = safe_unpack_tar_gz(&archive_path, &destination).unwrap_err();
+
+        assert!(error.to_string().contains("unsafe path"));
+        assert!(!temp.path().join("outside.txt").exists());
+    }
+
+    fn write_raw_tar_gz_with_entry(path: &Path, name: &str, contents: &[u8]) {
+        let mut header = [0u8; 512];
+        header[..name.len()].copy_from_slice(name.as_bytes());
+        header[100..108].copy_from_slice(b"0000644\0");
+        header[108..116].copy_from_slice(b"0000000\0");
+        header[116..124].copy_from_slice(b"0000000\0");
+        let size = format!("{:011o}\0", contents.len());
+        header[124..136].copy_from_slice(size.as_bytes());
+        header[136..148].copy_from_slice(b"00000000000\0");
+        header[148..156].fill(b' ');
+        header[156] = b'0';
+        header[257..263].copy_from_slice(b"ustar\0");
+        header[263..265].copy_from_slice(b"00");
+        let checksum: u32 = header.iter().map(|byte| *byte as u32).sum();
+        let checksum = format!("{:06o}\0 ", checksum);
+        header[148..156].copy_from_slice(checksum.as_bytes());
+
+        let file = File::create(path).unwrap();
+        let mut encoder = GzEncoder::new(file, Compression::default());
+        encoder.write_all(&header).unwrap();
+        encoder.write_all(contents).unwrap();
+        let padding = (512 - contents.len() % 512) % 512;
+        encoder.write_all(&vec![0u8; padding]).unwrap();
+        encoder.write_all(&[0u8; 1024]).unwrap();
+        encoder.finish().unwrap();
+    }
 
     #[test]
     fn test_effective_language_accepts_chinese_script_intent_for_zh_capability() {

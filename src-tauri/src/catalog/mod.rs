@@ -211,6 +211,14 @@ pub fn rank_of(model_id: &str) -> u32 {
     RANK_BY_ID.get(model_id).copied().unwrap_or(u32::MAX)
 }
 
+/// Product-level recommendation whitelist. Locally discovered and legacy
+/// entries must not acquire a badge from stale mutable model metadata.
+pub fn is_product_recommended(model_id: &str) -> bool {
+    CATALOG
+        .iter()
+        .any(|descriptor| descriptor.id == model_id && descriptor.recommended)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,5 +290,25 @@ mod tests {
             "catalog architecture(s) missing from KNOWN_ARCHES: {:?}",
             missing
         );
+    }
+
+    #[test]
+    fn product_recommendations_are_qwen_and_whisper_only() {
+        let recommended: BTreeSet<&str> = CATALOG
+            .iter()
+            .filter(|descriptor| descriptor.recommended)
+            .map(|descriptor| descriptor.id.as_str())
+            .collect();
+
+        assert_eq!(
+            recommended,
+            BTreeSet::from([
+                "handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf",
+                "handy-computer/whisper-large-v3-gguf/whisper-large-v3-Q5_K_M.gguf",
+            ])
+        );
+        assert!(CATALOG
+            .iter()
+            .all(|descriptor| descriptor.caps.architecture.as_deref() != Some("funasr_nano")));
     }
 }
