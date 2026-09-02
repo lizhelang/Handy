@@ -29,6 +29,8 @@ dist-ssr
 .claude/
 
 /target/
+crates/**/target/
+spikes/**/target/
 recording_*
 .crush/
 
