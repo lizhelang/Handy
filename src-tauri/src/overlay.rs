@@ -4,13 +4,18 @@ use crate::settings::{OverlayPosition, OverlayStyle};
 use log::debug;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
+
+#[cfg(not(target_os = "macos"))]
+use tauri::WebviewWindowBuilder;
 
 #[cfg(target_os = "macos")]
 use tauri::WebviewUrl;
 
 #[cfg(target_os = "macos")]
-use tauri_nspanel::{tauri_panel, CollectionBehavior, PanelBuilder, PanelLevel, StyleMask};
+use tauri_nspanel::{
+    tauri_panel, CollectionBehavior, ManagerExt, PanelBuilder, PanelLevel, StyleMask,
+};
 
 #[cfg(target_os = "linux")]
 use crate::utils;
@@ -23,6 +28,12 @@ tauri_panel! {
     panel!(RecordingOverlayPanel {
         config: {
             can_become_key_window: false,
+            is_floating_panel: true
+        }
+    })
+    panel!(ClipboardOverlayPanel {
+        config: {
+            can_become_key_window: true,
             is_floating_panel: true
         }
     })
@@ -46,6 +57,8 @@ const OVERLAY_STREAM_WIDTH: f64 = 400.0;
 const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 const CLIPBOARD_OVERLAY_WIDTH: f64 = 400.0;
 const CLIPBOARD_OVERLAY_HEIGHT: f64 = 550.0;
+#[cfg(target_os = "macos")]
+const CLIPBOARD_OVERLAY_CORNER_RADIUS: f64 = 22.0;
 
 #[cfg(target_os = "macos")]
 static CLIPBOARD_OVERLAY_PINNED: AtomicBool = AtomicBool::new(false);
@@ -301,6 +314,24 @@ fn calculate_clipboard_overlay_position(app_handle: &AppHandle) -> Option<(f64, 
 }
 
 #[cfg(target_os = "macos")]
+fn clipboard_overlay_collection_behavior() -> CollectionBehavior {
+    CollectionBehavior::new()
+        .can_join_all_spaces()
+        .full_screen_auxiliary()
+        .transient()
+        .ignores_cycle()
+}
+
+#[cfg(target_os = "macos")]
+fn clipboard_overlay_level(pinned: bool) -> PanelLevel {
+    if pinned {
+        PanelLevel::Status
+    } else {
+        PanelLevel::Floating
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn run_clipboard_overlay_on_main_thread<F>(
     app_handle: &AppHandle,
     operation: &'static str,
@@ -368,36 +399,53 @@ fn create_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
         return;
     }
 
-    let clipboard_overlay_url = tauri::WebviewUrl::App("/src/overlay/clipboard/index.html".into());
-
+    let webview_data_dir = crate::portable::data_dir().map(|dir| dir.join("webview"));
     let mut builder =
-        WebviewWindowBuilder::new(app_handle, "clipboard_overlay", clipboard_overlay_url)
+        PanelBuilder::<_, ClipboardOverlayPanel>::new(app_handle, "clipboard_overlay")
+            .url(WebviewUrl::App("/src/overlay/clipboard/index.html".into()))
             .title("Clipboard")
-            .resizable(false)
-            .inner_size(CLIPBOARD_OVERLAY_WIDTH, CLIPBOARD_OVERLAY_HEIGHT)
-            .shadow(true)
-            .maximizable(false)
-            .minimizable(false)
-            .closable(true)
-            .accept_first_mouse(true)
-            .decorations(true)
-            .always_on_top(true)
-            .transparent(false)
-            .visible(true);
+            .level(clipboard_overlay_level(false))
+            .size(tauri::Size::Logical(tauri::LogicalSize {
+                width: CLIPBOARD_OVERLAY_WIDTH,
+                height: CLIPBOARD_OVERLAY_HEIGHT,
+            }))
+            .has_shadow(true)
+            .transparent(true)
+            .corner_radius(CLIPBOARD_OVERLAY_CORNER_RADIUS)
+            .hides_on_deactivate(false)
+            .becomes_key_only_if_needed(false)
+            .style_mask(StyleMask::empty().borderless().full_size_content_view())
+            .collection_behavior(clipboard_overlay_collection_behavior())
+            .with_window(move |window| {
+                let window = window
+                    .resizable(false)
+                    .maximizable(false)
+                    .minimizable(false)
+                    .closable(false)
+                    .accept_first_mouse(true)
+                    .decorations(false)
+                    .always_on_top(false)
+                    .skip_taskbar(true)
+                    .transparent(true)
+                    .visible(false)
+                    .focused(false);
+
+                match webview_data_dir {
+                    Some(path) => window.data_directory(path),
+                    None => window,
+                }
+            });
 
     if let Some((x, y)) = calculate_clipboard_overlay_position(app_handle) {
-        builder = builder.position(x, y);
-    } else {
-        builder = builder.center();
-    }
-
-    if let Some(data_dir) = crate::portable::data_dir() {
-        builder = builder.data_directory(data_dir.join("webview"));
+        builder = builder.position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
     }
 
     match builder.build() {
-        Ok(_) => debug!("Clipboard overlay window created successfully"),
-        Err(e) => debug!("Failed to create clipboard overlay window: {}", e),
+        Ok(panel) => {
+            panel.hide();
+            debug!("Clipboard overlay panel created successfully (hidden)");
+        }
+        Err(e) => debug!("Failed to create clipboard overlay panel: {}", e),
     }
 }
 
@@ -421,22 +469,30 @@ fn show_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
             }
         }
 
-        match overlay_window.show() {
-            Ok(_) => {
-                #[cfg(debug_assertions)]
-                overlay_window.open_devtools();
-
-                if let Err(err) = overlay_window.set_focus() {
-                    debug!("Failed to focus clipboard overlay window: {err}");
-                }
-                if let Err(err) = overlay_window.set_always_on_top(true) {
-                    debug!("Failed to update clipboard overlay z-order: {err}");
-                }
-                CLIPBOARD_OVERLAY_FOCUSED.store(true, Ordering::Relaxed);
-                debug!("Clipboard overlay window shown");
-            }
-            Err(err) => debug!("Failed to show clipboard overlay window: {err}"),
+        if let Err(err) = overlay_window.set_visible_on_all_workspaces(true) {
+            debug!("Failed to keep clipboard overlay on all workspaces: {err}");
         }
+
+        if let Ok(panel) = app_handle.get_webview_panel("clipboard_overlay") {
+            panel.set_level(
+                clipboard_overlay_level(CLIPBOARD_OVERLAY_PINNED.load(Ordering::Relaxed)).into(),
+            );
+            panel.set_collection_behavior(clipboard_overlay_collection_behavior().value());
+            panel.show_and_make_key();
+        } else if let Err(err) = overlay_window.show() {
+            debug!("Failed to show clipboard overlay window: {err}");
+            return;
+        }
+
+        #[cfg(debug_assertions)]
+        overlay_window.open_devtools();
+
+        if let Err(err) = overlay_window.set_focus() {
+            debug!("Failed to focus clipboard overlay window: {err}");
+        }
+
+        CLIPBOARD_OVERLAY_FOCUSED.store(true, Ordering::Relaxed);
+        debug!("Clipboard overlay window shown");
     } else {
         debug!("Failed to find clipboard overlay window");
     }
@@ -458,7 +514,9 @@ pub fn show_clipboard_overlay(app_handle: &AppHandle) {
 
 #[cfg(target_os = "macos")]
 fn hide_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
-    if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {
+    if let Ok(panel) = app_handle.get_webview_panel("clipboard_overlay") {
+        panel.hide();
+    } else if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {
         if let Err(err) = overlay_window.hide() {
             debug!("Failed to hide clipboard overlay window: {err}");
         }
@@ -484,10 +542,15 @@ pub fn hide_clipboard_overlay(app_handle: &AppHandle) {
 }
 
 #[cfg(target_os = "macos")]
-fn set_clipboard_overlay_pinned_on_main_thread(app_handle: &AppHandle, _pinned: bool) {
+fn set_clipboard_overlay_pinned_on_main_thread(app_handle: &AppHandle, pinned: bool) {
+    if let Ok(panel) = app_handle.get_webview_panel("clipboard_overlay") {
+        panel.set_level(clipboard_overlay_level(pinned).into());
+        panel.set_collection_behavior(clipboard_overlay_collection_behavior().value());
+    }
+
     if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {
-        if let Err(err) = overlay_window.set_always_on_top(true) {
-            debug!("Failed to update clipboard overlay pinned state: {err}");
+        if let Err(err) = overlay_window.set_visible_on_all_workspaces(true) {
+            debug!("Failed to update clipboard overlay workspace visibility: {err}");
         }
     }
 }
@@ -511,6 +574,10 @@ pub fn set_clipboard_overlay_pinned(app_handle: &AppHandle, pinned: bool) {
 
 #[cfg(target_os = "macos")]
 fn is_clipboard_overlay_visible_on_main_thread(app_handle: &AppHandle) -> bool {
+    if let Ok(panel) = app_handle.get_webview_panel("clipboard_overlay") {
+        return panel.is_visible();
+    }
+
     app_handle
         .get_webview_window("clipboard_overlay")
         .and_then(|window| window.is_visible().ok())
@@ -1071,6 +1138,28 @@ mod tests {
         assert!(is_mouse_within_monitor((-1, 1239), &position, &size));
         assert!(!is_mouse_within_monitor((0, 0), &position, &size));
         assert!(!is_mouse_within_monitor((-1, 1240), &position, &size));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn clipboard_panel_uses_compact_rounded_geometry() {
+        assert_eq!(CLIPBOARD_OVERLAY_WIDTH, 400.0);
+        assert_eq!(CLIPBOARD_OVERLAY_HEIGHT, 550.0);
+        assert_eq!(CLIPBOARD_OVERLAY_CORNER_RADIUS, 22.0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn clipboard_panel_follows_spaces_without_persistent_move_behavior() {
+        use tauri_nspanel::objc2_app_kit::NSWindowCollectionBehavior;
+
+        let behavior = clipboard_overlay_collection_behavior().value();
+
+        assert!(behavior.contains(NSWindowCollectionBehavior::CanJoinAllSpaces));
+        assert!(behavior.contains(NSWindowCollectionBehavior::FullScreenAuxiliary));
+        assert!(behavior.contains(NSWindowCollectionBehavior::Transient));
+        assert!(behavior.contains(NSWindowCollectionBehavior::IgnoresCycle));
+        assert!(!behavior.contains(NSWindowCollectionBehavior::MoveToActiveSpace));
     }
 
     #[cfg(target_os = "windows")]

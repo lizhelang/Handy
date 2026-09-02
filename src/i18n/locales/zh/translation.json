@@ -716,7 +716,16 @@
         "pinToTop": "置顶窗口",
         "caseSensitive": "区分大小写",
         "wholeWord": "全词匹配",
-        "unlimited": "无限制"
+        "unlimited": "无限制",
+        "keyShiftEnter": "Shift+Enter",
+        "keyDelete": "Delete",
+        "keySpace": "Space",
+        "helpSearch": "聚焦搜索",
+        "helpQuickSelect": "复制第 1-5 项",
+        "helpPlainTextCopy": "以纯文本复制",
+        "helpPin": "置顶所选项目",
+        "helpPreview": "按住预览所选项目",
+        "fileCount": "共 {{count}} 项"
       }
     }
   },

@@ -28,7 +28,12 @@ import type {
   ClipboardStats,
   ClipboardContentTypeFilter,
 } from "@/lib/types/clipboard";
-import { getClipboardItemLabel } from "@/components/clipboard/utils";
+import {
+  getClipboardFilePaths,
+  getClipboardItemBodyText,
+  getClipboardItemLabel,
+  getClipboardTypeLabel,
+} from "@/components/clipboard/utils";
 import "./ClipboardOverlay.css";
 
 const APP_NAME = "HANDY";
@@ -41,6 +46,16 @@ const DEFAULT_LIMITED_CLIPBOARD_RECORDS = 500;
 
 const cn = (...classes: Array<string | false | null | undefined>) =>
   classes.filter(Boolean).join(" ");
+
+const isEditableKeyboardTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) return false;
+
+  if (target.isContentEditable) return true;
+
+  return Boolean(
+    target.closest("input, textarea, select, [contenteditable='true']"),
+  );
+};
 
 const PinToTopIcon: React.FC = () => (
   <svg viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
@@ -182,6 +197,8 @@ const ClipboardOverlay: React.FC = () => {
   const [wholeWord, setWholeWord] = useState(false);
   const [windowPinned, setWindowPinned] = useState(false);
   const [activePanel, setActivePanel] = useState<OverlayPanel>("list");
+  const [previewHeld, setPreviewHeld] = useState(false);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const copyInFlightRef = useRef<Set<number>>(new Set());
@@ -218,7 +235,7 @@ const ClipboardOverlay: React.FC = () => {
   ]);
 
   useEffect(() => {
-    searchRef.current?.focus();
+    overlayRef.current?.focus();
   }, []);
 
   const filteredItems = useMemo(() => {
@@ -288,9 +305,10 @@ const ClipboardOverlay: React.FC = () => {
   }, [windowPinned]);
 
   const handleSetPanel = useCallback((panel: OverlayPanel) => {
+    setPreviewHeld(false);
     setActivePanel(panel);
     if (panel === "list") {
-      requestAnimationFrame(() => searchRef.current?.focus());
+      requestAnimationFrame(() => overlayRef.current?.focus());
     }
   }, []);
 
@@ -363,11 +381,47 @@ const ClipboardOverlay: React.FC = () => {
     [handleCopy, hideAfterConfirm],
   );
 
+  const handleConfirmItemAsPlainText = useCallback(
+    (item: ClipboardItem) => {
+      if (item.content_type === "image") {
+        handleConfirmItem(item);
+        return;
+      }
+
+      const text =
+        item.content_type === "file"
+          ? getClipboardFilePaths(item).join("\n")
+          : getClipboardItemBodyText(item);
+
+      if (!text) {
+        handleConfirmItem(item);
+        return;
+      }
+
+      setSelectedItemId(item.id);
+      showCopyFeedback(item.id);
+      void invoke("copy_clipboard_content_to_system", {
+        contentType: "text",
+        text,
+        imagePath: null,
+      }).catch(() => {
+        setCopiedId((currentId) => (currentId === item.id ? null : currentId));
+      });
+      hideAfterConfirm();
+    },
+    [handleConfirmItem, hideAfterConfirm, showCopyFeedback],
+  );
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      const isEditableTarget = isEditableKeyboardTarget(e.target);
+
       switch (e.key) {
         case "ArrowDown":
         case "j":
+          if (isEditableTarget) {
+            break;
+          }
           e.preventDefault();
           setSelectedItemId((currentId) => {
             if (filteredItems.length === 0) return null;
@@ -384,6 +438,9 @@ const ClipboardOverlay: React.FC = () => {
           break;
         case "ArrowUp":
         case "k":
+          if (isEditableTarget) {
+            break;
+          }
           e.preventDefault();
           setSelectedItemId((currentId) => {
             if (filteredItems.length === 0) return null;
@@ -398,17 +455,53 @@ const ClipboardOverlay: React.FC = () => {
             return filteredItems[nextIndex].id;
           });
           break;
+        case "/":
+          if (!e.metaKey && !e.ctrlKey && !e.altKey && !isEditableTarget) {
+            e.preventDefault();
+            searchRef.current?.focus();
+            searchRef.current?.select();
+          }
+          break;
+        case "1":
+        case "2":
+        case "3":
+        case "4":
+        case "5":
+          if (
+            activePanel === "list" &&
+            !e.metaKey &&
+            !e.ctrlKey &&
+            !e.altKey &&
+            !isEditableTarget
+          ) {
+            e.preventDefault();
+            const item = filteredItems[Number(e.key) - 1];
+            if (item) {
+              handleConfirmItem(item);
+            }
+          }
+          break;
         case "Enter":
+          if (activePanel !== "list" || isEditableTarget) {
+            break;
+          }
           e.preventDefault();
           if (selectedItem) {
-            handleConfirmItem(selectedItem);
+            if (e.shiftKey) {
+              handleConfirmItemAsPlainText(selectedItem);
+            } else {
+              handleConfirmItem(selectedItem);
+            }
           }
           break;
         case "f":
+        case "F":
           if (
+            activePanel === "list" &&
             !e.metaKey &&
             !e.ctrlKey &&
-            document.activeElement !== searchRef.current
+            !e.altKey &&
+            !isEditableTarget
           ) {
             e.preventDefault();
             if (selectedItem) {
@@ -416,11 +509,30 @@ const ClipboardOverlay: React.FC = () => {
             }
           }
           break;
-        case "d":
+        case "p":
+        case "P":
           if (
+            activePanel === "list" &&
             !e.metaKey &&
             !e.ctrlKey &&
-            document.activeElement !== searchRef.current
+            !e.altKey &&
+            !isEditableTarget
+          ) {
+            e.preventDefault();
+            if (selectedItem) {
+              togglePin(selectedItem.id);
+            }
+          }
+          break;
+        case "d":
+        case "D":
+        case "Delete":
+          if (
+            activePanel === "list" &&
+            !e.metaKey &&
+            !e.ctrlKey &&
+            !e.altKey &&
+            !isEditableTarget
           ) {
             e.preventDefault();
             if (selectedItem) {
@@ -428,8 +540,22 @@ const ClipboardOverlay: React.FC = () => {
             }
           }
           break;
+        case " ":
+          if (
+            activePanel === "list" &&
+            !e.metaKey &&
+            !e.ctrlKey &&
+            !e.altKey &&
+            !isEditableTarget &&
+            selectedItem
+          ) {
+            e.preventDefault();
+            setPreviewHeld(true);
+          }
+          break;
         case "Escape":
           e.preventDefault();
+          setPreviewHeld(false);
           if (activePanel !== "list") {
             handleSetPanel("list");
           } else if (searchQuery) {
@@ -444,6 +570,7 @@ const ClipboardOverlay: React.FC = () => {
       filteredItems,
       selectedItem,
       handleConfirmItem,
+      handleConfirmItemAsPlainText,
       toggleFavorite,
       togglePin,
       deleteItem,
@@ -456,6 +583,27 @@ const ClipboardOverlay: React.FC = () => {
     ],
   );
 
+  const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === " ") {
+      e.preventDefault();
+      setPreviewHeld(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const releasePreview = () => setPreviewHeld(false);
+    const releaseHiddenPreview = () => {
+      if (document.hidden) releasePreview();
+    };
+
+    window.addEventListener("blur", releasePreview);
+    document.addEventListener("visibilitychange", releaseHiddenPreview);
+    return () => {
+      window.removeEventListener("blur", releasePreview);
+      document.removeEventListener("visibilitychange", releaseHiddenPreview);
+    };
+  }, []);
+
   useEffect(() => {
     if (selectedItemId === null) return;
 
@@ -466,214 +614,258 @@ const ClipboardOverlay: React.FC = () => {
   }, [selectedItemId, filteredItemIdKey]);
 
   return (
-    <div className="clipboard-overlay" onKeyDown={handleKeyDown}>
+    <div className="clipboard-overlay-stage">
       <div
-        className="clipboard-overlay-topbar"
-        data-tauri-drag-region
-        onMouseDown={handleStartDrag}
+        ref={overlayRef}
+        className="clipboard-overlay"
+        onKeyDown={handleKeyDown}
+        onKeyUp={handleKeyUp}
+        tabIndex={-1}
       >
-        <div className="clipboard-overlay-brand">{APP_NAME}</div>
         <div
-          className="clipboard-overlay-window-actions"
-          onMouseDown={(event) => event.stopPropagation()}
+          className="clipboard-overlay-topbar"
+          data-tauri-drag-region
+          onMouseDown={handleStartDrag}
         >
-          <button
-            className={cn(
-              "clipboard-overlay-icon-button",
-              windowPinned && "active",
-            )}
-            onClick={handleToggleWindowPinned}
-            title={t("settings.clipboard.overlay.pinToTop")}
+          <div className="clipboard-overlay-brand">{APP_NAME}</div>
+          <div
+            className="clipboard-overlay-window-actions"
+            onMouseDown={(event) => event.stopPropagation()}
           >
-            <PinToTopIcon />
-          </button>
-          <button
-            className={cn(
-              "clipboard-overlay-icon-button",
-              activePanel === "help" && "active",
-            )}
-            onClick={() =>
-              handleSetPanel(activePanel === "help" ? "list" : "help")
-            }
-            title={t("settings.clipboard.overlay.panelHelp")}
-          >
-            <CircleHelp />
-          </button>
-          <button
-            className={cn(
-              "clipboard-overlay-icon-button",
-              activePanel === "about" && "active",
-            )}
-            onClick={() =>
-              handleSetPanel(activePanel === "about" ? "list" : "about")
-            }
-            title={t("settings.clipboard.overlay.panelAbout")}
-          >
-            <Info />
-          </button>
-          <button
-            className={cn(
-              "clipboard-overlay-icon-button",
-              activePanel === "settings" && "active",
-            )}
-            onClick={() =>
-              handleSetPanel(activePanel === "settings" ? "list" : "settings")
-            }
-            title={t("settings.clipboard.overlay.panelSettings")}
-          >
-            <Settings />
-          </button>
-        </div>
-      </div>
-
-      {activePanel === "list" ? (
-        <>
-          <div className="clipboard-overlay-controls">
-            <div className="clipboard-overlay-search-pill">
-              <Search className="clipboard-overlay-search-icon" />
-              <input
-                ref={searchRef}
-                type="text"
-                className="clipboard-overlay-search"
-                placeholder={t("settings.clipboard.overlay.search")}
-                value={searchQuery}
-                onChange={(e) =>
-                  search(
-                    e.target.value,
-                    contentFilter as ClipboardContentTypeFilter,
-                  )
-                }
-              />
-              {searchQuery && (
-                <button
-                  className="clipboard-overlay-clear"
-                  onClick={() =>
-                    search("", contentFilter as ClipboardContentTypeFilter)
-                  }
-                >
-                  <X />
-                </button>
-              )}
-              <div className="clipboard-overlay-search-divider" />
-              <button
-                className={cn(
-                  "clipboard-overlay-text-toggle",
-                  caseSensitive && "active",
-                )}
-                onClick={() => setCaseSensitive((value) => !value)}
-                title={t("settings.clipboard.overlay.caseSensitive")}
-              >
-                {t("settings.clipboard.overlay.caseSensitiveShort")}
-              </button>
-              <button
-                className={cn(
-                  "clipboard-overlay-text-toggle",
-                  wholeWord && "active",
-                )}
-                onClick={() => setWholeWord((value) => !value)}
-                title={t("settings.clipboard.overlay.wholeWord")}
-              >
-                {t("settings.clipboard.overlay.wholeWordShort")}
-              </button>
-            </div>
-
-            <div className="clipboard-overlay-filter-pill">
-              <button
-                className={cn(
-                  "clipboard-overlay-tool-button",
-                  contentFilter === "text" && "active",
-                )}
-                onClick={() =>
-                  setContentFilter((value) =>
-                    value === "text" ? "all" : "text",
-                  )
-                }
-                title={t("settings.clipboard.filterText")}
-              >
-                <AlignJustify />
-              </button>
-              <button
-                className={cn(
-                  "clipboard-overlay-tool-button",
-                  contentFilter === "image" && "active",
-                )}
-                onClick={() =>
-                  setContentFilter((value) =>
-                    value === "image" ? "all" : "image",
-                  )
-                }
-                title={t("settings.clipboard.filterImage")}
-              >
-                <Image />
-              </button>
-              <button
-                className={cn(
-                  "clipboard-overlay-tool-button",
-                  contentFilter === "file" && "active",
-                )}
-                onClick={() =>
-                  setContentFilter((value) =>
-                    value === "file" ? "all" : "file",
-                  )
-                }
-                title={t("settings.clipboard.filterFiles")}
-              >
-                <FileText />
-              </button>
-            </div>
-
             <button
               className={cn(
-                "clipboard-overlay-favorite-filter",
-                favoritesOnly && "active",
+                "clipboard-overlay-icon-button",
+                windowPinned && "active",
               )}
-              onClick={() => setFavoritesOnly((value) => !value)}
-              title={t("settings.clipboard.toggleFavorite")}
+              onClick={handleToggleWindowPinned}
+              title={t("settings.clipboard.overlay.pinToTop")}
             >
-              <Star />
+              <PinToTopIcon />
+            </button>
+            <button
+              className={cn(
+                "clipboard-overlay-icon-button",
+                activePanel === "help" && "active",
+              )}
+              onClick={() =>
+                handleSetPanel(activePanel === "help" ? "list" : "help")
+              }
+              title={t("settings.clipboard.overlay.panelHelp")}
+            >
+              <CircleHelp />
+            </button>
+            <button
+              className={cn(
+                "clipboard-overlay-icon-button",
+                activePanel === "about" && "active",
+              )}
+              onClick={() =>
+                handleSetPanel(activePanel === "about" ? "list" : "about")
+              }
+              title={t("settings.clipboard.overlay.panelAbout")}
+            >
+              <Info />
+            </button>
+            <button
+              className={cn(
+                "clipboard-overlay-icon-button",
+                activePanel === "settings" && "active",
+              )}
+              onClick={() =>
+                handleSetPanel(activePanel === "settings" ? "list" : "settings")
+              }
+              title={t("settings.clipboard.overlay.panelSettings")}
+            >
+              <Settings />
             </button>
           </div>
+        </div>
 
-          <div
-            className="clipboard-overlay-list"
-            ref={listRef}
-            onScroll={handleListScroll}
-          >
-            {filteredItems.length === 0 ? (
-              <div className="clipboard-overlay-empty">
-                {t("settings.clipboard.emptyTitle")}
-              </div>
-            ) : (
-              filteredItems.map((item, index) => (
-                <OverlayItem
-                  key={item.id}
-                  item={item}
-                  isSelected={item.id === selectedItemId}
-                  isCopied={copiedId === item.id}
-                  onToggleFavorite={() => toggleFavorite(item.id)}
-                  onTogglePin={() => togglePin(item.id)}
-                  onUpdateTitle={(title) => updateTitle(item.id, title)}
-                  onDelete={() => deleteItem(item.id)}
-                  onConfirm={() => handleConfirmItem(item)}
-                  index={index}
+        {activePanel === "list" ? (
+          <>
+            <div className="clipboard-overlay-controls">
+              <div className="clipboard-overlay-search-pill">
+                <Search className="clipboard-overlay-search-icon" />
+                <input
+                  ref={searchRef}
+                  type="text"
+                  className="clipboard-overlay-search"
+                  placeholder={t("settings.clipboard.overlay.search")}
+                  value={searchQuery}
+                  onChange={(e) =>
+                    search(
+                      e.target.value,
+                      contentFilter as ClipboardContentTypeFilter,
+                    )
+                  }
                 />
-              ))
-            )}
-          </div>
+                {searchQuery && (
+                  <button
+                    className="clipboard-overlay-clear"
+                    onClick={() =>
+                      search("", contentFilter as ClipboardContentTypeFilter)
+                    }
+                  >
+                    <X />
+                  </button>
+                )}
+                <div className="clipboard-overlay-search-divider" />
+                <button
+                  className={cn(
+                    "clipboard-overlay-text-toggle",
+                    caseSensitive && "active",
+                  )}
+                  onClick={() => setCaseSensitive((value) => !value)}
+                  title={t("settings.clipboard.overlay.caseSensitive")}
+                >
+                  {t("settings.clipboard.overlay.caseSensitiveShort")}
+                </button>
+                <button
+                  className={cn(
+                    "clipboard-overlay-text-toggle",
+                    wholeWord && "active",
+                  )}
+                  onClick={() => setWholeWord((value) => !value)}
+                  title={t("settings.clipboard.overlay.wholeWord")}
+                >
+                  {t("settings.clipboard.overlay.wholeWordShort")}
+                </button>
+              </div>
 
-          <div className="clipboard-overlay-bottom-fade" />
-        </>
-      ) : (
-        <OverlayPanelView
-          panel={activePanel}
-          stats={stats}
-          settings={settings}
-          onBack={() => handleSetPanel("list")}
-          onClearHistory={clearHistory}
-          onUpdateMaxRecords={(maxRecords) =>
-            updateSettings({ max_records: maxRecords })
-          }
+              <div className="clipboard-overlay-filter-pill">
+                <button
+                  className={cn(
+                    "clipboard-overlay-tool-button",
+                    contentFilter === "text" && "active",
+                  )}
+                  onClick={() =>
+                    setContentFilter((value) =>
+                      value === "text" ? "all" : "text",
+                    )
+                  }
+                  title={t("settings.clipboard.filterText")}
+                >
+                  <AlignJustify />
+                </button>
+                <button
+                  className={cn(
+                    "clipboard-overlay-tool-button",
+                    contentFilter === "image" && "active",
+                  )}
+                  onClick={() =>
+                    setContentFilter((value) =>
+                      value === "image" ? "all" : "image",
+                    )
+                  }
+                  title={t("settings.clipboard.filterImage")}
+                >
+                  <Image />
+                </button>
+                <button
+                  className={cn(
+                    "clipboard-overlay-tool-button",
+                    contentFilter === "file" && "active",
+                  )}
+                  onClick={() =>
+                    setContentFilter((value) =>
+                      value === "file" ? "all" : "file",
+                    )
+                  }
+                  title={t("settings.clipboard.filterFiles")}
+                >
+                  <FileText />
+                </button>
+              </div>
+
+              <button
+                className={cn(
+                  "clipboard-overlay-favorite-filter",
+                  favoritesOnly && "active",
+                )}
+                onClick={() => setFavoritesOnly((value) => !value)}
+                title={t("settings.clipboard.toggleFavorite")}
+              >
+                <Star />
+              </button>
+            </div>
+
+            <div
+              className="clipboard-overlay-list"
+              ref={listRef}
+              onScroll={handleListScroll}
+            >
+              {filteredItems.length === 0 ? (
+                <div className="clipboard-overlay-empty">
+                  {t("settings.clipboard.emptyTitle")}
+                </div>
+              ) : (
+                filteredItems.map((item, index) => (
+                  <OverlayItem
+                    key={item.id}
+                    item={item}
+                    isSelected={item.id === selectedItemId}
+                    isCopied={copiedId === item.id}
+                    onToggleFavorite={() => toggleFavorite(item.id)}
+                    onTogglePin={() => togglePin(item.id)}
+                    onUpdateTitle={(title) => updateTitle(item.id, title)}
+                    onDelete={() => deleteItem(item.id)}
+                    onConfirm={() => handleConfirmItem(item)}
+                    index={index}
+                  />
+                ))
+              )}
+            </div>
+
+            <div className="clipboard-overlay-bottom-fade" />
+            {previewHeld && selectedItem ? (
+              <OverlayQuickPreview item={selectedItem} />
+            ) : null}
+          </>
+        ) : (
+          <OverlayPanelView
+            panel={activePanel}
+            stats={stats}
+            settings={settings}
+            onBack={() => handleSetPanel("list")}
+            onClearHistory={clearHistory}
+            onUpdateMaxRecords={(maxRecords) =>
+              updateSettings({ max_records: maxRecords })
+            }
+          />
+        )}
+      </div>
+    </div>
+  );
+};
+
+const OverlayQuickPreview: React.FC<{ item: ClipboardItem }> = ({ item }) => {
+  const { t } = useTranslation();
+  const [imageError, setImageError] = useState(false);
+  const itemText = getClipboardItemBodyText(item);
+  const imageUrl =
+    item.content_type === "image" && item.image_path && !imageError
+      ? getImageUrl(item.image_path)
+      : null;
+  const title = item.title?.trim() || getClipboardItemLabel(t, item);
+  const typeLabel = getClipboardTypeLabel(t, item.content_type);
+
+  return (
+    <div aria-live="polite" className="clipboard-overlay-preview">
+      <div className="clipboard-overlay-preview-header">
+        <span className="clipboard-overlay-preview-type">{typeLabel}</span>
+        {title ? (
+          <strong className="clipboard-overlay-preview-title">{title}</strong>
+        ) : null}
+      </div>
+      {imageUrl ? (
+        <img
+          className="clipboard-overlay-preview-image"
+          src={imageUrl}
+          alt={title || getClipboardItemLabel(t, item)}
+          onError={() => setImageError(true)}
         />
+      ) : (
+        <pre className="clipboard-overlay-preview-text">{itemText}</pre>
       )}
     </div>
   );
@@ -820,21 +1012,42 @@ const OverlayPanelView: React.FC<OverlayPanelViewProps> = ({
       {panel === "help" && (
         <div className="clipboard-overlay-panel-stack">
           <div className="clipboard-overlay-help-line">
+            <kbd>/</kbd>
+            <span>{t("settings.clipboard.overlay.helpSearch")}</span>
+          </div>
+          <div className="clipboard-overlay-help-line">
             <kbd>↑</kbd>
             <kbd>↓</kbd>
             <span>{t("settings.clipboard.overlay.helpMove")}</span>
+          </div>
+          <div className="clipboard-overlay-help-line">
+            <kbd>1-5</kbd>
+            <span>{t("settings.clipboard.overlay.helpQuickSelect")}</span>
           </div>
           <div className="clipboard-overlay-help-line">
             <kbd>{t("settings.clipboard.overlay.keyEnter")}</kbd>
             <span>{t("settings.clipboard.overlay.helpCopy")}</span>
           </div>
           <div className="clipboard-overlay-help-line">
+            <kbd>{t("settings.clipboard.overlay.keyShiftEnter")}</kbd>
+            <span>{t("settings.clipboard.overlay.helpPlainTextCopy")}</span>
+          </div>
+          <div className="clipboard-overlay-help-line">
             <kbd>F</kbd>
             <span>{t("settings.clipboard.overlay.helpFavorite")}</span>
           </div>
           <div className="clipboard-overlay-help-line">
+            <kbd>P</kbd>
+            <span>{t("settings.clipboard.overlay.helpPin")}</span>
+          </div>
+          <div className="clipboard-overlay-help-line">
             <kbd>D</kbd>
+            <kbd>{t("settings.clipboard.overlay.keyDelete")}</kbd>
             <span>{t("settings.clipboard.overlay.helpDelete")}</span>
+          </div>
+          <div className="clipboard-overlay-help-line">
+            <kbd>{t("settings.clipboard.overlay.keySpace")}</kbd>
+            <span>{t("settings.clipboard.overlay.helpPreview")}</span>
           </div>
           <div className="clipboard-overlay-help-line">
             <kbd>{t("settings.clipboard.overlay.keyEscape")}</kbd>
@@ -875,17 +1088,29 @@ const OverlayItem: React.FC<OverlayItemProps> = ({
   const [imageError, setImageError] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(item.title ?? "");
-  const itemText = item.full_text || getClipboardItemLabel(t, item);
+  const itemText = getClipboardItemBodyText(item);
+  const filePaths = getClipboardFilePaths(item);
+  const derivedTitle =
+    item.content_type === "file" && filePaths.length > 0
+      ? getClipboardItemLabel(t, item)
+      : "";
+  const fileCountLabel =
+    item.content_type === "file" && filePaths.length > 1
+      ? t("settings.clipboard.overlay.fileCount", { count: filePaths.length })
+      : "";
   const customTitle = item.title?.trim();
-  const displayTitle = item.is_favorite
-    ? customTitle || getDefaultItemTitle(itemText)
-    : "";
+  const displayTitle =
+    customTitle ||
+    (item.is_favorite
+      ? derivedTitle || getDefaultItemTitle(itemText)
+      : derivedTitle);
   const imageUrl =
     item.content_type === "image" && !imageError
       ? getImageUrl(item.image_path)
       : null;
   const isLongItem = itemText.length > 56;
-  const shouldShowTitleLine = isEditingTitle || item.is_favorite;
+  const shouldShowTitleLine =
+    isEditingTitle || item.is_favorite || item.content_type === "file";
 
   useEffect(() => {
     if (!isEditingTitle) {
@@ -961,7 +1186,14 @@ const OverlayItem: React.FC<OverlayItemProps> = ({
               }}
             />
           ) : displayTitle ? (
-            <div className="clipboard-overlay-item-title">{displayTitle}</div>
+            <div className="clipboard-overlay-item-title">
+              <span>{displayTitle}</span>
+              {fileCountLabel ? (
+                <span className="clipboard-overlay-file-count">
+                  {fileCountLabel}
+                </span>
+              ) : null}
+            </div>
           ) : (
             <button
               className="clipboard-overlay-item-title empty"

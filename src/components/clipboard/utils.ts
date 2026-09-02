@@ -3,6 +3,13 @@ import type { ClipboardItem } from "@/lib/types/clipboard";
 
 const imagePreviewPattern = /^Image\s+(\d+)x(\d+)$/i;
 
+const normalizeStoredFilePath = (value: string) => value.trim();
+
+const fileNameFromPath = (path: string) => {
+  const segments = path.split(/[\\/]/).filter(Boolean);
+  return segments[segments.length - 1] || path;
+};
+
 export function formatClipboardRelativeTime(
   dateStr: string,
   locale: string,
@@ -53,10 +60,53 @@ export function getClipboardTypeLabel(
   }
 }
 
+export function getClipboardFilePaths(item: ClipboardItem): string[] {
+  if (item.content_type !== "file") {
+    return [];
+  }
+
+  const rawValue = item.full_text?.trim();
+  if (!rawValue) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(rawValue);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((value): value is string => typeof value === "string")
+        .map(normalizeStoredFilePath)
+        .filter(Boolean);
+    }
+  } catch {
+    return rawValue.split(/\r?\n/).map(normalizeStoredFilePath).filter(Boolean);
+  }
+
+  return [];
+}
+
+export function getClipboardItemBodyText(item: ClipboardItem): string {
+  const filePaths = getClipboardFilePaths(item);
+  if (filePaths.length > 0) {
+    return filePaths.join("\n");
+  }
+
+  return item.full_text || item.content_preview;
+}
+
 export function getClipboardItemLabel(
   t: TFunction,
   item: ClipboardItem,
 ): string {
+  if (item.content_type === "file") {
+    const filePaths = getClipboardFilePaths(item);
+    if (filePaths.length > 0) {
+      return fileNameFromPath(filePaths[0]);
+    }
+
+    return item.content_preview || getClipboardTypeLabel(t, item.content_type);
+  }
+
   if (item.content_type !== "image") {
     return item.content_preview;
   }

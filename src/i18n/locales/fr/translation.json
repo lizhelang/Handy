@@ -716,7 +716,16 @@
         "pinToTop": "Pin to top",
         "caseSensitive": "Case sensitive",
         "wholeWord": "Whole word",
-        "unlimited": "Unlimited"
+        "unlimited": "Unlimited",
+        "keyShiftEnter": "Shift+Enter",
+        "keyDelete": "Delete",
+        "keySpace": "Space",
+        "helpSearch": "Focus search",
+        "helpQuickSelect": "Copy item 1-5",
+        "helpPlainTextCopy": "Copy as plain text",
+        "helpPin": "Pin selected item",
+        "helpPreview": "Hold to preview selected item",
+        "fileCount": "{{count}} items"
       }
     }
   },

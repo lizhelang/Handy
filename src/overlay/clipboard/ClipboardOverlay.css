@@ -1,29 +1,51 @@
+.clipboard-overlay-stage {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  box-sizing: border-box;
+}
+
 .clipboard-overlay {
   --ropy-background: #ffffff;
   --ropy-foreground: #1a1a1a;
-  --ropy-secondary: #f5f5f5;
-  --ropy-border: #e0e0e0;
-  --ropy-accent: #ffe4f0;
+  --ropy-secondary: #f7f7f5;
+  --ropy-border: rgb(17 24 39 / 0.1);
+  --ropy-accent: #fce6f1;
   --ropy-muted-foreground: #6b6b6b;
   --ropy-primary: #da5893;
   --ropy-primary-foreground: #ffffff;
-  --handy-selection: #f9c5e8;
+  --handy-selection: #f7d3e7;
   --handy-selection-border: #da5893;
   --handy-selection-shadow: rgb(218 88 147 / 24%);
 
   display: flex;
+  position: relative;
   flex-direction: column;
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--ropy-background);
-  border-radius: 12px;
+  background: linear-gradient(
+    180deg,
+    rgb(255 255 255 / 0.98),
+    rgb(252 252 251 / 0.96)
+  );
+  border: 1px solid var(--ropy-border);
+  border-radius: 22px;
   color: var(--ropy-foreground);
   font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+    "SF Pro Display",
+    "SF Pro Text",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    "PingFang SC",
+    "Noto Sans SC",
+    sans-serif;
   letter-spacing: 0;
-  padding: 0 16px 16px;
+  padding: 18px 18px 16px;
   box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
 }
 
 .clipboard-overlay *,
@@ -39,13 +61,24 @@
   flex: 0 0 auto;
   min-width: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: 12px;
   background: transparent;
   color: inherit;
   cursor: pointer;
   font: inherit;
   letter-spacing: 0;
   padding: 0;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease,
+    opacity 120ms ease;
+}
+
+.clipboard-overlay button:focus-visible,
+.clipboard-overlay input:focus-visible {
+  outline: 2px solid rgb(218 88 147 / 0.42);
+  outline-offset: 2px;
 }
 
 .clipboard-overlay svg {
@@ -59,8 +92,7 @@
   align-items: center;
   justify-content: space-between;
   flex: 0 0 auto;
-  margin-bottom: 16px;
-  padding-top: 16px;
+  margin-bottom: 18px;
   cursor: move;
   user-select: none;
 }
@@ -69,20 +101,21 @@
   color: var(--ropy-foreground);
   font-size: 18px;
   font-weight: 700;
+  letter-spacing: -0.03em;
   line-height: 1;
 }
 
 .clipboard-overlay-window-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   cursor: default;
 }
 
 .clipboard-overlay-icon-button {
-  width: 32px;
-  height: 32px;
-  opacity: 0.5;
+  width: 40px;
+  height: 40px;
+  opacity: 0.62;
 }
 
 .clipboard-overlay-icon-button.active,
@@ -100,8 +133,8 @@
   display: flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: 10px;
+  margin-bottom: 18px;
 }
 
 .clipboard-overlay-search-pill,
@@ -109,11 +142,11 @@
 .clipboard-overlay-favorite-filter {
   display: flex;
   align-items: center;
-  min-height: 34px;
+  min-height: 42px;
   background: var(--ropy-secondary);
   border: 1px solid var(--ropy-border);
-  border-radius: 16px;
-  padding: 2px;
+  border-radius: 21px;
+  padding: 3px;
 }
 
 .clipboard-overlay-search-pill {
@@ -124,30 +157,30 @@
 
 .clipboard-overlay-search-icon {
   flex: 0 0 auto;
-  margin-left: 8px;
-  margin-right: 2px;
+  margin-left: 10px;
+  margin-right: 4px;
 }
 
 .clipboard-overlay-search {
   min-width: 0;
   flex: 1 1 auto;
-  height: 28px;
+  height: 34px;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--ropy-foreground);
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1;
-  padding: 4px;
+  padding: 4px 6px;
 }
 
 .clipboard-overlay-search::placeholder {
-  color: transparent;
+  color: rgb(107 107 107 / 0.6);
 }
 
 .clipboard-overlay-clear {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   opacity: 0.6;
 }
 
@@ -158,7 +191,7 @@
 
 .clipboard-overlay-search-divider {
   width: 1px;
-  height: 12px;
+  height: 18px;
   background: var(--ropy-border);
   opacity: 0.45;
 }
@@ -166,9 +199,9 @@
 .clipboard-overlay-text-toggle,
 .clipboard-overlay-tool-button,
 .clipboard-overlay-favorite-filter {
-  width: 30px;
-  height: 30px;
-  border-radius: 14px;
+  width: 36px;
+  height: 36px;
+  border-radius: 18px;
 }
 
 .clipboard-overlay-text-toggle {
@@ -187,6 +220,7 @@
   background: var(--ropy-primary);
   color: var(--ropy-primary-foreground);
   opacity: 1;
+  box-shadow: 0 8px 18px rgb(218 88 147 / 0.22);
 }
 
 .clipboard-overlay-filter-pill {
@@ -215,11 +249,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 96px;
+  min-height: 124px;
   color: var(--ropy-muted-foreground);
   background: var(--ropy-secondary);
   border: 1px solid var(--ropy-border);
-  border-radius: 6px;
+  border-radius: 12px;
   font-size: 14px;
 }
 
@@ -236,18 +270,18 @@
   align-items: center;
   flex: 0 0 auto;
   gap: 8px;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
   color: var(--ropy-foreground);
   font-size: 16px;
   font-weight: 700;
 }
 
 .clipboard-overlay-panel-back {
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   background: var(--ropy-secondary);
   border: 1px solid var(--ropy-border);
-  border-radius: 14px;
+  border-radius: 18px;
 }
 
 .clipboard-overlay-panel-back:hover {
@@ -275,7 +309,7 @@
 .clipboard-overlay-danger-actions {
   background: var(--ropy-secondary);
   border: 1px solid var(--ropy-border);
-  border-radius: 6px;
+  border-radius: 12px;
 }
 
 .clipboard-overlay-setting-row {
@@ -455,16 +489,16 @@
 .clipboard-overlay-item {
   display: flex;
   position: relative;
-  padding-bottom: 8px;
+  padding-bottom: 10px;
 }
 
 .clipboard-overlay-item::before {
   position: absolute;
-  inset: 0 0 8px 0;
+  inset: 0 0 10px 0;
   content: "";
   background: var(--ropy-secondary);
   border: 1px solid var(--ropy-border);
-  border-radius: 6px;
+  border-radius: 12px;
   transition:
     background-color 120ms ease,
     border-color 120ms ease,
@@ -500,11 +534,11 @@
   flex: 0 0 54px;
   width: 54px;
   height: 54px;
-  margin: 12px 0 20px 12px;
+  margin: 14px 0 22px 14px;
   overflow: hidden;
   background: var(--ropy-background);
   border: 1px solid var(--ropy-border);
-  border-radius: 6px;
+  border-radius: 10px;
 }
 
 .clipboard-overlay-image-preview img {
@@ -517,7 +551,7 @@
 .clipboard-overlay-item-content {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 12px;
+  padding: 14px;
 }
 
 .clipboard-overlay-item-text {
@@ -527,6 +561,9 @@
   color: var(--ropy-foreground);
   font-size: 14px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
 }
@@ -538,15 +575,15 @@
   align-items: center;
   gap: 4px;
   overflow: hidden;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
   background: rgb(218 88 147 / 12%);
   border: 1px solid rgb(218 88 147 / 28%);
-  border-radius: 5px;
+  border-radius: 8px;
   color: var(--ropy-foreground);
   font-size: 13px;
   font-weight: 700;
   line-height: 1.2;
-  padding: 0 7px;
+  padding: 0 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -574,13 +611,20 @@
   text-overflow: ellipsis;
 }
 
+.clipboard-overlay-file-count {
+  flex: 0 0 auto;
+  color: var(--ropy-muted-foreground);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .clipboard-overlay-title-input {
   display: block;
   width: 100%;
   height: 28px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   border: 1px solid var(--handy-selection-border);
-  border-radius: 6px;
+  border-radius: 8px;
   outline: 0;
   background: var(--ropy-background);
   color: var(--ropy-foreground);
@@ -600,8 +644,8 @@
 .clipboard-overlay-item-meta {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-top: 4px;
+  gap: 6px;
+  margin-top: 8px;
   color: var(--ropy-muted-foreground);
   font-size: 12px;
   line-height: 1;
@@ -611,9 +655,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  border-radius: 4px;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 7px;
   background: var(--ropy-background);
   color: var(--ropy-muted-foreground);
   padding: 0 4px;
@@ -624,22 +668,22 @@
   flex: 0 0 auto;
   flex-direction: column;
   align-items: flex-end;
-  gap: 2px;
-  padding: 12px 12px 12px 0;
+  gap: 4px;
+  padding: 14px 14px 14px 0;
 }
 
 .clipboard-overlay-item-action-row {
   display: flex;
-  gap: 2px;
+  gap: 4px;
 }
 
 .clipboard-overlay .clipboard-overlay-star-button,
 .clipboard-overlay .clipboard-overlay-pin-button,
 .clipboard-overlay .clipboard-overlay-title-button,
 .clipboard-overlay .clipboard-overlay-delete-button {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
   font-size: 13px;
   line-height: 1;
 }
@@ -672,4 +716,82 @@
 
 .clipboard-overlay-bottom-fade {
   display: none;
+}
+
+.clipboard-overlay-preview {
+  position: absolute;
+  inset: 132px 14px 14px;
+  z-index: 20;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+  padding: 14px;
+  pointer-events: none;
+  background: rgb(250 250 248 / 0.96);
+  border: 1px solid rgb(17 24 39 / 0.12);
+  border-radius: 14px;
+  box-shadow:
+    0 22px 54px rgb(15 23 42 / 0.2),
+    0 6px 18px rgb(15 23 42 / 0.1);
+  backdrop-filter: blur(18px);
+  animation: clipboard-preview-enter 110ms ease-out;
+}
+
+.clipboard-overlay-preview-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.clipboard-overlay-preview-type {
+  flex: 0 0 auto;
+  color: #9b2f63;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.clipboard-overlay-preview-title {
+  overflow: hidden;
+  color: var(--ropy-foreground);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clipboard-overlay-preview-image {
+  display: block;
+  min-height: 0;
+  max-width: 100%;
+  max-height: 100%;
+  margin: auto;
+  object-fit: contain;
+  border-radius: 10px;
+}
+
+.clipboard-overlay-preview-text {
+  overflow: auto;
+  margin: 0;
+  color: var(--ropy-foreground);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@keyframes clipboard-preview-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }

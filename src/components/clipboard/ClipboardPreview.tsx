@@ -14,7 +14,11 @@ import {
   AlertCircle,
 } from "lucide-react";
 import type { ClipboardItem } from "@/lib/types/clipboard";
-import { getClipboardItemLabel, getClipboardTypeLabel } from "./utils";
+import {
+  getClipboardItemBodyText,
+  getClipboardItemLabel,
+  getClipboardTypeLabel,
+} from "./utils";
 
 function formatDateTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -60,6 +64,7 @@ export const ClipboardPreview: React.FC<ClipboardPreviewProps> = ({
   const [imageError, setImageError] = useState(false);
   const itemLabel = getClipboardItemLabel(t, item);
   const typeLabel = getClipboardTypeLabel(t, item.content_type);
+  const itemBodyText = getClipboardItemBodyText(item);
 
   const getImageUrl = useCallback((path: string) => {
     try {
@@ -161,7 +166,7 @@ export const ClipboardPreview: React.FC<ClipboardPreviewProps> = ({
             )
           ) : (
             <pre className="text-sm text-text/90 whitespace-pre-wrap break-words font-mono leading-relaxed">
-              {item.full_text || item.content_preview}
+              {itemBodyText}
             </pre>
           )}
         </div>

@@ -716,7 +716,16 @@
         "pinToTop": "置頂視窗",
         "caseSensitive": "區分大小寫",
         "wholeWord": "全字詞比對",
-        "unlimited": "無限制"
+        "unlimited": "無限制",
+        "keyShiftEnter": "Shift+Enter",
+        "keyDelete": "Delete",
+        "keySpace": "Space",
+        "helpSearch": "聚焦搜尋",
+        "helpQuickSelect": "複製第 1-5 項",
+        "helpPlainTextCopy": "以純文字複製",
+        "helpPin": "置頂所選項目",
+        "helpPreview": "按住預覽所選項目",
+        "fileCount": "共 {{count}} 項"
       }
     }
   },

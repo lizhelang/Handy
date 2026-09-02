@@ -3,7 +3,6 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local, Utc};
 #[cfg(not(target_os = "macos"))]
 use clipboard_rs::common::RustImage;
-#[cfg(not(target_os = "macos"))]
 use clipboard_rs::{Clipboard, ClipboardContext};
 #[cfg(not(target_os = "macos"))]
 use clipboard_rs::{ClipboardHandler, ClipboardWatcher, ClipboardWatcherContext};
@@ -31,6 +30,7 @@ use tauri_nspanel::objc2::MainThreadMarker;
 
 const TEXT_PREVIEW_MAX_CHARS: usize = 200;
 const SEARCH_RESULT_LIMIT: i64 = 100;
+const FILE_PREVIEW_MAX_PATHS: usize = 3;
 
 /// Database migrations for clipboard history.
 static MIGRATIONS: &[M] = &[
@@ -137,11 +137,20 @@ pub struct ClipboardManager {
 }
 
 #[cfg(target_os = "macos")]
-fn process_macos_clipboard_representations<I, T>(try_image: I, try_text: T) -> Result<()>
+fn process_macos_clipboard_representations<F, I, T>(
+    try_files: F,
+    try_image: I,
+    try_text: T,
+) -> Result<()>
 where
+    F: FnOnce() -> Result<bool>,
     I: FnOnce() -> Result<bool>,
     T: FnOnce() -> Result<bool>,
 {
+    if try_files()? {
+        return Ok(());
+    }
+
     if try_image()? {
         return Ok(());
     }
@@ -150,8 +159,102 @@ where
         return Ok(());
     }
 
-    debug!("Clipboard change did not contain supported text or image content");
+    debug!("Clipboard change did not contain supported file, image, or text content");
     Ok(())
+}
+
+// Adapted from StudentWeis/ropy's MIT-licensed clipboard file utilities.
+// See docs/third-party-notices.md.
+fn hex_digit_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn decode_percent_encoded(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut index = 0;
+    let mut decoded = Vec::with_capacity(bytes.len());
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let high = hex_digit_value(bytes[index + 1]);
+            let low = hex_digit_value(bytes[index + 2]);
+
+            if let (Some(high), Some(low)) = (high, low) {
+                decoded.push((high << 4) | low);
+                index += 3;
+                continue;
+            }
+        }
+
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn normalize_clipboard_file_path(path: &str) -> Option<String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let uri_path = trimmed
+        .strip_prefix("file://localhost")
+        .or_else(|| trimmed.strip_prefix("file://"));
+
+    Some(match uri_path {
+        Some(path) => decode_percent_encoded(path),
+        None => trimmed.to_owned(),
+    })
+}
+
+fn normalize_clipboard_file_paths(paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .filter_map(|path| normalize_clipboard_file_path(path))
+        .collect()
+}
+
+fn serialize_clipboard_file_paths(paths: &[String]) -> Result<String> {
+    serde_json::to_string(&normalize_clipboard_file_paths(paths))
+        .map_err(|e| anyhow!("Failed to serialize clipboard file paths: {}", e))
+}
+
+fn deserialize_clipboard_file_paths(content: &str) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(content).map_or_else(
+        |_| {
+            content
+                .lines()
+                .filter_map(normalize_clipboard_file_path)
+                .collect()
+        },
+        |paths| normalize_clipboard_file_paths(&paths),
+    )
+}
+
+fn clipboard_file_preview(paths: &[String]) -> String {
+    let normalized = normalize_clipboard_file_paths(paths);
+    if normalized.is_empty() {
+        return String::new();
+    }
+
+    normalized
+        .into_iter()
+        .take(FILE_PREVIEW_MAX_PATHS)
+        .map(|path| {
+            PathBuf::from(&path)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map_or(path, ToString::to_string)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 impl ClipboardManager {
@@ -279,6 +382,13 @@ impl ClipboardManager {
     fn compute_hash(content: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(content);
+        format!("{:x}", hasher.finalize())
+    }
+
+    fn compute_file_hash(serialized_paths: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(b"file\0");
+        hasher.update(serialized_paths.as_bytes());
         format!("{:x}", hasher.finalize())
     }
 
@@ -491,6 +601,25 @@ impl ClipboardManager {
         self.add_text(text).map(|_| ())
     }
 
+    fn process_file_paths_change(&self, file_paths: &[String]) -> Result<()> {
+        let serialized_paths = serialize_clipboard_file_paths(file_paths)?;
+        let hash = Self::compute_file_hash(&serialized_paths);
+
+        #[cfg(target_os = "macos")]
+        if self.is_last_seen_hash(&hash) {
+            return Ok(());
+        }
+
+        let result = self.add_files(file_paths).map(|_| ());
+
+        #[cfg(target_os = "macos")]
+        if result.is_ok() {
+            self.remember_last_seen_hash(hash);
+        }
+
+        result
+    }
+
     #[cfg(target_os = "macos")]
     fn is_last_seen_hash(&self, hash: &str) -> bool {
         self.last_seen_hash
@@ -565,6 +694,15 @@ impl ClipboardManager {
         let clipboard = self.app_handle.clipboard();
 
         process_macos_clipboard_representations(
+            || {
+                let file_paths = self.read_file_paths_from_system_clipboard()?;
+                if file_paths.is_empty() {
+                    return Ok(false);
+                }
+
+                self.process_file_paths_change(&file_paths)?;
+                Ok(true)
+            },
             || match clipboard.read_image() {
                 Ok(image) => {
                     self.process_tauri_image_change(&image)?;
@@ -586,6 +724,13 @@ impl ClipboardManager {
     fn process_clipboard_change(&self, clipboard: &mut ClipboardContext) -> Result<()> {
         if !self.monitoring_enabled() {
             return Ok(());
+        }
+
+        if let Ok(file_paths) = clipboard.get_files() {
+            let file_paths = normalize_clipboard_file_paths(&file_paths);
+            if !file_paths.is_empty() {
+                return self.process_file_paths_change(&file_paths);
+            }
         }
 
         if let Ok(text) = clipboard.get_text() {
@@ -692,6 +837,17 @@ impl ClipboardManager {
         Ok(full_path)
     }
 
+    #[cfg(target_os = "macos")]
+    fn read_file_paths_from_system_clipboard(&self) -> Result<Vec<String>> {
+        self.run_on_main_thread_sync("read files from system clipboard", |_manager| {
+            let clipboard = ClipboardContext::new()
+                .map_err(|e| anyhow!("Failed to access clipboard files: {}", e))?;
+            let file_paths = clipboard.get_files().unwrap_or_default();
+            Ok(normalize_clipboard_file_paths(&file_paths))
+        })
+        .ok_or_else(|| anyhow!("Failed to read clipboard files on the macOS main thread"))?
+    }
+
     fn write_text_to_system_clipboard(&self, text: String) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
@@ -746,6 +902,50 @@ impl ClipboardManager {
         }
     }
 
+    fn write_file_paths_to_system_clipboard(&self, file_paths: Vec<String>) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            return self
+                .run_on_main_thread_sync("write files to system clipboard", move |_manager| {
+                    let clipboard = ClipboardContext::new()
+                        .map_err(|e| anyhow!("Failed to access clipboard files: {}", e))?;
+                    clipboard
+                        .set_files(file_paths)
+                        .map_err(|e| anyhow!("Failed to write clipboard files: {}", e))
+                })
+                .ok_or_else(|| {
+                    anyhow!("Failed to write clipboard files on the macOS main thread")
+                })?;
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let clipboard = ClipboardContext::new()
+                .map_err(|e| anyhow!("Failed to access clipboard files: {}", e))?;
+            clipboard
+                .set_files(file_paths)
+                .map_err(|e| anyhow!("Failed to write clipboard files: {}", e))
+        }
+    }
+
+    fn write_stored_file_content_to_system_clipboard(&self, content: String) -> Result<()> {
+        let file_paths = deserialize_clipboard_file_paths(&content);
+        if !file_paths.is_empty() {
+            match self.write_file_paths_to_system_clipboard(file_paths) {
+                Ok(()) => return Ok(()),
+                Err(error) => debug!(
+                    "Failed to restore stored file paths as native clipboard files; falling back to text: {}",
+                    error
+                ),
+            }
+        }
+
+        // Historical file records may predate the JSON path-array format. Keep
+        // their raw payload retrievable even when native file restoration is not
+        // possible.
+        self.write_text_to_system_clipboard(content)
+    }
+
     /// Copy an already-loaded clipboard payload without re-querying history.
     pub fn copy_content_to_clipboard(
         &self,
@@ -754,9 +954,13 @@ impl ClipboardManager {
         image_path: Option<String>,
     ) -> Result<()> {
         match content_type {
-            "text" | "richtext" | "file" => {
+            "text" | "richtext" => {
                 let text = text.ok_or_else(|| anyhow!("Text content not found"))?;
                 self.write_text_to_system_clipboard(text)
+            }
+            "file" => {
+                let text = text.ok_or_else(|| anyhow!("File content not found"))?;
+                self.write_stored_file_content_to_system_clipboard(text)
             }
             "image" => {
                 let path = image_path.ok_or_else(|| anyhow!("Image path not found"))?;
@@ -821,6 +1025,75 @@ impl ClipboardManager {
         info!("Added clipboard text entry with id {}", item.id);
 
         // Emit event
+        if let Err(e) =
+            (ClipboardUpdatePayload::Added { item: item.clone() }).emit(&self.app_handle)
+        {
+            error!("Failed to emit clipboard-added event: {}", e);
+        }
+
+        let deleted_ids = self.cleanup_old_entries()?;
+        self.emit_deleted_many(deleted_ids);
+
+        Ok(Some(item))
+    }
+
+    /// Add a file-path entry to clipboard history.
+    pub fn add_files(&self, file_paths: &[String]) -> Result<Option<ClipboardItem>> {
+        let normalized_paths = normalize_clipboard_file_paths(file_paths);
+        if normalized_paths.is_empty() {
+            return Ok(None);
+        }
+
+        let serialized_paths = serialize_clipboard_file_paths(&normalized_paths)?;
+        let hash = Self::compute_file_hash(&serialized_paths);
+
+        {
+            let conn = self.get_connection()?;
+            let exists: bool = conn.query_row(
+                "SELECT COUNT(*) > 0 FROM clipboard_history WHERE content_hash = ?1",
+                params![hash],
+                |row| row.get(0),
+            )?;
+
+            if exists {
+                debug!("Clipboard file list already exists (hash: {})", hash);
+                return self.refresh_existing_item(&hash);
+            }
+        }
+
+        let preview = clipboard_file_preview(&normalized_paths);
+        let size_bytes = serialized_paths.len() as i64;
+        let now = Utc::now().timestamp();
+
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT INTO clipboard_history (
+                content_type, content_preview, content_hash, full_text,
+                created_at, size_bytes
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params!["file", preview, hash, serialized_paths, now, size_bytes],
+        )?;
+
+        let item = ClipboardItem {
+            id: conn.last_insert_rowid(),
+            title: None,
+            content_type: "file".to_string(),
+            content_preview: preview,
+            content_hash: hash,
+            full_text: Some(serialized_paths),
+            image_path: None,
+            source_app: None,
+            is_favorite: false,
+            is_pinned: false,
+            created_at: DateTime::from_timestamp(now, 0)
+                .unwrap_or_default()
+                .with_timezone(&Local)
+                .to_rfc3339(),
+            size_bytes,
+        };
+
+        info!("Added clipboard file entry with id {}", item.id);
+
         if let Err(e) =
             (ClipboardUpdatePayload::Added { item: item.clone() }).emit(&self.app_handle)
         {
@@ -1317,9 +1590,13 @@ impl ClipboardManager {
         )?;
 
         match item.content_type.as_str() {
-            "text" | "richtext" | "file" => {
+            "text" | "richtext" => {
                 let text = item.full_text.unwrap_or(item.content_preview);
                 self.write_text_to_system_clipboard(text)
+            }
+            "file" => {
+                let text = item.full_text.unwrap_or(item.content_preview);
+                self.write_stored_file_content_to_system_clipboard(text)
             }
             "image" => {
                 let path = item
@@ -1448,7 +1725,10 @@ impl ClipboardHandler for ClipboardChangeHandler {
 mod tests {
     #[cfg(target_os = "macos")]
     use super::process_macos_clipboard_representations;
-    use super::{ClipboardManager, TEXT_PREVIEW_MAX_CHARS};
+    use super::{
+        clipboard_file_preview, deserialize_clipboard_file_paths, normalize_clipboard_file_paths,
+        serialize_clipboard_file_paths, ClipboardManager, TEXT_PREVIEW_MAX_CHARS,
+    };
 
     #[test]
     fn text_preview_keeps_short_text_unchanged() {
@@ -1475,12 +1755,77 @@ mod tests {
         assert!(preview.ends_with("..."));
     }
 
+    #[test]
+    fn normalize_clipboard_file_paths_strips_uri_prefix_and_decodes_spaces() {
+        let paths = vec![
+            "file:///tmp/hello%20world.txt".to_string(),
+            "file://localhost/tmp/demo.txt".to_string(),
+        ];
+
+        let normalized = normalize_clipboard_file_paths(&paths);
+
+        assert_eq!(normalized, vec!["/tmp/hello world.txt", "/tmp/demo.txt"]);
+    }
+
+    #[test]
+    fn normalize_clipboard_file_paths_preserves_percent_sequences_in_local_paths() {
+        let normalized = normalize_clipboard_file_paths(&["/tmp/100%20literal.txt".to_string()]);
+
+        assert_eq!(normalized, vec!["/tmp/100%20literal.txt"]);
+    }
+
+    #[test]
+    fn serialize_and_deserialize_clipboard_file_paths_round_trip() {
+        let serialized = serialize_clipboard_file_paths(&[
+            "/tmp/alpha.txt".to_string(),
+            "/tmp/beta.txt".to_string(),
+        ])
+        .unwrap();
+
+        let deserialized = deserialize_clipboard_file_paths(&serialized);
+
+        assert_eq!(deserialized, vec!["/tmp/alpha.txt", "/tmp/beta.txt"]);
+    }
+
+    #[test]
+    fn deserialize_legacy_file_paths_normalizes_each_line() {
+        let deserialized = deserialize_clipboard_file_paths(
+            "file:///tmp/alpha%20one.txt\nfile://localhost/tmp/beta.txt",
+        );
+
+        assert_eq!(deserialized, vec!["/tmp/alpha one.txt", "/tmp/beta.txt"]);
+    }
+
+    #[test]
+    fn file_hash_cannot_collide_with_identical_plain_text_payload() {
+        let serialized = r#"["/tmp/alpha.txt"]"#;
+
+        assert_ne!(
+            ClipboardManager::compute_file_hash(serialized),
+            ClipboardManager::compute_hash(serialized.as_bytes())
+        );
+    }
+
+    #[test]
+    fn clipboard_file_preview_uses_file_names() {
+        let preview = clipboard_file_preview(&[
+            "/tmp/alpha.txt".to_string(),
+            "/tmp/nested/beta.png".to_string(),
+        ]);
+
+        assert_eq!(preview, "alpha.txt\nbeta.png");
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
-    fn macos_clipboard_processing_prefers_image_when_both_formats_exist() {
+    fn macos_clipboard_processing_prefers_files_over_other_formats() {
         let calls = std::cell::RefCell::new(Vec::new());
 
         process_macos_clipboard_representations(
+            || {
+                calls.borrow_mut().push("files");
+                Ok(true)
+            },
             || {
                 calls.borrow_mut().push("image");
                 Ok(true)
@@ -1492,7 +1837,31 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(calls.into_inner(), vec!["image"]);
+        assert_eq!(calls.into_inner(), vec!["files"]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_clipboard_processing_prefers_image_when_both_formats_exist() {
+        let calls = std::cell::RefCell::new(Vec::new());
+
+        process_macos_clipboard_representations(
+            || {
+                calls.borrow_mut().push("files");
+                Ok(false)
+            },
+            || {
+                calls.borrow_mut().push("image");
+                Ok(true)
+            },
+            || {
+                calls.borrow_mut().push("text");
+                Ok(true)
+            },
+        )
+        .unwrap();
+
+        assert_eq!(calls.into_inner(), vec!["files", "image"]);
     }
 
     #[cfg(target_os = "macos")]
@@ -1501,6 +1870,10 @@ mod tests {
         let calls = std::cell::RefCell::new(Vec::new());
 
         process_macos_clipboard_representations(
+            || {
+                calls.borrow_mut().push("files");
+                Ok(false)
+            },
             || {
                 calls.borrow_mut().push("image");
                 Ok(false)
@@ -1512,6 +1885,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(calls.into_inner(), vec!["image", "text"]);
+        assert_eq!(calls.into_inner(), vec!["files", "image", "text"]);
     }
 }
