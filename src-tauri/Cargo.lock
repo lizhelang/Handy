@@ -2578,6 +2578,7 @@ name = "handy"
 version = "0.9.6"
 dependencies = [
  "anyhow",
+ "block2",
  "chrono",
  "clap",
  "clipboard-rs",

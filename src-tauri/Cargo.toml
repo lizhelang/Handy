@@ -157,6 +157,7 @@ transcribe-cpp = { git = "https://github.com/lizhelang/transcribe.cpp", rev = "1
 # Used by the receipt-sequenced ("reliable") paste path for lazy NSPasteboard
 # promises. Versions track what Tauri already pulls in.
 objc2 = "0.6"
+block2 = "0.6"
 objc2-foundation = "0.3"
 objc2-app-kit = "0.3"
 objc2-service-management = "0.3.2"

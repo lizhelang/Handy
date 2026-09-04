@@ -1101,16 +1101,17 @@ pub fn run(cli_args: CliArgs) {
                 // Re-apply the current tray state with the new theme's icon set
                 utils::refresh_tray_icon(window.app_handle());
             }
-            tauri::WindowEvent::Focused(true) if window.label() == "clipboard_overlay" => {
-                utils::set_clipboard_overlay_focused(true);
-            }
+            #[cfg(not(target_os = "macos"))]
             tauri::WindowEvent::Focused(false) if window.label() == "clipboard_overlay" => {
-                utils::set_clipboard_overlay_focused(false);
                 let app_handle = window.app_handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(150));
                     utils::hide_clipboard_overlay_if_unfocused(&app_handle);
                 });
+            }
+            #[cfg(target_os = "macos")]
+            tauri::WindowEvent::Destroyed if window.label() == "clipboard_overlay" => {
+                overlay::remove_clipboard_overlay_monitors(window.app_handle());
             }
             _ => {}
         })
@@ -1142,6 +1143,8 @@ pub fn run(cli_args: CliArgs) {
         }
         // Teardown transcribe.cpp before exit
         tauri::RunEvent::Exit => {
+            #[cfg(target_os = "macos")]
+            overlay::remove_clipboard_overlay_monitors(app);
             if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                 let _ = tm.unload_model();
             }

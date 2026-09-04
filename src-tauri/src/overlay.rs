@@ -63,9 +63,6 @@ const CLIPBOARD_OVERLAY_CORNER_RADIUS: f64 = 22.0;
 #[cfg(target_os = "macos")]
 static CLIPBOARD_OVERLAY_PINNED: AtomicBool = AtomicBool::new(false);
 
-#[cfg(target_os = "macos")]
-static CLIPBOARD_OVERLAY_FOCUSED: AtomicBool = AtomicBool::new(false);
-
 /// Overlay window size (logical) for a given UI state.
 fn overlay_dimensions(state: &str) -> (f64, f64) {
     if state == "streaming" {
@@ -323,12 +320,130 @@ fn clipboard_overlay_collection_behavior() -> CollectionBehavior {
 }
 
 #[cfg(target_os = "macos")]
+fn clipboard_overlay_style_mask() -> StyleMask {
+    StyleMask::empty().borderless().full_size_content_view()
+}
+
+#[cfg(target_os = "macos")]
 fn clipboard_overlay_level(pinned: bool) -> PanelLevel {
     if pinned {
         PanelLevel::Status
     } else {
         PanelLevel::Floating
     }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn should_hide_clipboard_overlay_on_mouse_down(
+    visible: bool,
+    pinned: bool,
+    targets_clipboard: bool,
+) -> bool {
+    visible && !pinned && !targets_clipboard
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn clipboard_mouse_targets_window(event_window: Option<isize>, clipboard_window: isize) -> bool {
+    event_window == Some(clipboard_window)
+}
+
+#[cfg(target_os = "macos")]
+mod clipboard_mouse_monitor {
+    use super::*;
+    use block2::RcBlock;
+    use objc2::{rc::Retained, runtime::AnyObject, MainThreadMarker};
+    use objc2_app_kit::{NSEvent, NSEventMask};
+    use std::{cell::RefCell, ptr::NonNull};
+
+    struct Monitors {
+        global: Retained<AnyObject>,
+        local: Retained<AnyObject>,
+    }
+
+    impl Drop for Monitors {
+        fn drop(&mut self) {
+            unsafe {
+                NSEvent::removeMonitor(&self.global);
+                NSEvent::removeMonitor(&self.local);
+            }
+        }
+    }
+
+    thread_local! {
+        static MONITORS: RefCell<Option<Monitors>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn mouse_mask() -> NSEventMask {
+        NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown
+    }
+
+    fn handle_mouse_down(app: &AppHandle, targets_clipboard: bool) {
+        if should_hide_clipboard_overlay_on_mouse_down(
+            is_clipboard_overlay_visible_on_main_thread(app),
+            CLIPBOARD_OVERLAY_PINNED.load(Ordering::Relaxed),
+            targets_clipboard,
+        ) {
+            hide_clipboard_overlay_on_main_thread(app);
+        }
+    }
+
+    pub(super) fn install(mtm: MainThreadMarker, app: &AppHandle) {
+        MONITORS.with(|slot| {
+            if slot.borrow().is_some() {
+                return;
+            }
+            let global_app = app.clone();
+            let global_handler = RcBlock::new(move |_event: NonNull<NSEvent>| {
+                handle_mouse_down(&global_app, false);
+            });
+            let local_app = app.clone();
+            let local_handler = RcBlock::new(move |event: NonNull<NSEvent>| {
+                let targets_clipboard = local_app
+                    .get_webview_panel("clipboard_overlay")
+                    .map(|panel| unsafe {
+                        clipboard_mouse_targets_window(
+                            event
+                                .as_ref()
+                                .window(mtm)
+                                .map(|window| window.windowNumber()),
+                            panel.as_panel().windowNumber(),
+                        )
+                    })
+                    .unwrap_or(false);
+                handle_mouse_down(&local_app, targets_clipboard);
+                event.as_ptr()
+            });
+            let Some(global) = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
+                mouse_mask(),
+                &global_handler,
+            ) else {
+                log::error!("Failed to install clipboard global mouse monitor");
+                return;
+            };
+            let local = unsafe {
+                NSEvent::addLocalMonitorForEventsMatchingMask_handler(mouse_mask(), &local_handler)
+            };
+            let Some(local) = local else {
+                unsafe { NSEvent::removeMonitor(&global) };
+                log::error!("Failed to install clipboard local mouse monitor");
+                return;
+            };
+            *slot.borrow_mut() = Some(Monitors { global, local });
+        });
+    }
+
+    pub(super) fn remove(_mtm: MainThreadMarker) {
+        MONITORS.with(|slot| drop(slot.borrow_mut().take()));
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn remove_clipboard_overlay_monitors(app_handle: &AppHandle) {
+    run_clipboard_overlay_on_main_thread(app_handle, "remove mouse monitors", |_| {
+        if let Some(mtm) = objc2::MainThreadMarker::new() {
+            clipboard_mouse_monitor::remove(mtm);
+        }
+    });
 }
 
 #[cfg(target_os = "macos")]
@@ -414,7 +529,7 @@ fn create_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
             .corner_radius(CLIPBOARD_OVERLAY_CORNER_RADIUS)
             .hides_on_deactivate(false)
             .becomes_key_only_if_needed(false)
-            .style_mask(StyleMask::empty().borderless().full_size_content_view())
+            .style_mask(clipboard_overlay_style_mask())
             .collection_behavior(clipboard_overlay_collection_behavior())
             .with_window(move |window| {
                 let window = window
@@ -461,6 +576,9 @@ fn show_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
     create_clipboard_overlay_on_main_thread(app_handle);
 
     if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {
+        if let Some(mtm) = objc2::MainThreadMarker::new() {
+            clipboard_mouse_monitor::install(mtm, app_handle);
+        }
         if let Some((x, y)) = calculate_clipboard_overlay_position(app_handle) {
             if let Err(err) = overlay_window
                 .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
@@ -469,11 +587,12 @@ fn show_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
             }
         }
 
-        if let Err(err) = overlay_window.set_visible_on_all_workspaces(true) {
-            debug!("Failed to keep clipboard overlay on all workspaces: {err}");
-        }
-
         if let Ok(panel) = app_handle.get_webview_panel("clipboard_overlay") {
+            if let Some(mtm) = tauri_nspanel::objc2::MainThreadMarker::new() {
+                let application = objc2_app_kit::NSApplication::sharedApplication(mtm);
+                #[allow(deprecated)]
+                application.activateIgnoringOtherApps(true);
+            }
             panel.set_level(
                 clipboard_overlay_level(CLIPBOARD_OVERLAY_PINNED.load(Ordering::Relaxed)).into(),
             );
@@ -491,7 +610,6 @@ fn show_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
             debug!("Failed to focus clipboard overlay window: {err}");
         }
 
-        CLIPBOARD_OVERLAY_FOCUSED.store(true, Ordering::Relaxed);
         debug!("Clipboard overlay window shown");
     } else {
         debug!("Failed to find clipboard overlay window");
@@ -521,8 +639,6 @@ fn hide_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
             debug!("Failed to hide clipboard overlay window: {err}");
         }
     }
-
-    CLIPBOARD_OVERLAY_FOCUSED.store(false, Ordering::Relaxed);
 }
 
 #[cfg(target_os = "macos")]
@@ -546,12 +662,6 @@ fn set_clipboard_overlay_pinned_on_main_thread(app_handle: &AppHandle, pinned: b
     if let Ok(panel) = app_handle.get_webview_panel("clipboard_overlay") {
         panel.set_level(clipboard_overlay_level(pinned).into());
         panel.set_collection_behavior(clipboard_overlay_collection_behavior().value());
-    }
-
-    if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {
-        if let Err(err) = overlay_window.set_visible_on_all_workspaces(true) {
-            debug!("Failed to update clipboard overlay workspace visibility: {err}");
-        }
     }
 }
 
@@ -619,29 +729,6 @@ pub fn toggle_clipboard_overlay(app_handle: &AppHandle) {
     } else {
         show_clipboard_overlay(app_handle);
     }
-}
-
-#[cfg(target_os = "macos")]
-pub fn set_clipboard_overlay_focused(focused: bool) {
-    CLIPBOARD_OVERLAY_FOCUSED.store(focused, Ordering::Relaxed);
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn set_clipboard_overlay_focused(_focused: bool) {}
-
-#[cfg(target_os = "macos")]
-pub fn hide_clipboard_overlay_if_unfocused(app_handle: &AppHandle) {
-    run_clipboard_overlay_on_main_thread(app_handle, "hide if unfocused", |app_handle| {
-        if CLIPBOARD_OVERLAY_FOCUSED.load(Ordering::Relaxed) {
-            return;
-        }
-
-        if CLIPBOARD_OVERLAY_PINNED.load(Ordering::Relaxed) {
-            return;
-        }
-
-        hide_clipboard_overlay_on_main_thread(&app_handle);
-    });
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1150,16 +1237,61 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn clipboard_panel_follows_spaces_without_persistent_move_behavior() {
-        use tauri_nspanel::objc2_app_kit::NSWindowCollectionBehavior;
+    fn clipboard_panel_joins_all_spaces_without_move_to_active_space() {
+        use tauri_nspanel::objc2_app_kit::{NSWindowCollectionBehavior, NSWindowStyleMask};
 
         let behavior = clipboard_overlay_collection_behavior().value();
+        let style_mask = clipboard_overlay_style_mask().value();
 
         assert!(behavior.contains(NSWindowCollectionBehavior::CanJoinAllSpaces));
         assert!(behavior.contains(NSWindowCollectionBehavior::FullScreenAuxiliary));
         assert!(behavior.contains(NSWindowCollectionBehavior::Transient));
         assert!(behavior.contains(NSWindowCollectionBehavior::IgnoresCycle));
         assert!(!behavior.contains(NSWindowCollectionBehavior::MoveToActiveSpace));
+        assert!(!style_mask.contains(NSWindowStyleMask::NonactivatingPanel));
+    }
+
+    #[test]
+    fn clipboard_mouse_down_only_dismisses_visible_unpinned_external_clicks() {
+        for visible in [false, true] {
+            for pinned in [false, true] {
+                for targets_clipboard in [false, true] {
+                    assert_eq!(
+                        should_hide_clipboard_overlay_on_mouse_down(
+                            visible,
+                            pinned,
+                            targets_clipboard
+                        ),
+                        (visible, pinned, targets_clipboard) == (true, false, false),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn clipboard_local_mouse_target_matches_only_its_window() {
+        assert!(clipboard_mouse_targets_window(Some(42), 42));
+        assert!(!clipboard_mouse_targets_window(Some(43), 42));
+        assert!(!clipboard_mouse_targets_window(None, 42));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn clipboard_monitors_only_observe_mouse_down() {
+        use objc2_app_kit::NSEventMask;
+
+        assert_eq!(
+            clipboard_mouse_monitor::mouse_mask(),
+            NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown,
+        );
+        assert!(!clipboard_mouse_monitor::mouse_mask().intersects(
+            NSEventMask::KeyDown
+                | NSEventMask::KeyUp
+                | NSEventMask::FlagsChanged
+                | NSEventMask::ScrollWheel
+                | NSEventMask::LeftMouseUp,
+        ));
     }
 
     #[cfg(target_os = "windows")]
