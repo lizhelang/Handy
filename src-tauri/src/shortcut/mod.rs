@@ -40,9 +40,145 @@ pub(crate) fn binding_enabled(settings: &settings::AppSettings, id: &str) -> boo
     }
 }
 
+fn modifier_side_mask(
+    modifiers: ::handy_keys::Modifiers,
+    left: ::handy_keys::Modifiers,
+    right: ::handy_keys::Modifiers,
+) -> u8 {
+    u8::from(modifiers.contains(left)) | (u8::from(modifiers.contains(right)) << 1)
+}
+
+/// Returns whether two HandyKeys shortcut patterns can both match the same
+/// ordinary physical key chord. Compound modifiers accept either side, while
+/// left- and right-specific modifiers remain distinct.
+fn handy_keys_shortcuts_overlap(first: &str, second: &str) -> Result<bool, String> {
+    let first = first
+        .parse::<::handy_keys::Hotkey>()
+        .map_err(|error| format!("Invalid HandyKeys shortcut '{first}': {error}"))?;
+    let second = second
+        .parse::<::handy_keys::Hotkey>()
+        .map_err(|error| format!("Invalid HandyKeys shortcut '{second}': {error}"))?;
+
+    if first.key != second.key {
+        return Ok(false);
+    }
+
+    let modifier_groups = [
+        (
+            ::handy_keys::Modifiers::CMD_LEFT,
+            ::handy_keys::Modifiers::CMD_RIGHT,
+        ),
+        (
+            ::handy_keys::Modifiers::SHIFT_LEFT,
+            ::handy_keys::Modifiers::SHIFT_RIGHT,
+        ),
+        (
+            ::handy_keys::Modifiers::CTRL_LEFT,
+            ::handy_keys::Modifiers::CTRL_RIGHT,
+        ),
+        (
+            ::handy_keys::Modifiers::OPT_LEFT,
+            ::handy_keys::Modifiers::OPT_RIGHT,
+        ),
+    ];
+
+    for (left, right) in modifier_groups {
+        let first_sides = modifier_side_mask(first.modifiers, left, right);
+        let second_sides = modifier_side_mask(second.modifiers, left, right);
+        if (first_sides == 0) != (second_sides == 0) {
+            return Ok(false);
+        }
+        if first_sides != 0 && first_sides & second_sides == 0 {
+            return Ok(false);
+        }
+    }
+
+    Ok(first.modifiers.contains(::handy_keys::Modifiers::FN)
+        == second.modifiers.contains(::handy_keys::Modifiers::FN))
+}
+
+fn find_handy_keys_conflict(
+    settings: &settings::AppSettings,
+    binding_id: &str,
+    candidate: &str,
+) -> Result<Option<String>, String> {
+    if settings.keyboard_implementation != KeyboardImplementation::HandyKeys
+        || !binding_enabled(settings, binding_id)
+    {
+        return Ok(None);
+    }
+
+    let mut active_ids = settings
+        .bindings
+        .keys()
+        .filter(|id| id.as_str() != binding_id && binding_enabled(settings, id))
+        .cloned()
+        .collect::<Vec<_>>();
+    active_ids.sort();
+
+    for id in active_ids {
+        let Some(binding) = settings.bindings.get(&id) else {
+            continue;
+        };
+        if handy_keys_shortcuts_overlap(candidate, &binding.current_binding)? {
+            return Ok(Some(id));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Repair the historical configuration that assigned the same physical chord
+/// to plain and post-processed transcription. The post-processing chord wins;
+/// plain transcription returns to its platform default.
+fn repair_transcribe_post_process_overlap(
+    settings: &mut settings::AppSettings,
+) -> Result<bool, String> {
+    if settings.keyboard_implementation != KeyboardImplementation::HandyKeys
+        || !settings.post_process_enabled
+    {
+        return Ok(false);
+    }
+
+    let Some(plain) = settings.bindings.get("transcribe") else {
+        return Ok(false);
+    };
+    let Some(post_process) = settings.bindings.get("transcribe_with_post_process") else {
+        return Ok(false);
+    };
+
+    if !handy_keys_shortcuts_overlap(&plain.current_binding, &post_process.current_binding)? {
+        return Ok(false);
+    }
+
+    let default_plain = plain.default_binding.clone();
+    if handy_keys_shortcuts_overlap(&default_plain, &post_process.current_binding)? {
+        return Err("Default transcription shortcut overlaps the post-processing shortcut".into());
+    }
+
+    settings
+        .bindings
+        .get_mut("transcribe")
+        .expect("transcribe binding checked above")
+        .current_binding = default_plain;
+    Ok(true)
+}
+
 /// Initialize shortcuts using the configured implementation
 pub fn init_shortcuts(app: &AppHandle) {
-    let user_settings = settings::load_or_create_app_settings(app);
+    let mut user_settings = settings::load_or_create_app_settings(app);
+    if user_settings.keyboard_implementation == KeyboardImplementation::HandyKeys {
+        match repair_transcribe_post_process_overlap(&mut user_settings) {
+            Ok(true) => {
+                warn!(
+                    "Resetting plain transcription shortcut to its default because it overlaps the post-processing shortcut"
+                );
+                settings::write_settings(app, user_settings.clone());
+            }
+            Ok(false) => {}
+            Err(error) => error!("Failed to repair overlapping transcription shortcuts: {error}"),
+        }
+    }
 
     // Check which implementation to use
     match user_settings.keyboard_implementation {
@@ -176,18 +312,31 @@ pub fn change_binding(
         }
     }
 
-    // Unregister the existing binding
-    if let Err(e) = unregister_shortcut(&app, binding_to_modify.clone()) {
-        let error_msg = format!("Failed to unregister shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
-    }
-
     // Validate the new shortcut for the current keyboard implementation
     if let Err(e) = validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
     {
         warn!("change_binding validation error: {}", e);
-        restore_registration(&app, &binding_to_modify);
         return Err(e);
+    }
+
+    if let Some(conflict_id) = find_handy_keys_conflict(&settings, &id, &binding)? {
+        let error_msg = format!(
+            "Shortcut '{}' conflicts with active binding '{}'",
+            binding, conflict_id
+        );
+        warn!("change_binding conflict: {error_msg}");
+        return Ok(BindingResponse {
+            success: false,
+            binding: None,
+            error: Some(error_msg),
+        });
+    }
+
+    // Unregister the existing binding only after the replacement is known to be
+    // valid and non-conflicting, so rejection leaves the current shortcut live.
+    if let Err(e) = unregister_shortcut(&app, binding_to_modify.clone()) {
+        let error_msg = format!("Failed to unregister shortcut: {}", e);
+        error!("change_binding error: {}", error_msg);
     }
 
     // Create an updated binding
@@ -1006,20 +1155,68 @@ pub fn change_auto_submit_key_setting(app: AppHandle, key: String) -> Result<(),
 #[specta::specta]
 pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
-    settings.post_process_enabled = enabled;
-    settings::write_settings(&app, settings.clone());
+    if settings.post_process_enabled == enabled {
+        return Ok(());
+    }
 
-    // Register or unregister the post-processing shortcut
-    if let Some(binding) = settings
+    settings.post_process_enabled = enabled;
+    let old_plain_binding = settings.bindings.get("transcribe").cloned();
+    let repaired_plain_binding = if enabled {
+        repair_transcribe_post_process_overlap(&mut settings)?
+    } else {
+        false
+    };
+    let new_plain_binding = settings.bindings.get("transcribe").cloned();
+    let post_process_binding = settings
         .bindings
         .get("transcribe_with_post_process")
-        .cloned()
-    {
-        if enabled {
-            let _ = register_shortcut(&app, binding);
-        } else {
-            let _ = unregister_shortcut(&app, binding);
+        .cloned();
+
+    if enabled {
+        if repaired_plain_binding {
+            let old_plain = old_plain_binding
+                .as_ref()
+                .ok_or("Plain transcription shortcut is missing")?;
+            let new_plain = new_plain_binding
+                .as_ref()
+                .ok_or("Plain transcription shortcut is missing after repair")?;
+            unregister_shortcut(&app, old_plain.clone())?;
+            if let Err(error) = register_shortcut(&app, new_plain.clone()) {
+                restore_registration(&app, old_plain);
+                return Err(error);
+            }
         }
+
+        if let Some(binding) = post_process_binding.clone() {
+            if let Err(error) = register_shortcut(&app, binding) {
+                if repaired_plain_binding {
+                    if let (Some(old_plain), Some(new_plain)) =
+                        (old_plain_binding.as_ref(), new_plain_binding.as_ref())
+                    {
+                        let _ = unregister_shortcut(&app, new_plain.clone());
+                        restore_registration(&app, old_plain);
+                    }
+                }
+                return Err(error);
+            }
+        }
+    } else if let Some(binding) = post_process_binding {
+        unregister_shortcut(&app, binding)?;
+    }
+
+    settings::write_settings(&app, settings);
+
+    if repaired_plain_binding {
+        let _ = app.emit(
+            "settings-changed",
+            serde_json::json!({
+                "setting": "bindings",
+                "reason": "transcription_shortcut_overlap_repaired"
+            }),
+        );
+        warn!(
+            "Reset plain transcription shortcut to its default while enabling post-processing because the shortcuts overlapped"
+        );
     }
 
     crate::secure_input::reconcile_fallback(&app);
@@ -1410,8 +1607,13 @@ pub async fn get_available_accelerators() -> crate::managers::transcription::Ava
 
 #[cfg(test)]
 mod tests {
-    use super::binding_enabled;
-    use crate::settings::{get_default_settings, CLIPBOARD_HISTORY_BINDING_ID};
+    use super::{
+        binding_enabled, find_handy_keys_conflict, handy_keys_shortcuts_overlap,
+        repair_transcribe_post_process_overlap,
+    };
+    use crate::settings::{
+        get_default_settings, KeyboardImplementation, CLIPBOARD_HISTORY_BINDING_ID,
+    };
 
     #[test]
     fn clipboard_binding_requires_feature_and_hotkey_toggles() {
@@ -1423,5 +1625,90 @@ mod tests {
 
         settings.clipboard_hotkey_enabled = true;
         assert!(binding_enabled(&settings, CLIPBOARD_HISTORY_BINDING_ID));
+    }
+
+    #[test]
+    fn handy_keys_generic_modifiers_overlap_side_specific_modifiers() {
+        assert!(
+            handy_keys_shortcuts_overlap("option+shift+space", "option_left+shift_left+space")
+                .unwrap()
+        );
+        assert!(handy_keys_shortcuts_overlap(
+            "option+shift+space",
+            "option_right+shift_right+space"
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn handy_keys_distinct_sides_and_keys_do_not_overlap() {
+        assert!(!handy_keys_shortcuts_overlap(
+            "option_left+shift_left+space",
+            "option_right+shift_right+space"
+        )
+        .unwrap());
+        assert!(!handy_keys_shortcuts_overlap("option+shift+space", "option+space").unwrap());
+        assert!(!handy_keys_shortcuts_overlap("option+shift+space", "option+shift+k").unwrap());
+    }
+
+    #[test]
+    fn active_handy_keys_binding_conflict_is_reported() {
+        let mut settings = get_default_settings();
+        settings.keyboard_implementation = KeyboardImplementation::HandyKeys;
+        settings.post_process_enabled = true;
+        settings
+            .bindings
+            .get_mut("transcribe")
+            .unwrap()
+            .current_binding = "option_left+shift_left+space".into();
+
+        let conflict =
+            find_handy_keys_conflict(&settings, "transcribe", "option_left+shift_left+space")
+                .unwrap();
+
+        assert_eq!(conflict.as_deref(), Some("transcribe_with_post_process"));
+    }
+
+    #[test]
+    fn startup_repair_preserves_post_process_and_resets_plain_transcribe() {
+        let mut settings = get_default_settings();
+        settings.keyboard_implementation = KeyboardImplementation::HandyKeys;
+        settings.post_process_enabled = true;
+        settings
+            .bindings
+            .get_mut("transcribe")
+            .unwrap()
+            .current_binding = "option_left+shift_left+space".into();
+        let post_process_before = settings.bindings["transcribe_with_post_process"]
+            .current_binding
+            .clone();
+
+        assert!(repair_transcribe_post_process_overlap(&mut settings).unwrap());
+        assert_eq!(
+            settings.bindings["transcribe"].current_binding,
+            settings.bindings["transcribe"].default_binding
+        );
+        assert_eq!(
+            settings.bindings["transcribe_with_post_process"].current_binding,
+            post_process_before
+        );
+    }
+
+    #[test]
+    fn startup_repair_leaves_disabled_post_process_binding_untouched() {
+        let mut settings = get_default_settings();
+        settings.keyboard_implementation = KeyboardImplementation::HandyKeys;
+        settings.post_process_enabled = false;
+        settings
+            .bindings
+            .get_mut("transcribe")
+            .unwrap()
+            .current_binding = "option_left+shift_left+space".into();
+
+        assert!(!repair_transcribe_post_process_overlap(&mut settings).unwrap());
+        assert_eq!(
+            settings.bindings["transcribe"].current_binding,
+            "option_left+shift_left+space"
+        );
     }
 }

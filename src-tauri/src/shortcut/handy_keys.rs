@@ -191,6 +191,18 @@ impl HandyKeysState {
         binding_id: &str,
         hotkey_string: &str,
     ) -> Result<(), String> {
+        if binding_to_hotkey.contains_key(binding_id) {
+            return Err(format!("Binding '{binding_id}' is already registered"));
+        }
+
+        for (registered_id, registered_hotkey) in hotkey_to_binding.values() {
+            if super::handy_keys_shortcuts_overlap(hotkey_string, registered_hotkey)? {
+                return Err(format!(
+                    "Shortcut '{hotkey_string}' conflicts with registered binding '{registered_id}'"
+                ));
+            }
+        }
+
         let hotkey: Hotkey = hotkey_string
             .parse()
             .map_err(|e| format!("Failed to parse hotkey '{}': {}", hotkey_string, e))?;
