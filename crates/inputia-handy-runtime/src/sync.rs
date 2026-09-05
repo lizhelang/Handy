@@ -60,6 +60,23 @@ impl SourcePump {
         self.outbox.store_id()
     }
 
+    pub fn update_record(
+        &mut self,
+        record_id: &str,
+        expected_revision: u64,
+        operation_id: &str,
+        patch: &crate::source::HistoryPatch,
+    ) -> Result<crate::source::MutationResult, SyncError> {
+        Ok(self.outbox.update_record(
+            &mut self.connection,
+            self.source,
+            record_id,
+            expected_revision,
+            operation_id,
+            patch,
+        )?)
+    }
+
     /// 每次处理最多 2000 事件，允许外层服务公平处理 UI 和停止请求。
     pub fn sync_batch(&mut self, store: &mut IntegrationStore) -> Result<SyncReport, SyncError> {
         store.register_source(self.source.logical_name(), self.outbox.store_id())?;

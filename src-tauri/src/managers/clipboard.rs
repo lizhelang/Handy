@@ -257,7 +257,34 @@ fn clipboard_file_preview(paths: &[String]) -> String {
         .join("\n")
 }
 
+fn restore_files_strict(
+    content: &str,
+    write: impl FnOnce(Vec<String>) -> Result<()>,
+) -> Result<()> {
+    let paths = if content.trim_start().starts_with('[') {
+        let raw: Vec<String> =
+            serde_json::from_str(content).map_err(|_| anyhow!("Invalid file clipboard payload"))?;
+        normalize_clipboard_file_paths(&raw)
+    } else {
+        deserialize_clipboard_file_paths(content)
+    };
+    if paths.is_empty()
+        || paths.iter().any(|path| {
+            !std::path::Path::new(path).is_absolute() || path.chars().any(char::is_control)
+        })
+    {
+        return Err(anyhow!("Clipboard file paths are unavailable or invalid"));
+    }
+    write(paths)
+}
+
 impl ClipboardManager {
+    /// 统一历史的文件复制不降级成路径文本；原生写入失败必须返回失败。
+    pub fn copy_files_strict(&self, content: &str) -> Result<()> {
+        restore_files_strict(content, |paths| {
+            self.write_file_paths_to_system_clipboard(paths)
+        })
+    }
     fn client_image_path(&self, path: &str) -> String {
         self.images_dir.join(path).to_string_lossy().into_owned()
     }
@@ -1723,6 +1750,31 @@ impl ClipboardHandler for ClipboardChangeHandler {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unified_files_never_fall_back_to_text_on_invalid_payload_or_native_error() {
+        assert!(
+            super::restore_files_strict("[broken", |_| panic!("invalid payload dispatched"))
+                .is_err()
+        );
+        assert!(super::restore_files_strict("relative/path", |_| panic!(
+            "relative path dispatched"
+        ))
+        .is_err());
+        assert!(super::restore_files_strict("[]", |_| panic!("empty payload dispatched")).is_err());
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp
+            .path()
+            .join("synthetic-file")
+            .to_string_lossy()
+            .into_owned();
+        let payload = serde_json::to_string(&vec![path.clone()]).unwrap();
+        let result = super::restore_files_strict(&payload, |paths| {
+            assert_eq!(paths, vec![path]);
+            Err(anyhow::anyhow!("native failure fixture"))
+        });
+        assert!(result.is_err());
+    }
+
     #[cfg(target_os = "macos")]
     use super::process_macos_clipboard_representations;
     use super::{

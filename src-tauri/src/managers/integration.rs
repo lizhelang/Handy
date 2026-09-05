@@ -46,7 +46,13 @@ impl IntegrationManager {
 fn prepare_source(path: &Path, source: SourceTable) -> Result<()> {
     let installed = {
         let conn = Connection::open(path)?;
-        conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='unified_source_meta')",[],|row|row.get::<_,bool>(0))?
+        let exists=conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='unified_source_meta')",[],|row|row.get::<_,bool>(0))?;
+        exists
+            && conn.query_row(
+                "SELECT schema_version>=3 FROM unified_source_meta",
+                [],
+                |row| row.get::<_, bool>(0),
+            )?
     };
     if !installed {
         let backup_root = path

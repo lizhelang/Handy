@@ -3,7 +3,18 @@
 use crate::store::{ItemSnapshot, SourceChange, SourceOperation};
 use inputia_core::integration::events::Identifier;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{fmt, time::Duration};
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct HistoryPatch {
+    pub starred: Option<bool>,
+    pub pinned: Option<bool>,
+    pub title: Option<String>,
+    pub clear_title: bool,
+    pub text: Option<String>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceTable {
@@ -31,9 +42,9 @@ impl SourceTable {
         match self {
             Self::History => format!(
                 "json_object('source_kind','voice','content_type','text',
-                 'text',COALESCE(NULLIF({row}.post_processed_text,''),{row}.transcription_text),
+                 'text',COALESCE((SELECT text_override FROM unified_source_annotations WHERE record_id=CAST({row}.id AS TEXT)),NULLIF({row}.post_processed_text,''),{row}.transcription_text),
                  'title',{row}.title,'starred',json(CASE WHEN {row}.saved THEN 'true' ELSE 'false' END),
-                 'pinned',json('false'),'created_at_ms',{row}.timestamp * 1000,
+                 'pinned',json(CASE WHEN COALESCE((SELECT pinned FROM unified_source_annotations WHERE record_id=CAST({row}.id AS TEXT)),0) THEN 'true' ELSE 'false' END),'created_at_ms',{row}.timestamp * 1000,
                  'asset_ref',NULLIF({row}.file_name,''),'source_app',NULL,'source_trust','unknown')"
             ),
             Self::Clipboard => format!(
@@ -184,6 +195,8 @@ impl SourceOutbox {
                 acknowledged_sequence INTEGER NOT NULL DEFAULT 0);
              CREATE TABLE IF NOT EXISTS unified_source_versions (
                 record_id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS unified_source_annotations (
+                record_id TEXT PRIMARY KEY,pinned INTEGER NOT NULL DEFAULT 0,text_override TEXT);
              CREATE TABLE IF NOT EXISTS unified_source_outbox (
                 seq INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE,
                 record_id TEXT NOT NULL, revision INTEGER NOT NULL, operation TEXT NOT NULL,
@@ -197,7 +210,7 @@ impl SourceOutbox {
         ).optional()?;
         let fresh = existing.is_none();
         if let Some((schema, _, name)) = &existing {
-            if *schema != 1 {
+            if ![1, 2, 3].contains(schema) {
                 return Err(SourceError::IncompatibleSchema);
             }
             if name != source.logical_name() {
@@ -206,7 +219,14 @@ impl SourceOutbox {
         } else {
             tx.execute(
                 "INSERT INTO unified_source_meta(singleton,schema_version,store_id,logical_name,policy_epoch)
-                 VALUES(1,1,lower(hex(randomblob(16))),?1,1)", [source.logical_name()],
+                 VALUES(1,3,lower(hex(randomblob(16))),?1,1)", [source.logical_name()],
+            )?;
+        }
+        let has_override:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('unified_source_annotations') WHERE name='text_override')",[],|row|row.get(0))?;
+        if !has_override {
+            tx.execute(
+                "ALTER TABLE unified_source_annotations ADD COLUMN text_override TEXT",
+                [],
             )?;
         }
         let table = source.table();
@@ -220,9 +240,18 @@ impl SourceOutbox {
             } else {
                 source.snapshot_sql(row)
             };
+            let clear_old_override = if operation == "delete" {
+                "DELETE FROM unified_source_annotations WHERE record_id=CAST(OLD.id AS TEXT);"
+            } else if source == SourceTable::History {
+                "UPDATE unified_source_annotations SET text_override=NULL WHERE record_id=CAST(NEW.id AS TEXT) AND text_override IS NOT NEW.post_processed_text;"
+            } else {
+                ""
+            };
             tx.execute_batch(&format!(
-                "CREATE TRIGGER IF NOT EXISTS unified_{table}_{suffix} AFTER {event} ON {table}
+                "DROP TRIGGER IF EXISTS unified_{table}_{suffix};
+                 CREATE TRIGGER unified_{table}_{suffix} AFTER {event} ON {table}
                  BEGIN
+                   {clear_old_override}
                    INSERT INTO unified_source_versions(record_id,revision) VALUES(CAST({row}.id AS TEXT),1)
                    ON CONFLICT(record_id) DO UPDATE SET revision=revision+1;
                    INSERT INTO unified_source_outbox(event_id,record_id,revision,operation,policy_epoch,payload)
@@ -252,6 +281,10 @@ impl SourceOutbox {
             "SELECT store_id FROM unified_source_meta WHERE singleton=1",
             [],
             |r| r.get(0),
+        )?;
+        tx.execute(
+            "UPDATE unified_source_meta SET schema_version=3 WHERE singleton=1",
+            [],
         )?;
         tx.commit()?;
         Ok(Self { store_id })
@@ -394,6 +427,71 @@ impl SourceOutbox {
             return Err(SourceError::PolicyRegression);
         }
         Ok(())
+    }
+
+    /// 修改源表并由事务触发器生成事件；同操作重试返回原修订号，不重复改文。
+    pub fn update_record(
+        &self,
+        conn: &mut Connection,
+        source: SourceTable,
+        record_id: &str,
+        expected_revision: u64,
+        operation_id: &str,
+        patch: &HistoryPatch,
+    ) -> Result<MutationResult> {
+        Identifier::parse(record_id).map_err(|_| SourceError::InvalidIdentifier)?;
+        if patch
+            .title
+            .as_ref()
+            .is_some_and(|s| s.chars().count() > 256)
+            || patch
+                .text
+                .as_ref()
+                .is_some_and(|s| s.len() > 2 * 1024 * 1024 || s.contains('\0'))
+            || (patch.clear_title && patch.title.is_some())
+        {
+            return Err(SourceError::InvalidIdentifier);
+        }
+        let digest = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&(
+                source.logical_name(),
+                record_id,
+                expected_revision,
+                patch
+            ))?)
+        );
+        self.mutate_once(conn,operation_id,&digest,|tx| {
+            let logical:String=tx.query_row("SELECT logical_name FROM unified_source_meta",[],|row|row.get(0))?;
+            if logical!=source.logical_name(){return Err(rusqlite::Error::InvalidQuery);}
+            let revision:u64=tx.query_row("SELECT revision FROM unified_source_versions WHERE record_id=?1",[record_id],|row|row.get(0))?;
+            if revision!=expected_revision{return Err(rusqlite::Error::QueryReturnedNoRows);}
+            let changed=match source {
+                SourceTable::History=> {
+                    if let Some(text)=&patch.text {
+                        tx.execute("INSERT INTO unified_source_annotations(record_id,text_override) VALUES(?1,?2) ON CONFLICT(record_id) DO UPDATE SET text_override=excluded.text_override",params![record_id,text])?;
+                    }
+                    if let Some(pinned)=patch.pinned {
+                        tx.execute("INSERT INTO unified_source_annotations(record_id,pinned) VALUES(?1,?2) ON CONFLICT(record_id) DO UPDATE SET pinned=excluded.pinned",params![record_id,pinned])?;
+                    }
+                    tx.execute("UPDATE transcription_history SET saved=COALESCE(?1,saved),title=CASE WHEN ?2 THEN '' ELSE COALESCE(?3,title) END,post_processed_text=COALESCE(?4,post_processed_text) WHERE id=CAST(?5 AS INTEGER)",params![patch.starred,patch.clear_title,patch.title,patch.text,record_id])?
+                },
+                SourceTable::Clipboard=> {
+                    if let Some(text)=&patch.text {
+                        let kind:String=tx.query_row("SELECT content_type FROM clipboard_history WHERE id=CAST(?1 AS INTEGER)",[record_id],|row|row.get(0))?;
+                        if kind!="text" && kind!="richtext" {return Err(rusqlite::Error::InvalidQuery);}
+                        let hash=format!("{:x}",Sha256::digest(text.as_bytes()));
+                        let preview=text.chars().take(200).collect::<String>();
+                        tx.execute("UPDATE clipboard_history SET full_text=?1,content_preview=?2,content_hash=?3,size_bytes=?4,is_favorite=COALESCE(?5,is_favorite),is_pinned=COALESCE(?6,is_pinned),title=CASE WHEN ?7 THEN NULL ELSE COALESCE(?8,title) END WHERE id=CAST(?9 AS INTEGER)",params![text,preview,hash,text.len() as i64,patch.starred,patch.pinned,patch.clear_title,patch.title,record_id])?
+                    } else {
+                        tx.execute("UPDATE clipboard_history SET is_favorite=COALESCE(?1,is_favorite),is_pinned=COALESCE(?2,is_pinned),title=CASE WHEN ?3 THEN NULL ELSE COALESCE(?4,title) END WHERE id=CAST(?5 AS INTEGER)",params![patch.starred,patch.pinned,patch.clear_title,patch.title,record_id])?
+                    }
+                }
+            };
+            if changed!=1{return Err(rusqlite::Error::QueryReturnedNoRows);}
+            let revision:u64=tx.query_row("SELECT revision FROM unified_source_versions WHERE record_id=?1",[record_id],|row|row.get(0))?;
+            Ok(revision.to_string())
+        })
     }
 
     /// 业务修改与去重回执在同一源事务；重复请求不再执行 toggle 等非幂等动作。

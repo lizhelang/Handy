@@ -164,6 +164,71 @@ impl HistoryService {
         })
     }
 
+    pub fn get_item(&self, item_id: String, expected_revision: u64) -> ServiceResult<IndexedItem> {
+        self.call(move |worker| {
+            if let Some(error) = &worker.last_error {
+                return Err(error.clone());
+            }
+            let item = worker
+                .store
+                .get(&item_id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "history item no longer exists".to_owned())?;
+            if item.revision != expected_revision {
+                return Err("history item has a newer revision".into());
+            }
+            Ok(item)
+        })
+    }
+
+    pub fn update_item(
+        &self,
+        item_id: String,
+        expected_revision: u64,
+        operation_id: String,
+        patch: crate::source::HistoryPatch,
+    ) -> ServiceResult<u64> {
+        self.call(move |worker| {
+            let item = worker
+                .store
+                .get(&item_id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "history item no longer exists".to_owned())?;
+            let source = worker
+                .sources
+                .iter_mut()
+                .find(|source| source.store_id() == item.store_id)
+                .ok_or_else(|| "history source unavailable".to_owned())?;
+            let result = source
+                .update_record(&item.record_id, expected_revision, &operation_id, &patch)
+                .map_err(|e| e.to_string())?;
+            let revision = result
+                .response
+                .parse::<u64>()
+                .map_err(|_| "invalid source receipt".to_owned())?;
+            // 消费到该修订才确认 UI 修改完成；超时重试仍复用相同 operation_id。
+            for _ in 0..100 {
+                match worker.sync_once() {
+                    Ok(_) => {}
+                    Err(error) => {
+                        worker.last_error = Some(error.clone());
+                        return Err(error);
+                    }
+                }
+                if worker
+                    .store
+                    .get(&item_id)
+                    .map_err(|e| e.to_string())?
+                    .is_some_and(|current| current.revision >= revision)
+                {
+                    worker.last_error = None;
+                    return Ok(revision);
+                }
+            }
+            Err("source updated but projection is still pending".into())
+        })
+    }
+
     pub fn list_terms(&self, limit: u32, offset: u64) -> ServiceResult<Vec<LearnedTermView>> {
         self.call(move |worker| {
             worker

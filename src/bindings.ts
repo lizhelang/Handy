@@ -1411,6 +1411,61 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
+  async copyUnifiedHistoryItem(
+    itemId: string,
+    expectedRevision: number,
+  ): Promise<Result<null, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("copy_unified_history_item", {
+          itemId,
+          expectedRevision,
+        }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
+  async updateUnifiedHistoryItem(
+    itemId: string,
+    expectedRevision: number,
+    operationId: string,
+    patch: UnifiedHistoryPatch,
+  ): Promise<Result<number, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("update_unified_history_item", {
+          itemId,
+          expectedRevision,
+          operationId,
+          patch,
+        }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
+  async getUnifiedHistoryAsset(
+    itemId: string,
+    expectedRevision: number,
+  ): Promise<Result<string | null, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("get_unified_history_asset", {
+          itemId,
+          expectedRevision,
+        }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
   async getUnifiedTerms(
     limit: number,
     offset: number,
@@ -2201,6 +2256,13 @@ export type UnifiedHistoryItem = {
   created_at_ms: number;
   asset_ref: string | null;
   source_app: string | null;
+};
+export type UnifiedHistoryPatch = {
+  starred: boolean | null;
+  pinned: boolean | null;
+  title: string | null;
+  clear_title: boolean;
+  text: string | null;
 };
 export type UnifiedHistoryQuery = {
   search: string | null;

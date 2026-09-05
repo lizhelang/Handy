@@ -1,9 +1,118 @@
+use crate::managers::clipboard::ClipboardManager;
 use crate::managers::integration::IntegrationManager;
 use inputia_handy_runtime::store::{ContentType, HistoryQuery, IndexedItem, SourceKind};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, State};
+
+#[derive(Clone, Debug, Deserialize, Type)]
+pub struct UnifiedHistoryPatch {
+    pub starred: Option<bool>,
+    pub pinned: Option<bool>,
+    pub title: Option<String>,
+    pub clear_title: bool,
+    pub text: Option<String>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn update_unified_history_item(
+    manager: State<'_, Arc<IntegrationManager>>,
+    item_id: String,
+    expected_revision: u64,
+    operation_id: String,
+    patch: UnifiedHistoryPatch,
+) -> Result<u64, String> {
+    let service = manager.service.clone();
+    let patch = inputia_handy_runtime::source::HistoryPatch {
+        starred: patch.starred,
+        pinned: patch.pinned,
+        title: patch.title,
+        clear_title: patch.clear_title,
+        text: patch.text,
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        service.update_item(item_id, expected_revision, operation_id, patch)
+    })
+    .await
+    .map_err(|_| "unified history worker failed".to_owned())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn copy_unified_history_item(
+    manager: State<'_, Arc<IntegrationManager>>,
+    clipboard: State<'_, Arc<ClipboardManager>>,
+    item_id: String,
+    expected_revision: u64,
+) -> Result<(), String> {
+    let service = manager.service.clone();
+    let clipboard = Arc::clone(&clipboard);
+    tauri::async_runtime::spawn_blocking(move || {
+        let item = service.get_item(item_id, expected_revision)?;
+        if item.snapshot.content_type == ContentType::Files {
+            return clipboard
+                .copy_files_strict(
+                    item.snapshot
+                        .text
+                        .as_deref()
+                        .ok_or_else(|| "file payload unavailable".to_owned())?,
+                )
+                .map_err(|_| "unable to restore native file clipboard".to_owned());
+        }
+        let kind = match item.snapshot.content_type {
+            ContentType::Text => "text",
+            ContentType::Image => "image",
+            ContentType::Files => "file",
+            ContentType::Html | ContentType::Rtf => {
+                return Err("rich content requires an explicit plain-text copy action".into())
+            }
+        };
+        clipboard
+            .copy_content_to_clipboard(kind, item.snapshot.text, item.snapshot.asset_ref)
+            .map_err(|_| "unable to copy history item".to_owned())
+    })
+    .await
+    .map_err(|_| "unified history worker failed".to_owned())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_unified_history_asset(
+    app: AppHandle,
+    manager: State<'_, Arc<IntegrationManager>>,
+    item_id: String,
+    expected_revision: u64,
+) -> Result<Option<String>, String> {
+    let service = manager.service.clone();
+    let root =
+        crate::portable::app_data_dir(&app).map_err(|_| "history data unavailable".to_owned())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let item = service.get_item(item_id, expected_revision)?;
+        let Some(reference) = item.snapshot.asset_ref else {
+            return Ok(None);
+        };
+        let folder = match (item.snapshot.source_kind, item.snapshot.content_type) {
+            (SourceKind::Voice, _) => root.join("recordings"),
+            (_, ContentType::Image) => root.join("clipboard_images"),
+            _ => return Ok(None),
+        };
+        let folder = folder
+            .canonicalize()
+            .map_err(|_| "history attachment directory unavailable".to_owned())?;
+        let path = folder
+            .join(reference)
+            .canonicalize()
+            .map_err(|_| "history attachment unavailable".to_owned())?;
+        if !path.starts_with(&folder) || !path.is_file() {
+            return Err("history attachment is outside managed storage".into());
+        }
+        Ok(Some(path.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|_| "unified history worker failed".to_owned())?
+}
 
 #[derive(Clone, Debug, Serialize, Type)]
 pub struct UnifiedTerm {

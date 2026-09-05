@@ -26,6 +26,41 @@ fn background_service_combines_real_sources_and_notifies_revisions() {
     assert_eq!(items[0].snapshot.source_kind, SourceKind::Clipboard);
     assert_eq!(items[1].snapshot.source_kind, SourceKind::Voice);
     let voice_id = items[1].item_id.clone();
+    let patch = inputia_handy_runtime::source::HistoryPatch {
+        starred: Some(true),
+        pinned: Some(true),
+        title: Some("命名语音".into()),
+        ..Default::default()
+    };
+    let revision = service
+        .update_item(
+            voice_id.clone(),
+            1,
+            "metadata-operation".into(),
+            patch.clone(),
+        )
+        .unwrap();
+    assert_eq!(revision, 2);
+    assert_eq!(
+        service
+            .update_item(voice_id.clone(), 1, "metadata-operation".into(), patch)
+            .unwrap(),
+        2
+    );
+    assert!(service
+        .update_item(
+            voice_id.clone(),
+            1,
+            "stale-operation".into(),
+            inputia_handy_runtime::source::HistoryPatch {
+                title: Some("过时覆盖".into()),
+                ..Default::default()
+            }
+        )
+        .is_err());
+    let current = service.get_item(voice_id.clone(), 2).unwrap();
+    assert!(current.snapshot.pinned && current.snapshot.starred);
+    assert_eq!(current.snapshot.title.as_deref(), Some("命名语音"));
     history
         .execute(
             "UPDATE transcription_history SET post_processed_text='修订文本',saved=1 WHERE id=1",
