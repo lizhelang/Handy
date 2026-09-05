@@ -15,18 +15,58 @@ use rusqlite::{Connection, OpenFlags};
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc::{self, SyncSender},
         Arc,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 type ServiceResult<T> = Result<T, String>;
 type Job = Box<dyn FnOnce(&mut ServiceResult<Worker>) + Send>;
 
+/// GUI 发键边界只读取原子快照，不等待数据库或服务队列。
+/// 所有新增的策略/删除写入口必须在写入前调用 Worker::revoke_outputs。
+#[derive(Clone)]
+pub struct OutputPermit {
+    generation: Arc<AtomicU64>,
+    expected: u64,
+    expires: Instant,
+}
+
+#[derive(Default)]
+struct SourceWrites {
+    active: AtomicUsize,
+    generation: AtomicU64,
+}
+
+/// 源写入期间阻止新许可；Drop 后仍须由同步屏障消费源事务才可重新输出。
+pub struct SourceWriteGuard {
+    source: Arc<SourceWrites>,
+}
+impl Drop for SourceWriteGuard {
+    fn drop(&mut self) {
+        self.source.generation.fetch_add(1, Ordering::AcqRel);
+        self.source.active.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+impl OutputPermit {
+    pub fn check(&self) -> ServiceResult<()> {
+        if self.generation.load(Ordering::Acquire) == self.expected && Instant::now() < self.expires
+        {
+            Ok(())
+        } else {
+            Err("output permission expired or was revoked".into())
+        }
+    }
+}
+
 struct Worker {
+    output_generation: Arc<AtomicU64>,
+    source_writes: Arc<SourceWrites>,
+    _writer_lease: std::fs::File,
     learning_key: [u8; 32],
     store: IntegrationStore,
     sources: Vec<SourcePump>,
@@ -36,11 +76,18 @@ struct Worker {
 }
 
 impl Worker {
+    fn revoke_outputs(&self) {
+        self.output_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
     fn sync_once(&mut self) -> ServiceResult<bool> {
         let mut changed = false;
         let mut failure = None;
         for source in &mut self.sources {
-            match source.sync_batch(&mut self.store) {
+            let generation = self.output_generation.clone();
+            match source.sync_batch_before_apply(&mut self.store, || {
+                generation.fetch_add(1, Ordering::AcqRel);
+            }) {
                 Ok(result) => changed |= result.applied_events > 0 || result.restored_records > 0,
                 Err(error) => {
                     failure.get_or_insert_with(|| error.to_string());
@@ -51,11 +98,16 @@ impl Worker {
             self.generation = self.generation.saturating_add(1);
             (self.changed)(self.generation);
         }
+        if failure.is_some() {
+            self.revoke_outputs();
+        }
         failure.map_or(Ok(changed), Err)
     }
 }
 
 pub struct HistoryService {
+    output_generation: Arc<AtomicU64>,
+    source_writes: Arc<SourceWrites>,
     sender: SyncSender<Job>,
     stopping: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
@@ -71,10 +123,27 @@ impl HistoryService {
         let (sender, receiver) = mpsc::sync_channel::<Job>(32);
         let stopping = Arc::new(AtomicBool::new(false));
         let stop = stopping.clone();
+        let output_generation = Arc::new(AtomicU64::new(1));
+        let worker_generation = output_generation.clone();
+        let source_writes = Arc::new(SourceWrites::default());
+        let worker_source_writes = source_writes.clone();
         let thread = thread::Builder::new()
             .name("handy-unified-history".into())
             .spawn(move || {
                 let mut worker = (|| {
+                    let mut options = std::fs::OpenOptions::new();
+                    options.read(true).write(true).create(true).truncate(false);
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::OpenOptionsExt;
+                        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+                    }
+                    let writer = options
+                        .open(root.join("integration-writer.lock"))
+                        .map_err(|_| "unable to open integration writer lease".to_owned())?;
+                    writer
+                        .try_lock()
+                        .map_err(|_| "unified history already has a writer".to_owned())?;
                     let mut sources = Vec::new();
                     for (file, table) in [
                         ("history.db", SourceTable::History),
@@ -98,7 +167,11 @@ impl HistoryService {
                     )
                     .map_err(|_| "learning key unavailable or unsafe".to_owned())?;
                     store.enable_learning(&key).map_err(|e| e.to_string())?;
+                    store.initialize_outputs().map_err(|e| e.to_string())?;
                     Ok(Worker {
+                        output_generation: worker_generation,
+                        source_writes: worker_source_writes,
+                        _writer_lease: writer,
                         learning_key: key,
                         store,
                         sources,
@@ -120,6 +193,8 @@ impl HistoryService {
             })
             .map_err(|_| "unable to start history worker".to_owned())?;
         Ok(Self {
+            output_generation,
+            source_writes,
             sender,
             stopping,
             thread: Some(thread),
@@ -189,6 +264,7 @@ impl HistoryService {
         patch: crate::source::HistoryPatch,
     ) -> ServiceResult<u64> {
         self.call(move |worker| {
+            worker.revoke_outputs();
             let item = worker
                 .store
                 .get(&item_id)
@@ -236,6 +312,101 @@ impl HistoryService {
                 .list_terms(limit, offset)
                 .map_err(|e| e.to_string())
         })
+    }
+
+    pub fn policy_epoch(&self) -> ServiceResult<u64> {
+        self.call(|worker| worker.store.policy_epoch().map_err(|e| e.to_string()))
+    }
+    pub fn prepare_output(
+        &self,
+        intent: crate::output_ledger::OutputIntent,
+    ) -> ServiceResult<crate::output_ledger::OutputRecord> {
+        self.call(move |worker| {
+            worker
+                .store
+                .prepare_output(&intent)
+                .map_err(|e| e.to_string())
+        })
+    }
+    pub fn claim_output(&self, intent: crate::output_ledger::OutputIntent) -> ServiceResult<bool> {
+        self.call(move |worker| {
+            worker
+                .store
+                .claim_output(&intent)
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    /// 取得执行所有权与短期许可在同一后台请求内完成。许可不得跨进程持久化。
+    pub fn claim_output_with_permit(
+        &self,
+        intent: crate::output_ledger::OutputIntent,
+    ) -> ServiceResult<Option<OutputPermit>> {
+        self.call(move |worker| {
+            // 外部 manager 的源事务与投影分别持连接；先验证完整同步屏障，
+            // 不能在“已撤销旧许可、尚未投影”的窗口签发另一个旧内容许可。
+            let source_generation = worker.source_writes.generation.load(Ordering::Acquire);
+            if worker.source_writes.active.load(Ordering::Acquire) != 0 {
+                return Err("source mutation is in progress".into());
+            }
+            let mut caught_up = false;
+            for _ in 0..100 {
+                if !worker.sync_once()? {
+                    caught_up = true;
+                    break;
+                }
+            }
+            let expected_generation = worker.output_generation.load(Ordering::Acquire);
+            if !caught_up
+                || worker.source_writes.active.load(Ordering::Acquire) != 0
+                || worker.source_writes.generation.load(Ordering::Acquire) != source_generation
+            {
+                return Err("source changed during output authorization".into());
+            }
+            if worker.last_error.is_some() {
+                return Err("history synchronization unavailable".into());
+            }
+            if !worker
+                .store
+                .claim_output(&intent)
+                .map_err(|e| e.to_string())?
+            {
+                return Ok(None);
+            }
+            Ok(Some(OutputPermit {
+                generation: worker.output_generation.clone(),
+                expected: expected_generation,
+                expires: Instant::now() + Duration::from_secs(2),
+            }))
+        })
+    }
+
+    /// 必须在任何源正文/元数据/附件变更之前持有此守卫，直到源事务提交。
+    pub fn begin_source_write(&self) -> SourceWriteGuard {
+        self.source_writes.active.fetch_add(1, Ordering::AcqRel);
+        self.source_writes.generation.fetch_add(1, Ordering::AcqRel);
+        self.output_generation.fetch_add(1, Ordering::AcqRel);
+        SourceWriteGuard {
+            source: self.source_writes.clone(),
+        }
+    }
+    pub fn finish_output(
+        &self,
+        intent: crate::output_ledger::OutputIntent,
+        outcome: crate::output_ledger::OutputOutcome,
+    ) -> ServiceResult<crate::output_ledger::OutputRecord> {
+        self.call(move |worker| {
+            worker
+                .store
+                .finish_output(&intent, outcome)
+                .map_err(|e| e.to_string())
+        })
+    }
+    pub fn output_record(
+        &self,
+        id: String,
+    ) -> ServiceResult<Option<crate::output_ledger::OutputRecord>> {
+        self.call(move |worker| worker.store.output_record(&id).map_err(|e| e.to_string()))
     }
 
     /// 模型调用方提供已捕获的真实目标策略；此方法不自行猜测前台来源。
@@ -286,9 +457,32 @@ impl HistoryService {
 
 impl Drop for HistoryService {
     fn drop(&mut self) {
+        self.output_generation.fetch_add(1, Ordering::AcqRel);
         self.stopping.store(true, Ordering::Release);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod output_permit_tests {
+    use super::*;
+
+    #[test]
+    fn stale_and_expired_permits_fail_without_a_service_call() {
+        let generation = Arc::new(AtomicU64::new(1));
+        let mut permit = OutputPermit {
+            generation: generation.clone(),
+            expected: 1,
+            expires: Instant::now() + Duration::from_secs(2),
+        };
+        assert!(permit.check().is_ok());
+        generation.fetch_add(1, Ordering::AcqRel);
+        assert!(permit.check().is_err());
+        permit.expected = 2;
+        assert!(permit.check().is_ok());
+        permit.expires = Instant::now();
+        assert!(permit.check().is_err());
     }
 }

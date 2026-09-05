@@ -1,5 +1,6 @@
 use std::fmt;
 pub mod learning;
+pub mod output_ledger;
 pub mod private_key;
 pub mod protocol;
 pub mod service;

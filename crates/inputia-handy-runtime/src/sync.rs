@@ -79,6 +79,15 @@ impl SourcePump {
 
     /// 每次处理最多 2000 事件，允许外层服务公平处理 UI 和停止请求。
     pub fn sync_batch(&mut self, store: &mut IntegrationStore) -> Result<SyncReport, SyncError> {
+        self.sync_batch_before_apply(store, || {})
+    }
+
+    /// 服务在投影写入前撤销已有输出许可；空批次不会无故打断准备中的插入。
+    pub fn sync_batch_before_apply(
+        &mut self,
+        store: &mut IntegrationStore,
+        mut before_apply: impl FnMut(),
+    ) -> Result<SyncReport, SyncError> {
         store.register_source(self.source.logical_name(), self.outbox.store_id())?;
         let cursor = store.cursor(self.outbox.store_id())?;
         let events = match self.outbox.read_batch(&self.connection, cursor, 2_000) {
@@ -100,6 +109,7 @@ impl SourcePump {
                             Ok((view.header.clone(), records))
                         })?;
                 let policy = store.history_retention_policy()?;
+                before_apply();
                 store.restore_retained_history(&header, &records, &policy)?;
                 self.outbox
                     .acknowledge(&mut self.connection, header.through_sequence)?;
@@ -115,6 +125,7 @@ impl SourcePump {
         let through_sequence = events.last().map_or(cursor, |event| event.seq);
         if !events.is_empty() {
             let policy = store.history_retention_policy()?;
+            before_apply();
             store.apply_retained_history(&events, &policy)?;
             self.outbox
                 .acknowledge(&mut self.connection, through_sequence)?;

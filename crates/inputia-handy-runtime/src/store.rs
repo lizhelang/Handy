@@ -177,6 +177,7 @@ pub struct SnapshotRestoreOutcome {
 
 #[derive(Debug)]
 pub enum StoreError {
+    Output(crate::output_ledger::OutputLedgerError),
     Learning(LearningError),
     Io(std::io::Error),
     Sqlite(rusqlite::Error),
@@ -199,6 +200,7 @@ impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // 不将来自数据库的正文或外部输入拼入诊断。
         match self {
+            Self::Output(error) => write!(f, "{error}"),
             Self::Learning(error) => write!(f, "{error}"),
             Self::Io(_) => write!(f, "integration file operation failed"),
             Self::Sqlite(_) => write!(f, "integration SQLite operation failed"),
@@ -237,6 +239,11 @@ impl fmt::Display for StoreError {
 }
 
 impl std::error::Error for StoreError {}
+impl From<crate::output_ledger::OutputLedgerError> for StoreError {
+    fn from(error: crate::output_ledger::OutputLedgerError) -> Self {
+        Self::Output(error)
+    }
+}
 impl From<LearningError> for StoreError {
     fn from(error: LearningError) -> Self {
         Self::Learning(error)
@@ -266,6 +273,63 @@ pub struct IntegrationStore {
 }
 
 impl IntegrationStore {
+    pub fn initialize_outputs(&mut self) -> StoreResult<()> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        crate::output_ledger::initialize(&tx)?;
+        crate::output_ledger::recover_inflight(&tx)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn prepare_output(
+        &mut self,
+        intent: &crate::output_ledger::OutputIntent,
+    ) -> StoreResult<crate::output_ledger::OutputRecord> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let record = crate::output_ledger::prepare(&tx, intent)?;
+        if record.state == crate::output_ledger::OutputState::Prepared {
+            validate_output_item(&tx, intent)?;
+        }
+        tx.commit()?;
+        Ok(record)
+    }
+
+    pub fn claim_output(
+        &mut self,
+        intent: &crate::output_ledger::OutputIntent,
+    ) -> StoreResult<bool> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_output_item(&tx, intent)?;
+        let claimed = crate::output_ledger::claim_dispatch(&tx, intent)?;
+        tx.commit()?;
+        Ok(claimed)
+    }
+
+    pub fn finish_output(
+        &mut self,
+        intent: &crate::output_ledger::OutputIntent,
+        outcome: crate::output_ledger::OutputOutcome,
+    ) -> StoreResult<crate::output_ledger::OutputRecord> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let result = crate::output_ledger::finish(&tx, intent, outcome)?;
+        tx.commit()?;
+        Ok(result)
+    }
+
+    pub fn output_record(
+        &self,
+        id: &str,
+    ) -> StoreResult<Option<crate::output_ledger::OutputRecord>> {
+        Ok(crate::output_ledger::get(&self.conn, id)?)
+    }
     pub fn history_retention_policy(&self) -> StoreResult<HistoryRetentionPolicy> {
         let tx = self.conn.unchecked_transaction()?;
         let stored: Option<String> = tx
@@ -969,6 +1033,30 @@ fn identifier(value: &str) -> StoreResult<()> {
     Identifier::parse(value)
         .map(|_| ())
         .map_err(StoreError::Invalid)
+}
+
+fn validate_output_item(
+    conn: &Connection,
+    intent: &crate::output_ledger::OutputIntent,
+) -> StoreResult<()> {
+    let current = epoch(conn)?;
+    if current != intent.policy_epoch {
+        return Err(StoreError::EpochMismatch {
+            expected: current,
+            actual: intent.policy_epoch,
+        });
+    }
+    let revision: Option<i64> = conn
+        .query_row(
+            "SELECT revision FROM integration_items WHERE item_id=?1",
+            [&intent.item_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if revision != Some(checked_number(intent.revision)?) {
+        return Err(StoreError::Invalid("output item was deleted or changed"));
+    }
+    Ok(())
 }
 
 fn checked_number(value: u64) -> StoreResult<i64> {
