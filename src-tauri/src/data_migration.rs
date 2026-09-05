@@ -5,10 +5,138 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use tauri::Manager;
 
 const STARTUP_MIGRATION_ID: &str = "upstream-first-fbd4e15-v1";
+const SQLITE_SIDECARS: [&str; 3] = ["-wal", "-shm", "-journal"];
+
+fn validate_relative(path: &Path) -> Result<()> {
+    anyhow::ensure!(
+        !path.as_os_str().is_empty()
+            && path
+                .components()
+                .all(|part| matches!(part, Component::Normal(_))),
+        "migration reference must be a non-empty relative path without traversal"
+    );
+    Ok(())
+}
+
+fn validate_root(root: &Path) -> Result<()> {
+    anyhow::ensure!(
+        root.is_absolute()
+            && !root
+                .components()
+                .any(|part| matches!(part, Component::ParentDir | Component::CurDir)),
+        "migration root must be an absolute path without traversal"
+    );
+    Ok(())
+}
+
+/// root 是调用者授权的域，relative 来自待验证数据。先做词法约束，再查域内元数据。
+/// 不对未经授权的引用执行 canonicalize/stat，也不跟随域内链接。
+fn checked_path(root: &Path, relative: &Path) -> Result<PathBuf> {
+    validate_root(root)?;
+    validate_relative(relative)?;
+    let mut current = root.to_path_buf();
+    let mut paths = vec![current.clone()];
+    for part in relative.components() {
+        current.push(part);
+        paths.push(current.clone());
+    }
+    for (index, path) in paths.iter().enumerate() {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) => {
+                anyhow::ensure!(
+                    !metadata.file_type().is_symlink(),
+                    "migration reference contains a symbolic link"
+                );
+                anyhow::ensure!(
+                    metadata.is_dir() || metadata.is_file(),
+                    "migration reference contains a special file"
+                );
+                anyhow::ensure!(
+                    index == paths.len() - 1 || metadata.is_dir(),
+                    "migration reference has a non-directory parent"
+                );
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    anyhow::ensure!(
+                        !metadata.is_file() || metadata.nlink() == 1,
+                        "migration reference contains a hard link"
+                    );
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("migration reference metadata unavailable"),
+        }
+    }
+    Ok(current)
+}
+
+fn checked_database(root: &Path, relative: &Path) -> Result<PathBuf> {
+    let path = checked_path(root, relative)?;
+    for suffix in SQLITE_SIDECARS {
+        let mut sidecar = relative.as_os_str().to_owned();
+        sidecar.push(suffix);
+        checked_path(root, Path::new(&sidecar))?;
+    }
+    Ok(path)
+}
+
+fn validate_outcome_paths(
+    outcome: &MigrationBackupOutcome,
+    roots: Option<&[MigrationSourceRoot]>,
+) -> Result<()> {
+    let parent = outcome
+        .backup_dir
+        .parent()
+        .context("backup domain has no parent")?;
+    let name = outcome
+        .backup_dir
+        .file_name()
+        .context("backup domain has no name")?;
+    anyhow::ensure!(
+        name.to_string_lossy().starts_with("handy-data-"),
+        "unexpected backup domain name"
+    );
+    checked_path(parent, Path::new(name))?;
+    anyhow::ensure!(
+        outcome.manifest_path == outcome.backup_dir.join("manifest.json"),
+        "manifest path is outside its backup domain"
+    );
+    checked_path(&outcome.backup_dir, Path::new("manifest.json"))?;
+    // 整批检查必须完成后才能 fingerprint 或写入第一条，不能产生部分越界恢复。
+    for entry in &outcome.manifest.entries {
+        let label = Path::new(&entry.source_root_label);
+        validate_relative(label)?;
+        anyhow::ensure!(
+            label.components().count() == 1,
+            "migration source label must be one component"
+        );
+        validate_root(&entry.source_root)?;
+        validate_relative(&entry.source_relative_path)?;
+        validate_relative(&entry.backup_relative_path)?;
+        anyhow::ensure!(
+            entry.backup_relative_path == label.join(&entry.source_relative_path),
+            "backup reference does not match its source mapping"
+        );
+        if let Some(roots) = roots {
+            let root = roots
+                .iter()
+                .find(|root| root.label == entry.source_root_label)
+                .context("manifest source root is not authorized")?;
+            anyhow::ensure!(
+                root.root == entry.source_root,
+                "copied migration source root requires explicit relocation"
+            );
+            checked_database(&root.root, &entry.source_relative_path)?;
+        }
+        checked_database(&outcome.backup_dir, &entry.backup_relative_path)?;
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MigrationPathKind {
@@ -56,7 +184,40 @@ pub struct MigrationBackupManifest {
     pub application_version: String,
     pub created_at: String,
     pub status: MigrationBackupStatus,
+    /// 缺失表示旧格式；新格式 SQLite 条目均为包含已提交 WAL 的自包含快照。
+    #[serde(default)]
+    pub sqlite_snapshot_format: Option<SqliteSnapshotFormat>,
     pub entries: Vec<MigrationBackupEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SqliteSnapshotFormat {
+    VacuumIntoV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SqliteRestorePolicy {
+    ConsistentSnapshot,
+    /// 明确恢复哈希验证过的主快照时点，绝不声称合并旧 WAL 中未知的后续提交。
+    VerifiedSnapshotPoint,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MigrationRestoreReport {
+    pub policy: SqliteRestorePolicy,
+    pub selected_manifest_created_at: String,
+    pub sqlite_snapshot_hashes: Vec<(PathBuf, String)>,
+    pub preserved_legacy_sidecars: Vec<PathBuf>,
+    pub target_quarantines: Vec<PathBuf>,
+    pub lossless_legacy_wal_merge: bool,
+}
+
+fn is_sqlite_sidecar(path: &Path, database: &Path) -> bool {
+    SQLITE_SIDECARS.iter().any(|suffix| {
+        let mut expected = database.as_os_str().to_owned();
+        expected.push(suffix);
+        path == Path::new(&expected)
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -89,10 +250,10 @@ pub struct MigrationLock {
 
 impl MigrationLock {
     pub fn acquire(lock_dir: &Path, name: &str) -> Result<Self> {
+        let path = checked_path(lock_dir, Path::new(&format!("{name}.lock")))?;
         fs::create_dir_all(lock_dir).with_context(|| {
             format!("failed to create migration lock dir {}", lock_dir.display())
         })?;
-        let path = lock_dir.join(format!("{name}.lock"));
         if path.exists() {
             let owner_pid = read_lock_pid(&path);
             if owner_pid.is_some_and(process_is_alive) {
@@ -173,6 +334,17 @@ impl StartupMigration {
             self.outcome.manifest.status == MigrationBackupStatus::Verified,
             "startup migration cannot complete before its backup is verified"
         );
+        validate_outcome_paths(&self.outcome, Some(&self.source_roots))?;
+        let backup_root = self
+            .outcome
+            .backup_dir
+            .parent()
+            .context("backup domain has no parent")?;
+        anyhow::ensure!(
+            self.marker_path == backup_root.join("complete.json"),
+            "marker is outside its backup domain"
+        );
+        checked_path(backup_root, Path::new("complete.json"))?;
         let (_, manifest_sha256) = file_fingerprint(&self.outcome.manifest_path)?;
         let marker = StartupMigrationMarker {
             migration_id: STARTUP_MIGRATION_ID.to_string(),
@@ -196,9 +368,9 @@ impl Drop for StartupMigration {
         if self.completed {
             return;
         }
-        if let Err(err) = restore_backup(&self.outcome, &self.source_roots) {
-            log::error!("Failed to restore incomplete startup migration: {err:#}");
-        }
+        // setup 失败时 manager 可能仍持有 SQLite/Rime 连接；不在这些 live handle 下换文件。
+        // 没有 complete marker 的已验证备份由下一次启动、初始化 manager 之前恢复。
+        log::warn!("Startup migration incomplete; verified backup retained for recovery before managers open on next launch: {}", self.outcome.manifest_path.display());
     }
 }
 
@@ -210,11 +382,14 @@ pub fn prepare_startup_backup(app: &tauri::AppHandle) -> Result<Option<StartupMi
     let lock_root = handy_root.join("migration_locks");
 
     #[cfg(target_os = "macos")]
-    let inputia_root = app
-        .path()
-        .home_dir()
-        .ok()
-        .map(|home| home.join("Library/Application Support/Inputia"));
+    let inputia_root = crate::candidate_profile::current()
+        .map(|profile| profile.inputia_root.clone())
+        .or_else(|| {
+            app.path()
+                .home_dir()
+                .ok()
+                .map(|home| home.join("Library/Application Support/Inputia"))
+        });
     #[cfg(not(target_os = "macos"))]
     let inputia_root: Option<PathBuf> = None;
 
@@ -232,13 +407,7 @@ fn prepare_startup_backup_for_paths(
     backup_root: &Path,
     lock_root: &Path,
 ) -> Result<Option<StartupMigration>> {
-    let marker_path = backup_root.join("complete.json");
-    if marker_path.exists() {
-        verify_startup_marker(&marker_path)?;
-        return Ok(None);
-    }
-
-    let lock = MigrationLock::acquire(lock_root, STARTUP_MIGRATION_ID)?;
+    let marker_path = checked_path(backup_root, Path::new("complete.json"))?;
     let mut source_roots = vec![MigrationSourceRoot {
         label: "handy".to_string(),
         root: handy_root.to_path_buf(),
@@ -252,6 +421,12 @@ fn prepare_startup_backup_for_paths(
         });
         candidates.extend(inputia_data_candidates("inputia"));
     }
+
+    if marker_path.exists() {
+        verify_startup_marker(&marker_path, &source_roots)?;
+        return Ok(None);
+    }
+    let lock = MigrationLock::acquire(lock_root, STARTUP_MIGRATION_ID)?;
 
     recover_incomplete_startup_backup(backup_root, &source_roots)?;
     let outcome = prepare_backup_for_migration(
@@ -274,6 +449,7 @@ fn recover_incomplete_startup_backup(
     backup_root: &Path,
     source_roots: &[MigrationSourceRoot],
 ) -> Result<()> {
+    checked_path(backup_root, Path::new("complete.json"))?;
     let Ok(entries) = fs::read_dir(backup_root) else {
         return Ok(());
     };
@@ -281,11 +457,9 @@ fn recover_incomplete_startup_backup(
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| {
-            path.is_dir()
-                && path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with("handy-data-"))
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("handy-data-"))
         })
         .collect::<Vec<_>>();
     backup_dirs.sort();
@@ -293,7 +467,8 @@ fn recover_incomplete_startup_backup(
     let Some(backup_dir) = backup_dirs.pop() else {
         return Ok(());
     };
-    let manifest_path = backup_dir.join("manifest.json");
+    let relative = backup_dir.strip_prefix(backup_root)?.join("manifest.json");
+    let manifest_path = checked_path(backup_root, &relative)?;
     if !manifest_path.exists() {
         return Ok(());
     }
@@ -315,7 +490,15 @@ fn recover_incomplete_startup_backup(
         .context("failed to restore interrupted startup migration")
 }
 
-fn verify_startup_marker(marker_path: &Path) -> Result<()> {
+fn verify_startup_marker(marker_path: &Path, roots: &[MigrationSourceRoot]) -> Result<()> {
+    let backup_root = marker_path
+        .parent()
+        .context("marker has no backup domain")?;
+    anyhow::ensure!(
+        marker_path.file_name() == Some(std::ffi::OsStr::new("complete.json")),
+        "unexpected startup marker name"
+    );
+    checked_path(backup_root, Path::new("complete.json"))?;
     let marker: StartupMigrationMarker = serde_json::from_slice(
         &fs::read(marker_path)
             .with_context(|| format!("failed to read {}", marker_path.display()))?,
@@ -325,11 +508,39 @@ fn verify_startup_marker(marker_path: &Path) -> Result<()> {
         "startup migration marker has unexpected id {}",
         marker.migration_id
     );
+    let relative = marker.manifest_path.strip_prefix(backup_root).context(
+        "copied marker manifest is outside current backup domain; explicit relocation required",
+    )?;
+    validate_relative(relative)?;
+    anyhow::ensure!(
+        relative.components().count() == 2
+            && relative.file_name() == Some(std::ffi::OsStr::new("manifest.json")),
+        "unexpected marker manifest layout"
+    );
+    checked_path(backup_root, relative)?;
     let (_, actual_sha256) = file_fingerprint(&marker.manifest_path)?;
     anyhow::ensure!(
         actual_sha256 == marker.manifest_sha256,
         "startup migration manifest checksum changed"
     );
+    let manifest: MigrationBackupManifest =
+        serde_json::from_slice(&fs::read(&marker.manifest_path)?)?;
+    anyhow::ensure!(
+        manifest.migration_id == marker.migration_id,
+        "marker and manifest migration identities differ"
+    );
+    validate_outcome_paths(
+        &MigrationBackupOutcome {
+            backup_dir: marker
+                .manifest_path
+                .parent()
+                .context("manifest has no domain")?
+                .to_path_buf(),
+            manifest_path: marker.manifest_path,
+            manifest,
+        },
+        Some(roots),
+    )?;
     Ok(())
 }
 
@@ -338,11 +549,9 @@ pub fn handy_data_candidates(label: &str) -> Vec<MigrationPathCandidate> {
         label,
         &[
             ("history.db", MigrationPathKind::Sqlite),
-            ("history.db-wal", MigrationPathKind::File),
-            ("history.db-shm", MigrationPathKind::File),
             ("clipboard.db", MigrationPathKind::Sqlite),
-            ("clipboard.db-wal", MigrationPathKind::File),
-            ("clipboard.db-shm", MigrationPathKind::File),
+            ("integration.db", MigrationPathKind::Sqlite),
+            ("integration-learning.key", MigrationPathKind::File),
             ("settings_store.json", MigrationPathKind::File),
             ("recordings", MigrationPathKind::Directory),
             ("clipboard_images", MigrationPathKind::Directory),
@@ -357,8 +566,9 @@ pub fn inputia_data_candidates(label: &str) -> Vec<MigrationPathCandidate> {
         &[
             ("settings.json", MigrationPathKind::File),
             ("inputia_memory.db", MigrationPathKind::Sqlite),
-            ("inputia_memory.db-wal", MigrationPathKind::File),
-            ("inputia_memory.db-shm", MigrationPathKind::File),
+            ("outbox.db", MigrationPathKind::Sqlite),
+            ("policy.db", MigrationPathKind::Sqlite),
+            ("snapshots", MigrationPathKind::Directory),
             ("rime", MigrationPathKind::Directory),
         ],
     )
@@ -378,19 +588,57 @@ fn prepare_backup_for_migration(
     backup_root: &Path,
     migration_id: &str,
 ) -> Result<MigrationBackupOutcome> {
+    // 对全部声明先做约束；非法候选不应在读到一半后才失败。
+    for root in source_roots {
+        validate_root(&root.root)?;
+        let label = Path::new(&root.label);
+        validate_relative(label)?;
+        anyhow::ensure!(
+            label.components().count() == 1,
+            "migration source label must be one component"
+        );
+    }
+    for candidate in candidates {
+        let root = source_roots
+            .iter()
+            .find(|root| root.label == candidate.source_root_label)
+            .context("backup candidate source root is not authorized")?;
+        checked_database(&root.root, &candidate.relative_path)?;
+        if candidate.kind == MigrationPathKind::Sqlite
+            && !root.root.join(&candidate.relative_path).exists()
+        {
+            for suffix in SQLITE_SIDECARS {
+                let mut sidecar = candidate.relative_path.as_os_str().to_owned();
+                sidecar.push(suffix);
+                anyhow::ensure!(
+                    !root.root.join(sidecar).exists(),
+                    "orphan SQLite sidecar requires explicit recovery before backup"
+                );
+            }
+        }
+    }
+    checked_path(backup_root, Path::new("manifest.json"))?;
     fs::create_dir_all(backup_root)
         .with_context(|| format!("failed to create backup root {}", backup_root.display()))?;
 
     let backup_dir = backup_root.join(format!(
         "handy-data-{}",
-        Utc::now().format("%Y%m%dT%H%M%S%3fZ")
+        Utc::now().format("%Y%m%dT%H%M%S%9fZ")
     ));
-    fs::create_dir_all(&backup_dir)
+    fs::create_dir(&backup_dir)
         .with_context(|| format!("failed to create backup dir {}", backup_dir.display()))?;
 
     let mut entries = Vec::new();
 
     for candidate in candidates {
+        // 即使旧调用方仍列出 sidecar，也不能与 VACUUM 产物混配。
+        if candidates.iter().any(|database| {
+            database.kind == MigrationPathKind::Sqlite
+                && database.source_root_label == candidate.source_root_label
+                && is_sqlite_sidecar(&candidate.relative_path, &database.relative_path)
+        }) {
+            continue;
+        }
         let Some(root) = source_roots
             .iter()
             .find(|root| root.label == candidate.source_root_label)
@@ -413,6 +661,7 @@ fn prepare_backup_for_migration(
             application_version: env!("CARGO_PKG_VERSION").to_string(),
             created_at: Utc::now().to_rfc3339(),
             status: MigrationBackupStatus::Prepared,
+            sqlite_snapshot_format: Some(SqliteSnapshotFormat::VacuumIntoV1),
             entries,
         },
         manifest_path,
@@ -429,32 +678,121 @@ fn prepare_backup_for_migration(
     Ok(verified)
 }
 
+/// 默认只恢复一致的主快照；调用方必须已停止全部来源写入并关闭目标连接。
+/// 旧备份存在不明确的非空 WAL/journal 时拒绝自动恢复，保留数据等待显式恢复点选择。
 pub fn restore_backup(
     outcome: &MigrationBackupOutcome,
     source_roots: &[MigrationSourceRoot],
 ) -> Result<()> {
+    restore_backup_with_policy(
+        outcome,
+        source_roots,
+        SqliteRestorePolicy::ConsistentSnapshot,
+    )
+    .map(|_| ())
+}
+
+/// 前置合同：调用方已停止所有来源写入，并关闭目标 SQLite/Rime 连接。
+/// SQLite 排他事务探针尽力发现活跃写入，不能证明 WAL 读者、空闲或稍后重开的连接已关闭。
+/// 恢复通过新文件替换，不对 live SQLite 文件原地覆盖；跨数据库不是全局原子事务。
+pub fn restore_backup_with_policy(
+    outcome: &MigrationBackupOutcome,
+    source_roots: &[MigrationSourceRoot],
+    policy: SqliteRestorePolicy,
+) -> Result<MigrationRestoreReport> {
+    validate_outcome_paths(outcome, Some(source_roots))?;
+    let legacy_sidecars: Vec<_> = outcome
+        .manifest
+        .entries
+        .iter()
+        .filter(|entry| {
+            outcome.manifest.entries.iter().any(|database| {
+                database.kind == MigrationPathKind::Sqlite
+                    && database.source_root_label == entry.source_root_label
+                    && is_sqlite_sidecar(
+                        &entry.source_relative_path,
+                        &database.source_relative_path,
+                    )
+            })
+        })
+        .collect();
+    anyhow::ensure!(
+        outcome.manifest.sqlite_snapshot_format.is_none() || legacy_sidecars.is_empty(),
+        "self-contained SQLite snapshot manifest cannot contain source sidecars"
+    );
+    let has_unknown_commits = legacy_sidecars.iter().any(|entry| {
+        entry.byte_len > 0
+            && !entry
+                .source_relative_path
+                .to_string_lossy()
+                .ends_with("-shm")
+    });
+    anyhow::ensure!(!has_unknown_commits || policy == SqliteRestorePolicy::VerifiedSnapshotPoint,
+        "legacy WAL/journal may contain later commits; explicit VerifiedSnapshotPoint selection required; original sidecars retained, no lossless merge claimed");
     verify_backup(outcome)?;
 
+    for entry in outcome
+        .manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == MigrationPathKind::Sqlite)
+    {
+        let root = source_roots
+            .iter()
+            .find(|root| root.label == entry.source_root_label)
+            .context("restore source root unavailable")?;
+        require_sqlite_idle(&checked_database(&root.root, &entry.source_relative_path)?)?;
+    }
+    let mut report = MigrationRestoreReport {
+        policy,
+        selected_manifest_created_at: outcome.manifest.created_at.clone(),
+        sqlite_snapshot_hashes: outcome
+            .manifest
+            .entries
+            .iter()
+            .filter(|entry| entry.kind == MigrationPathKind::Sqlite)
+            .map(|entry| (entry.source_relative_path.clone(), entry.sha256.clone()))
+            .collect(),
+        preserved_legacy_sidecars: legacy_sidecars
+            .iter()
+            .map(|entry| outcome.backup_dir.join(&entry.backup_relative_path))
+            .collect(),
+        target_quarantines: Vec::new(),
+        lossless_legacy_wal_merge: false,
+    };
+
     for entry in &outcome.manifest.entries {
+        if legacy_sidecars
+            .iter()
+            .any(|sidecar| std::ptr::eq(*sidecar, entry))
+        {
+            continue;
+        }
         let Some(root) = source_roots
             .iter()
             .find(|root| root.label == entry.source_root_label)
         else {
             continue;
         };
-        let source = root.root.join(&entry.source_relative_path);
-        let backup = outcome.backup_dir.join(&entry.backup_relative_path);
+        let source = checked_database(&root.root, &entry.source_relative_path)?;
+        let backup = checked_database(&outcome.backup_dir, &entry.backup_relative_path)?;
         if let Some(parent) = source.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create restore dir {}", parent.display()))?;
         }
-        fs::copy(&backup, &source).with_context(|| {
-            format!(
-                "failed to restore {} from {}",
-                source.display(),
-                backup.display()
-            )
-        })?;
+        if entry.kind == MigrationPathKind::Sqlite {
+            report
+                .target_quarantines
+                .push(restore_sqlite_file(&backup, &source)?);
+        } else {
+            fs::copy(&backup, &source).with_context(|| {
+                format!(
+                    "failed to restore {} from {}",
+                    source.display(),
+                    backup.display()
+                )
+            })?;
+        }
     }
 
     let mut restored = outcome.clone();
@@ -463,7 +801,75 @@ pub fn restore_backup(
         entry.status = MigrationBackupStatus::Restored;
     }
     write_manifest(&restored)?;
+    write_json_atomically(&outcome.backup_dir.join("last-restore.json"), &report)?;
+    log::info!("Migration restored selected snapshot point; legacy sidecars retained={}, target recovery quarantines={}", report.preserved_legacy_sidecars.len(), report.target_quarantines.len());
+    Ok(report)
+}
+
+fn require_sqlite_idle(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    conn.busy_timeout(std::time::Duration::ZERO)?;
+    conn.pragma_update(None, "locking_mode", "EXCLUSIVE")?;
+    conn.execute_batch("BEGIN EXCLUSIVE; ROLLBACK;")
+        .context("restore requires closed SQLite connections; target has an active transaction")?;
     Ok(())
+}
+
+fn restore_sqlite_file(backup: &Path, target: &Path) -> Result<PathBuf> {
+    let parent = target
+        .parent()
+        .context("SQLite restore target has no parent")?;
+    let name = target
+        .file_name()
+        .context("SQLite restore target has no name")?;
+    let recovery_relative = PathBuf::from("migration_restore_quarantine").join(format!(
+        "restore-{}-{}",
+        std::process::id(),
+        Utc::now().format("%Y%m%dT%H%M%S%9fZ")
+    ));
+    let recovery = checked_path(parent, &recovery_relative)?;
+    fs::create_dir_all(
+        recovery
+            .parent()
+            .context("recovery directory has no parent")?,
+    )?;
+    fs::create_dir(&recovery)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&recovery, fs::Permissions::from_mode(0o700))?;
+    }
+    let stage = checked_path(&recovery, Path::new("verified-snapshot.db"))?;
+    fs::copy(backup, &stage)?;
+    verify_sqlite_database(&stage)?;
+    fs::File::open(&stage)?.sync_all()?;
+    // 只移动当前确切主库和三种 sidecar，保留旧状态而非删除。失败时按逆序恢复。
+    let mut moved = Vec::new();
+    let replace = (|| -> Result<()> {
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let mut component = name.to_owned();
+            component.push(suffix);
+            let source = checked_path(parent, Path::new(&component))?;
+            if source.exists() {
+                let destination = checked_path(&recovery, Path::new(&component))?;
+                fs::rename(&source, &destination)?;
+                moved.push((source, destination));
+            }
+        }
+        fs::rename(&stage, target)?;
+        Ok(())
+    })();
+    if let Err(error) = replace {
+        for (source, destination) in moved.iter().rev() {
+            fs::rename(destination, source)
+                .context("SQLite restore failed and quarantine rollback requires recovery")?;
+        }
+        return Err(error).context("SQLite replacement failed; previous exact files restored");
+    }
+    Ok(recovery)
 }
 
 pub fn run_sqlite_migration_with_backup<F>(
@@ -492,8 +898,9 @@ where
     let outcome = prepare_backup(&roots, &candidates, backup_root)?;
 
     let migration_result = (|| {
-        let mut conn = Connection::open(db_path)
-            .with_context(|| format!("failed to open database {}", db_path.display()))?;
+        let mut conn =
+            Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
+                .with_context(|| format!("failed to open database {}", db_path.display()))?;
         migrate(&mut conn)
     })();
 
@@ -508,6 +915,7 @@ where
 }
 
 pub fn verify_backup(outcome: &MigrationBackupOutcome) -> Result<()> {
+    validate_outcome_paths(outcome, None)?;
     for entry in &outcome.manifest.entries {
         let backup = outcome.backup_dir.join(&entry.backup_relative_path);
         if entry.kind == MigrationPathKind::Sqlite {
@@ -549,6 +957,7 @@ fn snapshot_path(
     backup_dir: &Path,
     entries: &mut Vec<MigrationBackupEntry>,
 ) -> Result<()> {
+    checked_database(&root.root, &candidate.relative_path)?;
     if source.is_dir() {
         snapshot_dir(root, candidate, source, source, backup_dir, entries)
     } else {
@@ -571,10 +980,12 @@ fn snapshot_dir(
     backup_dir: &Path,
     entries: &mut Vec<MigrationBackupEntry>,
 ) -> Result<()> {
+    checked_path(&root.root, current.strip_prefix(&root.root)?)?;
     for entry in fs::read_dir(current)
         .with_context(|| format!("failed to read snapshot dir {}", current.display()))?
     {
         let path = entry?.path();
+        checked_path(&root.root, path.strip_prefix(&root.root)?)?;
         if path.is_dir() {
             snapshot_dir(root, candidate, dir_root, &path, backup_dir, entries)?;
         } else if path.is_file() {
@@ -601,8 +1012,12 @@ fn snapshot_file(
     backup_dir: &Path,
     entries: &mut Vec<MigrationBackupEntry>,
 ) -> Result<()> {
+    anyhow::ensure!(
+        source == checked_database(&root.root, source_relative)?,
+        "snapshot source mapping mismatch"
+    );
     let backup_relative = PathBuf::from(&root.label).join(source_relative);
-    let backup = backup_dir.join(&backup_relative);
+    let backup = checked_database(backup_dir, &backup_relative)?;
     if let Some(parent) = backup.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create backup parent {}", parent.display()))?;
@@ -636,8 +1051,9 @@ fn snapshot_file(
 }
 
 fn sqlite_consistent_copy(source: &Path, backup: &Path) -> Result<()> {
-    let source_conn = Connection::open(source)
-        .with_context(|| format!("failed to open source database {}", source.display()))?;
+    let source_conn =
+        Connection::open_with_flags(source, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| format!("failed to open source database {}", source.display()))?;
     let backup_sql = format!("VACUUM main INTO '{}'", escape_sql_path(backup));
     source_conn
         .execute_batch(&backup_sql)
@@ -646,8 +1062,15 @@ fn sqlite_consistent_copy(source: &Path, backup: &Path) -> Result<()> {
 }
 
 fn verify_sqlite_database(path: &Path) -> Result<()> {
-    let conn = Connection::open(path)
-        .with_context(|| format!("failed to open sqlite backup {}", path.display()))?;
+    // VACUUM INTO 是自包含主快照；验证不能让旧备份目录中的 WAL 改变其读取时点。
+    let mut uri = tauri::Url::from_file_path(path)
+        .map_err(|_| anyhow::anyhow!("invalid SQLite backup path"))?;
+    uri.query_pairs_mut().append_pair("immutable", "1");
+    let conn = Connection::open_with_flags(
+        uri.as_str(),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    )
+    .with_context(|| format!("failed to open sqlite backup {}", path.display()))?;
     let result: String = conn
         .pragma_query_value(None, "integrity_check", |row| row.get(0))
         .with_context(|| format!("failed to run integrity_check on {}", path.display()))?;
@@ -697,11 +1120,26 @@ fn escape_sql_path(path: &Path) -> String {
 }
 
 fn write_json_atomically<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    let root = path
+        .parent()
+        .context("migration JSON has no authorized parent")?;
+    let name = path
+        .file_name()
+        .context("migration JSON has no file name")?;
+    checked_path(root, Path::new(name))?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
     let temp_path = path.with_extension(format!("tmp-{}", std::process::id()));
+    checked_path(
+        root,
+        Path::new(
+            temp_path
+                .file_name()
+                .context("migration JSON temporary path has no file name")?,
+        ),
+    )?;
     let bytes = serde_json::to_vec_pretty(value)?;
     {
         let mut file = fs::File::create(&temp_path)
@@ -722,6 +1160,7 @@ fn write_json_atomically<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 }
 
 fn write_manifest(outcome: &MigrationBackupOutcome) -> Result<()> {
+    validate_outcome_paths(outcome, None)?;
     let json = serde_json::to_vec_pretty(&outcome.manifest)?;
     let mut file = fs::File::create(&outcome.manifest_path).with_context(|| {
         format!(
@@ -742,6 +1181,405 @@ fn write_manifest(outcome: &MigrationBackupOutcome) -> Result<()> {
 mod tests {
     use super::*;
     use rusqlite::params;
+
+    #[test]
+    fn wal_snapshot_and_later_sidecars_are_different_recovery_points() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.db");
+        let snapshot = temp.path().join("snapshot.db");
+        let writer = Connection::open(&source).unwrap();
+        writer.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE records(id INTEGER PRIMARY KEY, body TEXT); INSERT INTO records VALUES(1,'committed before snapshot');").unwrap();
+        sqlite_consistent_copy(&source, &snapshot).unwrap();
+        let count = |path: &Path| -> rusqlite::Result<i64> {
+            Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?
+                .query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))
+        };
+        assert_eq!(
+            count(&snapshot).unwrap(),
+            1,
+            "snapshot contains committed WAL row"
+        );
+        writer
+            .execute(
+                "INSERT INTO records VALUES(2,'committed after snapshot')",
+                [],
+            )
+            .unwrap();
+        fs::copy(
+            temp.path().join("source.db-wal"),
+            temp.path().join("snapshot.db-wal"),
+        )
+        .unwrap();
+        fs::copy(
+            temp.path().join("source.db-shm"),
+            temp.path().join("snapshot.db-shm"),
+        )
+        .unwrap();
+        let mixed = count(&snapshot);
+        eprintln!("syntheticWalMixedRecovery before_snapshot=1 after_snapshot=2 mixed={mixed:?}");
+        assert_eq!(count(&source).unwrap(), 2);
+        // 此实验只证明两文件集来自不同时间点；不能用其混合结果作为可靠恢复依据。
+        drop(writer);
+    }
+
+    #[test]
+    fn active_wal_backup_is_self_contained_and_legacy_restore_requires_selected_point() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.db");
+        let writer = Connection::open(&source).unwrap();
+        writer.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE records(id INTEGER PRIMARY KEY, body TEXT, favorite INTEGER); INSERT INTO records VALUES(1,'kept',1);").unwrap();
+        let roots = [MigrationSourceRoot {
+            label: "source".into(),
+            root: temp.path().into(),
+        }];
+        let candidates = [
+            MigrationPathCandidate {
+                source_root_label: "source".into(),
+                relative_path: "source.db".into(),
+                kind: MigrationPathKind::Sqlite,
+            },
+            MigrationPathCandidate {
+                source_root_label: "source".into(),
+                relative_path: "source.db-wal".into(),
+                kind: MigrationPathKind::File,
+            },
+            MigrationPathCandidate {
+                source_root_label: "source".into(),
+                relative_path: "source.db-shm".into(),
+                kind: MigrationPathKind::File,
+            },
+        ];
+        let outcome = prepare_backup(&roots, &candidates, &temp.path().join("backups")).unwrap();
+        assert_eq!(outcome.manifest.entries.len(), 1);
+        assert_eq!(
+            outcome.manifest.sqlite_snapshot_format,
+            Some(SqliteSnapshotFormat::VacuumIntoV1)
+        );
+        let snapshot = outcome.backup_dir.join("source/source.db");
+        let read_state = |path: &Path| -> (i64, String, i64) {
+            Connection::open(path)
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*),MIN(body),SUM(favorite) FROM records",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap()
+        };
+        assert_eq!(read_state(&snapshot), (1, "kept".into(), 1));
+        writer
+            .execute("INSERT INTO records VALUES(2,'later',0)", [])
+            .unwrap();
+        let mut legacy = outcome.clone();
+        legacy.manifest.sqlite_snapshot_format = None;
+        for suffix in ["-wal", "-shm"] {
+            let relative = PathBuf::from(format!("source.db{suffix}"));
+            let backup_relative = PathBuf::from("source").join(&relative);
+            let backup = outcome.backup_dir.join(&backup_relative);
+            fs::copy(temp.path().join(&relative), &backup).unwrap();
+            let (byte_len, sha256) = file_fingerprint(&backup).unwrap();
+            legacy.manifest.entries.push(MigrationBackupEntry {
+                source_root_label: "source".into(),
+                source_root: temp.path().into(),
+                source_relative_path: relative,
+                backup_relative_path: backup_relative,
+                kind: MigrationPathKind::File,
+                byte_len,
+                mtime_unix_ms: None,
+                sha256,
+                status: MigrationBackupStatus::Verified,
+            });
+        }
+        write_manifest(&legacy).unwrap();
+        let forensic_before =
+            file_fingerprint(&legacy.backup_dir.join("source/source.db-wal")).unwrap();
+        assert!(restore_backup(&legacy, &roots)
+            .unwrap_err()
+            .to_string()
+            .contains("VerifiedSnapshotPoint"));
+        assert_eq!(read_state(&source).0, 2);
+        // 调用方完成静默窗口：先关闭所有目标连接，再选择早期已验证主快照时点。
+        drop(writer);
+        for _ in 0..2 {
+            let report = restore_backup_with_policy(
+                &legacy,
+                &roots,
+                SqliteRestorePolicy::VerifiedSnapshotPoint,
+            )
+            .unwrap();
+            assert!(!report.lossless_legacy_wal_merge);
+            assert_eq!(report.preserved_legacy_sidecars.len(), 2);
+            assert_eq!(
+                report.sqlite_snapshot_hashes[0].1,
+                outcome.manifest.entries[0].sha256
+            );
+            assert_eq!(read_state(&source), (1, "kept".into(), 1));
+            assert_eq!(
+                file_fingerprint(&legacy.backup_dir.join("source/source.db-wal")).unwrap(),
+                forensic_before
+            );
+            assert!(!temp.path().join("source.db-wal").exists());
+            assert!(!temp.path().join("source.db-shm").exists());
+            assert!(report.target_quarantines[0].join("source.db").exists());
+        }
+    }
+
+    #[test]
+    fn restore_rejects_active_sqlite_writer_before_replacing_any_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.db");
+        create_sample_database(&source);
+        let roots = [MigrationSourceRoot {
+            label: "source".into(),
+            root: temp.path().into(),
+        }];
+        let outcome = prepare_backup(
+            &roots,
+            &[MigrationPathCandidate {
+                source_root_label: "source".into(),
+                relative_path: "source.db".into(),
+                kind: MigrationPathKind::Sqlite,
+            }],
+            &temp.path().join("backups"),
+        )
+        .unwrap();
+        let writer = Connection::open(&source).unwrap();
+        writer
+            .execute_batch(
+                "PRAGMA journal_mode=WAL; BEGIN IMMEDIATE; UPDATE items SET name='live';",
+            )
+            .unwrap();
+        assert!(restore_backup(&outcome, &roots).is_err());
+        assert!(!temp.path().join("migration_restore_quarantine").exists());
+        assert_eq!(
+            writer
+                .query_row("SELECT name FROM items", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "live"
+        );
+        writer.execute_batch("ROLLBACK;").unwrap();
+        drop(writer);
+        restore_backup(&outcome, &roots).unwrap();
+        assert_eq!(read_item_name(&source), "kept");
+    }
+
+    #[test]
+    fn missing_source_database_is_not_created_by_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing.db");
+        assert!(sqlite_consistent_copy(&missing, &temp.path().join("backup.db")).is_err());
+        assert!(!missing.exists());
+    }
+
+    #[test]
+    fn offline_sqlite_replacement_quarantines_only_exact_target_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.db");
+        let backup = temp.path().join("backup.db");
+        create_sample_database(&target);
+        sqlite_consistent_copy(&target, &backup).unwrap();
+        fs::write(temp.path().join("other.db-wal"), b"unrelated untouched").unwrap();
+        for suffix in SQLITE_SIDECARS {
+            fs::write(
+                temp.path().join(format!("target.db{suffix}")),
+                suffix.as_bytes(),
+            )
+            .unwrap();
+        }
+        // 没有打开的数据库句柄。仅验证离线替换函数的精确文件边界。
+        let quarantine = restore_sqlite_file(&backup, &target).unwrap();
+        for suffix in SQLITE_SIDECARS {
+            assert!(!temp.path().join(format!("target.db{suffix}")).exists());
+            assert_eq!(
+                fs::read(quarantine.join(format!("target.db{suffix}"))).unwrap(),
+                suffix.as_bytes()
+            );
+        }
+        assert_eq!(
+            fs::read(temp.path().join("other.db-wal")).unwrap(),
+            b"unrelated untouched"
+        );
+        assert_eq!(read_item_name(&target), "kept");
+    }
+
+    fn synthetic_file_backup() -> (
+        tempfile::TempDir,
+        Vec<MigrationSourceRoot>,
+        MigrationBackupOutcome,
+    ) {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("source");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("value.txt"), b"kept").unwrap();
+        let roots = vec![MigrationSourceRoot {
+            label: "synthetic".into(),
+            root,
+        }];
+        let outcome = prepare_backup(
+            &roots,
+            &[MigrationPathCandidate {
+                source_root_label: "synthetic".into(),
+                relative_path: "value.txt".into(),
+                kind: MigrationPathKind::File,
+            }],
+            &temp.path().join("backups"),
+        )
+        .unwrap();
+        (temp, roots, outcome)
+    }
+
+    #[test]
+    fn rejects_absolute_and_parent_backup_references_before_fingerprinting() {
+        let (temp, _, outcome) = synthetic_file_backup();
+        let outside = temp.path().join("outside");
+        fs::write(&outside, b"kept").unwrap();
+        for reference in [outside, PathBuf::from("../../outside")] {
+            let mut altered = outcome.clone();
+            altered.manifest.entries[0].backup_relative_path = reference;
+            assert!(verify_backup(&altered).is_err());
+        }
+    }
+
+    #[test]
+    fn rejects_restore_escape_before_any_source_write() {
+        let (temp, roots, outcome) = synthetic_file_backup();
+        let outside = temp.path().join("outside");
+        fs::write(&outside, b"outside untouched").unwrap();
+        fs::write(roots[0].root.join("value.txt"), b"current unchanged").unwrap();
+        for reference in [outside.clone(), PathBuf::from("../outside")] {
+            let mut altered = outcome.clone();
+            let mut invalid = altered.manifest.entries[0].clone();
+            invalid.source_relative_path = reference;
+            altered.manifest.entries.push(invalid);
+            assert!(restore_backup(&altered, &roots).is_err());
+            assert_eq!(
+                fs::read(roots[0].root.join("value.txt")).unwrap(),
+                b"current unchanged"
+            );
+            assert_eq!(fs::read(&outside).unwrap(), b"outside untouched");
+        }
+    }
+
+    #[test]
+    fn copied_backup_requires_explicit_source_root_relocation() {
+        let (_temp, roots, mut outcome) = synthetic_file_backup();
+        outcome.manifest.entries[0].source_root = PathBuf::from("/synthetic-old-profile/source");
+        assert!(restore_backup(&outcome, &roots).is_err());
+    }
+
+    #[test]
+    fn copied_complete_marker_cannot_reference_original_backup_domain() {
+        let (temp, roots, outcome) = synthetic_file_backup();
+        let copied_root = temp.path().join("copied-backups");
+        fs::create_dir(&copied_root).unwrap();
+        let marker = StartupMigrationMarker {
+            migration_id: STARTUP_MIGRATION_ID.into(),
+            completed_at: "synthetic".into(),
+            manifest_path: outcome.manifest_path.clone(),
+            manifest_sha256: file_fingerprint(&outcome.manifest_path).unwrap().1,
+        };
+        let marker_path = copied_root.join("complete.json");
+        write_json_atomically(&marker_path, &marker).unwrap();
+        assert!(verify_startup_marker(&marker_path, &roots).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_linked_backup_content_without_reading_its_target() {
+        use std::os::unix::fs::symlink;
+        let (temp, _, outcome) = synthetic_file_backup();
+        let outside = temp.path().join("outside");
+        fs::write(&outside, b"kept").unwrap();
+        let backup = outcome
+            .backup_dir
+            .join(&outcome.manifest.entries[0].backup_relative_path);
+        fs::remove_file(&backup).unwrap();
+        symlink(&outside, &backup).unwrap();
+        assert!(verify_backup(&outcome).is_err());
+        fs::remove_file(&backup).unwrap();
+        fs::hard_link(&outside, &backup).unwrap();
+        assert!(verify_backup(&outcome).is_err());
+        assert_eq!(fs::read(&outside).unwrap(), b"kept");
+    }
+
+    #[test]
+    fn rejects_traversal_candidates_before_creating_a_backup() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        fs::create_dir(&source).unwrap();
+        let backup = temp.path().join("backups");
+        let roots = [MigrationSourceRoot {
+            label: "source".into(),
+            root: source,
+        }];
+        for relative in [PathBuf::from("../outside"), temp.path().join("outside")] {
+            assert!(prepare_backup(
+                &roots,
+                &[MigrationPathCandidate {
+                    source_root_label: "source".into(),
+                    relative_path: relative,
+                    kind: MigrationPathKind::File,
+                }],
+                &backup
+            )
+            .is_err());
+            assert!(!backup.exists());
+        }
+    }
+
+    #[test]
+    fn missing_sqlite_backup_is_not_created_by_verification() {
+        let (_temp, _, mut outcome) = synthetic_file_backup();
+        outcome.manifest.entries[0].kind = MigrationPathKind::Sqlite;
+        let backup = outcome
+            .backup_dir
+            .join(&outcome.manifest.entries[0].backup_relative_path);
+        fs::remove_file(&backup).unwrap();
+        assert!(verify_backup(&outcome).is_err());
+        assert!(!backup.exists());
+    }
+
+    #[test]
+    fn marker_rejects_missing_foreign_reference_before_attempting_to_open_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let marker_path = temp.path().join("complete.json");
+        let marker = StartupMigrationMarker {
+            migration_id: STARTUP_MIGRATION_ID.into(),
+            completed_at: "synthetic".into(),
+            manifest_path: PathBuf::from("/synthetic-forbidden-not-present/manifest.json"),
+            manifest_sha256: "not-read".into(),
+        };
+        write_json_atomically(&marker_path, &marker).unwrap();
+        let error = verify_startup_marker(&marker_path, &[])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("outside current backup domain"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_linked_source_and_sqlite_sidecar_before_backup_creation() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("source");
+        fs::create_dir(&root).unwrap();
+        let outside = temp.path().join("outside");
+        fs::write(&outside, b"untouched").unwrap();
+        let roots = [MigrationSourceRoot {
+            label: "source".into(),
+            root: root.clone(),
+        }];
+        let candidates = [MigrationPathCandidate {
+            source_root_label: "source".into(),
+            relative_path: "db.sqlite".into(),
+            kind: MigrationPathKind::Sqlite,
+        }];
+        let backup = temp.path().join("backups");
+        symlink(&outside, root.join("db.sqlite-wal")).unwrap();
+        assert!(prepare_backup(&roots, &candidates, &backup).is_err());
+        assert!(!backup.exists());
+        assert_eq!(fs::read(outside).unwrap(), b"untouched");
+    }
 
     #[test]
     fn lists_handy_and_inputia_data_candidates() {
@@ -976,25 +1814,139 @@ mod tests {
     }
 
     #[test]
-    fn dropping_incomplete_startup_migration_restores_source_files() {
+    fn failed_setup_defers_restore_until_next_startup_after_connections_close() {
         let temp = tempfile::tempdir().unwrap();
         let handy_root = temp.path().join("handy");
         let backup_root = temp.path().join("backups");
         let lock_root = temp.path().join("locks");
         fs::create_dir_all(&handy_root).unwrap();
         fs::write(handy_root.join("settings_store.json"), b"kept").unwrap();
+        create_sample_database(&handy_root.join("history.db"));
 
         let migration =
             prepare_startup_backup_for_paths(&handy_root, None, &backup_root, &lock_root)
                 .unwrap()
                 .unwrap();
         fs::write(handy_root.join("settings_store.json"), b"changed").unwrap();
+        let writer = Connection::open(handy_root.join("history.db")).unwrap();
+        writer
+            .execute_batch("PRAGMA journal_mode=WAL; UPDATE items SET name='changed';")
+            .unwrap();
         drop(migration);
-
+        assert_eq!(
+            fs::read(handy_root.join("settings_store.json")).unwrap(),
+            b"changed"
+        );
+        assert_eq!(
+            writer
+                .query_row("SELECT name FROM items", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "changed"
+        );
+        // 模拟失败进程已退出/关闭连接，下一次启动仍在任何 manager 打开前。
+        drop(writer);
+        let mut resumed =
+            prepare_startup_backup_for_paths(&handy_root, None, &backup_root, &lock_root)
+                .unwrap()
+                .unwrap();
         assert_eq!(
             fs::read(handy_root.join("settings_store.json")).unwrap(),
             b"kept"
         );
+        assert_eq!(read_item_name(&handy_root.join("history.db")), "kept");
+        resumed.complete().unwrap();
+    }
+
+    #[test]
+    fn formal_backup_restores_records_favorites_terms_key_and_host_state_twice() {
+        let temp = tempfile::tempdir().unwrap();
+        let handy = temp.path().join("Handy");
+        let inputia = temp.path().join("Inputia");
+        fs::create_dir_all(&handy).unwrap();
+        fs::create_dir_all(inputia.join("snapshots")).unwrap();
+        let key = [7_u8; 32];
+        fs::write(handy.join("integration-learning.key"), key).unwrap();
+        fs::write(
+            inputia.join("snapshots/terms.json"),
+            b"synthetic confirmed terms",
+        )
+        .unwrap();
+        let databases = [
+            handy.join("history.db"),
+            handy.join("clipboard.db"),
+            handy.join("integration.db"),
+            inputia.join("inputia_memory.db"),
+            inputia.join("outbox.db"),
+            inputia.join("policy.db"),
+        ];
+        for path in &databases {
+            let conn = Connection::open(path).unwrap();
+            conn.execute_batch("CREATE TABLE records(body TEXT,favorite INTEGER); INSERT INTO records VALUES('synthetic record',1); CREATE TABLE terms(term TEXT); INSERT INTO terms VALUES('Inputia');").unwrap();
+        }
+        let roots = [
+            MigrationSourceRoot {
+                label: "handy".into(),
+                root: handy.clone(),
+            },
+            MigrationSourceRoot {
+                label: "inputia".into(),
+                root: inputia.clone(),
+            },
+        ];
+        let candidates: Vec<_> = handy_data_candidates("handy")
+            .into_iter()
+            .chain(inputia_data_candidates("inputia"))
+            .collect();
+        let outcome = prepare_backup(&roots, &candidates, &temp.path().join("backups")).unwrap();
+        assert_eq!(
+            outcome
+                .manifest
+                .entries
+                .iter()
+                .filter(|entry| entry.kind == MigrationPathKind::Sqlite)
+                .count(),
+            6
+        );
+        assert!(outcome
+            .manifest
+            .entries
+            .iter()
+            .any(|entry| entry.source_relative_path == Path::new("integration-learning.key")));
+        for _ in 0..2 {
+            for path in &databases {
+                let conn = Connection::open(path).unwrap();
+                conn.execute_batch("DELETE FROM records; DELETE FROM terms;")
+                    .unwrap();
+            }
+            fs::write(handy.join("integration-learning.key"), b"changed").unwrap();
+            fs::write(inputia.join("snapshots/terms.json"), b"changed").unwrap();
+            // 上面每个连接已经离开作用域，所有源写入者在恢复期间保持关闭。
+            restore_backup(&outcome, &roots).unwrap();
+            for path in &databases {
+                let conn = Connection::open(path).unwrap();
+                assert_eq!(
+                    conn.query_row("SELECT body,favorite FROM records", [], |row| Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?
+                    )))
+                    .unwrap(),
+                    ("synthetic record".into(), 1)
+                );
+                assert_eq!(
+                    conn.query_row("SELECT term FROM terms", [], |row| row.get::<_, String>(0))
+                        .unwrap(),
+                    "Inputia"
+                );
+            }
+            assert_eq!(
+                fs::read(handy.join("integration-learning.key")).unwrap(),
+                key
+            );
+            assert_eq!(
+                fs::read(inputia.join("snapshots/terms.json")).unwrap(),
+                b"synthetic confirmed terms"
+            );
+        }
     }
 
     #[test]
@@ -1023,7 +1975,7 @@ mod tests {
             eprintln!("verifiedBackupDir={}", migration.backup_dir().display());
             migration.complete().unwrap();
         } else {
-            verify_startup_marker(&backup_root.join("complete.json")).unwrap();
+            // prepare_startup_backup_for_paths 已在返回 None 前校验 marker 与授权根。
             eprintln!("verifiedBackupMarker={}", backup_root.display());
         }
     }

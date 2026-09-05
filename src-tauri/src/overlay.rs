@@ -502,7 +502,7 @@ pub fn create_clipboard_overlay(app_handle: &AppHandle) {
         builder = builder.data_directory(data_dir.join("webview"));
     }
 
-    match builder.build() {
+    match crate::candidate_profile::configure_webview(builder).build() {
         Ok(_) => debug!("Clipboard overlay window created successfully (hidden)"),
         Err(e) => debug!("Failed to create clipboard overlay window: {}", e),
     }
@@ -545,10 +545,11 @@ fn create_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
                     .visible(false)
                     .focused(false);
 
-                match webview_data_dir {
+                let window = match webview_data_dir {
                     Some(path) => window.data_directory(path),
                     None => window,
-                }
+                };
+                crate::candidate_profile::configure_webview(window)
             });
 
     if let Some((x, y)) = calculate_clipboard_overlay_position(app_handle) {
@@ -874,7 +875,7 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     }
 
     #[allow(unused_variables)]
-    match builder.build() {
+    match crate::candidate_profile::configure_webview(builder).build() {
         Ok(window) => {
             #[cfg(target_os = "linux")]
             {
@@ -914,7 +915,11 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
             .no_activate(true)
             .corner_radius(0.0)
             .style_mask(StyleMask::empty().borderless().nonactivating_panel())
-            .with_window(|w| w.decorations(false).transparent(true).focusable(false))
+            .with_window(|w| {
+                crate::candidate_profile::configure_webview(
+                    w.decorations(false).transparent(true).focusable(false),
+                )
+            })
             .collection_behavior(
                 CollectionBehavior::new()
                     .can_join_all_spaces()

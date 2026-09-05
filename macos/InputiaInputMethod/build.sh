@@ -5,9 +5,64 @@ umask 022
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$ROOT_DIR/build-artifact-lock.sh"
-BUILD_DIR="$ROOT_DIR/build"
-APP_DIR="$BUILD_DIR/InputiaInputMethod.app"
-SETTINGS_APP_DIR="$BUILD_DIR/Inputia 设置.app"
+IS_CANDIDATE="${INPUTIA_UNIFIED_CANDIDATE:-0}"
+RUN_ID="${INPUTIA_PROFILE_RUN_ID:-}"
+if [[ "$IS_CANDIDATE" != "0" && "$IS_CANDIDATE" != "1" ]]; then
+  echo "INPUTIA_UNIFIED_CANDIDATE must be 0 or 1" >&2
+  exit 2
+fi
+if [[ "$IS_CANDIDATE" == "1" ]]; then
+  if [[ ! "$RUN_ID" =~ '^[A-Za-z0-9_-]{1,64}$' ]]; then
+    echo "candidate requires a safe explicit profile run ID" >&2
+    exit 2
+  fi
+  BUILD_DIR="$ROOT_DIR/candidate-builds/$RUN_ID"
+  if [[ -n "${INPUTIA_BUILD_DIR:-}" && "$INPUTIA_BUILD_DIR" != "$BUILD_DIR" ]]; then
+    echo "candidate build directory must match its repository-owned run directory" >&2
+    exit 2
+  fi
+  APP_DIR="$BUILD_DIR/InputiaUnifiedCandidate.app"
+  SETTINGS_APP_DIR="$BUILD_DIR/Inputia 候选设置.app"
+else
+  if [[ -n "$RUN_ID" ]]; then
+    echo "profile run ID requires explicit candidate mode" >&2
+    exit 2
+  fi
+  BUILD_DIR="${INPUTIA_BUILD_DIR-$ROOT_DIR/build}"
+  APP_DIR="$BUILD_DIR/InputiaInputMethod.app"
+  SETTINGS_APP_DIR="$BUILD_DIR/Inputia 设置.app"
+fi
+# 删除旧构建前固定归属；不接受安装目录、路径穿越或符号链接别名。
+if [[ "$BUILD_DIR" != "$ROOT_DIR/build" && "$BUILD_DIR" != "$ROOT_DIR/build/"* && "$BUILD_DIR" != "$ROOT_DIR/candidate-builds/"* ]]; then
+  echo "build output must remain below this checkout's build roots" >&2
+  exit 2
+fi
+if [[ "$BUILD_DIR" != "${BUILD_DIR:A}" ]]; then
+  echo "build output must be canonical and cannot use symlink aliases" >&2
+  exit 2
+fi
+build_cursor="$BUILD_DIR"
+while [[ "$build_cursor" != "/" ]]; do
+  if [[ -L "$build_cursor" ]]; then
+    echo "build output contains a symbolic link" >&2
+    exit 2
+  fi
+  build_cursor="${build_cursor:h}"
+done
+if [[ -L "$APP_DIR" || -L "$SETTINGS_APP_DIR" ]]; then
+  echo "build app output cannot be a symbolic link" >&2
+  exit 2
+fi
+if [[ "${INPUTIA_BUILD_PATH_CHECK_ONLY:-0}" == "1" ]]; then
+  echo "buildPathSafe=true candidate=$IS_CANDIDATE output=$BUILD_DIR"
+  exit 0
+fi
+if [[ "$IS_CANDIDATE" == "1" ]]; then
+  mkdir -p "$BUILD_DIR"
+  INPUTIA_BUILD_ARTIFACT_LOCK_DIR="$BUILD_DIR/.build-artifacts.lock"
+  INPUTIA_BUILD_ARTIFACT_LOCK_HELD=0
+  INPUTIA_BUILD_ARTIFACT_LOCK_ACQUIRED=0
+fi
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
@@ -30,20 +85,64 @@ if [[ "${INPUTIA_CODESIGN_AS_ROOT:-0}" == "1" ]]; then
 fi
 BUILD_USER="$(/usr/bin/id -un)"
 BUILD_GROUP="$(/usr/bin/id -gn)"
-TARGET_TRIPLE="$(uname -m)-apple-macos13.0"
+MIN_MACOS_VERSION="13.0"
+TARGET_TRIPLE="$(uname -m)-apple-macos$MIN_MACOS_VERSION"
 CAPI_MANIFEST="$ROOT_DIR/../../crates/inputia-capi/Cargo.toml"
-CAPI_LIB="$ROOT_DIR/../../crates/inputia-capi/target/release/libinputia_capi.a"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/../../crates/inputia-capi/target}"
+if [[ "$IS_CANDIDATE" == "1" ]]; then
+  export CARGO_TARGET_DIR="$BUILD_DIR/cargo-target"
+fi
 RUST_TOOLCHAIN="${INPUTIA_RUST_TOOLCHAIN:-1.96.0}"
-export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
+if [[ -n "${MACOSX_DEPLOYMENT_TARGET:-}" && "$MACOSX_DEPLOYMENT_TARGET" != "$MIN_MACOS_VERSION" && "$MACOSX_DEPLOYMENT_TARGET" != "13" && "$MACOSX_DEPLOYMENT_TARGET" != "13.0.0" ]]; then
+  echo "MACOSX_DEPLOYMENT_TARGET must match the supported macOS $MIN_MACOS_VERSION minimum" >&2
+  exit 2
+fi
+# Swift、Rust 和 cc 编译的 bundled SQLite 必须共享部署下限。
+# 删除该变量会让 cc 使用 SDK 默认值，并产生高于最终 Host 下限的静态对象。
+export MACOSX_DEPLOYMENT_TARGET="$MIN_MACOS_VERSION"
 
 run_cargo() {
   if [[ -n "${CARGO:-}" ]]; then
-    /usr/bin/env -u MACOSX_DEPLOYMENT_TARGET "$CARGO" "$@"
+    "$CARGO" "$@"
   elif /usr/bin/command -v rustup >/dev/null 2>&1; then
-    /usr/bin/env -u MACOSX_DEPLOYMENT_TARGET rustup run "$RUST_TOOLCHAIN" cargo "$@"
+    rustup run "$RUST_TOOLCHAIN" cargo "$@"
   else
-    /usr/bin/env -u MACOSX_DEPLOYMENT_TARGET cargo "$@"
+    cargo "$@"
   fi
+}
+
+if [[ "${INPUTIA_BUILD_DEPLOYMENT_SELF_CHECK:-0}" == "1" ]]; then
+  observed_target="$(CARGO=/usr/bin/printenv run_cargo MACOSX_DEPLOYMENT_TARGET)"
+  if [[ "$observed_target" != "$MIN_MACOS_VERSION" ]]; then
+    echo "buildDeploymentSelfCheck=false observed=$observed_target" >&2
+    exit 2
+  fi
+  echo "buildDeploymentSelfCheck=true cargoTarget=$observed_target swiftTarget=$TARGET_TRIPLE"
+  exit 0
+fi
+
+check_macos_deployment() {
+  local artifact="$1"
+  local exact="${2:-0}"
+  /usr/bin/otool -l "$artifact" | /usr/bin/python3 -c '
+import sys
+expected, exact, artifact = sys.argv[1:]
+def version(value):
+    parts = tuple(int(part) for part in value.split("."))
+    return parts + (0,) * (3 - len(parts))
+versions = []
+command = None
+for line in sys.stdin:
+    fields = line.split()
+    if len(fields) == 2 and fields[0] == "cmd":
+        command = fields[1]
+    if len(fields) == 2 and ((command == "LC_BUILD_VERSION" and fields[0] == "minos") or (command == "LC_VERSION_MIN_MACOSX" and fields[0] == "version")):
+        versions.append(fields[1])
+if not versions or any(version(value) > version(expected) or (exact == "1" and version(value) != version(expected)) for value in versions):
+    sys.exit(f"macOSDeploymentCheck=false expected={expected} observed={sorted(set(versions))} path={artifact}")
+observed = ",".join(sorted(set(versions)))
+print(f"macOSDeploymentCheck=true expected={expected} observed={observed} entries={len(versions)} path={artifact}")
+' "$MIN_MACOS_VERSION" "$exact" "$artifact"
 }
 
 detect_verification_processes() {
@@ -109,14 +208,36 @@ fi
 /bin/zsh "$ROOT_DIR/Tools/verify-imk-event-route.sh" \
   "$ROOT_DIR/Sources/InputiaInputMethod/main.swift"
 
-run_cargo build --release --manifest-path "$CAPI_MANIFEST"
+CAPI_LIB="$(run_cargo build --release --manifest-path "$CAPI_MANIFEST" --message-format=json-render-diagnostics |
+  /usr/bin/python3 -c '
+import json, sys
+libraries = []
+for line in sys.stdin:
+    event = json.loads(line)
+    target = event.get("target", {})
+    if event.get("reason") == "compiler-artifact" and target.get("name") == "inputia_capi" and "staticlib" in target.get("crate_types", []):
+        libraries.extend(path for path in event.get("filenames", []) if path.endswith(".a"))
+if len(libraries) != 1:
+    sys.exit("expected exactly one inputia_capi staticlib from this cargo build")
+print(libraries[0])
+')"
 if [[ ! -f "$CAPI_LIB" ]]; then
   echo "missing inputia-capi staticlib: $CAPI_LIB" >&2
   exit 1
 fi
+# 不仅检查最终可执行文件：链接器仍可能接受带更高 minOS 的 archive 成员。
+check_macos_deployment "$CAPI_LIB"
+
+/usr/bin/swiftc \
+  "$ROOT_DIR/Tools/UnifiedInputProfileSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
+  -parse-as-library \
+  -target "$TARGET_TRIPLE" \
+  -o "$BUILD_DIR/unified-input-profile-self-check"
 
 /usr/bin/swiftc \
   "$ROOT_DIR/Sources/InputiaInputMethod/main.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHostTextPolicy.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaInputTextRouter.swift" \
@@ -135,6 +256,23 @@ fi
   -o "$MACOS_DIR/InputiaInputMethod"
 
 cp "$ROOT_DIR/Info.plist" "$CONTENTS_DIR/Info.plist"
+if [[ "$IS_CANDIDATE" == "1" ]]; then
+  candidate_host_id="com.inputia.inputmethod.Inputia.UnifiedCandidate"
+  host_plist="$CONTENTS_DIR/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $candidate_host_id" "$host_plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia候选" "$host_plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia候选" "$host_plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 51" "$host_plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.0" "$host_plist"
+  /usr/libexec/PlistBuddy -c "Set :InputMethodConnectionName ${candidate_host_id}_Connection" "$host_plist"
+  /usr/libexec/PlistBuddy -c "Set :TISInputSourceID $candidate_host_id" "$host_plist"
+  /usr/libexec/PlistBuddy -c "Copy :ComponentInputModeDict:tsInputModeListKey:com.inputia.inputmethod.Inputia.Hans :ComponentInputModeDict:tsInputModeListKey:$candidate_host_id.Hans" "$host_plist"
+  /usr/libexec/PlistBuddy -c "Delete :ComponentInputModeDict:tsInputModeListKey:com.inputia.inputmethod.Inputia.Hans" "$host_plist"
+  /usr/libexec/PlistBuddy -c "Set :ComponentInputModeDict:tsInputModeListKey:$candidate_host_id.Hans:TISInputSourceID $candidate_host_id.Hans" "$host_plist"
+  /usr/libexec/PlistBuddy -c "Set :ComponentInputModeDict:tsVisibleInputModeOrderedArrayKey:0 $candidate_host_id.Hans" "$host_plist"
+  /usr/libexec/PlistBuddy -c "Add :InputiaDevelopmentCandidate bool true" "$host_plist"
+  /usr/libexec/PlistBuddy -c "Add :InputiaProfileRunID string $RUN_ID" "$host_plist"
+fi
 cp -R "$ROOT_DIR/Resources/." "$RESOURCES_DIR/"
 /usr/bin/python3 "$ROOT_DIR/Tools/generate_inputia_icons.py" --resources-dir "$RESOURCES_DIR"
 /bin/rm -rf "$RESOURCES_DIR/RimeData"
@@ -144,6 +282,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
 
 /usr/bin/swiftc \
   "$ROOT_DIR/SettingsLauncher/main.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   -parse-as-library \
   -target "$TARGET_TRIPLE" \
   -module-name InputiaSettingsLauncher \
@@ -168,6 +307,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
 
 /usr/bin/swiftc \
   "$ROOT_DIR/Tools/InputiaInputTextRouterSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaInputTextRouter.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaShortcutClassifier.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
@@ -178,6 +318,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
 
 /usr/bin/swiftc \
   "$ROOT_DIR/Tools/InputiaHandyMemorySyncSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "$CAPI_LIB" \
@@ -209,6 +350,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
 
 /usr/bin/swiftc \
   "$ROOT_DIR/Tools/InputiaSettingsWindowSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsWindow.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
@@ -219,6 +361,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
 
 /usr/bin/swiftc \
   "$ROOT_DIR/Tools/InputiaBridgePrivacySelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "$CAPI_LIB" \
   -target "$TARGET_TRIPLE" \
@@ -227,6 +370,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
 
 /usr/bin/swiftc \
   "$ROOT_DIR/Tools/InputiaBridgeCandidateCountSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "$CAPI_LIB" \
   -target "$TARGET_TRIPLE" \
@@ -234,6 +378,16 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   -o "$BUILD_DIR/inputia-bridge-candidate-count-self-check"
 
 cp "$ROOT_DIR/SettingsLauncher/Info.plist" "$SETTINGS_CONTENTS_DIR/Info.plist"
+if [[ "$IS_CANDIDATE" == "1" ]]; then
+  settings_plist="$SETTINGS_CONTENTS_DIR/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.inputia.settings.UnifiedCandidate" "$settings_plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia候选设置" "$settings_plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia候选设置" "$settings_plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 51" "$settings_plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.0" "$settings_plist"
+  /usr/libexec/PlistBuddy -c "Add :InputiaDevelopmentCandidate bool true" "$settings_plist"
+  /usr/libexec/PlistBuddy -c "Add :InputiaProfileRunID string $RUN_ID" "$settings_plist"
+fi
 cp "$RESOURCES_DIR/Inputia.icns" "$SETTINGS_RESOURCES_DIR/Inputia.icns"
 /usr/bin/plutil -lint "$SETTINGS_CONTENTS_DIR/Info.plist"
 
@@ -288,7 +442,7 @@ else
   /usr/bin/sed 's/^/codesignOutput: /' "$codesign_output" >&2 || true
   /bin/rm -f "$codesign_output"
   echo "warning: codesign failed with identity '$SIGN_IDENTITY'; build artifact still exists at $APP_DIR" >&2
-  if [[ "$SIGN_IDENTITY" != "-" ]]; then
+  if [[ "$SIGN_IDENTITY" != "-" || "$IS_CANDIDATE" == "1" ]]; then
     echo "buildSigned=false reason=codesign-failed target=input-method identity=$SIGN_IDENTITY" >&2
     exit 31
   fi
@@ -303,14 +457,26 @@ else
   /usr/bin/sed 's/^/codesignOutput: /' "$codesign_output" >&2 || true
   /bin/rm -f "$codesign_output"
   echo "warning: codesign failed with identity '$SIGN_IDENTITY'; settings launcher still exists at $SETTINGS_APP_DIR" >&2
-  if [[ "$SIGN_IDENTITY" != "-" ]]; then
+  if [[ "$SIGN_IDENTITY" != "-" || "$IS_CANDIDATE" == "1" ]]; then
     echo "buildSigned=false reason=codesign-failed target=settings-launcher identity=$SIGN_IDENTITY" >&2
     exit 32
   fi
 fi
 
-"$LSREGISTER" -u "$APP_DIR" >/dev/null 2>&1 || true
-"$LSREGISTER" -u "$SETTINGS_APP_DIR" >/dev/null 2>&1 || true
+if [[ "$IS_CANDIDATE" != "1" ]]; then
+  "$LSREGISTER" -u "$APP_DIR" >/dev/null 2>&1 || true
+  "$LSREGISTER" -u "$SETTINGS_APP_DIR" >/dev/null 2>&1 || true
+fi
+
+for candidate_binary in "$MACOS_DIR/InputiaInputMethod" "$SETTINGS_MACOS_DIR/InputiaSettingsLauncher"; do
+  check_macos_deployment "$candidate_binary" 1
+done
+for candidate_plist in "$CONTENTS_DIR/Info.plist" "$SETTINGS_CONTENTS_DIR/Info.plist"; do
+  if [[ "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$candidate_plist")" != "$MIN_MACOS_VERSION" ]]; then
+    echo "bundle minimum macOS version does not match its binaries: $candidate_plist" >&2
+    exit 2
+  fi
+done
 
 echo "$APP_DIR"
 echo "$SETTINGS_APP_DIR"

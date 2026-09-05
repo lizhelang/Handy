@@ -4,6 +4,9 @@ use std::path::PathBuf;
 #[derive(Parser, Debug, Clone, Default)]
 #[command(name = "handy", about = "Handy - Speech to Text")]
 pub struct CliArgs {
+    /// Validate signed candidate profile routing and exit before Tauri or user databases start.
+    #[arg(long, hide = true)]
+    pub unified_profile_self_check: bool,
     /// Test a unique private native pasteboard on the main thread without starting the application.
     #[arg(long, hide = true)]
     pub unified_clipboard_self_check: bool,

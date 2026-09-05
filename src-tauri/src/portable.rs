@@ -14,6 +14,10 @@ static PORTABLE_DATA_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
 /// Must be called once at startup before Tauri initializes.
 pub fn init() {
     PORTABLE_DATA_DIR.get_or_init(|| {
+        if let Some(profile) = crate::candidate_profile::current() {
+            std::env::set_var("HF_HOME", hugging_face_home(&profile.handy_root));
+            return Some(profile.handy_root.clone());
+        }
         let exe_path = std::env::current_exe().ok()?;
         let exe_dir = exe_path.parent()?;
 
@@ -56,7 +60,8 @@ fn hugging_face_home(data_dir: &Path) -> PathBuf {
 
 /// Returns `true` if running in portable mode.
 pub fn is_portable() -> bool {
-    PORTABLE_DATA_DIR.get().and_then(|v| v.as_ref()).is_some()
+    crate::candidate_profile::current().is_none()
+        && PORTABLE_DATA_DIR.get().and_then(|v| v.as_ref()).is_some()
 }
 
 /// Get the portable data dir (if active). Does not require an AppHandle.

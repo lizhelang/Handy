@@ -26,3 +26,5 @@ src-tauri/src/catalog/catalog.json
 .DS_Store
 *.log
 .omx
+macos/InputiaInputMethod/candidate-builds/
+tools/unified-voice-benchmark/artifacts/

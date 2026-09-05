@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Handy Unified Candidate",
+  "identifier": "com.pais.handy.UnifiedCandidate",
+  "version": "0.10.0",
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "targets": ["app"],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "infoPlist": "UnifiedCandidateInfo.plist",
+      "signingIdentity": "-"
+    }
+  }
+}

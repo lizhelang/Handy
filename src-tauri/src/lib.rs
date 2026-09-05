@@ -4,6 +4,7 @@ mod apple_intelligence;
 mod audio_feedback;
 pub mod audio_toolkit;
 mod autostart;
+mod candidate_profile;
 mod catalog;
 pub mod cli;
 mod clipboard;
@@ -842,7 +843,10 @@ pub fn run(cli_args: CliArgs) {
         ]);
 
     #[cfg(debug_assertions)] // 诊断不改文件；导出路径不依赖启动工作目录。
-    if !cli_args.unified_target_self_check && !cli_args.unified_clipboard_self_check {
+    if !cli_args.unified_target_self_check
+        && !cli_args.unified_clipboard_self_check
+        && !cli_args.unified_profile_self_check
+    {
         specta_builder
             .export(
                 Typescript::default().bigint(BigIntExportBehavior::Number),
@@ -884,7 +888,26 @@ pub fn run(cli_args: CliArgs) {
         }
         return;
     }
+    let context = tauri::generate_context!();
+    if let Err(error) = candidate_profile::initialize(&context.config().identifier) {
+        eprintln!("candidate profile initialization rejected: {error}");
+        std::process::exit(78);
+    }
     portable::init();
+    if cli_args.unified_profile_self_check {
+        let Some(profile) = candidate_profile::current() else {
+            eprintln!("profile diagnostic requires an explicitly marked candidate bundle");
+            std::process::exit(78);
+        };
+        if portable::data_dir() != Some(&profile.handy_root)
+            || portable::store_path("settings.json") != profile.handy_root.join("settings.json")
+        {
+            eprintln!("candidate storage routing mismatch");
+            std::process::exit(78);
+        }
+        println!("unified_candidate_profile_self_check=pass profile_id={} handy_root={} inputia_root={} daily_data_opened=false tauri_started=false", profile.profile_id, profile.handy_root.display(), profile.inputia_root.display());
+        return;
+    }
 
     // The headless path must run as its own instance (see the single-instance
     // note below), not forward to an already-running app.
@@ -995,9 +1018,11 @@ pub fn run(cli_args: CliArgs) {
             specta_builder.mount_events(app);
 
             // Protect the user's existing Handy and Inputia data before any
-            // settings or manager schema migration can write to it. The guard
-            // restores the verified snapshot automatically if setup exits
-            // early; successful initialization writes a checksum-pinned marker
+            // settings or manager schema migration can write to it. If setup
+            // exits early, retain the verified snapshot for recovery on the
+            // next launch before any managers open their connections; never
+            // overwrite databases underneath live SQLite/Rime handles.
+            // Successful initialization writes a checksum-pinned marker
             // so later launches do not repeat the multi-gigabyte backup.
             let mut startup_migration = data_migration::prepare_startup_backup(app.handle())?;
 
@@ -1062,7 +1087,7 @@ pub fn run(cli_args: CliArgs) {
                 win_builder = win_builder.data_directory(data_dir.join("webview"));
             }
 
-            win_builder.build()?;
+            candidate_profile::configure_webview(win_builder).build()?;
 
             let mut settings = get_settings(app.handle());
 
@@ -1181,7 +1206,7 @@ pub fn run(cli_args: CliArgs) {
             _ => {}
         })
         .invoke_handler(invoke_handler)
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application");
 
     // Must sit between build() and run(): see the doc comment.

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>HandyDevelopmentCandidate</key>
+  <true/>
+  <key>HandyProfileRunID</key>
+  <string>trial-20260905</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>候选环境使用麦克风进行本地语音转写测试</string>
+</dict>
+</plist>

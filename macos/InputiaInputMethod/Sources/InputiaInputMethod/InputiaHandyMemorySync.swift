@@ -9,7 +9,9 @@ struct InputiaHandyDataPaths: Equatable {
     let base = baseURL
       ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
       ?? URL(fileURLWithPath: NSTemporaryDirectory())
-    let root = base.appendingPathComponent("com.pais.handy", isDirectory: true)
+    let root = InputiaProfile.current.isCandidate || baseURL == nil
+      ? InputiaProfile.current.handyRoot
+      : base.appendingPathComponent("com.pais.handy", isDirectory: true)
     return Self(
       root: root,
       history: root.appendingPathComponent("history.db"),
@@ -114,6 +116,7 @@ enum InputiaHandyMemorySync {
     guard include else {
       return .skipped
     }
+    guard InputiaProfile.current.allowsHandyImport(paths.history.path) else { return .failed }
     guard fileExists(paths.history.path) else {
       return .missing
     }
@@ -139,6 +142,7 @@ enum InputiaHandyMemorySync {
     guard include else {
       return .skipped
     }
+    guard InputiaProfile.current.allowsHandyImport(paths.clipboard.path) else { return .failed }
     guard fileExists(paths.clipboard.path) else {
       return .missing
     }

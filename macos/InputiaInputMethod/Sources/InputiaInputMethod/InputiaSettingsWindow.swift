@@ -190,13 +190,18 @@ struct InputiaSettingsDocument: Codable {
     if memoryDbPath == nil {
       memoryDbPath = baseURL.appendingPathComponent("inputia_memory.db").path
     }
+    if InputiaProfile.current.isCandidate {
+      rimeUserDataDir = InputiaProfile.current.rime.path
+      memoryDbPath = InputiaProfile.current.memory.path
+      rimeSharedDataDir = Self.bundledRimeDataPath()
+    }
   }
 
   private static func bundledRimeDataPath() -> String? {
-    let candidates = [
-      Bundle.main.resourceURL?.appendingPathComponent("RimeData", isDirectory: true),
-      URL(fileURLWithPath: "/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/RimeData", isDirectory: true),
-    ].compactMap { $0 }
+    var candidates = [Bundle.main.resourceURL?.appendingPathComponent("RimeData", isDirectory: true)].compactMap { $0 }
+    if !InputiaProfile.current.isCandidate {
+      candidates.append(URL(fileURLWithPath: "/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/RimeData", isDirectory: true))
+    }
 
     for url in candidates where FileManager.default.fileExists(atPath: url.path) {
       return url.path
@@ -233,9 +238,7 @@ final class InputiaSettingsWindowController: NSWindowController {
   private let statusLabel = NSTextField(labelWithString: "")
 
   init() {
-    let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-      ?? URL(fileURLWithPath: NSTemporaryDirectory())
-    settingsURL = baseURL.appendingPathComponent("Inputia/settings.json")
+    settingsURL = InputiaProfile.current.settings
     settingsDocument = Self.loadDocument(from: settingsURL)
 
     let window = NSWindow(
@@ -265,6 +268,7 @@ final class InputiaSettingsWindowController: NSWindowController {
 
   private static func loadDocument(from url: URL) -> InputiaSettingsDocument {
     do {
+      try InputiaProfile.current.validateSettingsPath(url.path)
       if FileManager.default.fileExists(atPath: url.path) {
         let data = try Data(contentsOf: url)
         var document = try JSONDecoder().decode(InputiaSettingsDocument.self, from: data)
@@ -666,13 +670,22 @@ final class InputiaSettingsWindowController: NSWindowController {
     next.sanitize(using: settingsURL)
 
     do {
+      try InputiaProfile.current.validateSettingsPath(settingsURL.path)
       try FileManager.default.createDirectory(
         at: settingsURL.deletingLastPathComponent(),
         withIntermediateDirectories: true
       )
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-      let data = try encoder.encode(next)
+      let encoded = try encoder.encode(next)
+      let data: Data
+      if InputiaProfile.current.isCandidate,
+         let dictionary = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] {
+        let isolated = try InputiaProfile.current.isolatedSettings(dictionary, settingsPath: settingsURL.path)
+        data = try JSONSerialization.data(withJSONObject: isolated, options: [.prettyPrinted, .sortedKeys])
+      } else {
+        data = encoded
+      }
       try data.write(to: settingsURL, options: Data.WritingOptions.atomic)
       settingsDocument = next
       updateSpellingCorrectionAvailability(for: next.schemaId)
@@ -715,6 +728,7 @@ final class InputiaSettingsWindowController: NSWindowController {
   }
 
   @objc private func openSettingsFolder() {
+    guard (try? InputiaProfile.current.validateSettingsPath(settingsURL.path)) != nil else { return }
     try? FileManager.default.createDirectory(
       at: settingsURL.deletingLastPathComponent(),
       withIntermediateDirectories: true

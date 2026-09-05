@@ -10,7 +10,20 @@ private let launcherVersion =
   Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
 private let expectedHostCDHash =
   Bundle.main.object(forInfoDictionaryKey: "InputiaExpectedHostCDHash") as? String ?? ""
-private let inputiaAppCandidates: [InputiaAppCandidate] = [
+private let inputiaAppCandidates: [InputiaAppCandidate] = {
+  if InputiaProfile.current.isCandidate {
+    return [
+      InputiaAppCandidate(
+        path: Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("InputiaUnifiedCandidate.app").path,
+        source: "candidate-sibling"
+      ),
+      InputiaAppCandidate(
+        path: "\(NSHomeDirectory())/Library/Input Methods/InputiaUnifiedCandidate.app",
+        source: "candidate-user-install"
+      ),
+    ]
+  }
+  return [
   ProcessInfo.processInfo.environment["INPUTIA_APP"].map {
     InputiaAppCandidate(path: $0, source: "INPUTIA_APP")
   },
@@ -20,6 +33,7 @@ private let inputiaAppCandidates: [InputiaAppCandidate] = [
     source: "user"
   ),
 ].compactMap { $0 }
+}()
 
 private func showFailure(message: String) {
   let app = NSApplication.shared
@@ -89,6 +103,14 @@ private func bundleCDHash(at appPath: String) -> String? {
 private func matchingCandidate() -> InputiaAppCandidate? {
   for candidate in inputiaAppCandidates
   where FileManager.default.fileExists(atPath: candidate.path) {
+    if InputiaProfile.current.isCandidate {
+      guard let host = Bundle(url: URL(fileURLWithPath: candidate.path)),
+            host.bundleIdentifier == "com.inputia.inputmethod.Inputia.UnifiedCandidate",
+            host.object(forInfoDictionaryKey: "InputiaProfileRunID") as? String == InputiaProfile.current.runID,
+            host.object(forInfoDictionaryKey: "InputiaDevelopmentCandidate") as? Bool == true,
+            !expectedHostCDHash.isEmpty,
+            !launcherVersion.isEmpty else { continue }
+    }
     guard !launcherVersion.isEmpty else {
       return candidate
     }

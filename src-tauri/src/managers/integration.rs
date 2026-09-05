@@ -39,12 +39,17 @@ impl IntegrationManager {
             prepare_source(&root.join(file), source)?;
         }
         let app = app.clone();
-        let service = HistoryService::start(root, "handy-local".into(), move |generation| {
+        let profile_id = crate::candidate_profile::current()
+            .map(|profile| profile.profile_id.clone())
+            .unwrap_or_else(|| "handy-local".into());
+        let service = HistoryService::start(root, profile_id, move |generation| {
             if (UnifiedHistoryUpdate { generation }).emit(&app).is_err() {
                 log::warn!("Unable to notify unified history change");
             }
         })
         .map_err(anyhow::Error::msg)?;
+        // start 只创建后台线程；确认实际数据库/密钥初始化成功后，外层才能提交启动迁移标记。
+        service.policy_epoch().map_err(anyhow::Error::msg)?;
         Ok(Self {
             service: Arc::new(service),
         })

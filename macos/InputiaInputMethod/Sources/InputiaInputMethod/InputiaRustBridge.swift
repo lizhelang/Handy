@@ -526,7 +526,7 @@ final class InputiaRustBridge {
   }
 
   func importHandyHistory(path: String, bundleId: String, limit: Int) -> Int? {
-    guard let session else {
+    guard InputiaProfile.current.allowsHandyImport(path), let session else {
       return nil
     }
     let raw = path.withCString { pathPointer in
@@ -538,7 +538,7 @@ final class InputiaRustBridge {
   }
 
   func importHandyClipboard(path: String, bundleId: String, limit: Int) -> Int? {
-    guard let session else {
+    guard InputiaProfile.current.allowsHandyImport(path), let session else {
       return nil
     }
     let raw = path.withCString { pathPointer in
@@ -674,25 +674,15 @@ final class InputiaRustBridge {
   }
 
   private static func defaultUserDataDir() -> String {
-    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-      .first
-      ?? URL(fileURLWithPath: NSTemporaryDirectory())
-    let dir = base.appendingPathComponent("Inputia/rime", isDirectory: true)
-    return dir.path
+    InputiaProfile.current.rime.path
   }
 
   private static func defaultMemoryDbPath() -> String {
-    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-      .first
-      ?? URL(fileURLWithPath: NSTemporaryDirectory())
-    return base.appendingPathComponent("Inputia/inputia_memory.db").path
+    InputiaProfile.current.memory.path
   }
 
   private static func defaultSettingsPath() -> String {
-    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-      .first
-      ?? URL(fileURLWithPath: NSTemporaryDirectory())
-    return base.appendingPathComponent("Inputia/settings.json").path
+    InputiaProfile.current.settings.path
   }
 
   private static func modificationDate(for path: String) -> Date? {
@@ -706,6 +696,24 @@ final class InputiaRustBridge {
   }
 
   private static func openSettingsSession(settingsPath: String) -> UnsafeMutableRawPointer? {
+    if InputiaProfile.current.isCandidate {
+      do {
+        try InputiaProfile.current.validateCandidatePaths()
+        try InputiaProfile.current.validateSettingsPath(settingsPath)
+        guard let original = loadSettingsDictionary(path: settingsPath), let bundledRimeDataPath else {
+          return nil
+        }
+        var isolated = try InputiaProfile.current.isolatedSettings(original, settingsPath: settingsPath)
+        isolated["rime_shared_data_dir"] = bundledRimeDataPath
+        if !NSDictionary(dictionary: original).isEqual(to: isolated) {
+          let data = try JSONSerialization.data(withJSONObject: isolated, options: [.sortedKeys])
+          try data.write(to: URL(fileURLWithPath: settingsPath), options: .atomic)
+        }
+      } catch {
+        NSLog("Inputia candidate settings rejected")
+        return nil
+      }
+    }
     let session = settingsPath.withCString { pointer in
       inputia_session_new_from_settings(pointer)
     }
@@ -723,6 +731,7 @@ final class InputiaRustBridge {
   }
 
   private static func ensureSettingsFile(at path: String) {
+    guard (try? InputiaProfile.current.validateSettingsPath(path)) != nil else { return }
     let url = URL(fileURLWithPath: path)
     if FileManager.default.fileExists(atPath: path) {
       patchSettingsFileIfNeeded(url: url)
@@ -800,6 +809,7 @@ final class InputiaRustBridge {
   }
 
   private static func loadSettingsDictionary(path: String) -> [String: Any]? {
+    guard (try? InputiaProfile.current.validateSettingsPath(path)) != nil else { return nil }
     let url = URL(fileURLWithPath: path)
     guard
       let data = try? Data(contentsOf: url),
@@ -940,6 +950,7 @@ final class InputiaRustBridge {
     chineseScript: String = "simplified",
     to path: String
   ) {
+    guard (try? InputiaProfile.current.validateSettingsPath(path)) != nil else { return }
     let url = URL(fileURLWithPath: path)
     try? FileManager.default.createDirectory(
       at: url.deletingLastPathComponent(),
@@ -966,18 +977,19 @@ final class InputiaRustBridge {
     if let bundledRimeDataPath {
       dictionary["rime_shared_data_dir"] = bundledRimeDataPath
     }
+    guard let isolated = try? InputiaProfile.current.isolatedSettings(dictionary, settingsPath: path) else { return }
     let data = try? JSONSerialization.data(
-      withJSONObject: dictionary,
+      withJSONObject: isolated,
       options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     )
     try? data?.write(to: url, options: .atomic)
   }
 
   private static var bundledRimeDataPath: String? {
-    let candidates = [
-      Bundle.main.resourceURL?.appendingPathComponent("RimeData", isDirectory: true),
-      URL(fileURLWithPath: "/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/RimeData", isDirectory: true),
-    ].compactMap { $0 }
+    var candidates = [Bundle.main.resourceURL?.appendingPathComponent("RimeData", isDirectory: true)].compactMap { $0 }
+    if !InputiaProfile.current.isCandidate {
+      candidates.append(URL(fileURLWithPath: "/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/RimeData", isDirectory: true))
+    }
 
     for url in candidates where FileManager.default.fileExists(atPath: url.path) {
       return url.path
