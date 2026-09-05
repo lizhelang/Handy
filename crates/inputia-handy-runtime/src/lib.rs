@@ -8,6 +8,7 @@ pub mod source;
 pub mod store;
 pub mod sync;
 pub mod transport;
+pub mod voice_protocol;
 use std::path::{Path, PathBuf};
 
 use inputia_core::{AppContext, AppPolicy, SqliteMemory};

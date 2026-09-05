@@ -1,0 +1,136 @@
+use inputia_handy_runtime::voice_protocol::*;
+
+fn request() -> VoiceRequest {
+    VoiceRequest {
+        request_id: "request-1".into(),
+        session_id: "session-1".into(),
+        server_instance: "server-1".into(),
+        client_instance: "host-1".into(),
+        policy_epoch: 7,
+        command: VoiceCommand::Start {
+            target: HostTargetToken {
+                target_id: "target-1".into(),
+                host_instance: "host-1".into(),
+                controller_id: "controller-1".into(),
+                activation_generation: 2,
+                field_id: Some("field-1".into()),
+                selection_generation: 3,
+                composition_generation: 4,
+                source_app: Some("com.example.fixture".into()),
+            },
+            post_process: false,
+            terms: VoiceTermsVersion {
+                policy_epoch: 7,
+                learning_generation: 11,
+            },
+        },
+    }
+}
+fn peer() -> VoicePeer<'static> {
+    VoicePeer {
+        server_instance: "server-1",
+        client_instance: "host-1",
+        policy_epoch: 7,
+        policy_applied: true,
+    }
+}
+
+#[test]
+fn wire_shape_is_explicit_and_rejects_arbitrary_fields() {
+    let wire = serde_json::to_value(request()).unwrap();
+    assert_eq!(wire["command"]["kind"], "start");
+    assert_eq!(wire["command"]["terms"]["learning_generation"], 11);
+    assert_eq!(
+        serde_json::from_value::<VoiceRequest>(wire.clone()).unwrap(),
+        request()
+    );
+    let mut extra = wire.clone();
+    extra["command"]["shell"] = "not permitted".into();
+    assert!(serde_json::from_value::<VoiceRequest>(extra).is_err());
+    let mut extra = wire;
+    extra["command"]["target"]["path"] = "/arbitrary".into();
+    assert!(serde_json::from_value::<VoiceRequest>(extra).is_err());
+}
+
+#[test]
+fn authenticated_connection_and_current_policy_are_required_for_start() {
+    let mut request = request();
+    assert!(request.validate_for(&peer()).is_ok());
+    request.server_instance = "server-before-restart".into();
+    assert!(request.validate_for(&peer()).is_err());
+    request.server_instance = "server-1".into();
+    request.client_instance = "another-host".into();
+    assert!(request.validate_for(&peer()).is_err());
+    request.client_instance = "host-1".into();
+    request.policy_epoch = 6;
+    assert!(request.validate_for(&peer()).is_err());
+    request.policy_epoch = 7;
+    assert!(request
+        .validate_for(&VoicePeer {
+            policy_applied: false,
+            ..peer()
+        })
+        .is_err());
+    if let VoiceCommand::Start { target, .. } = &mut request.command {
+        target.host_instance = "other-host".into();
+    }
+    assert!(request.validate_for(&peer()).is_err());
+}
+
+#[test]
+fn withdrawal_does_not_prevent_stop_or_cancel_but_future_epochs_are_rejected() {
+    for command in [
+        VoiceCommand::Stop,
+        VoiceCommand::Cancel,
+        VoiceCommand::Status,
+    ] {
+        let request = VoiceRequest {
+            command,
+            policy_epoch: 6,
+            ..request()
+        };
+        assert!(request
+            .validate_for(&VoicePeer {
+                policy_applied: false,
+                ..peer()
+            })
+            .is_ok());
+        assert!(VoiceRequest {
+            policy_epoch: 8,
+            ..request
+        }
+        .validate_for(&peer())
+        .is_err());
+    }
+}
+
+#[test]
+fn missing_field_identity_is_representable_but_never_manufactured_from_bundle_id() {
+    let mut request = request();
+    if let VoiceCommand::Start { target, .. } = &mut request.command {
+        target.field_id = None;
+    }
+    assert!(request.validate_for(&peer()).is_ok());
+    let wire = serde_json::to_value(request).unwrap();
+    assert!(wire["command"]["target"]["field_id"].is_null());
+}
+
+#[test]
+fn delivery_keeps_body_off_debug_and_bounds_wire_without_truncating_text() {
+    let mut delivery = VoiceDelivery {
+        operation_id: "output-1".into(),
+        session_id: "session-1".into(),
+        item_id: "voice-store:record-1".into(),
+        revision: 1,
+        policy_epoch: 7,
+        target_id: "target-1".into(),
+        text: "合成正文\n第二行".into(),
+    };
+    assert!(delivery.validate().is_ok());
+    let decoded: VoiceDelivery =
+        serde_json::from_str(&serde_json::to_string(&delivery).unwrap()).unwrap();
+    assert!(decoded == delivery);
+    delivery.text = "x".repeat(MAX_DELIVERY_TEXT_BYTES + 1);
+    assert!(delivery.validate().is_err());
+    assert_eq!(delivery.text.len(), MAX_DELIVERY_TEXT_BYTES + 1);
+}
