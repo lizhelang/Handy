@@ -168,6 +168,9 @@ impl HistoryService {
                     .map_err(|_| "learning key unavailable or unsafe".to_owned())?;
                     store.enable_learning(&key).map_err(|e| e.to_string())?;
                     store.initialize_outputs().map_err(|e| e.to_string())?;
+                    store
+                        .initialize_voice_sessions()
+                        .map_err(|e| e.to_string())?;
                     Ok(Worker {
                         output_generation: worker_generation,
                         source_writes: worker_source_writes,
@@ -316,6 +319,59 @@ impl HistoryService {
 
     pub fn policy_epoch(&self) -> ServiceResult<u64> {
         self.call(|worker| worker.store.policy_epoch().map_err(|e| e.to_string()))
+    }
+
+    pub fn prepare_voice_request(
+        &self,
+        request: crate::voice_protocol::VoiceRequest,
+        client: String,
+        server: String,
+        applied_epoch: Option<u64>,
+    ) -> ServiceResult<crate::voice_ledger::SessionRecord> {
+        self.call(move |worker| {
+            worker
+                .store
+                .prepare_voice_request(&request, &client, &server, applied_epoch)
+                .map_err(|e| e.to_string())
+        })
+    }
+    pub fn claim_voice_request(
+        &self,
+        request: crate::voice_protocol::VoiceRequest,
+        client: String,
+        server: String,
+        applied_epoch: Option<u64>,
+    ) -> ServiceResult<bool> {
+        self.call(move |worker| {
+            worker
+                .store
+                .claim_voice_request(&request, &client, &server, applied_epoch)
+                .map_err(|e| e.to_string())
+        })
+    }
+    pub fn project_voice_session(
+        &self,
+        client: String,
+        server: String,
+        view: crate::voice_protocol::VoiceSessionView,
+    ) -> ServiceResult<bool> {
+        self.call(move |worker| {
+            worker
+                .store
+                .project_voice_session(&client, &server, &view)
+                .map_err(|e| e.to_string())
+        })
+    }
+    pub fn voice_session(
+        &self,
+        session_id: String,
+    ) -> ServiceResult<Option<crate::voice_ledger::SessionRecord>> {
+        self.call(move |worker| {
+            worker
+                .store
+                .voice_session(&session_id)
+                .map_err(|e| e.to_string())
+        })
     }
     pub fn prepare_output(
         &self,
@@ -468,6 +524,75 @@ impl Drop for HistoryService {
 #[cfg(test)]
 mod output_permit_tests {
     use super::*;
+
+    #[test]
+    fn delayed_voice_claim_times_out_without_granting_caller_execution_or_reclaim() {
+        use crate::voice_protocol::*;
+        let root = tempfile::tempdir().unwrap();
+        let history = Connection::open(root.path().join("history.db")).unwrap();
+        history.execute_batch("CREATE TABLE transcription_history(id INTEGER PRIMARY KEY,file_name TEXT,timestamp INTEGER,saved INTEGER,title TEXT,transcription_text TEXT,post_processed_text TEXT);").unwrap();
+        Connection::open(root.path().join("clipboard.db")).unwrap().execute_batch("CREATE TABLE clipboard_history(id INTEGER PRIMARY KEY,content_type TEXT,full_text TEXT,title TEXT,is_favorite INTEGER,is_pinned INTEGER,created_at INTEGER,image_path TEXT,source_app TEXT);").unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let once = AtomicBool::new(true);
+        let service = HistoryService::start(root.path().into(), "fixture".into(), move |_| {
+            if once.swap(false, Ordering::AcqRel) {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            }
+        })
+        .unwrap();
+        let request = VoiceRequest {
+            request_id: "start".into(),
+            session_id: "voice".into(),
+            client_instance: "host".into(),
+            server_instance: "server".into(),
+            policy_epoch: 1,
+            command: VoiceCommand::Start {
+                target: HostTargetToken {
+                    target_id: "target".into(),
+                    host_instance: "host".into(),
+                    controller_id: "controller".into(),
+                    activation_generation: 1,
+                    field_id: None,
+                    selection_generation: 0,
+                    composition_generation: 0,
+                    source_app: None,
+                },
+                post_process: false,
+                terms: VoiceTermsVersion {
+                    policy_epoch: 1,
+                    learning_generation: 0,
+                },
+            },
+        };
+        service
+            .prepare_voice_request(request.clone(), "host".into(), "server".into(), Some(1))
+            .unwrap();
+        history
+            .execute_batch(
+                "INSERT INTO transcription_history VALUES(1,NULL,1,0,NULL,'synthetic',NULL);",
+            )
+            .unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let result =
+            service.claim_voice_request(request.clone(), "host".into(), "server".into(), Some(1));
+        assert!(result.is_err(), "超时不能返回执行资格");
+        release_tx.send(()).unwrap();
+        // 队列随后可能提交已消费claim；重试只能查询事实，不再次启动。
+        assert!(!service
+            .claim_voice_request(request, "host".into(), "server".into(), Some(1))
+            .unwrap());
+        assert_eq!(
+            service
+                .voice_session("voice".into())
+                .unwrap()
+                .unwrap()
+                .view
+                .phase,
+            VoicePhase::Preparing
+        );
+    }
 
     #[test]
     fn stale_and_expired_permits_fail_without_a_service_call() {

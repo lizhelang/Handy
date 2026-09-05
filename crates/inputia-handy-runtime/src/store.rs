@@ -178,6 +178,7 @@ pub struct SnapshotRestoreOutcome {
 #[derive(Debug)]
 pub enum StoreError {
     Output(crate::output_ledger::OutputLedgerError),
+    Voice(crate::voice_ledger::VoiceLedgerError),
     Learning(LearningError),
     Io(std::io::Error),
     Sqlite(rusqlite::Error),
@@ -201,6 +202,7 @@ impl fmt::Display for StoreError {
         // 不将来自数据库的正文或外部输入拼入诊断。
         match self {
             Self::Output(error) => write!(f, "{error}"),
+            Self::Voice(error) => write!(f, "{error}"),
             Self::Learning(error) => write!(f, "{error}"),
             Self::Io(_) => write!(f, "integration file operation failed"),
             Self::Sqlite(_) => write!(f, "integration SQLite operation failed"),
@@ -244,6 +246,11 @@ impl From<crate::output_ledger::OutputLedgerError> for StoreError {
         Self::Output(error)
     }
 }
+impl From<crate::voice_ledger::VoiceLedgerError> for StoreError {
+    fn from(error: crate::voice_ledger::VoiceLedgerError) -> Self {
+        Self::Voice(error)
+    }
+}
 impl From<LearningError> for StoreError {
     fn from(error: LearningError) -> Self {
         Self::Learning(error)
@@ -273,6 +280,85 @@ pub struct IntegrationStore {
 }
 
 impl IntegrationStore {
+    pub fn initialize_voice_sessions(&mut self) -> StoreResult<()> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        crate::voice_ledger::initialize(&tx)?;
+        crate::voice_ledger::recover(&tx)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// peer身份由认证服务给出；策略epoch必须取本库当前值，不接受客户端自报授权。
+    pub fn prepare_voice_request(
+        &mut self,
+        request: &crate::voice_protocol::VoiceRequest,
+        client: &str,
+        server: &str,
+        applied_epoch: Option<u64>,
+    ) -> StoreResult<crate::voice_ledger::SessionRecord> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = epoch(&tx)?;
+        let peer = crate::voice_protocol::VoicePeer {
+            client_instance: client,
+            server_instance: server,
+            policy_epoch: current,
+            policy_applied: applied_epoch == Some(current),
+        };
+        let record = crate::voice_ledger::prepare(&tx, request, &peer)?;
+        tx.commit()?;
+        Ok(record)
+    }
+
+    pub fn claim_voice_request(
+        &mut self,
+        request: &crate::voice_protocol::VoiceRequest,
+        client: &str,
+        server: &str,
+        applied_epoch: Option<u64>,
+    ) -> StoreResult<bool> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = epoch(&tx)?;
+        let peer = crate::voice_protocol::VoicePeer {
+            client_instance: client,
+            server_instance: server,
+            policy_epoch: current,
+            policy_applied: applied_epoch == Some(current),
+        };
+        request
+            .validate_for(&peer)
+            .map_err(|_| StoreError::Invalid("voice permission changed before claim"))?;
+        let claimed = crate::voice_ledger::claim(&tx, request)?;
+        tx.commit()?;
+        Ok(claimed)
+    }
+
+    pub fn project_voice_session(
+        &mut self,
+        client: &str,
+        server: &str,
+        view: &crate::voice_protocol::VoiceSessionView,
+    ) -> StoreResult<bool> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = crate::voice_ledger::project(&tx, client, server, view)?;
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    pub fn voice_session(
+        &self,
+        session_id: &str,
+    ) -> StoreResult<Option<crate::voice_ledger::SessionRecord>> {
+        Ok(crate::voice_ledger::get(&self.conn, session_id)?)
+    }
+
     pub fn initialize_outputs(&mut self) -> StoreResult<()> {
         let tx = self
             .conn
