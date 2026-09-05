@@ -104,6 +104,100 @@ fn physical_source_identity_is_unambiguous_and_profile_is_not_overwritten() {
 }
 
 #[test]
+fn retention_authorization_is_current_and_does_not_forge_event_receipts() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = open(&temp.path().join("index.db"));
+    let event = change("voice-store", 1, "one", 1, "old retained text");
+    store.advance_policy_epoch(1, 2).unwrap();
+    assert!(matches!(
+        store.apply_change(&event),
+        Err(StoreError::EpochMismatch { .. })
+    ));
+    let mut policy = store.history_retention_policy().unwrap();
+    policy.retain_unknown = false;
+    assert!(store
+        .apply_retained_history(std::slice::from_ref(&event), &policy)
+        .is_err());
+    let policy = store.history_retention_policy().unwrap();
+    store
+        .apply_retained_history(std::slice::from_ref(&event), &policy)
+        .unwrap();
+    assert_eq!(
+        store
+            .apply_retained_history(std::slice::from_ref(&event), &policy)
+            .unwrap(),
+        vec![ApplyOutcome::Replay]
+    );
+    let mut altered = event.clone();
+    altered.payload.as_mut().unwrap().text = Some("altered".into());
+    assert!(matches!(
+        store.apply_retained_history(&[altered], &policy),
+        Err(StoreError::EventConflict)
+    ));
+    let mut future = change("voice-store", 2, "two", 1, "future");
+    future.policy_epoch = 3;
+    assert!(matches!(
+        store.apply_retained_history(&[future], &policy),
+        Err(StoreError::EpochMismatch { .. })
+    ));
+    let mut sensitive = change("voice-store", 2, "two", 1, "sensitive retained fixture");
+    sensitive.payload.as_mut().unwrap().source_app = Some("com.1password.1password".into());
+    store.apply_retained_history(&[sensitive], &policy).unwrap();
+    assert_eq!(store.item_count().unwrap(), 1);
+    assert_eq!(store.cursor("voice-store").unwrap(), 2);
+}
+
+#[test]
+fn retained_replay_and_same_revision_snapshot_withdraw_existing_denied_projection() {
+    use inputia_handy_runtime::source::{SnapshotHeader, SnapshotRecord};
+    for use_snapshot in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = open(&temp.path().join("index.db"));
+        let mut event = change("voice-store", 1, "one", 1, "legacy sensitive fixture");
+        event.payload.as_mut().unwrap().source_app = Some("com.1password.1password".into());
+        store.apply_change(&event).unwrap();
+        assert_eq!(store.item_count().unwrap(), 1);
+        store.advance_policy_epoch(1, 2).unwrap();
+        let policy = store.history_retention_policy().unwrap();
+        if use_snapshot {
+            store
+                .restore_retained_history(
+                    &SnapshotHeader {
+                        store_id: "voice-store".into(),
+                        through_sequence: 1,
+                        policy_epoch: 1,
+                    },
+                    &[SnapshotRecord {
+                        record_id: "one".into(),
+                        revision: 1,
+                        payload: event.payload.clone(),
+                    }],
+                    &policy,
+                )
+                .unwrap();
+        } else {
+            store
+                .apply_retained_history(std::slice::from_ref(&event), &policy)
+                .unwrap();
+        }
+        assert_eq!(store.item_count().unwrap(), 0);
+        assert!(store
+            .revisions(&item_id("voice-store", "one"))
+            .unwrap()
+            .is_empty());
+        assert_eq!(store.cursor("voice-store").unwrap(), 1);
+        let mut retry = event.clone();
+        retry.seq = 2;
+        retry.event_id = "newer-event".into();
+        retry.revision = 2;
+        retry.policy_epoch = 2;
+        retry.payload.as_mut().unwrap().source_app = None;
+        store.apply_retained_history(&[retry], &policy).unwrap();
+        assert_eq!(store.item_count().unwrap(), 0);
+    }
+}
+
+#[test]
 fn payload_identity_conflicts_are_rejected_without_advancing_or_mutating() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("integration.db");

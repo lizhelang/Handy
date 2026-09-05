@@ -111,6 +111,28 @@ pub struct TermSnapshot {
     pub terms: Vec<String>,
 }
 
+/// 仅决定已持久化历史能否进入本地投影，不授予采集、学习或远程使用权限。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryRetentionPolicy {
+    pub epoch: u64,
+    pub retain_unknown: bool,
+    pub excluded_source_apps: Vec<String>,
+}
+
+impl HistoryRetentionPolicy {
+    fn permits(&self, snapshot: &ItemSnapshot) -> bool {
+        if !self.retain_unknown && snapshot.source_trust != SourceTrust::Verified {
+            return false;
+        }
+        !snapshot.source_app.as_deref().is_some_and(|app| {
+            self.excluded_source_apps
+                .iter()
+                .any(|excluded| excluded == app)
+                || inputia_core::AppPolicy::default().excludes(&inputia_core::AppContext::new(app))
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HistoryQuery {
     pub search: Option<String>,
@@ -244,6 +266,56 @@ pub struct IntegrationStore {
 }
 
 impl IntegrationStore {
+    pub fn history_retention_policy(&self) -> StoreResult<HistoryRetentionPolicy> {
+        let tx = self.conn.unchecked_transaction()?;
+        let stored: Option<String> = tx
+            .query_row(
+                "SELECT value FROM integration_meta WHERE key='history_retention_policy'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let mut policy = match stored {
+            Some(raw) => serde_json::from_str(&raw)?,
+            None => HistoryRetentionPolicy {
+                epoch: 0,
+                retain_unknown: true,
+                excluded_source_apps: Vec::new(),
+            },
+        };
+        policy.epoch = epoch(&tx)?;
+        Ok(policy)
+    }
+
+    /// 重新核验旧历史时保持原事件摘要；此方法绝不写学习贡献。
+    /// 授权必须与规范库当前保留规则完全一致，不能由客户端捏造。
+    pub fn apply_retained_history(
+        &mut self,
+        changes: &[SourceChange],
+        policy: &HistoryRetentionPolicy,
+    ) -> StoreResult<Vec<ApplyOutcome>> {
+        if *policy != self.history_retention_policy()? {
+            return Err(StoreError::Invalid(
+                "retention authorization differs from stored policy",
+            ));
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if epoch(&tx)? != policy.epoch {
+            return Err(StoreError::EpochMismatch {
+                expected: epoch(&tx)?,
+                actual: policy.epoch,
+            });
+        }
+        let outcomes = changes
+            .iter()
+            .map(|change| apply_authorized(&tx, change, Some(policy)))
+            .collect::<StoreResult<Vec<_>>>()?;
+        tx.commit()?;
+        Ok(outcomes)
+    }
+
     /// 控制中心的有界词库列表；调用者必须是已授权的本地设置入口。
     pub fn list_terms(&self, limit: u32, offset: u64) -> StoreResult<Vec<LearnedTermView>> {
         if limit == 0 || limit > 500 {
@@ -700,6 +772,29 @@ impl IntegrationStore {
         header: &SnapshotHeader,
         records: &[SnapshotRecord],
     ) -> StoreResult<SnapshotRestoreOutcome> {
+        self.restore_authorized_snapshot(header, records, None)
+    }
+
+    pub fn restore_retained_history(
+        &mut self,
+        header: &SnapshotHeader,
+        records: &[SnapshotRecord],
+        policy: &HistoryRetentionPolicy,
+    ) -> StoreResult<SnapshotRestoreOutcome> {
+        if *policy != self.history_retention_policy()? {
+            return Err(StoreError::Invalid(
+                "retention authorization differs from stored policy",
+            ));
+        }
+        self.restore_authorized_snapshot(header, records, Some(policy))
+    }
+
+    fn restore_authorized_snapshot(
+        &mut self,
+        header: &SnapshotHeader,
+        records: &[SnapshotRecord],
+        retention: Option<&HistoryRetentionPolicy>,
+    ) -> StoreResult<SnapshotRestoreOutcome> {
         identifier(&header.store_id)?;
         let through = checked_number(header.through_sequence)?;
         checked_number(header.policy_epoch)?;
@@ -707,7 +802,10 @@ impl IntegrationStore {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current_epoch = epoch(&tx)?;
-        if current_epoch != header.policy_epoch {
+        if (retention.is_none() && current_epoch != header.policy_epoch)
+            || header.policy_epoch > current_epoch
+            || retention.is_some_and(|policy| policy.epoch != current_epoch)
+        {
             return Err(StoreError::EpochMismatch {
                 expected: current_epoch,
                 actual: header.policy_epoch,
@@ -745,13 +843,19 @@ impl IntegrationStore {
                     "snapshot record revision or duplicate identity",
                 ));
             }
+            if let Some(policy) = retention {
+                withdraw_disallowed_record(&tx, &header.store_id, &record.record_id, policy)?;
+            }
             match apply_record(
                 &tx,
                 &logical_name,
                 &header.store_id,
                 &record.record_id,
                 revision,
-                record.payload.as_ref(),
+                record
+                    .payload
+                    .as_ref()
+                    .filter(|snapshot| retention.is_none_or(|policy| policy.permits(snapshot))),
             )? {
                 ApplyOutcome::Applied => outcome.applied += 1,
                 ApplyOutcome::StaleSuppressed => outcome.stale_suppressed += 1,
@@ -935,6 +1039,14 @@ fn decode_item(
 }
 
 fn apply(tx: &Transaction<'_>, change: &SourceChange) -> StoreResult<ApplyOutcome> {
+    apply_authorized(tx, change, None)
+}
+
+fn apply_authorized(
+    tx: &Transaction<'_>,
+    change: &SourceChange,
+    retention: Option<&HistoryRetentionPolicy>,
+) -> StoreResult<ApplyOutcome> {
     identifier(&change.store_id)?;
     identifier(&change.event_id)?;
     identifier(&change.record_id)?;
@@ -950,7 +1062,10 @@ fn apply(tx: &Transaction<'_>, change: &SourceChange) -> StoreResult<ApplyOutcom
         return Err(StoreError::Invalid("payload does not match operation"));
     }
     let current_epoch = epoch(tx)?;
-    if current_epoch != change.policy_epoch {
+    if (retention.is_none() && current_epoch != change.policy_epoch)
+        || change.policy_epoch > current_epoch
+        || retention.is_some_and(|policy| policy.epoch != current_epoch)
+    {
         return Err(StoreError::EpochMismatch {
             expected: current_epoch,
             actual: change.policy_epoch,
@@ -968,6 +1083,9 @@ fn apply(tx: &Transaction<'_>, change: &SourceChange) -> StoreResult<ApplyOutcom
         return Err(StoreError::RetiredStore);
     }
     let digest = Sha256::digest(serde_json::to_vec(change)?).to_vec();
+    if let Some(policy) = retention {
+        withdraw_disallowed_record(tx, &change.store_id, &change.record_id, policy)?;
+    }
     let receipt: Option<Vec<u8>> = tx
         .query_row(
             "SELECT digest FROM integration_events WHERE event_id=?1",
@@ -1008,7 +1126,10 @@ fn apply(tx: &Transaction<'_>, change: &SourceChange) -> StoreResult<ApplyOutcom
         &change.store_id,
         &change.record_id,
         revision,
-        change.payload.as_ref(),
+        change
+            .payload
+            .as_ref()
+            .filter(|snapshot| retention.is_none_or(|policy| policy.permits(snapshot))),
     )?;
     tx.execute(
         "INSERT INTO integration_events(event_id,store_id,seq,digest) VALUES (?1,?2,?3,?4)",
@@ -1019,6 +1140,33 @@ fn apply(tx: &Transaction<'_>, change: &SourceChange) -> StoreResult<ApplyOutcom
         params![seq, change.store_id],
     )?;
     Ok(outcome)
+}
+
+/// 现行策略撤销独立于源 revision；同版本快照与已确认事件也须重核验。
+/// 检查规范库当前正文，不能让一个旧拒绝事件误删较新的合法来源版本。
+fn withdraw_disallowed_record(
+    tx: &Transaction<'_>,
+    store_id: &str,
+    record_id: &str,
+    policy: &HistoryRetentionPolicy,
+) -> StoreResult<()> {
+    let id = item_id(store_id, record_id);
+    let existing: Option<(String, i64, String)> = tx
+        .query_row(
+            "SELECT logical_name,revision,snapshot FROM integration_items WHERE item_id=?1",
+            [&id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    if let Some((logical_name, revision, raw)) = existing {
+        let snapshot: ItemSnapshot = serde_json::from_str(&raw)?;
+        if !policy.permits(&snapshot) {
+            tx.execute("INSERT INTO integration_tombstones(logical_name,record_id,deleted_revision) VALUES(?1,?2,?3) ON CONFLICT(logical_name,record_id) DO UPDATE SET deleted_revision=max(deleted_revision,excluded.deleted_revision)",params![logical_name,record_id,revision])?;
+            tx.execute("DELETE FROM integration_items WHERE item_id=?1", [&id])?;
+            tx.execute("INSERT INTO integration_meta(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("retention-exclusion:{id}"),policy.epoch.to_string()])?;
+        }
+    }
+    Ok(())
 }
 
 fn apply_record(

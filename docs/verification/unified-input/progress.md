@@ -57,10 +57,11 @@
 
 下一步按实际代码接续：
 
-1. learning ledger 已接入 IntegrationStore 同一事务：源改文/删除由触发器撤销贡献，忘记与 policy epoch 原子推进；4 项故障注入/删除/修订回归通过。仍需完成旧源 epoch 事件重核策略，避免永久堵住流，并验证快照恢复撤销的完整业务路径。
+1. learning ledger 已接入 IntegrationStore 同一事务；旧源 epoch 的队列和完整快照已加入当前保留规则重核验，保留原摘要且不授予学习权，避免忘记操作后永久堵流。新增重复事件/同版本策略撤销通过独立复核，详见 [历史重核验](./retained-history-revalidation.md)。完整采集隐私设置及兼容恢复仍需验证。
    后续独立审查的三项问题已修复，回归扩至 6 项；增加独立 learning_generation 保证删除/改文使旧词库快照失效。详见 [原子学习接线](./learning-atomicity.md)。Host 订阅仍未接通。
 2. 已实现 OS 随机源的 0600 持久密钥、缺失拒绝重建、文件/链接校验，后台服务初始化词库；已注册只读词库列表接口。设置策略与显式加入/忘记的完整 UI/API 仍需完成，尚未开放会让旧队列堵塞的 UI 操作。
 3. 统一历史变更动作路由回源 manager，复用 mutate_once；补受管修订准备/确认与单一输出账本，再接 P2 界面。
+   P2 前端已委派 `unified_history_view`：只拥有新统一列表/新store/types/相关UI测试及新增翻译；根代理拥有后台动作、Sidebar/App接线和最终验证，不能互相覆盖。
 4. 完成 Handy 候选 profile 配对、正式对端认证与 Host 会话；目前仅有独立原生签名探针和部分 Swift 路径隔离。
 5. 恢复 FunASR 产品入口并实际运行；Sherpa 尚未找到现成实现，需按 baseline.md 继续查证/接通，不能把其他引擎改名作为保留。
 6. 继续 P3–P6 全范围，准备候选包后再处理必要原生测试安装权限。

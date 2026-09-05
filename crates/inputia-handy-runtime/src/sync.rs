@@ -82,9 +82,11 @@ impl SourcePump {
                             }
                             Ok((view.header.clone(), records))
                         })?;
-                store.restore_source_snapshot(&header, &records)?;
+                let policy = store.history_retention_policy()?;
+                store.restore_retained_history(&header, &records, &policy)?;
                 self.outbox
                     .acknowledge(&mut self.connection, header.through_sequence)?;
+                self.outbox.advance_policy(&self.connection, policy.epoch)?;
                 return Ok(SyncReport {
                     applied_events: 0,
                     restored_records: records.len(),
@@ -95,10 +97,13 @@ impl SourcePump {
         };
         let through_sequence = events.last().map_or(cursor, |event| event.seq);
         if !events.is_empty() {
-            store.apply_changes(&events)?;
+            let policy = store.history_retention_policy()?;
+            store.apply_retained_history(&events, &policy)?;
             self.outbox
                 .acknowledge(&mut self.connection, through_sequence)?;
         }
+        self.outbox
+            .advance_policy(&self.connection, store.policy_epoch()?)?;
         Ok(SyncReport {
             applied_events: events.len(),
             restored_records: 0,
