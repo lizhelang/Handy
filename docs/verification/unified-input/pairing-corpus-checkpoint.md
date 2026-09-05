@@ -42,10 +42,22 @@
 
 ## 下一执行点
 
-1. 冻结并重建包含最新身份/WK/迁移修复的候选，复核编译身份负例；不安装。
+1. 包含最新身份/WK/迁移修复的Handy候选已从`b9e819d7`重建并签名；配对诊断通过，裸候选在数据初始化前以78拒绝。实际WK和P3接线仍未完成，详情见下方追加记录。
 2. 解决候选动态依赖与硬化，嵌入配对公钥/manifest并验证真实两端；保持基础输入独立。
 3. 将会话合同接到唯一录音协调器和Host主线程交付，把学习/排名/配置扫描移出新增按键路径。
 4. 接入统一术语快照，执行已冻结音频的完整质量对照；恢复FunASR并落实Sherpa，不以换名替代。
 5. 完成P5及P6全套原生、性能、迁移/兼容回滚、独立终审和最终提交可安装包。
 
 全部A01–A12仍未最终验收；没有日常安装替换、真实数据迁移或远程发布。
+
+## 已提交基线重建与硬化实验追加
+
+- 本轮提交：`0d94abf7`候选/迁移隔离，`0da33c6a`会话/配对合同，`b9e819d7`固定音频工具。
+- 最新Handy候选主程序SHA256：`e1ecd072548dee4b318ffe59906270debbd38e1f84c4fdefd608d4fd14b05a7a`。从上述提交构建成功，严格bundle签名验证通过，未公证（没有提供Apple发行凭据），未安装。
+- 候选bundle的 `--unified-profile-self-check` 返回配对根且 `daily_data_opened=false tauri_started=false`；同一候选裸二进制返回78及“编译身份与安装包身份不一致，拒绝初始化数据”，不再回退日常模式。
+- CAPI基线套件：22项报告通过；主代理用候选RimeData再次运行并显式查看skip，其中旧固定`/tmp/inputia-rime-shared-double-pinyin`依赖的单独用例没有执行，不能将其算作原生通过。其余包含实际Rime临时用户目录运行；这是CAPI基线，不是IMK跨应用验收。
+- 新增 `native/unified-pair-auth/LibraryValidationProbe.swift`，只dlopen/dlsym，不创建Rime session或用户词典。工具位于 `/tmp/inputia-library-validation.adikxU`，以ad-hoc + hardened runtime签名。
+- 真实加载结果：系统Squirrel的librime被拒绝，原因为进程与非平台库Team ID不一致；将该库复制到专用临时目录并ad-hoc重签，仍被拒绝。没有修改Squirrel安装或降低候选防护，`rime_session_created=false`。
+- 下一替代路线为保留Rime功能与插件的静态打包，而不是关闭library validation。官方1.16.0 [CMake配置](https://raw.githubusercontent.com/rime/librime/1.16.0/CMakeLists.txt)提供`BUILD_SHARED_LIBS`、`BUILD_STATIC`与`BUILD_MERGED_PLUGINS`开关；这里只确认上游支持选项，尚未证明本项目完整静态构建、插件能力和严格候选运行已通过。
+
+以上是真实平台差异导致的实现调整，未改变P0–P6/A01–A12成功标准。当前仍有可执行的源码/构建路线，并非需要用户权限才能继续的阻塞。
