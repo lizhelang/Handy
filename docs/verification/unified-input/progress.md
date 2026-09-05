@@ -10,7 +10,7 @@
 ## 阶段状态
 
 - P0 进行中：冻结协议与领域合同、真实本地通讯原型、原生能力与版本/模型基线检查。
-- P1 未开始：统一索引、源事务 outbox、隐私、修订、删除、兼容回滚。
+- P1 进行中：已实现统一索引、源事务 outbox、快照恢复、后台服务及独立学习贡献账本；尚需将学习撤销与内容事务合并、隐私重新核验和兼容回滚构建。
 - P2 未开始：统一历史、召回、复制/插入。
 - P3 未开始：Host 真实会话、异步学习与断线恢复。
 - P4 未开始：词库、模型提示集成与固定音频质量对照。
@@ -34,13 +34,34 @@
 - A11 未验证：60 术语/40 普通音频及 CER/WER 对照。
 - A12 未验证：迁移、修订和兼容构建回滚后不复活。
 
-## 当前文件归属
+## 当前工作与恢复位置
 
 - 主代理：本进度、执行文档、`inputia-core/src/integration`、后续服务集成和最终审计。
-- runtime_protocol：`inputia-handy-runtime` protocol/transport 及对应依赖/测试；不修改业务服务。
-- native_feasibility：`Tools/UnifiedInput*` 独立原生探针、native-p0 报告；不修改日常 Host 或输入源。
-- baseline_verification：baseline 报告与非 GUI 基线证据；不覆盖源码。
+- 运行时已有 `protocol.rs`、`transport.rs`、`source.rs`、`store.rs`、`sync.rs`、`service.rs` 和 `learning.rs`；源 outbox 与索引恢复有真实 SQLite 测试。
+- 原生 profile 隔离已落盘但尚未独立完整复核；`InputiaProfile.swift` 与三个 Swift 调用点、build.sh 待集成验收，不能据此安装候选。
+- Handy 已接入 `managers/integration.rs` 和 `commands/integration.rs`，后台服务编译通过；现有两套 UI 尚未切换到统一接口。
+- 新增 debug-only `--export-bindings`，在设置/数据库/窗口初始化前退出；已用于生成新接口绑定。
+- 原子快照和学习代理因会话/额度中断没有留下完整最终报告；主代理读取实际代码并重新执行测试，不依据任务状态认定完成。
+
+## 已取得的阶段证据
+
+见 [基础实现检查点](./checkpoint-foundations.md)。这些证据只覆盖分项，不替代 A01–A12 的原生与最终版本验收。
+
+- Core：58 tests passed；未知输出回执、目标代数、词库过滤、隐私租约。
+- Runtime：49 tests passed（3 旧 runtime + 18 索引/恢复 + 14 真实 socket + 10 source + 2 sync + 2 service）；另 6 项学习贡献测试通过。
+- 源快照 50000 行扫描：331 ms 独立运行、402 ms 并行构建时运行，完整记录数一致，EXPLAIN 使用整数主键。
+- Handy：cargo check 通过；lib tests 335 passed、2 ignored；绑定导出成功；前端 build、lint 和翻译基线通过。
+- 独立审查发现显式词控制标记、ACK 后游标丢失、快照关联全表扫描，均已实现修复与回归；新 service/learning/应用接线仍需后续独立复审。
 
 ## 下一步
 
-完成 P0 协议、隐私和输出所有权的真实可复用基础并验证；固定原生机制结果后推进 P1。原生 IMK 需安装时先完成其他工作，准备独立候选、数据隔离及恢复步骤，再集中报告所需用户操作。
+下一步按实际代码接续：
+
+1. 将 learning ledger 接入 IntegrationStore 同一事务：源改文/删除/快照重建撤销贡献，忘记与 policy epoch 原子推进，旧源 epoch 事件重核策略后才能消费，不能永久堵住流。
+2. 实现用户词密钥的受管持久化、设置策略与显式加入/忘记 API；现有 learning.rs 只接收调用者密钥，不自动生成。
+3. 统一历史变更动作路由回源 manager，复用 mutate_once；补受管修订准备/确认与单一输出账本，再接 P2 界面。
+4. 完成 Handy 候选 profile 配对、正式对端认证与 Host 会话；目前仅有独立原生签名探针和部分 Swift 路径隔离。
+5. 恢复 FunASR 产品入口并实际运行；Sherpa 尚未找到现成实现，需按 baseline.md 继续查证/接通，不能把其他引擎改名作为保留。
+6. 继续 P3–P6 全范围，准备候选包后再处理必要原生测试安装权限。
+
+前一目标轮分类：有进展（源码实现、编译与真实 SQLite/socket 测试改变了状态）；恢复时没有存活测试句柄，未把旧锁或任务状态当作仍在执行。

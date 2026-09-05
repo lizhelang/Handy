@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod clipboard;
 pub mod history;
+pub mod integration;
 pub mod models;
 pub mod transcription;
 

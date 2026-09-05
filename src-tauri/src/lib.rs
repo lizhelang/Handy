@@ -223,6 +223,10 @@ fn initialize_core_logic(app_handle: &AppHandle) -> tauri::Result<()> {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
     app_handle.manage(clipboard_manager.clone());
+    app_handle.manage(Arc::new(
+        managers::integration::IntegrationManager::new(app_handle)
+            .map_err(|error| std::io::Error::other(error.to_string()))?,
+    ));
     app_handle.manage(tray::TrayState::new());
 
     let settings = settings::get_settings(app_handle);
@@ -655,9 +659,6 @@ pub fn run(cli_args: CliArgs) {
     // instead of accumulating in malloc arenas (#1792). No-op off Linux/glibc.
     memory::init_allocator();
 
-    // Detect portable mode before anything else
-    portable::init();
-
     // Parse console logging directives from RUST_LOG, falling back to info-level logging
     // when the variable is unset
     let console_filter = build_console_filter();
@@ -783,6 +784,9 @@ pub fn run(cli_args: CliArgs) {
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
             commands::clipboard::get_clipboard_items,
+            commands::integration::get_unified_history,
+            commands::integration::get_unified_history_revisions,
+            commands::integration::refresh_unified_history,
             commands::clipboard::get_favorite_clipboard_items,
             commands::clipboard::search_clipboard,
             commands::clipboard::toggle_clipboard_favorite,
@@ -806,6 +810,7 @@ pub fn run(cli_args: CliArgs) {
         ])
         .events(collect_events![
             managers::history::HistoryUpdatePayload,
+            managers::integration::UnifiedHistoryUpdate,
             managers::clipboard::ClipboardUpdatePayload,
             managers::transcription::StreamTextEvent,
             managers::transcription::StreamPhaseEvent,
@@ -820,6 +825,13 @@ pub fn run(cli_args: CliArgs) {
         .expect("Failed to export typescript bindings");
 
     let invoke_handler = specta_builder.invoke_handler();
+
+    // 绑定导出不初始化设置、模型、窗口或任何用户数据库。
+    #[cfg(debug_assertions)]
+    if cli_args.export_bindings {
+        return;
+    }
+    portable::init();
 
     // The headless path must run as its own instance (see the single-instance
     // note below), not forward to an already-running app.

@@ -2595,6 +2595,7 @@ dependencies = [
  "handy-keys",
  "hf-hub",
  "hound",
+ "inputia-handy-runtime",
  "isolang",
  "libc",
  "llama-cpp-2",
@@ -3157,6 +3158,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e05c02b5e89bff3b946cedeca278abc628fe811e604f027c45a8aa3cf793d0eb"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "inputia-core"
+version = "0.0.1"
+dependencies = [
+ "rusqlite",
+]
+
+[[package]]
+name = "inputia-handy-runtime"
+version = "0.0.1"
+dependencies = [
+ "inputia-core",
+ "libc",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

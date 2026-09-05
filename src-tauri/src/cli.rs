@@ -4,6 +4,10 @@ use std::path::PathBuf;
 #[derive(Parser, Debug, Clone, Default)]
 #[command(name = "handy", about = "Handy - Speech to Text")]
 pub struct CliArgs {
+    /// Export frontend bindings and exit without opening app data or starting Tauri.
+    #[cfg(debug_assertions)]
+    #[arg(long)]
+    pub export_bindings: bool,
     /// Start with the main window hidden
     #[arg(long)]
     pub start_hidden: bool,

@@ -1,4 +1,11 @@
 use std::fmt;
+pub mod learning;
+pub mod protocol;
+pub mod service;
+pub mod source;
+pub mod store;
+pub mod sync;
+pub mod transport;
 use std::path::{Path, PathBuf};
 
 use inputia_core::{AppContext, AppPolicy, SqliteMemory};
