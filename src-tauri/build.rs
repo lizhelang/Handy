@@ -1,4 +1,6 @@
 fn main() {
+    build_unified_pair_auth_bridge();
+
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     build_apple_intelligence_bridge();
 
@@ -35,6 +37,125 @@ fn main() {
     stage_vc_runtime_dlls();
 
     tauri_build::build()
+}
+
+/// 按 Cargo 实际目标构建配对认证桥；不会改变 Apple Intelligence 原有构建分支。
+fn build_unified_pair_auth_bridge() {
+    use std::{env, path::PathBuf, process::Command};
+
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
+        return;
+    }
+    for name in ["MACOSX_DEPLOYMENT_TARGET", "SDKROOT", "SWIFTC"] {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let sources = manifest.join("../native/unified-pair-auth");
+    for file in [
+        "UnifiedPairAuth.swift",
+        "PairAuthBridge.swift",
+        "PairAuthBridge.h",
+    ] {
+        println!("cargo:rerun-if-changed={}", sources.join(file).display());
+    }
+    println!("cargo:rerun-if-changed=tauri.conf.json");
+    let architecture = match env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+        Ok("aarch64") => "arm64",
+        Ok("x86_64") => "x86_64",
+        _ => panic!("unsupported macOS architecture for unified pair authentication"),
+    };
+    let minimum = env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| {
+        let config: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(manifest.join("tauri.conf.json"))
+                .expect("read macOS deployment contract"),
+        )
+        .expect("parse macOS deployment contract");
+        let configured = config["bundle"]["macOS"]["minimumSystemVersion"]
+            .as_str()
+            .expect("configured macOS deployment target");
+        // Apple Silicon 的平台最低版本为 11；Intel 继续使用原 10.15，不提高到候选 13。
+        if architecture == "arm64" && configured.starts_with("10.") {
+            "11.0".to_owned()
+        } else {
+            configured.to_owned()
+        }
+    });
+    assert!(
+        (2..=3).contains(&minimum.split('.').count())
+            && minimum
+                .split('.')
+                .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())),
+        "invalid MACOSX_DEPLOYMENT_TARGET for unified pair authentication"
+    );
+    let target = format!("{architecture}-apple-macosx{minimum}");
+    let locate = |arguments: &[&str]| -> String {
+        let output = Command::new("xcrun")
+            .args(arguments)
+            .output()
+            .expect("execute xcrun");
+        assert!(
+            output.status.success(),
+            "xcrun failed for unified pair authentication"
+        );
+        String::from_utf8(output.stdout)
+            .expect("UTF-8 toolchain path")
+            .trim()
+            .to_owned()
+    };
+    let sdk =
+        env::var("SDKROOT").unwrap_or_else(|_| locate(&["--sdk", "macosx", "--show-sdk-path"]));
+    let swiftc = env::var("SWIFTC").unwrap_or_else(|_| locate(&["--find", "swiftc"]));
+    let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
+    let object = out.join("unified_pair_auth.o");
+    let archive = out.join("libunified_pair_auth.a");
+    let status = Command::new(&swiftc)
+        .args([
+            "-parse-as-library",
+            "-whole-module-optimization",
+            "-warnings-as-errors",
+            "-O",
+            "-target",
+            &target,
+            "-sdk",
+            &sdk,
+            "-module-name",
+            "UnifiedPairAuthNative",
+            "-import-objc-header",
+        ])
+        .arg(sources.join("PairAuthBridge.h"))
+        .arg("-emit-object")
+        .arg(sources.join("UnifiedPairAuth.swift"))
+        .arg(sources.join("PairAuthBridge.swift"))
+        .arg("-o")
+        .arg(&object)
+        .status()
+        .expect("compile unified pair authentication Swift bridge");
+    assert!(
+        status.success(),
+        "Swift unified pair authentication bridge build failed"
+    );
+    let status = Command::new("libtool")
+        .args(["-static", "-o"])
+        .arg(&archive)
+        .arg(&object)
+        .status()
+        .expect("archive unified pair authentication bridge");
+    assert!(
+        status.success(),
+        "unified pair authentication archive failed"
+    );
+    println!("cargo:rustc-link-search=native={}", out.display());
+    println!("cargo:rustc-link-lib=static=unified_pair_auth");
+    let toolchain = PathBuf::from(&swiftc)
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("Swift toolchain root")
+        .join("lib/swift/macosx");
+    println!("cargo:rustc-link-search=native={}", toolchain.display());
+    println!("cargo:rustc-link-search=native={}/usr/lib/swift", sdk);
+    println!("cargo:rustc-link-lib=framework=Foundation");
+    println!("cargo:rustc-link-lib=framework=Security");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
 }
 
 /// Stage the MSVC runtime DLLs into `transcribe-libs/` for app-local deployment.

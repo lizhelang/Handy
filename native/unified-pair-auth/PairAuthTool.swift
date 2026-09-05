@@ -322,6 +322,18 @@ struct PairAuthTool {
       if args.count == 3, args[0] == "identity", let role = PairRole(rawValue: args[1]) {
         print(String(decoding: try encode(identity(args[2], role: role)), as: UTF8.self)); return
       }
+      if args.count == 6, args[0] == "bridge-fixture-manifest" {
+        let key = try PairBuildKey(privateRepresentationForBuildOnly: read(args[1], limit: 97, privateKey: true))
+        let handy = try identity(args[2], role: .handy)
+        let host = try identity(args[3], role: .inputia)
+        let weak = try identity(args[4], role: .inputia)
+        guard host.identifier == weak.identifier else { try fail("fixture role identifiers") }
+        let payload = PairManifestPayload(keyID: "bridge-fixture-key", runID: "trial-20260905",
+          profileID: "unified-candidate:trial-20260905", protocolMajor: 1,
+          peers: [handy, PairCodeIdentity(role: .inputia, identifier: host.identifier,
+            cdhashes: host.cdhashes + weak.cdhashes)])
+        try writeNew(key.sign(payload), args[5]); print("bridge_fixture_manifest_signed=true"); return
+      }
       if args == ["build-marker"] {
         #if SYNTHETIC_ROGUE
         print("synthetic-untrusted-build")

@@ -65,6 +65,7 @@ public final class PairBuildKey {
   public let publicKeyX963: Data
   public init() throws {
     var error: Unmanaged<CFError>?
+    defer { error?.release() }
     let attributes: [String: Any] = [
       kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
       kSecAttrKeySizeInBits as String: 256,
@@ -82,6 +83,7 @@ public final class PairBuildKey {
     let raw = try canonical(payload)
     try validatePayload(payload)
     var error: Unmanaged<CFError>?
+    defer { error?.release() }
     guard let signature = SecKeyCreateSignature(privateKey,
       .ecdsaSignatureMessageX962SHA256, signedMessage(raw) as CFData, &error) else {
       throw PairAuthError.invalid("manifest signing")
@@ -93,6 +95,7 @@ public final class PairBuildKey {
   /// 专用临时 0600 文件可用于构建阶段跨进程交接；调用方不得输出返回值。
   public func privateRepresentationForBuildOnly() throws -> Data {
     var error: Unmanaged<CFError>?
+    defer { error?.release() }
     guard let data = SecKeyCopyExternalRepresentation(privateKey, &error) else {
       throw PairAuthError.invalid("build key export")
     }
@@ -101,6 +104,7 @@ public final class PairBuildKey {
 
   public init(privateRepresentationForBuildOnly data: Data) throws {
     var error: Unmanaged<CFError>?
+    defer { error?.release() }
     let attributes: [String: Any] = [
       kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
       kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
@@ -184,6 +188,7 @@ public struct SignedPairManifest {
       throw PairAuthError.invalid("manifest encoding")
     }
     var error: Unmanaged<CFError>?
+    defer { error?.release() }
     let attributes: [String: Any] = [
       kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
       kSecAttrKeyClass as String: kSecAttrKeyClassPublic,
@@ -298,6 +303,7 @@ public enum PeerAuthenticator {
     for key in ["com.apple.security.get-task-allow", "get-task-allow",
                 "com.apple.security.cs.disable-library-validation",
                 "com.apple.security.cs.allow-dyld-environment-variables",
+                "com.apple.security.cs.disable-executable-page-protection",
                 "com.apple.security.cs.allow-unsigned-executable-memory"] {
       if let value = entitlements[key], (value as? Bool) != false {
         throw PairAuthError.invalid("unsafe runtime entitlement")
