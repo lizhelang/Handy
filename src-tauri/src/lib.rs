@@ -10,8 +10,10 @@ mod clipboard;
 mod commands;
 mod custom_words_model;
 mod data_migration;
+mod dispatch_gate;
 mod helpers;
 mod input;
+mod integration_output;
 mod llm_client;
 mod managers;
 mod memory;
@@ -26,6 +28,8 @@ mod signal_handle;
 mod transcription_coordinator;
 mod tray;
 mod tray_i18n;
+#[cfg(target_os = "macos")]
+mod unified_target;
 mod utils;
 
 pub use cli::CliArgs;
@@ -97,6 +101,20 @@ fn build_console_filter() -> env_filter::Filter {
 }
 
 fn show_main_window(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        if objc2::MainThreadMarker::new().is_none() {
+            let handle = app.clone();
+            if app
+                .run_on_main_thread(move || show_main_window(&handle))
+                .is_err()
+            {
+                log::warn!("Unable to schedule main window display");
+            }
+            return;
+        }
+        integration_output::capture_before_ui();
+    }
     if let Some(main_window) = app.get_webview_window("main") {
         if let Err(e) = main_window.unminimize() {
             log::error!("Failed to unminimize webview window: {}", e);
@@ -785,6 +803,9 @@ pub fn run(cli_args: CliArgs) {
             commands::history::update_recording_retention_period,
             commands::clipboard::get_clipboard_items,
             commands::integration::get_unified_history,
+            commands::integration::get_unified_output_receipt,
+            commands::integration::retranscribe_unified_history_item,
+            commands::integration::insert_unified_history_item,
             commands::integration::copy_unified_history_item,
             commands::integration::update_unified_history_item,
             commands::integration::get_unified_history_asset,
@@ -820,19 +841,47 @@ pub fn run(cli_args: CliArgs) {
             managers::transcription::StreamPhaseEvent,
         ]);
 
-    #[cfg(debug_assertions)] // <- Only export on non-release builds
-    specta_builder
-        .export(
-            Typescript::default().bigint(BigIntExportBehavior::Number),
-            "../src/bindings.ts",
-        )
-        .expect("Failed to export typescript bindings");
+    #[cfg(debug_assertions)] // 诊断不改文件；导出路径不依赖启动工作目录。
+    if !cli_args.unified_target_self_check && !cli_args.unified_clipboard_self_check {
+        specta_builder
+            .export(
+                Typescript::default().bigint(BigIntExportBehavior::Number),
+                concat!(env!("CARGO_MANIFEST_DIR"), "/../src/bindings.ts"),
+            )
+            .expect("Failed to export typescript bindings");
+    }
 
     let invoke_handler = specta_builder.invoke_handler();
 
     // 绑定导出不初始化设置、模型、窗口或任何用户数据库。
     #[cfg(debug_assertions)]
     if cli_args.export_bindings {
+        return;
+    }
+    if cli_args.unified_clipboard_self_check {
+        #[cfg(target_os = "macos")]
+        match paste_tx::private_pasteboard_self_check() {
+            Ok(()) => println!("unified_private_clipboard_self_check=pass general_clipboard_accessed=false all_original_formats_preserved=true full_snapshot_restored=true revoked_write_cancelled=true newer_copy_preserved=true"),
+            Err(error) => { eprintln!("private clipboard diagnostic failed: {error}"); std::process::exit(1); }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            eprintln!("private clipboard diagnostic unavailable on this platform");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if cli_args.unified_target_self_check {
+        #[cfg(target_os="macos")]
+        match unified_target::metadata_self_check() {
+            Ok(())=>println!("unified_target_metadata_self_check=pass external_focus_read=false text_read=false input_posted=false"),
+            Err(_)=>{eprintln!("unified_target_metadata_self_check=failed");std::process::exit(1);}
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            eprintln!("native target diagnostic unavailable on this platform");
+            std::process::exit(1);
+        }
         return;
     }
     portable::init();

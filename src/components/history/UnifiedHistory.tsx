@@ -13,6 +13,11 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useUnifiedHistoryStore } from "@/stores/unifiedHistoryStore";
+import {
+  getOutputAttempt,
+  outputNeedsAcknowledgement,
+  useUnifiedOutputStore,
+} from "@/stores/unifiedOutputStore";
 import type {
   UnifiedHistoryItem,
   UnifiedHistoryProps,
@@ -121,13 +126,25 @@ export function UnifiedHistory({
   onInsert,
   onUpdate,
   resolveAsset,
-}: UnifiedHistoryProps) {
+  onRetranscribe,
+  onOpenRecordings,
+  onCheckOutputReceipt,
+}: UnifiedHistoryProps & {
+  onCheckOutputReceipt?: (
+    operationId: string,
+  ) => Promise<UnifiedHistoryActionResult | null>;
+}) {
   const { t, i18n } = useTranslation();
   const state = useUnifiedHistoryStore();
-  const [busy, setBusy] = useState(false);
+  const [localBusy, setBusy] = useState(false);
+  const outputs = useUnifiedOutputStore();
+  const busy =
+    localBusy ||
+    Object.values(outputs.attempts).some(
+      (attempt) => attempt.status === "inflight",
+    );
   const busyRef = useRef(false);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [blockedInsert, setBlockedInsert] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState(false);
   const [editingItem, setEditingItem] = useState<UnifiedHistoryItem | null>(
     null,
@@ -137,6 +154,21 @@ export function UnifiedHistory({
   const selected = state.items.find(
     (item) => item.item_id === state.selectedId,
   );
+  const insertAttempt = selected
+    ? getOutputAttempt(selected.item_id, "insert")
+    : undefined;
+  const copyAttempt = selected
+    ? getOutputAttempt(selected.item_id, "copy")
+    : undefined;
+  const feedbackMessage =
+    feedback ||
+    (outputs.storageFailed
+      ? "failed"
+      : outputNeedsAcknowledgement(insertAttempt)
+        ? insertAttempt?.status
+        : outputNeedsAcknowledgement(copyAttempt)
+          ? copyAttempt?.status
+          : null);
   useEffect(() => state.subscribe(), [state.subscribe]);
   useEffect(() => {
     setEditing(false);
@@ -146,19 +178,24 @@ export function UnifiedHistory({
   const output = async (
     item: UnifiedHistoryItem,
     action: "copy" | "insert",
+    receiptOnly = false,
   ) => {
-    if (
-      busyRef.current ||
-      (action === "insert" && blockedInsert.has(item.item_id))
-    )
-      return;
-    busyRef.current = true;
-    setBusy(true);
+    if (busyRef.current) return;
+    const attempt = outputs.begin(
+      item.item_id,
+      item.revision,
+      action,
+      receiptOnly,
+    );
+    if (!attempt) return;
     setFeedback(null);
     try {
-      const result: UnifiedHistoryActionResult = await (action === "copy"
-        ? onCopy(item)
-        : onInsert(item));
+      const result: UnifiedHistoryActionResult = receiptOnly
+        ? ((await onCheckOutputReceipt?.(attempt.operationId)) ?? {
+            status: "uncertain",
+          })
+        : await (action === "copy" ? onCopy(item) : onInsert(item));
+      outputs.finish(attempt, result.status);
       setFeedback(
         result.status === "confirmed"
           ? action === "copy"
@@ -166,27 +203,16 @@ export function UnifiedHistory({
             : "inserted"
           : result.status,
       );
-      if (
-        action === "insert" &&
-        (result.status === "uncertain" || result.status === "dispatched")
-      ) {
-        setBlockedInsert((previous) => new Set(previous).add(item.item_id));
-      }
     } catch {
-      setFeedback(action === "insert" ? "uncertain" : "failed");
-      if (action === "insert") {
-        setBlockedInsert((previous) => new Set(previous).add(item.item_id));
-      }
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
+      outputs.finish(attempt, "uncertain");
+      setFeedback("uncertain");
     }
   };
   const update = async (
     item: UnifiedHistoryItem,
     patch: UnifiedHistoryPatch,
   ) => {
-    if (busyRef.current) return;
+    if (busyRef.current || busy) return;
     busyRef.current = true;
     setBusy(true);
     setFeedback(null);
@@ -195,6 +221,27 @@ export function UnifiedHistory({
       setEditing(false);
       await state.load();
       setFeedback("updated");
+    } catch {
+      setFeedback("updateFailed");
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+  const recordingAction = async (
+    action: () => Promise<void>,
+    reload = false,
+  ) => {
+    if (busyRef.current || busy) return;
+    busyRef.current = true;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      await action();
+      if (reload) {
+        await state.load();
+        setFeedback("updated");
+      }
     } catch {
       setFeedback("updateFailed");
     } finally {
@@ -265,6 +312,15 @@ export function UnifiedHistory({
     >
       <header className="flex items-center justify-between gap-3">
         <h1 className="text-lg font-semibold">{t("unifiedHistory.heading")}</h1>
+        {onOpenRecordings && (
+          <button
+            className={buttonClass}
+            disabled={busy}
+            onClick={() => void recordingAction(onOpenRecordings)}
+          >
+            {t("settings.history.openFolder")}
+          </button>
+        )}
         <button
           className={buttonClass}
           disabled={state.loading}
@@ -342,9 +398,9 @@ export function UnifiedHistory({
           </button>
         </div>
       )}
-      {feedback && (
+      {feedbackMessage && (
         <p role="status" aria-live="polite" className="text-sm text-text/70">
-          {t(`unifiedHistory.feedback.${feedback}`)}
+          {t(`unifiedHistory.feedback.${feedbackMessage}`)}
         </p>
       )}
       <div className="flex min-h-0 flex-1 flex-wrap gap-4">
@@ -528,32 +584,69 @@ export function UnifiedHistory({
               </>
             )}
             <div className="flex flex-wrap gap-2">
-              {blockedInsert.has(selected.item_id) && (
-                <button
-                  className={buttonClass}
-                  disabled={busy}
-                  onClick={() => {
-                    setBlockedInsert((previous) => {
-                      const next = new Set(previous);
-                      next.delete(selected.item_id);
-                      return next;
-                    });
-                    setFeedback(null);
-                  }}
-                >
-                  {t("unifiedHistory.allowAnotherInsert")}
-                </button>
+              {onRetranscribe &&
+                selected.source_kind === "voice" &&
+                selected.asset_ref && (
+                  <button
+                    className={buttonClass}
+                    disabled={busy}
+                    onClick={() =>
+                      void recordingAction(() => onRetranscribe(selected), true)
+                    }
+                  >
+                    {t("settings.history.retranscribe")}
+                  </button>
+                )}
+              {(["insert", "copy"] as const).map(
+                (action) =>
+                  outputNeedsAcknowledgement(
+                    getOutputAttempt(selected.item_id, action),
+                  ) && (
+                    <span key={action} className="contents">
+                      {onCheckOutputReceipt && (
+                        <button
+                          className={buttonClass}
+                          disabled={busy || outputs.storageFailed}
+                          onClick={() => void output(selected, action, true)}
+                        >
+                          {t("unifiedHistory.checkOutputReceipt")}
+                        </button>
+                      )}
+                      <button
+                        className={buttonClass}
+                        disabled={busy}
+                        onClick={() => {
+                          outputs.acknowledge(selected.item_id, action);
+                          setFeedback(null);
+                        }}
+                      >
+                        {t(
+                          action === "insert"
+                            ? "unifiedHistory.allowAnotherInsert"
+                            : "unifiedHistory.allowAnotherCopy",
+                        )}
+                      </button>
+                    </span>
+                  ),
               )}
               <button
                 className={`${buttonClass} border-logo-primary/40`}
-                disabled={busy || blockedInsert.has(selected.item_id)}
+                disabled={
+                  busy ||
+                  outputs.storageFailed ||
+                  outputNeedsAcknowledgement(insertAttempt)
+                }
                 onClick={() => void output(selected, "insert")}
               >
                 {t("unifiedHistory.insert")}
               </button>
               <button
                 className={`${buttonClass} inline-flex items-center gap-1.5`}
-                disabled={busy}
+                disabled={
+                  busy ||
+                  outputs.storageFailed ||
+                  outputNeedsAcknowledgement(copyAttempt)
+                }
                 onClick={() => void output(selected, "copy")}
               >
                 <Copy size={14} aria-hidden="true" />

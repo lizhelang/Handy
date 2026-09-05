@@ -25,7 +25,10 @@ use windows::Win32::Foundation::{
     SetLastError, ERROR_SUCCESS, HANDLE, HGLOBAL, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
 };
 
-use super::{evaluate, send_chord, TxState, WaitDecision};
+use super::{
+    evaluate, guarded_dispatch, send_chord, HistoryPasteOutcome, PasteCompletion, TxState,
+    WaitDecision,
+};
 use crate::clipboard::send_return_key;
 use crate::input::EnigoState;
 use crate::settings::{AutoSubmitKey, ClipboardHandling, PasteMethod};
@@ -580,6 +583,69 @@ pub(super) fn run(
     auto_submit_key: AutoSubmitKey,
     clipboard_handling: ClipboardHandling,
 ) -> Result<(), String> {
+    match run_inner(
+        text,
+        app_handle,
+        paste_method,
+        enigo,
+        PasteCompletion {
+            auto_submit,
+            auto_submit_key,
+            clipboard_handling,
+        },
+        &mut || Ok(()),
+    ) {
+        HistoryPasteOutcome::NotDispatched(error) => Err(error),
+        HistoryPasteOutcome::PossiblyDispatched(error) => {
+            error!("[reliable-paste] injection outcome uncertain: {error}");
+            Ok(())
+        }
+        HistoryPasteOutcome::Dispatched => Ok(()),
+    }
+}
+
+pub(super) fn run_history(
+    text: &str,
+    app_handle: &tauri::AppHandle,
+    paste_method: &PasteMethod,
+    enigo: &mut enigo::Enigo,
+    validate: &mut dyn FnMut() -> Result<(), String>,
+) -> HistoryPasteOutcome {
+    // 不让历史操作 flush 旧语音事务并向新目标补发其 auto-submit。
+    match PENDING.try_lock() {
+        Ok(slot) if slot.is_none() => {}
+        _ => return HistoryPasteOutcome::NotDispatched("clipboard transaction pending".into()),
+    }
+    run_inner(
+        text,
+        app_handle,
+        paste_method,
+        enigo,
+        PasteCompletion {
+            auto_submit: false,
+            auto_submit_key: AutoSubmitKey::Enter,
+            clipboard_handling: ClipboardHandling::DontModify,
+        },
+        validate,
+    )
+}
+
+fn run_inner(
+    text: &str,
+    app_handle: &tauri::AppHandle,
+    paste_method: &PasteMethod,
+    enigo: &mut enigo::Enigo,
+    completion: PasteCompletion,
+    validate: &mut dyn FnMut() -> Result<(), String>,
+) -> HistoryPasteOutcome {
+    let PasteCompletion {
+        auto_submit,
+        auto_submit_key,
+        clipboard_handling,
+    } = completion;
+    if let Err(error) = validate() {
+        return HistoryPasteOutcome::NotDispatched(error);
+    }
     let shared = Arc::new(WinTxShared {
         state: Mutex::new(TxState::new()),
         text: text.to_string(),
@@ -600,19 +666,30 @@ pub(super) fn run(
     // why it could not) before injecting the chord.
     match ready_rx.recv() {
         Ok(Ok(())) => {}
-        Ok(Err(e)) => return Err(e),
-        Err(_) => return Err("reliable paste worker died before publishing".to_string()),
+        Ok(Err(e)) => return HistoryPasteOutcome::NotDispatched(e),
+        Err(_) => {
+            return HistoryPasteOutcome::NotDispatched(
+                "reliable paste worker died before publishing".to_string(),
+            )
+        }
     }
     info!("[reliable-paste] published transcript (delayed render)");
 
     // Mark injection *before* sending: enigo holds the chord for ~100ms and a
     // fast target may legitimately read while the chord is still held.
-    shared.state.lock().unwrap().injected_at = Some(Instant::now());
-    match send_chord(enigo, paste_method) {
-        Ok(()) => {
+    let outcome = guarded_dispatch(validate, || {
+        shared
+            .state
+            .lock()
+            .map_err(|_| "paste state lock poisoned")?
+            .injected_at = Some(Instant::now());
+        send_chord(enigo, paste_method)
+    });
+    match &outcome {
+        HistoryPasteOutcome::Dispatched => {
             info!("[reliable-paste] paste chord sent ({paste_method:?})");
         }
-        Err(e) => {
+        HistoryPasteOutcome::NotDispatched(e) | HistoryPasteOutcome::PossiblyDispatched(e) => {
             // Keep the transaction alive: the worker restores the clipboard
             // after the short failed-injection timeout.
             shared.state.lock().unwrap().injection_failed = true;
@@ -620,5 +697,5 @@ pub(super) fn run(
         }
     }
 
-    Ok(())
+    outcome
 }

@@ -3,7 +3,12 @@ import type { UnifiedHistoryItem } from "../src/bindings";
 
 interface HistoryHarness {
   calls: { command: string; args?: Record<string, unknown> }[];
-  actions: { action: string; item: UnifiedHistoryItem; patch?: unknown }[];
+  actions: {
+    action: string;
+    item: UnifiedHistoryItem;
+    patch?: unknown;
+    operationId?: string;
+  }[];
   items: UnifiedHistoryItem[];
   output: string;
   rejectMutation: boolean;
@@ -13,6 +18,7 @@ interface HistoryHarness {
   emit: () => void;
   listeners: Map<number, number>;
   unmount: () => void;
+  remount: () => void;
 }
 declare global {
   interface Window {
@@ -54,6 +60,7 @@ async function mountHistory(page: Page) {
         action: string;
         item: typeof fixture;
         patch?: unknown;
+        operationId?: string;
       }[],
       items: [
         fixture,
@@ -159,31 +166,70 @@ async function mountHistory(page: Page) {
     const { UnifiedHistory } = await import(
       "/src/components/history/UnifiedHistory.tsx"
     );
-    const root = ReactDOM.createRoot(document.getElementById("root")!);
-    Object.assign(harness, { unmount: () => root.unmount() });
-    root.render(
-      React.createElement(UnifiedHistory, {
-        resolveAsset: async () => null,
-        onCopy: async (item: typeof fixture) => {
-          harness.actions.push({ action: "copy", item });
-          return { status: harness.output };
-        },
-        onInsert: async (item: typeof fixture) => {
-          harness.actions.push({ action: "insert", item });
-          if (harness.output === "throw") throw new Error("response lost");
-          return { status: harness.output };
-        },
-        onUpdate: async (item: typeof fixture, patch: unknown) => {
-          harness.actions.push({ action: "update", item, patch });
-          if (harness.rejectMutation) throw new Error("conflict");
-          harness.items = harness.items.map((entry) =>
-            entry.item_id === item.item_id
-              ? { ...entry, ...(patch as object), revision: entry.revision + 1 }
-              : entry,
-          );
-        },
-      }),
+    const { requireActiveOutputAttempt } = await import(
+      "/src/stores/unifiedOutputStore.ts"
     );
+    let root = ReactDOM.createRoot(document.getElementById("root")!);
+    const render = () =>
+      root.render(
+        React.createElement(UnifiedHistory, {
+          resolveAsset: async () => null,
+          onCheckOutputReceipt: async (operationId: string) => {
+            harness.calls.push({
+              command: "get_unified_output_receipt",
+              args: { operationId },
+            });
+            return harness.output === "missing"
+              ? null
+              : { status: harness.output };
+          },
+          onCopy: async (item: typeof fixture) => {
+            harness.actions.push({
+              action: "copy",
+              item,
+              operationId: requireActiveOutputAttempt(item.item_id, "copy")
+                .operationId,
+            });
+            return { status: harness.output };
+          },
+          onInsert: async (item: typeof fixture) => {
+            harness.actions.push({
+              action: "insert",
+              item,
+              operationId: requireActiveOutputAttempt(item.item_id, "insert")
+                .operationId,
+            });
+            if (harness.output === "defer")
+              return new Promise((resolve) =>
+                harness.pending.set("output", resolve),
+              );
+            if (harness.output === "throw") throw new Error("response lost");
+            return { status: harness.output };
+          },
+          onUpdate: async (item: typeof fixture, patch: unknown) => {
+            harness.actions.push({ action: "update", item, patch });
+            if (harness.rejectMutation) throw new Error("conflict");
+            harness.items = harness.items.map((entry) =>
+              entry.item_id === item.item_id
+                ? {
+                    ...entry,
+                    ...(patch as object),
+                    revision: entry.revision + 1,
+                  }
+                : entry,
+            );
+          },
+        }),
+      );
+    Object.assign(harness, {
+      unmount: () => root.unmount(),
+      remount: () => {
+        root.unmount();
+        root = ReactDOM.createRoot(document.getElementById("root")!);
+        render();
+      },
+    });
+    render();
   });
   await expect(page.getByText("Voice fixture", { exact: true })).toBeVisible();
 }
@@ -318,6 +364,150 @@ test("stale search replies cannot replace newer results", async ({ page }) => {
   });
   await expect(page.getByText("Stale result", { exact: true })).toHaveCount(0);
   await expect(page.getByText("New result", { exact: true })).toBeVisible();
+});
+
+test("navigation remount preserves an in-flight operation and its eventual uncertain receipt", async ({
+  page,
+}) => {
+  await mountHistory(page);
+  await page.evaluate(() => {
+    window.__HISTORY_TEST__.output = "defer";
+  });
+  await page.getByText("Voice fixture", { exact: true }).dblclick();
+  await page.evaluate(() => window.__HISTORY_TEST__.remount());
+  await page.getByText("Voice fixture", { exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Insert", exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("searchbox").press("Enter");
+  expect(
+    await page.evaluate(() => window.__HISTORY_TEST__.actions.length),
+  ).toBe(1);
+  await page.evaluate(() =>
+    window.__HISTORY_TEST__.pending.get("output")!({ status: "uncertain" }),
+  );
+  await expect(
+    page.getByRole("button", {
+      name: "I checked the result; allow another insertion",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  await page.evaluate(() => window.__HISTORY_TEST__.remount());
+  await page.getByText("Voice fixture", { exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Insert", exact: true }),
+  ).toBeDisabled();
+});
+
+test("reload retains only output metadata and receipt queries reuse the previous operation ID", async ({
+  page,
+}) => {
+  await mountHistory(page);
+  await page.evaluate(() => {
+    window.__HISTORY_TEST__.output = "defer";
+  });
+  await page.getByText("Voice fixture", { exact: true }).dblclick();
+  const original = await page.evaluate(() => ({
+    id: window.__HISTORY_TEST__.actions[0].operationId,
+    stored: localStorage.getItem("handy.unified-output-metadata.v1"),
+  }));
+  expect(original.stored).not.toContain("Voice fixture");
+  expect(original.stored).not.toContain("synthetic");
+  await mountHistory(page);
+  await page.getByText("Voice fixture", { exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Insert", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Check previous output receipt", exact: true })
+    .click();
+  expect(
+    await page.evaluate(() => window.__HISTORY_TEST__.actions.length),
+  ).toBe(0);
+  expect(
+    await page.evaluate(
+      () =>
+        window.__HISTORY_TEST__.calls.find(
+          (call) => call.command === "get_unified_output_receipt",
+        )?.args?.operationId,
+    ),
+  ).toBe(original.id);
+  await expect(page.getByText("Inserted.", { exact: true })).toBeVisible();
+});
+
+test("uncertain copy is also blocked across remount and cannot overwrite a newer clipboard", async ({
+  page,
+}) => {
+  await mountHistory(page);
+  await page.evaluate(() => {
+    window.__HISTORY_TEST__.output = "uncertain";
+  });
+  await page.getByText("Voice fixture", { exact: true }).click();
+  await page.getByRole("button", { name: "Copy", exact: true }).click();
+  await page.evaluate(() => window.__HISTORY_TEST__.remount());
+  await page.getByText("Voice fixture", { exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Copy", exact: true }),
+  ).toBeDisabled();
+  expect(
+    await page.evaluate(() => window.__HISTORY_TEST__.actions.length),
+  ).toBe(1);
+});
+
+test("missing receipts stay uncertain until explicit acknowledgement creates a fresh operation", async ({
+  page,
+}) => {
+  await mountHistory(page);
+  await page.evaluate(() => {
+    window.__HISTORY_TEST__.output = "uncertain";
+  });
+  await page.getByText("Voice fixture", { exact: true }).dblclick();
+  const firstId = await page.evaluate(
+    () => window.__HISTORY_TEST__.actions[0].operationId,
+  );
+  await page.evaluate(() => {
+    window.__HISTORY_TEST__.output = "missing";
+  });
+  await page
+    .getByRole("button", { name: "Check previous output receipt", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Insert", exact: true }),
+  ).toBeDisabled();
+  expect(
+    await page.evaluate(() => window.__HISTORY_TEST__.actions.length),
+  ).toBe(1);
+  await page
+    .getByRole("button", {
+      name: "I checked the result; allow another insertion",
+      exact: true,
+    })
+    .click();
+  await page.evaluate(() => {
+    window.__HISTORY_TEST__.output = "confirmed";
+  });
+  await page.getByRole("button", { name: "Insert", exact: true }).click();
+  expect(
+    await page.evaluate(() => window.__HISTORY_TEST__.actions[1].operationId),
+  ).not.toBe(firstId);
+});
+
+test("failure to persist an output identity prevents the side effect", async ({
+  page,
+}) => {
+  await mountHistory(page);
+  await page.evaluate(() => {
+    Storage.prototype.setItem = () => {
+      throw new Error("synthetic storage failure");
+    };
+  });
+  await page.getByText("Voice fixture", { exact: true }).dblclick();
+  await expect(
+    page.getByRole("button", { name: "Insert", exact: true }),
+  ).toBeDisabled();
+  expect(
+    await page.evaluate(() => window.__HISTORY_TEST__.actions.length),
+  ).toBe(0);
 });
 
 test("live changes preserve edit revision and failed mutations do not report success", async ({

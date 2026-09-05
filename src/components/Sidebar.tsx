@@ -11,12 +11,12 @@ import {
 } from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import HandyHand from "./icons/HandyHand";
+import { UnifiedHistoryPage } from "./history/UnifiedHistoryPage";
 import { useSettings } from "../hooks/useSettings";
 import {
   GeneralSettings,
   AdvancedSettings,
   ClipboardSettings,
-  HistorySettings,
   DebugSettings,
   AboutSettings,
   PostProcessingSettings,
@@ -57,7 +57,7 @@ export const SECTIONS_CONFIG = {
   history: {
     labelKey: "sidebar.history",
     icon: History,
-    component: HistorySettings,
+    component: UnifiedHistoryPage,
     enabled: () => true,
   },
   clipboard: {

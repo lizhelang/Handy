@@ -257,10 +257,10 @@ fn clipboard_file_preview(paths: &[String]) -> String {
         .join("\n")
 }
 
-fn restore_files_strict(
+fn restore_files_strict<T>(
     content: &str,
-    write: impl FnOnce(Vec<String>) -> Result<()>,
-) -> Result<()> {
+    write: impl FnOnce(Vec<String>) -> Result<T>,
+) -> Result<T> {
     let paths = if content.trim_start().starts_with('[') {
         let raw: Vec<String> =
             serde_json::from_str(content).map_err(|_| anyhow!("Invalid file clipboard payload"))?;
@@ -278,12 +278,138 @@ fn restore_files_strict(
     write(paths)
 }
 
+pub(crate) enum PreparedClipboardCopy {
+    Text(String),
+    Image(Image<'static>),
+    Files(Vec<String>),
+}
+
+pub(crate) enum ClipboardWriteOutcome {
+    NotWritten,
+    Unknown,
+    Written,
+}
+
 impl ClipboardManager {
-    /// 统一历史的文件复制不降级成路径文本；原生写入失败必须返回失败。
-    pub fn copy_files_strict(&self, content: &str) -> Result<()> {
-        restore_files_strict(content, |paths| {
-            self.write_file_paths_to_system_clipboard(paths)
-        })
+    /// 慢解析、文件路径核验和图像解码在取得短期输出许可之前完成。
+    pub(crate) fn prepare_unified_copy(
+        &self,
+        content_type: &str,
+        text: Option<String>,
+        image_path: Option<String>,
+    ) -> Result<PreparedClipboardCopy> {
+        match content_type {
+            "text" => Ok(PreparedClipboardCopy::Text(
+                text.ok_or_else(|| anyhow!("Text unavailable"))?,
+            )),
+            "files" => restore_files_strict(
+                &text.ok_or_else(|| anyhow!("Files unavailable"))?,
+                |paths| Ok(PreparedClipboardCopy::Files(paths)),
+            ),
+            "image" => {
+                let path = self.resolve_clipboard_image_path(
+                    &image_path.ok_or_else(|| anyhow!("Image unavailable"))?,
+                )?;
+                Ok(PreparedClipboardCopy::Image(Image::from_path(path)?))
+            }
+            _ => Err(anyhow!("Unsupported clipboard representation")),
+        }
+    }
+
+    /// 由带截止门控的主线程任务调用；准备结束后紧邻真正写板检查撤销许可。
+    pub(crate) fn publish_unified_copy(
+        &self,
+        prepared: PreparedClipboardCopy,
+        expected_change_count: Option<isize>,
+        validate: impl FnOnce() -> std::result::Result<(), String>,
+    ) -> ClipboardWriteOutcome {
+        #[cfg(target_os = "macos")]
+        if MainThreadMarker::new().is_none() {
+            return ClipboardWriteOutcome::NotWritten;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let Some(change_count) = expected_change_count else {
+                return ClipboardWriteOutcome::NotWritten;
+            };
+            let items = match prepared {
+                PreparedClipboardCopy::Text(text) => {
+                    vec![vec![("public.utf8-plain-text".into(), text.into_bytes())]]
+                }
+                PreparedClipboardCopy::Files(paths) => {
+                    let mut items = Vec::new();
+                    for path in paths {
+                        let url = objc2_foundation::NSURL::fileURLWithPath(
+                            &objc2_foundation::NSString::from_str(&path),
+                        );
+                        let Some(url) = url.absoluteString() else {
+                            return ClipboardWriteOutcome::NotWritten;
+                        };
+                        items.push(vec![(
+                            "public.file-url".into(),
+                            url.to_string().into_bytes(),
+                        )]);
+                    }
+                    items
+                }
+                PreparedClipboardCopy::Image(image) => {
+                    let Ok(bytes) = Self::encode_tauri_image_png(&image) else {
+                        return ClipboardWriteOutcome::NotWritten;
+                    };
+                    vec![vec![("public.png".into(), bytes)]]
+                }
+            };
+            match crate::paste_tx::publish_snapshot(
+                crate::paste_tx::ClipboardSnapshot {
+                    change_count,
+                    items,
+                },
+                validate,
+            ) {
+                crate::paste_tx::HistoryPasteOutcome::NotDispatched(_) => {
+                    ClipboardWriteOutcome::NotWritten
+                }
+                crate::paste_tx::HistoryPasteOutcome::PossiblyDispatched(_) => {
+                    ClipboardWriteOutcome::Unknown
+                }
+                crate::paste_tx::HistoryPasteOutcome::Dispatched => ClipboardWriteOutcome::Written,
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = expected_change_count;
+            let result = match prepared {
+                PreparedClipboardCopy::Files(paths) => {
+                    let Ok(clipboard) = ClipboardContext::new() else {
+                        return ClipboardWriteOutcome::NotWritten;
+                    };
+                    if validate().is_err() {
+                        return ClipboardWriteOutcome::NotWritten;
+                    }
+                    clipboard.set_files(paths).map_err(|_| ())
+                }
+                PreparedClipboardCopy::Text(text) => {
+                    if validate().is_err() {
+                        return ClipboardWriteOutcome::NotWritten;
+                    }
+                    self.app_handle.clipboard().write_text(text).map_err(|_| ())
+                }
+                PreparedClipboardCopy::Image(image) => {
+                    if validate().is_err() {
+                        return ClipboardWriteOutcome::NotWritten;
+                    }
+                    self.app_handle
+                        .clipboard()
+                        .write_image(&image)
+                        .map_err(|_| ())
+                }
+            };
+            if result.is_ok() {
+                ClipboardWriteOutcome::Written
+            } else {
+                ClipboardWriteOutcome::Unknown
+            }
+        }
     }
     fn client_image_path(&self, path: &str) -> String {
         self.images_dir.join(path).to_string_lossy().into_owned()
@@ -604,11 +730,10 @@ impl ClipboardManager {
     pub fn sync_current_clipboard(&self) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
-            return self
-                .run_on_main_thread_sync("sync current clipboard", |manager| {
-                    manager.process_tauri_clipboard_change_on_main_thread()
-                })
-                .ok_or_else(|| anyhow!("Failed to sync clipboard on the macOS main thread"))?;
+            self.run_on_main_thread_sync("sync current clipboard", |manager| {
+                manager.process_tauri_clipboard_change_on_main_thread()
+            })
+            .ok_or_else(|| anyhow!("Failed to sync clipboard on the macOS main thread"))?
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -795,6 +920,7 @@ impl ClipboardManager {
     }
 
     fn refresh_existing_item(&self, hash: &str) -> Result<Option<ClipboardItem>> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         let now = Utc::now().timestamp();
         let conn = self.get_connection()?;
         let changed = conn.execute(
@@ -878,17 +1004,16 @@ impl ClipboardManager {
     fn write_text_to_system_clipboard(&self, text: String) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
-            return self
-                .run_on_main_thread_sync("write text to system clipboard", move |manager| {
-                    manager
-                        .app_handle
-                        .clipboard()
-                        .write_text(text)
-                        .map_err(|e| anyhow!("Failed to write text to system clipboard: {}", e))
-                })
-                .ok_or_else(|| {
-                    anyhow!("Failed to write text to system clipboard on the macOS main thread")
-                })?;
+            self.run_on_main_thread_sync("write text to system clipboard", move |manager| {
+                manager
+                    .app_handle
+                    .clipboard()
+                    .write_text(text)
+                    .map_err(|e| anyhow!("Failed to write text to system clipboard: {}", e))
+            })
+            .ok_or_else(|| {
+                anyhow!("Failed to write text to system clipboard on the macOS main thread")
+            })?
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -903,19 +1028,18 @@ impl ClipboardManager {
     fn write_image_path_to_system_clipboard(&self, full_path: PathBuf) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
-            return self
-                .run_on_main_thread_sync("write image to system clipboard", move |manager| {
-                    let image = Image::from_path(&full_path)
-                        .map_err(|e| anyhow!("Failed to load clipboard image: {}", e))?;
-                    manager
-                        .app_handle
-                        .clipboard()
-                        .write_image(&image)
-                        .map_err(|e| anyhow!("Failed to write image to system clipboard: {}", e))
-                })
-                .ok_or_else(|| {
-                    anyhow!("Failed to write image to system clipboard on the macOS main thread")
-                })?;
+            self.run_on_main_thread_sync("write image to system clipboard", move |manager| {
+                let image = Image::from_path(&full_path)
+                    .map_err(|e| anyhow!("Failed to load clipboard image: {}", e))?;
+                manager
+                    .app_handle
+                    .clipboard()
+                    .write_image(&image)
+                    .map_err(|e| anyhow!("Failed to write image to system clipboard: {}", e))
+            })
+            .ok_or_else(|| {
+                anyhow!("Failed to write image to system clipboard on the macOS main thread")
+            })?
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -932,17 +1056,14 @@ impl ClipboardManager {
     fn write_file_paths_to_system_clipboard(&self, file_paths: Vec<String>) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
-            return self
-                .run_on_main_thread_sync("write files to system clipboard", move |_manager| {
-                    let clipboard = ClipboardContext::new()
-                        .map_err(|e| anyhow!("Failed to access clipboard files: {}", e))?;
-                    clipboard
-                        .set_files(file_paths)
-                        .map_err(|e| anyhow!("Failed to write clipboard files: {}", e))
-                })
-                .ok_or_else(|| {
-                    anyhow!("Failed to write clipboard files on the macOS main thread")
-                })?;
+            self.run_on_main_thread_sync("write files to system clipboard", move |_manager| {
+                let clipboard = ClipboardContext::new()
+                    .map_err(|e| anyhow!("Failed to access clipboard files: {}", e))?;
+                clipboard
+                    .set_files(file_paths)
+                    .map_err(|e| anyhow!("Failed to write clipboard files: {}", e))
+            })
+            .ok_or_else(|| anyhow!("Failed to write clipboard files on the macOS main thread"))?
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -1000,6 +1121,7 @@ impl ClipboardManager {
 
     /// Add a text entry to clipboard history
     pub fn add_text(&self, text: &str) -> Result<Option<ClipboardItem>> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         let hash = Self::compute_hash(text.as_bytes());
 
         // Check if hash already exists
@@ -1066,6 +1188,7 @@ impl ClipboardManager {
 
     /// Add a file-path entry to clipboard history.
     pub fn add_files(&self, file_paths: &[String]) -> Result<Option<ClipboardItem>> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         let normalized_paths = normalize_clipboard_file_paths(file_paths);
         if normalized_paths.is_empty() {
             return Ok(None);
@@ -1139,6 +1262,7 @@ impl ClipboardManager {
         &self,
         image_data: &clipboard_rs::RustImageData,
     ) -> Result<Option<ClipboardItem>> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         // Get image bytes for hash
         let png_buffer = image_data
             .to_png()
@@ -1230,6 +1354,7 @@ impl ClipboardManager {
         height: u32,
         png_bytes: &[u8],
     ) -> Result<Option<ClipboardItem>> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         {
             let conn = self.get_connection()?;
             let exists: bool = conn.query_row(
@@ -1456,6 +1581,7 @@ impl ClipboardManager {
 
     /// Toggle favorite status
     pub fn toggle_favorite(&self, id: i64) -> Result<()> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         let conn = self.get_connection()?;
         conn.execute(
             "UPDATE clipboard_history SET is_favorite = NOT is_favorite WHERE id = ?1",
@@ -1474,6 +1600,7 @@ impl ClipboardManager {
 
     /// Toggle pin status
     pub fn toggle_pin(&self, id: i64) -> Result<()> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         let conn = self.get_connection()?;
         conn.execute(
             "UPDATE clipboard_history SET is_pinned = NOT is_pinned WHERE id = ?1",
@@ -1492,6 +1619,7 @@ impl ClipboardManager {
 
     /// Update the user-facing title for a clipboard item.
     pub fn update_title(&self, id: i64, title: Option<String>) -> Result<()> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         let title = title
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
@@ -1513,6 +1641,7 @@ impl ClipboardManager {
 
     /// Delete a clipboard item
     pub fn delete_item(&self, id: i64) -> Result<()> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         let conn = self.get_connection()?;
 
         // Get image path before deleting
@@ -1549,6 +1678,7 @@ impl ClipboardManager {
 
     /// Clear clipboard history
     pub fn clear_history(&self, keep_pinned: bool) -> Result<()> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         let conn = self.get_connection()?;
 
         if keep_pinned {
@@ -1673,6 +1803,7 @@ impl ClipboardManager {
 
     /// Cleanup old entries when exceeding max_records
     fn cleanup_old_entries(&self) -> Result<Vec<i64>> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         let max_records = crate::settings::get_settings(&self.app_handle).clipboard_max_records;
         let conn = self.get_connection()?;
 
@@ -1752,15 +1883,20 @@ impl ClipboardHandler for ClipboardChangeHandler {
 mod tests {
     #[test]
     fn unified_files_never_fall_back_to_text_on_invalid_payload_or_native_error() {
-        assert!(
-            super::restore_files_strict("[broken", |_| panic!("invalid payload dispatched"))
-                .is_err()
-        );
-        assert!(super::restore_files_strict("relative/path", |_| panic!(
-            "relative path dispatched"
+        assert!(super::restore_files_strict::<()>("[broken", |_| panic!(
+            "invalid payload dispatched"
         ))
         .is_err());
-        assert!(super::restore_files_strict("[]", |_| panic!("empty payload dispatched")).is_err());
+        assert!(
+            super::restore_files_strict::<()>("relative/path", |_| panic!(
+                "relative path dispatched"
+            ))
+            .is_err()
+        );
+        assert!(
+            super::restore_files_strict::<()>("[]", |_| panic!("empty payload dispatched"))
+                .is_err()
+        );
         let temp = tempfile::tempdir().unwrap();
         let path = temp
             .path()
@@ -1768,7 +1904,7 @@ mod tests {
             .to_string_lossy()
             .into_owned();
         let payload = serde_json::to_string(&vec![path.clone()]).unwrap();
-        let result = super::restore_files_strict(&payload, |paths| {
+        let result = super::restore_files_strict::<()>(&payload, |paths| {
             assert_eq!(paths, vec![path]);
             Err(anyhow::anyhow!("native failure fixture"))
         });

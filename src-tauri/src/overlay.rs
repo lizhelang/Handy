@@ -573,6 +573,7 @@ pub fn show_clipboard_overlay(app_handle: &AppHandle) {
 
 #[cfg(target_os = "macos")]
 fn show_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
+    crate::integration_output::capture_before_ui();
     create_clipboard_overlay_on_main_thread(app_handle);
 
     if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {

@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 use specta::Type;
 use std::{path::Path, sync::Arc};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 
 #[derive(Clone, Debug, Serialize, Type, tauri_specta::Event)]
@@ -19,6 +19,14 @@ pub struct UnifiedHistoryUpdate {
 
 pub struct IntegrationManager {
     pub service: Arc<HistoryService>,
+}
+
+/// 不等待 IPC/数据库；在唯一服务初始化前没有可撤销的输出许可。
+pub(crate) fn begin_source_write(
+    app: &AppHandle,
+) -> Option<inputia_handy_runtime::service::SourceWriteGuard> {
+    app.try_state::<Arc<IntegrationManager>>()
+        .map(|manager| manager.service.begin_source_write())
 }
 
 impl IntegrationManager {

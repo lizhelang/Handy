@@ -18,13 +18,17 @@ use std::time::{Duration, Instant};
 
 use log::{error, info};
 use objc2::rc::Retained;
+use objc2::runtime::ProtocolObject;
 use objc2::{define_class, msg_send, AnyThread, DefinedClass};
-use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
-use objc2_foundation::{NSArray, NSInteger, NSObject, NSString};
+use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPasteboardWriting};
+use objc2_foundation::{NSArray, NSData, NSInteger, NSObject, NSString};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-use super::{evaluate, send_chord, TxState, WaitDecision};
+use super::{
+    capture_snapshot, evaluate, guarded_dispatch, restore_if_owned, send_chord, ClipboardSnapshot,
+    HistoryPasteOutcome, PasteCompletion, TxState, WaitDecision,
+};
 use crate::clipboard::send_return_key;
 use crate::input::EnigoState;
 use crate::settings::{AutoSubmitKey, ClipboardHandling, PasteMethod};
@@ -95,8 +99,7 @@ impl HandyPasteProvider {
 
 struct MacPending {
     state: Arc<Mutex<TxState>>,
-    saved_text: Option<String>,
-    saved_image: Option<tauri::image::Image<'static>>,
+    snapshot: ClipboardSnapshot,
     change_count: NSInteger,
     provider: Option<Retained<HandyPasteProvider>>,
     auto_submit: bool,
@@ -113,6 +116,121 @@ struct MacPending {
 /// The transaction currently holding the clipboard, if any. A new paste
 /// settles it before snapshotting (see `flush_pending`).
 static PENDING: Mutex<Option<Arc<Mutex<MacPending>>>> = Mutex::new(None);
+
+fn snapshot(pasteboard: &NSPasteboard) -> Result<ClipboardSnapshot, String> {
+    capture_snapshot(
+        || pasteboard.changeCount(),
+        || {
+            let Some(items) = pasteboard.pasteboardItems() else {
+                // 无 items 但有 legacy 类型时不能把未知内容当空剪贴板。
+                if pasteboard.types().is_some_and(|types| !types.is_empty()) {
+                    return Err("pasteboard items unavailable for non-empty clipboard".into());
+                }
+                return Ok(Vec::new());
+            };
+            items
+                .iter()
+                .map(|item| {
+                    item.types()
+                        .iter()
+                        .map(|kind| {
+                            // 请求每个延迟表示并复制原始字节；任一无法兑现则不修改剪贴板。
+                            let data = item.dataForType(&kind).ok_or_else(|| {
+                                format!("clipboard representation unavailable: {kind}")
+                            })?;
+                            Ok((kind.to_string(), data.to_vec()))
+                        })
+                        .collect()
+                })
+                .collect()
+        },
+    )
+}
+
+fn prepare_items(snapshot: &ClipboardSnapshot) -> Result<Vec<Retained<NSPasteboardItem>>, String> {
+    let mut restored = Vec::new();
+    for formats in &snapshot.items {
+        let item = NSPasteboardItem::new();
+        for (kind, bytes) in formats {
+            if !item.setData_forType(&NSData::from_vec(bytes.clone()), &NSString::from_str(kind)) {
+                return Err(format!("cannot prepare clipboard representation: {kind}"));
+            }
+        }
+        restored.push(item);
+    }
+    Ok(restored)
+}
+
+fn restore_snapshot(
+    pasteboard: &NSPasteboard,
+    snapshot: &ClipboardSnapshot,
+    expected: NSInteger,
+) -> Result<bool, String> {
+    // 在 ownership 检查前完成全部分配和格式准备，缩短检查与替换之间的窗口。
+    let restored: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = prepare_items(snapshot)?
+        .into_iter()
+        .map(ProtocolObject::from_retained)
+        .collect();
+    let restored = NSArray::from_retained_slice(&restored);
+    restore_if_owned(
+        expected,
+        || pasteboard.changeCount(),
+        || {
+            let cleared = pasteboard.clearContents();
+            // AppKit 没有 compare-and-swap；clear 后若又被复制覆盖，绝不继续写回。
+            if pasteboard.changeCount() != cleared {
+                return Err("clipboard ownership changed during restore".into());
+            }
+            if !restored.is_empty() && !pasteboard.writeObjects(&restored) {
+                return Err("failed to restore complete clipboard items".into());
+            }
+            Ok(())
+        },
+    )
+}
+
+/// 显式复制：全部原生对象准备好后才核验许可，不经过插件锁或隐式图像转换。
+pub(crate) fn publish_snapshot(
+    snapshot: ClipboardSnapshot,
+    validate: impl FnOnce() -> Result<(), String>,
+) -> HistoryPasteOutcome {
+    publish_snapshot_on(&NSPasteboard::generalPasteboard(), snapshot, validate)
+}
+
+fn publish_snapshot_on(
+    pasteboard: &NSPasteboard,
+    snapshot: ClipboardSnapshot,
+    validate: impl FnOnce() -> Result<(), String>,
+) -> HistoryPasteOutcome {
+    let prepared = match prepare_items(&snapshot) {
+        Ok(items) => items
+            .into_iter()
+            .map(ProtocolObject::from_retained)
+            .collect::<Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>>>(),
+        Err(error) => return HistoryPasteOutcome::NotDispatched(error),
+    };
+    let objects = NSArray::from_retained_slice(&prepared);
+    if pasteboard.changeCount() != snapshot.change_count {
+        return HistoryPasteOutcome::NotDispatched(
+            "clipboard changed during copy preparation".into(),
+        );
+    }
+    if let Err(error) = validate() {
+        return HistoryPasteOutcome::NotDispatched(error);
+    }
+    if pasteboard.changeCount() != snapshot.change_count {
+        return HistoryPasteOutcome::NotDispatched(
+            "clipboard changed during permission check".into(),
+        );
+    }
+    let cleared = pasteboard.clearContents();
+    if pasteboard.changeCount() != cleared || !pasteboard.writeObjects(&objects) {
+        return HistoryPasteOutcome::PossiblyDispatched(
+            "clipboard publication outcome unknown".into(),
+        );
+    }
+    HistoryPasteOutcome::Dispatched
+}
 
 /// Settles a transaction exactly once: sends the owed auto-submit Enter and
 /// restores the previous clipboard, guarded so we never clobber a newer copy.
@@ -165,15 +283,15 @@ fn settle(
         let _ = app_handle.clipboard().write_text(&p.transcript);
         info!("[reliable-paste] left transcript on clipboard as plain text");
     } else {
-        let clipboard = app_handle.clipboard();
-        if let Some(text) = &p.saved_text {
-            let _ = clipboard.write_text(text);
-        } else if let Some(image) = &p.saved_image {
-            let _ = clipboard.write_image(image);
-        } else {
-            let _ = clipboard.clear();
+        match restore_snapshot(
+            &NSPasteboard::generalPasteboard(),
+            &p.snapshot,
+            p.change_count,
+        ) {
+            Ok(true) => info!("[reliable-paste] restored all previous clipboard items/types"),
+            Ok(false) => info!("[reliable-paste] clipboard changed during restore preparation"),
+            Err(error) => error!("[reliable-paste] complete clipboard restore failed: {error}"),
         }
-        info!("[reliable-paste] restored previous clipboard");
     }
 
     // Release the owner; any outstanding promise dies with the pasteboard
@@ -262,23 +380,94 @@ pub(super) fn run(
     auto_submit_key: AutoSubmitKey,
     clipboard_handling: ClipboardHandling,
 ) -> Result<(), String> {
+    // 旧语音调用者仅在未发键时允许其原有 fallback。发键失败不能被伪装成启动失败。
+    match run_inner(
+        text,
+        app_handle,
+        paste_method,
+        enigo,
+        PasteCompletion {
+            auto_submit,
+            auto_submit_key,
+            clipboard_handling,
+        },
+        &mut || Ok(()),
+    ) {
+        HistoryPasteOutcome::NotDispatched(error) => Err(error),
+        HistoryPasteOutcome::PossiblyDispatched(error) => {
+            error!("[reliable-paste] injection outcome uncertain: {error}");
+            Ok(())
+        }
+        HistoryPasteOutcome::Dispatched => Ok(()),
+    }
+}
+
+pub(super) fn run_history(
+    text: &str,
+    app_handle: &AppHandle,
+    paste_method: &PasteMethod,
+    enigo: &mut enigo::Enigo,
+    validate: &mut dyn FnMut() -> Result<(), String>,
+) -> HistoryPasteOutcome {
+    // 不通过 flush 旧事务向新目标补发旧 auto-submit，也不提前恢复尚未读完的内容。
+    // 主线程串行进入；忙碌只是本次未派发，旧事务仍按原有 receipt/timeout 完成。
+    match PENDING.try_lock() {
+        Ok(slot) => {
+            if let Some(pending) = slot.as_ref() {
+                match pending.try_lock() {
+                    Ok(pending) if pending.settled => {}
+                    _ => {
+                        return HistoryPasteOutcome::NotDispatched(
+                            "clipboard transaction pending".into(),
+                        )
+                    }
+                }
+            }
+        }
+        Err(_) => return HistoryPasteOutcome::NotDispatched("clipboard transaction busy".into()),
+    }
+    run_inner(
+        text,
+        app_handle,
+        paste_method,
+        enigo,
+        PasteCompletion {
+            auto_submit: false,
+            auto_submit_key: AutoSubmitKey::Enter,
+            clipboard_handling: ClipboardHandling::DontModify,
+        },
+        validate,
+    )
+}
+
+fn run_inner(
+    text: &str,
+    app_handle: &AppHandle,
+    paste_method: &PasteMethod,
+    enigo: &mut enigo::Enigo,
+    completion: PasteCompletion,
+    validate: &mut dyn FnMut() -> Result<(), String>,
+) -> HistoryPasteOutcome {
+    let PasteCompletion {
+        auto_submit,
+        auto_submit_key,
+        clipboard_handling,
+    } = completion;
+    if let Err(error) = validate() {
+        return HistoryPasteOutcome::NotDispatched(error);
+    }
     // Settle any previous transaction first so the snapshot below captures the
     // user's original clipboard, not the previous transcript.
     flush_pending(app_handle, enigo);
 
-    let clipboard = app_handle.clipboard();
-    let saved_text = clipboard.read_text().ok().filter(|t| !t.is_empty());
-    // Only probe for an image when there is no text; reading an image decodes
-    // the full bitmap (mirrors the legacy path).
-    let saved_image = if saved_text.is_none() {
-        clipboard.read_image().ok().map(|image| image.to_owned())
-    } else {
-        None
+    let pasteboard = NSPasteboard::generalPasteboard();
+    let snapshot = match snapshot(&pasteboard) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return HistoryPasteOutcome::NotDispatched(error),
     };
 
     let state = Arc::new(Mutex::new(TxState::new()));
     let provider = HandyPasteProvider::new(state.clone(), text.to_string());
-    let pasteboard = NSPasteboard::generalPasteboard();
 
     let mut types: Vec<Retained<NSString>> = Vec::with_capacity(1 + CONCEALMENT_TYPES.len());
     types.push(NSString::from_str("public.utf8-plain-text"));
@@ -287,25 +476,38 @@ pub(super) fn run(
     }
     let types = NSArray::from_retained_slice(&types);
 
+    // 延迟表示兑现可能很慢；快照之后重新检查，不向已经改变的目标发键。
+    if let Err(error) = validate() {
+        return HistoryPasteOutcome::NotDispatched(error);
+    }
+    if pasteboard.changeCount() != snapshot.change_count {
+        return HistoryPasteOutcome::NotDispatched("clipboard changed before publish".into());
+    }
+
     // declareTypes:owner: clears the pasteboard and puts our promise on it;
     // the return value is the new changeCount.
     let change_count: NSInteger =
         unsafe { msg_send![&*pasteboard, declareTypes: &*types, owner: &*provider] };
     if change_count <= 0 {
-        return Err("declareTypes:owner: failed".to_string());
+        return HistoryPasteOutcome::NotDispatched("declareTypes:owner: failed".to_string());
     }
     info!("[reliable-paste] published transcript as lazy promise (changeCount {change_count})");
 
-    // Mark injection *before* sending: enigo holds the chord for ~100ms and a
-    // fast target may legitimately read while the chord is still held.
-    if let Ok(mut st) = state.lock() {
-        st.injected_at = Some(Instant::now());
-    }
-    match send_chord(enigo, paste_method) {
-        Ok(()) => {
+    let outcome = guarded_dispatch(validate, || {
+        if pasteboard.changeCount() != change_count {
+            // 在此闭包中的失败一律保守当作可能派发；实际未发键仍不自动重试。
+            return Err("clipboard changed before paste chord".into());
+        }
+        if let Ok(mut st) = state.lock() {
+            st.injected_at = Some(Instant::now());
+        }
+        send_chord(enigo, paste_method)
+    });
+    match &outcome {
+        HistoryPasteOutcome::Dispatched => {
             info!("[reliable-paste] paste chord sent ({paste_method:?})");
         }
-        Err(e) => {
+        HistoryPasteOutcome::NotDispatched(e) | HistoryPasteOutcome::PossiblyDispatched(e) => {
             // Keep the transaction alive: the waiter restores the clipboard
             // after the short failed-injection timeout.
             if let Ok(mut st) = state.lock() {
@@ -317,8 +519,7 @@ pub(super) fn run(
 
     let pending = Arc::new(Mutex::new(MacPending {
         state,
-        saved_text,
-        saved_image,
+        snapshot,
         change_count,
         provider: Some(provider),
         auto_submit,
@@ -332,5 +533,138 @@ pub(super) fn run(
     }
     spawn_waiter(pending, app_handle.clone());
 
+    outcome
+}
+
+/// 主线程上的独立命名板检查，不读取或改写 generalPasteboard。
+pub(crate) fn private_pasteboard_self_check() -> Result<(), String> {
+    if objc2::MainThreadMarker::new().is_none() {
+        return Err("private clipboard diagnostic requires main thread".into());
+    }
+    struct PrivateBoard(Retained<NSPasteboard>);
+    impl Drop for PrivateBoard {
+        fn drop(&mut self) {
+            self.0.clearContents();
+        }
+    }
+    let board = PrivateBoard(NSPasteboard::pasteboardWithUniqueName());
+    let initial = ClipboardSnapshot {
+        change_count: board.0.changeCount(),
+        items: vec![
+            vec![
+                (
+                    "public.utf8-plain-text".into(),
+                    "合成测试".as_bytes().to_vec(),
+                ),
+                ("public.html".into(), b"<b>synthetic</b>".to_vec()),
+                ("public.rtf".into(), b"{\\rtf1 synthetic}".to_vec()),
+            ],
+            vec![
+                (
+                    "public.file-url".into(),
+                    b"file:///tmp/synthetic-only.pdf".to_vec(),
+                ),
+                ("test.binary.format".into(), vec![0, 255, 12]),
+            ],
+        ],
+    };
+    if publish_snapshot_on(&board.0, initial.clone(), || Ok(())) != HistoryPasteOutcome::Dispatched
+    {
+        return Err("private clipboard initial publication failed".into());
+    }
+    let saved = snapshot(&board.0)?;
+    // 系统可以补充派生类型；每个原始 item/type 必须仍存在且逐字节相等。
+    if saved.items.len() != initial.items.len()
+        || !initial
+            .items
+            .iter()
+            .zip(&saved.items)
+            .all(|(original, observed)| original.iter().all(|entry| observed.contains(entry)))
+    {
+        return Err("private clipboard lost original representation".into());
+    }
+    let replacement = ClipboardSnapshot {
+        change_count: board.0.changeCount(),
+        items: vec![vec![(
+            "public.utf8-plain-text".into(),
+            b"temporary".to_vec(),
+        )]],
+    };
+    if publish_snapshot_on(&board.0, replacement, || Ok(())) != HistoryPasteOutcome::Dispatched {
+        return Err("private clipboard temporary publication failed".into());
+    }
+    if !restore_snapshot(&board.0, &saved, board.0.changeCount())?
+        || snapshot(&board.0)?.items != saved.items
+    {
+        return Err("private clipboard restore differs from captured full snapshot".into());
+    }
+    let pending = ClipboardSnapshot {
+        change_count: board.0.changeCount(),
+        ..initial
+    };
+    if !matches!(
+        publish_snapshot_on(&board.0, pending.clone(), || Err("revoked".into())),
+        HistoryPasteOutcome::NotDispatched(_)
+    ) || board.0.changeCount() != pending.change_count
+    {
+        return Err("revoked private clipboard publication changed content".into());
+    }
+    let outcome = publish_snapshot_on(&board.0, pending.clone(), || {
+        board.0.clearContents();
+        if !board
+            .0
+            .setString_forType(&NSString::from_str("new synthetic copy"), unsafe {
+                NSPasteboardTypeString
+            })
+        {
+            return Err("unable to simulate newer private copy".into());
+        }
+        Ok(())
+    });
+    let newer = snapshot(&board.0)?;
+    if !matches!(outcome, HistoryPasteOutcome::NotDispatched(_))
+        || restore_snapshot(&board.0, &pending, pending.change_count)?
+        || snapshot(&board.0)? != newer
+    {
+        return Err("intervening private clipboard copy was overwritten".into());
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_in_memory_items_preserve_raw_representations_without_touching_pasteboard() {
+        let snapshot = ClipboardSnapshot {
+            change_count: 1,
+            items: vec![
+                vec![
+                    ("public.utf8-plain-text".into(), b"report".to_vec()),
+                    ("public.html".into(), b"<b>report</b>".to_vec()),
+                    ("public.rtf".into(), b"{\\rtf1 report}".to_vec()),
+                    ("custom.zero-length".into(), Vec::new()),
+                ],
+                vec![
+                    ("public.file-url".into(), b"file:///tmp/report.pdf".to_vec()),
+                    ("public.png".into(), vec![0, 255, 3, 4]),
+                ],
+            ],
+        };
+        // 只创建独立内存对象，不取得 generalPasteboard 或任何命名剪贴板。
+        let prepared = prepare_items(&snapshot).unwrap();
+        assert_eq!(prepared.len(), snapshot.items.len());
+        for (item, expected) in prepared.iter().zip(&snapshot.items) {
+            assert_eq!(item.types().len(), expected.len());
+            for (kind, bytes) in expected {
+                assert_eq!(
+                    item.dataForType(&NSString::from_str(kind))
+                        .unwrap()
+                        .to_vec(),
+                    *bytes
+                );
+            }
+        }
+    }
 }

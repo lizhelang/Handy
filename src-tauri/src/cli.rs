@@ -4,6 +4,12 @@ use std::path::PathBuf;
 #[derive(Parser, Debug, Clone, Default)]
 #[command(name = "handy", about = "Handy - Speech to Text")]
 pub struct CliArgs {
+    /// Test a unique private native pasteboard on the main thread without starting the application.
+    #[arg(long, hide = true)]
+    pub unified_clipboard_self_check: bool,
+    /// Run metadata-only native target diagnostics without starting the application.
+    #[arg(long, hide = true)]
+    pub unified_target_self_check: bool,
     /// Export frontend bindings and exit without opening app data or starting Tauri.
     #[cfg(debug_assertions)]
     #[arg(long)]

@@ -26,6 +26,8 @@ export type UnifiedHistoryActionResult = {
 };
 
 export interface UnifiedHistoryProps {
+  onRetranscribe?: (item: UnifiedHistoryItem) => Promise<void>;
+  onOpenRecordings?: () => Promise<void>;
   onCopy: (item: UnifiedHistoryItem) => Promise<UnifiedHistoryActionResult>;
   onInsert: (item: UnifiedHistoryItem) => Promise<UnifiedHistoryActionResult>;
   /** Resolve only after the source mutation and index synchronization succeed. */

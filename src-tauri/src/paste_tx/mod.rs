@@ -37,8 +37,90 @@
 
 use std::time::{Duration, Instant};
 
+/// 描述是否可能已经向目标发键；剪贴板读取不构成输入回执。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HistoryPasteOutcome {
+    NotDispatched(String),
+    PossiblyDispatched(String),
+    Dispatched,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) struct PasteCompletion {
+    pub auto_submit: bool,
+    pub auto_submit_key: crate::settings::AutoSubmitKey,
+    pub clipboard_handling: crate::settings::ClipboardHandling,
+}
+
+/// 在最后副作用边界检查目标/组合状态/策略。发键错误可能发生在部分发键后。
+pub(crate) fn guarded_dispatch(
+    validate: &mut dyn FnMut() -> Result<(), String>,
+    dispatch: impl FnOnce() -> Result<(), String>,
+) -> HistoryPasteOutcome {
+    if let Err(error) = validate() {
+        return HistoryPasteOutcome::NotDispatched(error);
+    }
+    match dispatch() {
+        Ok(()) => HistoryPasteOutcome::Dispatched,
+        Err(error) => HistoryPasteOutcome::PossiblyDispatched(error),
+    }
+}
+
+/// 所有 item 的所有原始表示；不进行文本/图像优先级选择或格式转换。
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ClipboardSnapshot {
+    pub change_count: isize,
+    pub items: Vec<Vec<(String, Vec<u8>)>>,
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn capture_snapshot(
+    count: impl Fn() -> isize,
+    read: impl FnOnce() -> Result<Vec<Vec<(String, Vec<u8>)>>, String>,
+) -> Result<ClipboardSnapshot, String> {
+    let change_count = count();
+    let items = read()?;
+    if count() != change_count {
+        return Err("clipboard changed while materializing snapshot".into());
+    }
+    Ok(ClipboardSnapshot {
+        change_count,
+        items,
+    })
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn restore_if_owned(
+    expected: isize,
+    count: impl FnOnce() -> isize,
+    restore: impl FnOnce() -> Result<(), String>,
+) -> Result<bool, String> {
+    if count() != expected {
+        return Ok(false);
+    }
+    restore()?;
+    Ok(true)
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) fn paste_history(
+    text: &str,
+    app: &tauri::AppHandle,
+    method: &crate::settings::PasteMethod,
+    enigo: &mut enigo::Enigo,
+    validate: &mut dyn FnMut() -> Result<(), String>,
+) -> HistoryPasteOutcome {
+    platform::run_history(text, app, method, enigo, validate)
+}
+
 #[cfg(target_os = "macos")]
 mod macos;
+
+#[cfg(target_os = "macos")]
+pub(crate) use macos::private_pasteboard_self_check;
+#[cfg(target_os = "macos")]
+pub(crate) use macos::publish_snapshot;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -214,6 +296,137 @@ pub(crate) fn try_reliable_paste(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_snapshot_keeps_all_items_and_formats_including_empty_bytes() {
+        let items = vec![
+            vec![
+                ("public.utf8-plain-text".into(), b"report".to_vec()),
+                ("public.html".into(), b"<b>report</b>".to_vec()),
+                ("public.rtf".into(), b"{\\rtf1 report}".to_vec()),
+                ("custom.zero-length".into(), Vec::new()),
+            ],
+            vec![
+                ("public.file-url".into(), b"file:///tmp/report.pdf".to_vec()),
+                ("public.png".into(), vec![0, 255, 3, 4]),
+            ],
+        ];
+        let snapshot = capture_snapshot(|| 7, || Ok(items.clone())).unwrap();
+        assert_eq!(snapshot.items, items);
+        assert_eq!(snapshot.change_count, 7);
+    }
+
+    #[test]
+    fn history_snapshot_does_not_treat_unavailable_data_as_empty() {
+        assert!(capture_snapshot(|| 7, || Err("unavailable promise".into())).is_err());
+    }
+
+    #[test]
+    fn history_snapshot_rejects_user_copy_during_materialization() {
+        let count = std::cell::Cell::new(7);
+        let snapshot = capture_snapshot(
+            || count.get(),
+            || {
+                count.set(8);
+                Ok(Vec::new())
+            },
+        );
+        assert!(snapshot.is_err());
+    }
+
+    #[test]
+    fn history_restore_does_not_write_after_new_user_copy() {
+        let restored = std::cell::Cell::new(false);
+        assert!(!restore_if_owned(
+            7,
+            || 8,
+            || {
+                restored.set(true);
+                Ok(())
+            }
+        )
+        .unwrap());
+        assert!(!restored.get());
+    }
+
+    #[test]
+    fn history_restore_preserves_a_genuinely_empty_clipboard() {
+        let saved = capture_snapshot(|| 7, || Ok(Vec::new())).unwrap();
+        let board =
+            std::cell::RefCell::new(vec![vec![("public.text".into(), b"temporary".to_vec())]]);
+        assert!(restore_if_owned(
+            8,
+            || 8,
+            || {
+                *board.borrow_mut() = saved.items;
+                Ok(())
+            }
+        )
+        .unwrap());
+        assert!(board.borrow().is_empty());
+    }
+
+    #[test]
+    fn history_restore_failure_is_not_swallowed() {
+        assert_eq!(
+            restore_if_owned(8, || 8, || Err("write failed".into())),
+            Err("write failed".into())
+        );
+    }
+
+    #[test]
+    fn history_last_boundary_rejects_target_change_after_slow_snapshot() {
+        let target_valid = std::cell::Cell::new(true);
+        let sent = std::cell::Cell::new(false);
+        let _ = capture_snapshot(
+            || 7,
+            || {
+                target_valid.set(false);
+                Ok(Vec::new())
+            },
+        )
+        .unwrap();
+        let result = guarded_dispatch(
+            &mut || {
+                if target_valid.get() {
+                    Ok(())
+                } else {
+                    Err("target changed".into())
+                }
+            },
+            || {
+                sent.set(true);
+                Ok(())
+            },
+        );
+        assert_eq!(
+            result,
+            HistoryPasteOutcome::NotDispatched("target changed".into())
+        );
+        assert!(!sent.get());
+    }
+
+    #[test]
+    fn history_partial_injection_error_is_uncertain_and_never_retried() {
+        let attempts = std::cell::Cell::new(0);
+        let result = guarded_dispatch(&mut || Ok(()), || {
+            attempts.set(attempts.get() + 1);
+            Err("key release failed after key press".into())
+        });
+        assert_eq!(
+            result,
+            HistoryPasteOutcome::PossiblyDispatched("key release failed after key press".into())
+        );
+        assert_eq!(attempts.get(), 1);
+    }
+
+    #[test]
+    fn history_chord_success_is_dispatch_only_not_a_target_receipt() {
+        assert_eq!(
+            guarded_dispatch(&mut || Ok(()), || Ok(())),
+            HistoryPasteOutcome::Dispatched
+        );
+    }
 
     fn state_after_publish(published_ago: Duration) -> TxState {
         let mut s = TxState::new();

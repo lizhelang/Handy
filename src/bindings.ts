@@ -1411,16 +1411,70 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
-  async copyUnifiedHistoryItem(
+  /**
+   * 回执查询没有输出副作用；不得通过重放 Prepared 命令实现“查看状态”。
+   */
+  async getUnifiedOutputReceipt(
+    operationId: string,
+  ): Promise<Result<UnifiedOutputResult | null, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("get_unified_output_receipt", { operationId }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
+  async retranscribeUnifiedHistoryItem(
     itemId: string,
     expectedRevision: number,
   ): Promise<Result<null, string>> {
     try {
       return {
         status: "ok",
+        data: await TAURI_INVOKE("retranscribe_unified_history_item", {
+          itemId,
+          expectedRevision,
+        }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
+  async insertUnifiedHistoryItem(
+    itemId: string,
+    expectedRevision: number,
+    operationId: string,
+  ): Promise<Result<UnifiedOutputResult, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("insert_unified_history_item", {
+          itemId,
+          expectedRevision,
+          operationId,
+        }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
+  async copyUnifiedHistoryItem(
+    itemId: string,
+    expectedRevision: number,
+    operationId: string,
+  ): Promise<Result<UnifiedOutputResult, string>> {
+    try {
+      return {
+        status: "ok",
         data: await TAURI_INVOKE("copy_unified_history_item", {
           itemId,
           expectedRevision,
+          operationId,
         }),
       };
     } catch (e) {
@@ -2278,6 +2332,7 @@ export type UnifiedHistoryRevision = {
   asset_ref: string | null;
 };
 export type UnifiedHistoryUpdate = { generation: number };
+export type UnifiedOutputResult = { operation_id: string; status: string };
 export type UnifiedTerm = {
   term: string;
   contributions: number;

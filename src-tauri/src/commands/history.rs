@@ -67,13 +67,33 @@ pub async fn retry_history_entry_transcription(
     transcription_manager: State<'_, Arc<TranscriptionManager>>,
     id: i64,
 ) -> Result<(), String> {
+    retry_history_entry_checked(app, &history_manager, &transcription_manager, id, None).await
+}
+
+pub(crate) async fn retry_history_entry_checked(
+    app: AppHandle,
+    history_manager: &HistoryManager,
+    transcription_manager: &Arc<TranscriptionManager>,
+    id: i64,
+    expected_revision: Option<u64>,
+) -> Result<(), String> {
     let entry = history_manager
         .get_entry_by_id(id)
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("History entry {} not found", id))?;
 
-    let audio_path = history_manager.get_audio_file_path(&entry.file_name);
+    let audio_path = history_manager
+        .get_audio_file_path(&entry.file_name)
+        .canonicalize()
+        .map_err(|_| "Recording file is unavailable".to_owned())?;
+    let recordings = history_manager
+        .recordings_dir()
+        .canonicalize()
+        .map_err(|_| "Recordings directory is unavailable".to_owned())?;
+    if !audio_path.starts_with(recordings) {
+        return Err("Recording is outside managed storage".into());
+    }
     let samples = crate::audio_toolkit::read_wav_samples(&audio_path)
         .map_err(|e| format!("Failed to load audio: {}", e))?;
 
@@ -83,7 +103,7 @@ pub async fn retry_history_entry_transcription(
 
     transcription_manager.initiate_model_load();
 
-    let tm = Arc::clone(&transcription_manager);
+    let tm = Arc::clone(transcription_manager);
     let transcription = tauri::async_runtime::spawn_blocking(move || tm.transcribe(samples))
         .await
         .map_err(|e| format!("Transcription task panicked: {}", e))?
@@ -96,11 +116,12 @@ pub async fn retry_history_entry_transcription(
     let processed =
         process_transcription_output(&app, &transcription, entry.post_process_requested).await;
     history_manager
-        .update_transcription(
+        .update_transcription_checked(
             id,
             transcription,
             processed.post_processed_text,
             processed.post_process_prompt,
+            expected_revision,
         )
         .map(|_| ())
         .map_err(|e| e.to_string())

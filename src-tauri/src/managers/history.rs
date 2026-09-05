@@ -224,6 +224,7 @@ impl HistoryManager {
         post_processed_text: Option<String>,
         post_process_prompt: Option<String>,
     ) -> Result<HistoryEntry> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         let timestamp = Utc::now().timestamp();
         let title = self.format_timestamp_title(timestamp);
 
@@ -280,14 +281,28 @@ impl HistoryManager {
     }
 
     /// Update an existing history entry with new transcription results (used by retry).
-    pub fn update_transcription(
+    pub fn update_transcription_checked(
         &self,
         id: i64,
         transcription_text: String,
         post_processed_text: Option<String>,
         post_process_prompt: Option<String>,
+        expected_revision: Option<u64>,
     ) -> Result<HistoryEntry> {
-        let conn = self.get_connection()?;
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
+        let mut connection = self.get_connection()?;
+        let conn =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if let Some(expected) = expected_revision {
+            let current: u64 = conn.query_row(
+                "SELECT revision FROM unified_source_versions WHERE record_id=?1",
+                [id.to_string()],
+                |row| row.get(0),
+            )?;
+            if current != expected {
+                return Err(anyhow!("History entry changed during transcription"));
+            }
+        }
         let updated = conn.execute(
             "UPDATE transcription_history
              SET transcription_text = ?1,
@@ -313,6 +328,8 @@ impl HistoryManager {
                 params![id],
                 Self::map_history_entry,
             )?;
+
+        conn.commit()?;
 
         debug!("Updated transcription for history entry {}", id);
 
@@ -348,6 +365,7 @@ impl HistoryManager {
     }
 
     fn delete_entries_and_files(&self, entries: &[(i64, String)]) -> Result<usize> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         if entries.is_empty() {
             return Ok(0);
         }
@@ -555,6 +573,7 @@ impl HistoryManager {
     }
 
     pub async fn toggle_saved_status(&self, id: i64) -> Result<()> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         let conn = self.get_connection()?;
 
         // Get current saved status
@@ -608,6 +627,7 @@ impl HistoryManager {
     }
 
     pub async fn delete_entry(&self, id: i64) -> Result<()> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
         let conn = self.get_connection()?;
 
         // Get the entry to find the file name

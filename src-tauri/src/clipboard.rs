@@ -771,6 +771,49 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
     auto_submit && paste_method != PasteMethod::None
 }
 
+/// 历史复用不继承自动发送、尾随空格，不在可能已派发后自动换路线。
+pub fn paste_history_text(
+    text: &str,
+    app: &AppHandle,
+    validate: &mut dyn FnMut() -> Result<(), String>,
+) -> crate::paste_tx::HistoryPasteOutcome {
+    use crate::paste_tx::HistoryPasteOutcome;
+    let settings = get_settings(app);
+    let Some(enigo_state) = app.try_state::<EnigoState>() else {
+        return HistoryPasteOutcome::NotDispatched("Enigo state not initialized".into());
+    };
+    // 历史输出持有短期目标/策略许可，不等待其他正在进行的输入。
+    let Ok(mut enigo) = enigo_state.0.try_lock() else {
+        return HistoryPasteOutcome::NotDispatched("input device busy".into());
+    };
+    match settings.paste_method {
+        PasteMethod::Direct => crate::paste_tx::guarded_dispatch(validate, || {
+            input::paste_text_direct(&mut enigo, text)
+        }),
+        PasteMethod::CtrlV | PasteMethod::CtrlShiftV | PasteMethod::ShiftInsert => {
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            {
+                crate::paste_tx::paste_history(
+                    text,
+                    app,
+                    &settings.paste_method,
+                    &mut enigo,
+                    validate,
+                )
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            {
+                HistoryPasteOutcome::NotDispatched(
+                    "transactional history paste unavailable on this platform".into(),
+                )
+            }
+        }
+        _ => HistoryPasteOutcome::NotDispatched(
+            "history insertion requires an enabled native paste method".into(),
+        ),
+    }
+}
+
 pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     let settings = get_settings(&app_handle);
     let paste_method = settings.paste_method;

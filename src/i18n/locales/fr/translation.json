@@ -1,5 +1,7 @@
 {
   "unifiedHistory": {
+    "checkOutputReceipt": "Check previous output receipt",
+    "allowAnotherCopy": "I checked the clipboard; allow another copy",
     "allowAnotherInsert": "I checked the result; allow another insertion",
     "previewHint": "Select a history item to preview. Double-click to insert.",
     "heading": "History",

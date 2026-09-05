@@ -1,5 +1,7 @@
 {
   "unifiedHistory": {
+    "checkOutputReceipt": "查看上次操作回執",
+    "allowAnotherCopy": "我已檢查剪貼簿，允許再次複製",
     "allowAnotherInsert": "我已檢查結果，允許再次插入",
     "previewHint": "Select a history item to preview. Double-click to insert.",
     "heading": "History",
