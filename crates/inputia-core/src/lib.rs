@@ -1,6 +1,8 @@
 #[cfg(feature = "sqlite-memory")]
 use std::path::Path;
 
+pub mod integration;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InputMode {
     English,
@@ -413,7 +415,7 @@ impl LocalMemory {
             .filter(|term| term.text.starts_with(prefix))
             .cloned()
             .collect::<Vec<_>>();
-        terms.sort_by(|left, right| right.score().cmp(&left.score()));
+        terms.sort_by_key(|term| std::cmp::Reverse(term.score()));
         terms
             .into_iter()
             .take(limit)
@@ -500,7 +502,7 @@ impl LocalMemory {
 
     pub fn voice_hotwords(&self, limit: usize) -> Vec<String> {
         let mut terms = self.terms.clone();
-        terms.sort_by(|left, right| right.score().cmp(&left.score()));
+        terms.sort_by_key(|term| std::cmp::Reverse(term.score()));
         terms
             .into_iter()
             .filter(|term| term.typed_count > 0 || term.voice_count > 0)
