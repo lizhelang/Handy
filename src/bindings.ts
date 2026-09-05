@@ -1411,6 +1411,20 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
+  async getUnifiedTerms(
+    limit: number,
+    offset: number,
+  ): Promise<Result<UnifiedTerm[], string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("get_unified_terms", { limit, offset }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
   async getUnifiedHistoryRevisions(
     itemId: string,
   ): Promise<Result<UnifiedHistoryRevision[], string>> {
@@ -2202,6 +2216,11 @@ export type UnifiedHistoryRevision = {
   asset_ref: string | null;
 };
 export type UnifiedHistoryUpdate = { generation: number };
+export type UnifiedTerm = {
+  term: string;
+  contributions: number;
+  explicitly_confirmed: boolean;
+};
 export type VadBackend = "silero" | "earshot";
 export type WindowsMicrophonePermissionStatus = {
   supported: boolean;

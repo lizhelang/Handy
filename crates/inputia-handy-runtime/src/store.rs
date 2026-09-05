@@ -7,7 +7,12 @@ use std::{collections::HashSet, fmt, path::Path, time::Duration};
 
 use crate::source::{SnapshotHeader, SnapshotRecord};
 
+use crate::learning::{ApplyContribution, ContributionInput, LearningError, LearningLedger};
 use inputia_core::integration::events::Identifier;
+use inputia_core::integration::{
+    privacy::{PrivacyContext, PrivacyPolicy},
+    terms::HotwordBudget,
+};
 use rusqlite::{
     params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
 };
@@ -92,6 +97,20 @@ pub struct ContentRevision {
     pub snapshot: ItemSnapshot,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LearnedTermView {
+    pub term: String,
+    pub contributions: u64,
+    pub explicitly_confirmed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TermSnapshot {
+    pub policy_epoch: u64,
+    pub learning_generation: u64,
+    pub terms: Vec<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HistoryQuery {
     pub search: Option<String>,
@@ -136,6 +155,7 @@ pub struct SnapshotRestoreOutcome {
 
 #[derive(Debug)]
 pub enum StoreError {
+    Learning(LearningError),
     Io(std::io::Error),
     Sqlite(rusqlite::Error),
     Serialization(serde_json::Error),
@@ -157,6 +177,7 @@ impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // 不将来自数据库的正文或外部输入拼入诊断。
         match self {
+            Self::Learning(error) => write!(f, "{error}"),
             Self::Io(_) => write!(f, "integration file operation failed"),
             Self::Sqlite(_) => write!(f, "integration SQLite operation failed"),
             Self::Serialization(_) => write!(f, "integration serialization failed"),
@@ -194,6 +215,11 @@ impl fmt::Display for StoreError {
 }
 
 impl std::error::Error for StoreError {}
+impl From<LearningError> for StoreError {
+    fn from(error: LearningError) -> Self {
+        Self::Learning(error)
+    }
+}
 impl From<std::io::Error> for StoreError {
     fn from(value: std::io::Error) -> Self {
         Self::Io(value)
@@ -218,6 +244,224 @@ pub struct IntegrationStore {
 }
 
 impl IntegrationStore {
+    /// 控制中心的有界词库列表；调用者必须是已授权的本地设置入口。
+    pub fn list_terms(&self, limit: u32, offset: u64) -> StoreResult<Vec<LearnedTermView>> {
+        if limit == 0 || limit > 500 {
+            return Err(StoreError::Invalid("term page size out of range"));
+        }
+        let mut query=self.conn.prepare("SELECT term,COUNT(*),MIN(evidence)<=1 FROM learning_contributions GROUP BY term ORDER BY MIN(evidence),term LIMIT ?1 OFFSET ?2")?;
+        let rows = query.query_map(params![limit, checked_number(offset)?], |row| {
+            Ok(LearnedTermView {
+                term: row.get(0)?,
+                contributions: row.get(1)?,
+                explicitly_confirmed: row.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn learning_initialized(&self) -> StoreResult<bool> {
+        Ok(self.conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='learning_meta')",[],|row|row.get(0))?)
+    }
+
+    /// 学习表及撤销触发器属于规范库的同一事务域；key 由受管配置提供。
+    pub fn enable_learning(&mut self, key: &[u8]) -> StoreResult<()> {
+        let ledger = LearningLedger::new(key)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ledger.install(&tx)?;
+        ledger.advance_epoch(&tx, epoch(&tx)?)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO integration_meta(key,value) VALUES('learning_generation','0')",
+            [],
+        )?;
+        tx.execute_batch(
+            "DROP TRIGGER IF EXISTS integration_delete_learning;
+             DROP TRIGGER IF EXISTS integration_revise_learning;
+             CREATE TRIGGER integration_delete_learning AFTER DELETE ON integration_items
+             BEGIN
+               UPDATE integration_meta SET value=CAST(value AS INTEGER)+1 WHERE key='learning_generation';
+               DELETE FROM learning_contributions WHERE store_id=OLD.store_id AND record_id=OLD.record_id;
+               INSERT INTO learning_sources(store_id,record_id,revision,deleted) VALUES(OLD.store_id,OLD.record_id,OLD.revision,1)
+               ON CONFLICT(store_id,record_id) DO UPDATE SET revision=max(revision,excluded.revision),deleted=1;
+             END;
+             CREATE TRIGGER integration_revise_learning AFTER UPDATE ON integration_items
+             WHEN OLD.content_revision<>NEW.content_revision
+             BEGIN
+               UPDATE integration_meta SET value=CAST(value AS INTEGER)+1 WHERE key='learning_generation';
+               DELETE FROM learning_contributions WHERE store_id=NEW.store_id AND record_id=NEW.record_id;
+               INSERT INTO learning_sources(store_id,record_id,revision,deleted) VALUES(NEW.store_id,NEW.record_id,NEW.revision,0)
+               ON CONFLICT(store_id,record_id) DO UPDATE SET revision=max(revision,excluded.revision);
+             END;
+             CREATE TRIGGER IF NOT EXISTS integration_advance_learning_epoch AFTER UPDATE ON integration_meta
+             WHEN NEW.key='policy_epoch'
+             BEGIN UPDATE learning_meta SET epoch=CAST(NEW.value AS INTEGER) WHERE singleton=1; END;"
+        )?;
+        // 首次启用学习也继承规范库已有的删除屏障，不能等到下一次删除再建立。
+        tx.execute_batch(
+            "INSERT INTO learning_sources(store_id,record_id,revision,deleted)
+             SELECT instance.store_id,tombstone.record_id,tombstone.deleted_revision,1
+             FROM integration_tombstones tombstone JOIN integration_instances instance USING(logical_name)
+             WHERE 1 ON CONFLICT(store_id,record_id) DO UPDATE SET revision=max(revision,excluded.revision),deleted=1;"
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn contribute_term(
+        &mut self,
+        key: &[u8],
+        input: &ContributionInput,
+        policy: &PrivacyPolicy,
+        context: PrivacyContext,
+    ) -> StoreResult<ApplyContribution> {
+        let ledger = LearningLedger::new(key)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = epoch(&tx)?;
+        if current != policy.epoch {
+            return Err(StoreError::EpochMismatch {
+                expected: current,
+                actual: policy.epoch,
+            });
+        }
+        let live: Option<(i64,i64,String)> = tx
+            .query_row(
+                "SELECT revision,content_revision,snapshot FROM integration_items WHERE store_id=?1 AND record_id=?2",
+                params![
+                    input.source.store_id.as_str(),
+                    input.source.record_id.as_str()
+                ],
+                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+            )
+            .optional()?;
+        let Some((revision, content_revision, snapshot)) = live else {
+            return Err(StoreError::Invalid("learning source is absent or changed"));
+        };
+        if revision != checked_number(input.source_revision)? {
+            return Err(StoreError::Invalid("learning source is absent or changed"));
+        }
+        let snapshot: ItemSnapshot = serde_json::from_str(&snapshot)?;
+        let trust = match snapshot.source_trust {
+            SourceTrust::Verified => inputia_core::integration::privacy::SourceTrust::Verified,
+            SourceTrust::Observed => inputia_core::integration::privacy::SourceTrust::Observed,
+            SourceTrust::Unknown => inputia_core::integration::privacy::SourceTrust::Unknown,
+        };
+        let source_sensitive = context.source_sensitive
+            || snapshot.source_app.as_deref().is_some_and(|app| {
+                inputia_core::AppPolicy::default().excludes(&inputia_core::AppContext::new(app))
+            });
+        let context = inputia_core::integration::privacy::PrivacyContext {
+            source_trust: if context.source_trust
+                == inputia_core::integration::privacy::SourceTrust::Verified
+            {
+                trust
+            } else {
+                context.source_trust
+            },
+            source_sensitive,
+            ..context
+        };
+        let contribution = ContributionInput {
+            contribution_id: input.contribution_id.clone(),
+            source: input.source.clone(),
+            source_revision: content_revision as u64,
+            policy_epoch: input.policy_epoch,
+            term: input.term.clone(),
+            evidence: input.evidence,
+            explicit_relearn: input.explicit_relearn,
+        };
+        let result = ledger.apply_contribution(&tx, &contribution, policy, context)?;
+        if result == ApplyContribution::Applied {
+            tx.execute("UPDATE integration_meta SET value=CAST(value AS INTEGER)+1 WHERE key='learning_generation'",[])?;
+        }
+        tx.commit()?;
+        Ok(result)
+    }
+
+    /// 词屏障、贡献移除和统一策略版本同一事务，失败时全量回滚。
+    pub fn forget_term(&mut self, key: &[u8], term: &str, expected_epoch: u64) -> StoreResult<u64> {
+        let ledger = LearningLedger::new(key)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = epoch(&tx)?;
+        if current != expected_epoch {
+            return Err(StoreError::EpochMismatch {
+                expected: current,
+                actual: expected_epoch,
+            });
+        }
+        let next = current
+            .checked_add(1)
+            .ok_or(StoreError::Invalid("policy epoch overflow"))?;
+        checked_number(next)?;
+        ledger.forget_term(&tx, term, next)?;
+        tx.execute("UPDATE integration_meta SET value=CAST(value AS INTEGER)+1 WHERE key='learning_generation'",[])?;
+        tx.execute(
+            "UPDATE integration_meta SET value=?1 WHERE key='policy_epoch'",
+            [next.to_string()],
+        )?;
+        tx.commit()?;
+        Ok(next)
+    }
+
+    pub fn hotwords(
+        &self,
+        key: &[u8],
+        policy: &PrivacyPolicy,
+        context: PrivacyContext,
+        explicit: &[String],
+        budget: HotwordBudget,
+    ) -> StoreResult<Vec<String>> {
+        let ledger = LearningLedger::new(key)?;
+        Ok(ledger.hotwords(
+            &self.conn,
+            policy,
+            context,
+            epoch(&self.conn)?,
+            explicit,
+            budget,
+        )?)
+    }
+
+    pub fn term_snapshot(
+        &self,
+        key: &[u8],
+        policy: &PrivacyPolicy,
+        context: PrivacyContext,
+        explicit: &[String],
+        budget: HotwordBudget,
+    ) -> StoreResult<TermSnapshot> {
+        let tx = self.conn.unchecked_transaction()?;
+        let ledger = LearningLedger::new(key)?;
+        let policy_epoch = epoch(&tx)?;
+        let learning_generation: u64 = tx.query_row(
+            "SELECT CAST(value AS INTEGER) FROM integration_meta WHERE key='learning_generation'",
+            [],
+            |row| row.get(0),
+        )?;
+        let terms = ledger.hotwords(&tx, policy, context, policy_epoch, explicit, budget)?;
+        Ok(TermSnapshot {
+            policy_epoch,
+            learning_generation,
+            terms,
+        })
+    }
+
+    /// 在线消费者提交前复核两个版本；离线消费者仍须遵守 2 秒租约。
+    pub fn term_snapshot_is_current(&self, snapshot: &TermSnapshot) -> StoreResult<bool> {
+        let tx = self.conn.unchecked_transaction()?;
+        let generation: u64 = tx.query_row(
+            "SELECT CAST(value AS INTEGER) FROM integration_meta WHERE key='learning_generation'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(snapshot.policy_epoch == epoch(&tx)? && snapshot.learning_generation == generation)
+    }
+
     /// 打开版本化索引；已有库的 profile 不符时拒绝，不接管陌生数据库。
     pub fn open(path: impl AsRef<Path>, profile_id: &str) -> StoreResult<Self> {
         identifier(profile_id)?;

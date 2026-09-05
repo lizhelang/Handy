@@ -785,6 +785,7 @@ pub fn run(cli_args: CliArgs) {
             commands::history::update_recording_retention_period,
             commands::clipboard::get_clipboard_items,
             commands::integration::get_unified_history,
+            commands::integration::get_unified_terms,
             commands::integration::get_unified_history_revisions,
             commands::integration::refresh_unified_history,
             commands::clipboard::get_favorite_clipboard_items,

@@ -5,6 +5,36 @@ use specta::Type;
 use std::sync::Arc;
 use tauri::State;
 
+#[derive(Clone, Debug, Serialize, Type)]
+pub struct UnifiedTerm {
+    pub term: String,
+    pub contributions: u64,
+    pub explicitly_confirmed: bool,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_unified_terms(
+    manager: State<'_, Arc<IntegrationManager>>,
+    limit: u32,
+    offset: u64,
+) -> Result<Vec<UnifiedTerm>, String> {
+    let service = manager.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service.list_terms(limit, offset).map(|rows| {
+            rows.into_iter()
+                .map(|row| UnifiedTerm {
+                    term: row.term,
+                    contributions: row.contributions,
+                    explicitly_confirmed: row.explicitly_confirmed,
+                })
+                .collect()
+        })
+    })
+    .await
+    .map_err(|_| "unified history worker failed".to_owned())?
+}
+
 #[derive(Clone, Debug, Deserialize, Type)]
 pub struct UnifiedHistoryQuery {
     pub search: Option<String>,

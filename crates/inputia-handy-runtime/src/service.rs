@@ -2,8 +2,14 @@
 
 use crate::{
     source::SourceTable,
-    store::{ContentRevision, HistoryQuery, IndexedItem, IntegrationStore},
+    store::{
+        ContentRevision, HistoryQuery, IndexedItem, IntegrationStore, LearnedTermView, TermSnapshot,
+    },
     sync::SourcePump,
+};
+use inputia_core::integration::{
+    privacy::{PrivacyContext, PrivacyPolicy},
+    terms::HotwordBudget,
 };
 use rusqlite::{Connection, OpenFlags};
 use std::{
@@ -21,6 +27,7 @@ type ServiceResult<T> = Result<T, String>;
 type Job = Box<dyn FnOnce(&mut ServiceResult<Worker>) + Send>;
 
 struct Worker {
+    learning_key: [u8; 32],
     store: IntegrationStore,
     sources: Vec<SourcePump>,
     last_error: Option<String>,
@@ -82,9 +89,17 @@ impl HistoryService {
                             SourcePump::attach(connection, table).map_err(|e| e.to_string())?,
                         );
                     }
-                    let store = IntegrationStore::open(root.join("integration.db"), &profile_id)
-                        .map_err(|e| e.to_string())?;
+                    let mut store =
+                        IntegrationStore::open(root.join("integration.db"), &profile_id)
+                            .map_err(|e| e.to_string())?;
+                    let key = crate::private_key::load_or_create(
+                        &root.join("integration-learning.key"),
+                        !store.learning_initialized().map_err(|e| e.to_string())?,
+                    )
+                    .map_err(|_| "learning key unavailable or unsafe".to_owned())?;
+                    store.enable_learning(&key).map_err(|e| e.to_string())?;
                     Ok(Worker {
+                        learning_key: key,
                         store,
                         sources,
                         last_error: None,
@@ -146,6 +161,40 @@ impl HistoryService {
                 return Err(error.clone());
             }
             worker.store.revisions(&item_id).map_err(|e| e.to_string())
+        })
+    }
+
+    pub fn list_terms(&self, limit: u32, offset: u64) -> ServiceResult<Vec<LearnedTermView>> {
+        self.call(move |worker| {
+            worker
+                .store
+                .list_terms(limit, offset)
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    /// 模型调用方提供已捕获的真实目标策略；此方法不自行猜测前台来源。
+    pub fn session_hotwords(
+        &self,
+        policy: PrivacyPolicy,
+        context: PrivacyContext,
+        explicit: Vec<String>,
+        budget: HotwordBudget,
+    ) -> ServiceResult<TermSnapshot> {
+        self.call(move |worker| {
+            worker
+                .store
+                .term_snapshot(&worker.learning_key, &policy, context, &explicit, budget)
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    pub fn term_snapshot_is_current(&self, snapshot: TermSnapshot) -> ServiceResult<bool> {
+        self.call(move |worker| {
+            worker
+                .store
+                .term_snapshot_is_current(&snapshot)
+                .map_err(|e| e.to_string())
         })
     }
 
