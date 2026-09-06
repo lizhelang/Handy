@@ -97,7 +97,60 @@ pub fn unregister_cancel_fallback(app: &AppHandle) {
 /// Synchronize Carbon fallback registrations with current settings and
 /// lifecycle state while preserving unchanged registrations.
 pub fn reconcile_fallback(app: &AppHandle) {
-    imp::reconcile_fallback(app)
+    if let Err(error) = reconcile_fallback_checked(app) {
+        log::warn!("SecureInput fallback reconciliation incomplete: {error}");
+    }
+}
+
+/// 同步清理屏障：Ok 表示本次旧 shadow 清理已完成；新 shadow 的覆盖失败仍由
+/// status.uncovered_bindings 表达。Err（含调度失败/超时未知）不能继续注册 primary。
+pub fn reconcile_fallback_checked(app: &AppHandle) -> Result<(), String> {
+    imp::reconcile_fallback_checked(app)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn reconcile_on_main_dispatch(
+    is_main: bool,
+    schedule: impl FnOnce(Box<dyn FnOnce() + Send>) -> Result<(), String>,
+    reconcile: impl FnOnce() -> Result<(), String> + Send + 'static,
+    timeout: std::time::Duration,
+) -> Result<(), String> {
+    if is_main {
+        return reconcile();
+    }
+    let (reply, received) = std::sync::mpsc::channel();
+    // 排队之前不读取/锁定 fallback 状态。取锁及所有 OS 操作都在这个闭包中。
+    schedule(Box::new(move || {
+        let _ = reply.send(reconcile());
+    }))?;
+    received
+        .recv_timeout(timeout)
+        .map_err(|error| match error {
+            std::sync::mpsc::RecvTimeoutError::Timeout => {
+                "fallback 主线程回执超时，清理结果未知".to_owned()
+            }
+            std::sync::mpsc::RecvTimeoutError::Disconnected => {
+                "fallback 主线程回执丢失，清理结果未知".to_owned()
+            }
+        })?
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn unregister_stale_shadows(
+    stale: Vec<crate::settings::ShortcutBinding>,
+    mut unregister: impl FnMut(&crate::settings::ShortcutBinding) -> Result<(), String>,
+) -> Vec<crate::settings::ShortcutBinding> {
+    stale
+        .into_iter()
+        .filter(|binding| {
+            if let Err(error) = unregister(binding) {
+                log::warn!("SecureInput fallback: old shadow cleanup failed: {error}");
+                true
+            } else {
+                false
+            }
+        })
+        .collect()
 }
 
 /// Managed state + monitor startup. On non-macOS platforms the state exists
@@ -450,18 +503,38 @@ mod imp {
         a.id == b.id && a.current_binding == b.current_binding
     }
 
-    /// Reconcile fallback registrations without replacing unchanged shadows.
-    /// The operation mutex serializes reconciliations; fallback state is
-    /// unlocked around plugin calls to avoid lock-order inversion.
+    /// 整次 reconcile（包括取锁）都在主线程运行。后台只排队并等待回执，
+    /// 不能持 fallback_operation 锁等待 global-shortcut 再派发到主线程。
     ///
     /// Carbon sends a release only to the registration that received the press.
     /// Replacing a held push-to-talk registration loses its release. See #1999.
-    pub fn reconcile_fallback(app: &AppHandle) {
-        let state = app.state::<SecureInputState>();
-        let _operation = state.fallback_operation.lock().unwrap();
+    pub fn reconcile_fallback_checked(app: &AppHandle) -> Result<(), String> {
+        let task_app = app.clone();
+        super::reconcile_on_main_dispatch(
+            objc2::MainThreadMarker::new().is_some(),
+            |task| {
+                app.run_on_main_thread(task)
+                    .map_err(|error| format!("无法调度 fallback 主线程清理: {error}"))
+            },
+            move || reconcile_on_main(&task_app),
+            Duration::from_secs(5),
+        )
+    }
+
+    fn reconcile_on_main(app: &AppHandle) -> Result<(), String> {
+        if objc2::MainThreadMarker::new().is_none() {
+            return Err("fallback 清理没有运行在主线程".into());
+        }
+        let state = app
+            .try_state::<SecureInputState>()
+            .ok_or("SecureInput 状态尚未初始化")?;
+        let _operation = state
+            .fallback_operation
+            .lock()
+            .map_err(|_| "fallback 操作锁不可用")?;
 
         let previous = {
-            let mut fallback = state.fallback.lock().unwrap();
+            let mut fallback = state.fallback.lock().map_err(|_| "fallback 状态锁不可用")?;
             std::mem::take(&mut *fallback)
         };
 
@@ -509,16 +582,23 @@ mod imp {
                 kept.len()
             );
         }
-        for binding in stale {
-            if let Err(e) = crate::shortcut::tauri_impl::unregister_shortcut(app, binding.clone()) {
-                warn!(
-                    "SecureInput fallback: failed to unregister '{}': {}",
-                    binding.current_binding, e
-                );
-            }
+        let failed_cleanup = super::unregister_stale_shadows(stale, |binding| {
+            crate::shortcut::tauri_impl::unregister_shortcut(app, binding.clone())
+        });
+        let cleanup_incomplete = !failed_cleanup.is_empty();
+        if cleanup_incomplete {
+            // 不遗忘未确认移除的 OS 注册，下一次必须继续清理；不先创建新 shadow。
+            next.uncovered
+                .extend(failed_cleanup.iter().map(|binding| binding.id.clone()));
+            next.uncovered
+                .extend(wanted.iter().map(|(id, _, _)| id.clone()));
+            next.uncovered.sort();
+            next.uncovered.dedup();
+            next.registered.extend(failed_cleanup);
+            next.registered.extend(kept.iter().cloned());
         }
 
-        for (id, shadow, degraded) in wanted {
+        for (id, shadow, degraded) in wanted.into_iter().filter(|_| !cleanup_incomplete) {
             if kept.iter().any(|k| same_shadow(k, &shadow)) {
                 debug!(
                     "SecureInput fallback: '{}' still registered via Carbon as '{}', left untouched",
@@ -579,7 +659,7 @@ mod imp {
             debug!("SecureInput fallback deferred until shortcuts are initialized");
         }
 
-        *state.fallback.lock().unwrap() = next;
+        *state.fallback.lock().map_err(|_| "fallback 状态锁不可用")? = next;
         drop(_operation);
 
         // The tray sync diffs against what is displayed, so this is free when
@@ -587,6 +667,11 @@ mod imp {
         // reads app state and must not nest under the operation mutex.
         refresh_tray(app);
         emit_status(app);
+        if cleanup_incomplete {
+            Err("旧 Carbon shadow 清理未确认，禁止注册新的 primary".into())
+        } else {
+            Ok(())
+        }
     }
 
     fn schedule_reconcile(app: &AppHandle) {
@@ -665,6 +750,174 @@ mod imp {
     }
 }
 
+#[cfg(test)]
+mod reconciliation_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::time::Duration;
+
+    #[test]
+    fn queued_background_reconcile_holds_no_operation_lock_when_gui_reconciles() {
+        let operation = Arc::new(Mutex::new(()));
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let (queued, received) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let worker_operation = operation.clone();
+        let worker_order = order.clone();
+        let worker = std::thread::spawn(move || {
+            reconcile_on_main_dispatch(
+                false,
+                |task| queued.send(task).map_err(|error| error.to_string()),
+                move || {
+                    let _guard = worker_operation.lock().unwrap();
+                    worker_order.lock().unwrap().push("background-cleanup");
+                    Ok(())
+                },
+                Duration::from_secs(2),
+            )
+        });
+        let pending = received.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(operation.try_lock().is_ok(), "后台排队时不得持有操作锁");
+        let gui_operation = operation.clone();
+        let gui_order = order.clone();
+        reconcile_on_main_dispatch(
+            true,
+            |_| panic!("GUI应直接执行"),
+            move || {
+                let _guard = gui_operation.lock().unwrap();
+                gui_order.lock().unwrap().push("gui-cleanup");
+                Ok(())
+            },
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        pending();
+        worker.join().unwrap().unwrap();
+        assert_eq!(
+            *order.lock().unwrap(),
+            vec!["gui-cleanup", "background-cleanup"]
+        );
+    }
+
+    #[test]
+    fn successful_cleanup_reply_is_a_barrier_before_primary_registration() {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let cleanup_order = order.clone();
+        reconcile_on_main_dispatch(
+            false,
+            |task| {
+                task();
+                Ok(())
+            },
+            move || {
+                cleanup_order.lock().unwrap().push("old-shadow-removed");
+                Ok(())
+            },
+            Duration::from_secs(1),
+        )
+        .and_then(|()| {
+            order.lock().unwrap().push("new-primary-registered");
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            *order.lock().unwrap(),
+            vec!["old-shadow-removed", "new-primary-registered"]
+        );
+    }
+
+    #[test]
+    fn failed_schedule_dropped_reply_or_cleanup_error_never_passes_primary_barrier() {
+        let executed = Arc::new(AtomicBool::new(false));
+        let task_executed = executed.clone();
+        let failed_schedule = reconcile_on_main_dispatch(
+            false,
+            |_| Err("synthetic schedule failure".into()),
+            move || {
+                task_executed.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+            Duration::from_secs(1),
+        );
+        assert!(failed_schedule.is_err());
+        assert!(!executed.load(Ordering::SeqCst));
+        let dropped_reply =
+            reconcile_on_main_dispatch(false, |_| Ok(()), || Ok(()), Duration::from_secs(1));
+        assert!(dropped_reply.is_err());
+        let cleanup_error = reconcile_on_main_dispatch(
+            true,
+            |_| panic!("not scheduled"),
+            || Err("old shadow still registered".into()),
+            Duration::from_secs(1),
+        );
+        let mut registered = false;
+        let result = cleanup_error.and_then(|()| {
+            registered = true;
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert!(!registered);
+    }
+
+    #[test]
+    fn timeout_remains_unknown_and_delayed_work_reads_state_only_when_executed() {
+        let (queued, received) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let current = Arc::new(Mutex::new(1));
+        let observed = Arc::new(Mutex::new(0));
+        let task_current = current.clone();
+        let task_observed = observed.clone();
+        let result = reconcile_on_main_dispatch(
+            false,
+            |task| queued.send(task).map_err(|error| error.to_string()),
+            move || {
+                *task_observed.lock().unwrap() = *task_current.lock().unwrap();
+                Ok(())
+            },
+            Duration::from_millis(2),
+        );
+        assert!(result.is_err());
+        assert_eq!(*observed.lock().unwrap(), 0);
+        *current.lock().unwrap() = 2;
+        received.recv_timeout(Duration::from_secs(1)).unwrap()();
+        assert_eq!(*observed.lock().unwrap(), 2);
+        assert!(result.is_err(), "迟到完成不能把已返回的未知改成成功");
+    }
+
+    #[test]
+    fn failed_stale_cleanup_keeps_exact_registration_for_retry() {
+        fn binding(id: &str, key: &str) -> crate::settings::ShortcutBinding {
+            crate::settings::ShortcutBinding {
+                id: id.into(),
+                name: "synthetic".into(),
+                description: "synthetic".into(),
+                current_binding: key.into(),
+                default_binding: key.into(),
+            }
+        }
+        let failed = unregister_stale_shadows(
+            vec![
+                binding("cancel", "Escape"),
+                binding("transcribe", "Alt+Space"),
+            ],
+            |entry| {
+                if entry.id == "cancel" {
+                    Err("synthetic OS refusal".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].id, "cancel");
+        assert_eq!(failed[0].current_binding, "Escape");
+        let retried = unregister_stale_shadows(failed, |entry| {
+            assert_eq!(entry.current_binding, "Escape");
+            Ok(())
+        });
+        assert!(retried.is_empty());
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 mod imp {
     use super::*;
@@ -706,7 +959,9 @@ mod imp {
 
     pub fn unregister_cancel_fallback(_app: &AppHandle) {}
 
-    pub fn reconcile_fallback(_app: &AppHandle) {}
+    pub fn reconcile_fallback_checked(_app: &AppHandle) -> Result<(), String> {
+        Ok(())
+    }
 
     pub async fn run_diagnostic(_duration_secs: u32) -> Result<KeyboardDiagnosticReport, String> {
         Err("The keyboard diagnostic is only supported on macOS".to_string())
