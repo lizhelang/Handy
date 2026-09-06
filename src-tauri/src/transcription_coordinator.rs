@@ -1,15 +1,20 @@
 use crate::actions::ACTION_MAP;
 use crate::managers::audio::AudioRecordingManager;
 use crate::settings::ShortcutActivation;
+use inputia_handy_runtime::voice_protocol::{
+    VoiceCommand, VoicePhase, VoiceRequest, VoiceSessionView,
+};
 use log::{debug, error, warn};
+use std::collections::HashMap;
 use std::sync::mpsc::{self, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 const DEBOUNCE: Duration = Duration::from_millis(30);
 const RELEASE_GRACE: Duration = Duration::from_millis(50);
+const VOICE_START_QUEUE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PttAction {
@@ -165,14 +170,57 @@ enum Effect {
         binding_id: String,
         hotkey_string: String,
     },
+    Cancel,
 }
 
 /// Commands processed sequentially by the coordinator thread.
 enum Command {
     Input(InputEvent),
-    Cancel { recording_was_active: bool },
+    GlobalCancel,
     ProcessingFinished,
+    Voice {
+        request: Box<VoiceRequest>,
+        reply: Sender<Result<VoiceSessionView, String>>,
+        deadline: Instant,
+    },
+    VoiceSessionView {
+        session_id: String,
+        reply: Sender<Result<VoiceSessionView, String>>,
+    },
+    RecordingRequested {
+        binding_id: String,
+        generation: u64,
+        session_id: Option<String>,
+    },
+    RecordingReady {
+        binding_id: String,
+        generation: u64,
+    },
+    PreparationFailed {
+        binding_id: String,
+        generation: u64,
+    },
 }
+
+/// 仅镜像归属和回执事实；录音/处理生命周期仍只由 Stage 决定。
+struct OwnedVoiceSession {
+    start: VoiceRequest,
+    /// 会话事实版本，与全局录音生命周期计数分离。
+    view_generation: u64,
+    binding_id: String,
+    microphone_generation: Option<u64>,
+    microphone_ready: bool,
+    terminal: Option<VoicePhase>,
+}
+
+/// 给 actions 读取冻结输出身份，不承担生命周期转换。
+#[derive(Default)]
+struct VoiceProjection {
+    context: Mutex<Option<VoiceRequest>>,
+}
+
+const MAX_VOICE_SESSIONS: usize = 1024;
+const MAX_VOICE_REQUESTS: usize = 16384;
 
 /// Decide whether a key-up should be deferred (so auto-repeat can cancel it)
 /// or a key-down cancels a deferred release. `hold_to_talk` is whether a
@@ -222,6 +270,10 @@ struct CoordinatorState {
     last_press: Option<Instant>,
     pending_release: Option<PendingRelease>,
     pending_press: Option<PendingPress>,
+    generation: u64,
+    active_voice: Option<String>,
+    voice_sessions: HashMap<String, OwnedVoiceSession>,
+    voice_requests: HashMap<String, (VoiceRequest, Result<VoiceSessionView, String>)>,
 }
 
 impl CoordinatorState {
@@ -232,6 +284,10 @@ impl CoordinatorState {
             last_press: None,
             pending_release: None,
             pending_press: None,
+            generation: 0,
+            active_voice: None,
+            voice_sessions: HashMap::new(),
+            voice_requests: HashMap::new(),
         }
     }
 
@@ -248,6 +304,18 @@ impl CoordinatorState {
     }
 
     fn on_input(&mut self, input: InputEvent, now: Instant) -> Option<Effect> {
+        // 本机同 binding 的明确停止按键仍可结束 IME 发起的录音，但不能换掉
+        // 已冻结的目标/输出所有者；无关 release、PTT press 和其他 binding 不参与。
+        if self.active_voice.is_some() {
+            if let Stage::Recording(binding) = &self.stage {
+                if !input.is_pressed
+                    || input.binding_id != *binding
+                    || input.mode == ShortcutActivation::PushToTalk
+                {
+                    return None;
+                }
+            }
+        }
         let pending_release_binding = self
             .pending_release
             .as_ref()
@@ -459,6 +527,16 @@ impl CoordinatorState {
     }
 
     fn on_cancel(&mut self, recording_was_active: bool) {
+        if let Some(session) = self
+            .active_voice
+            .as_ref()
+            .and_then(|id| self.voice_sessions.get_mut(id))
+        {
+            if session.terminal.is_none() {
+                session.terminal = Some(VoicePhase::Cancelled);
+                session.view_generation += 1;
+            }
+        }
         self.pending_release = None;
         // An explicit cancel abandons any remembered start too — the user
         // asked for silence, not a deferred recording.
@@ -469,10 +547,22 @@ impl CoordinatorState {
         {
             self.stage = Stage::Idle;
             self.hold = None;
+            self.active_voice = None;
         }
     }
 
     fn on_processing_finished(&mut self) -> Option<Effect> {
+        if let Some(session) = self
+            .active_voice
+            .take()
+            .and_then(|id| self.voice_sessions.get_mut(&id))
+        {
+            // FinishGuard 也在失败/展开栈时触发，不能据此声称已有结果或已上屏。
+            if session.terminal.is_none() {
+                session.terminal = Some(VoicePhase::Interrupted);
+                session.view_generation += 1;
+            }
+        }
         self.stage = Stage::Idle;
         self.hold = None;
         let pending = self.pending_press.take()?;
@@ -492,6 +582,14 @@ impl CoordinatorState {
     /// whether recording actually began (microphone access can be denied).
     fn on_start_result(&mut self, binding_id: &str, started: bool) {
         if !started && matches!(&self.stage, Stage::Recording(id) if id == binding_id) {
+            if let Some(session) = self
+                .active_voice
+                .take()
+                .and_then(|id| self.voice_sessions.get_mut(&id))
+            {
+                session.terminal = Some(VoicePhase::Failed);
+                session.view_generation += 1;
+            }
             self.stage = Stage::Idle;
             self.hold = None;
         }
@@ -507,6 +605,7 @@ impl CoordinatorState {
         pressed_at: Instant,
         locked: bool,
     ) -> Effect {
+        self.generation = self.generation.saturating_add(1);
         self.stage = Stage::Recording(binding_id.clone());
         self.hold = Some(Hold { pressed_at, locked });
         Effect::Start {
@@ -516,12 +615,267 @@ impl CoordinatorState {
     }
 
     fn begin_processing(&mut self, binding_id: String, hotkey_string: String) -> Effect {
+        if matches!(self.stage, Stage::Recording(_)) {
+            if let Some(session) = self
+                .active_voice
+                .as_ref()
+                .and_then(|id| self.voice_sessions.get_mut(id))
+            {
+                if session.terminal.is_none() {
+                    session.view_generation += 1;
+                }
+            }
+        }
         self.stage = Stage::Processing;
         self.hold = None;
         Effect::Stop {
             binding_id,
             hotkey_string,
         }
+    }
+
+    fn voice_context(&self) -> Option<VoiceRequest> {
+        self.active_voice
+            .as_ref()
+            .and_then(|id| self.voice_sessions.get(id))
+            .filter(|session| session.terminal.is_none())
+            .map(|session| session.start.clone())
+    }
+
+    fn voice_view(&self, session_id: &str) -> Result<VoiceSessionView, String> {
+        let session = self.voice_sessions.get(session_id).ok_or("未知语音会话")?;
+        let phase = session.terminal.unwrap_or_else(|| match &self.stage {
+            Stage::Recording(id) if id == &session.binding_id => {
+                if session.microphone_ready {
+                    VoicePhase::Recording
+                } else {
+                    VoicePhase::Preparing
+                }
+            }
+            Stage::Processing if self.active_voice.as_deref() == Some(session_id) => {
+                VoicePhase::Processing
+            }
+            _ => VoicePhase::Interrupted,
+        });
+        let target_id = match &session.start.command {
+            VoiceCommand::Start { target, .. } => Some(target.target_id.clone()),
+            _ => None,
+        };
+        Ok(VoiceSessionView {
+            session_id: session_id.into(),
+            generation: session.view_generation,
+            phase,
+            target_id,
+            item_id: None,
+            output_operation_id: None,
+        })
+    }
+
+    #[cfg(test)]
+    fn on_voice(
+        &mut self,
+        request: VoiceRequest,
+        now: Instant,
+    ) -> (Result<VoiceSessionView, String>, Option<Effect>) {
+        self.on_voice_before_deadline(request, now + VOICE_START_QUEUE_TIMEOUT, now)
+    }
+
+    fn on_voice_before_deadline(
+        &mut self,
+        request: VoiceRequest,
+        deadline: Instant,
+        now: Instant,
+    ) -> (Result<VoiceSessionView, String>, Option<Effect>) {
+        if let Some((original, result)) = self.voice_requests.get(&request.request_id) {
+            if original != &request {
+                return (Err("语音请求 ID 与原请求冲突".into()), None);
+            }
+            return (
+                match result {
+                    Ok(_) => self.voice_view(&request.session_id),
+                    Err(error) => Err(error.clone()),
+                },
+                None,
+            );
+        }
+        // 达到容量不驱逐旧身份；Status 不产生副作用，Stop/Cancel 仍须能关闭采集。
+        let at_capacity = self.voice_requests.len() >= MAX_VOICE_REQUESTS;
+        if at_capacity && matches!(request.command, VoiceCommand::Start { .. }) {
+            return (Err("语音请求账本已满；拒绝新会话".into()), None);
+        }
+        let (result, effect) =
+            if matches!(request.command, VoiceCommand::Start { .. }) && now >= deadline {
+                (Err("语音 Start 排队已超时，未开始录音".into()), None)
+            } else {
+                self.apply_voice(&request, now)
+            };
+        // 状态轮询只读，不占用去重容量。满容量时仍允许已授权 Stop/Cancel
+        // 关闭采集，但依赖会话的幂等事实而不再分配新回执；既有 ID 从不驱逐。
+        if !at_capacity && !matches!(request.command, VoiceCommand::Status) {
+            self.voice_requests
+                .insert(request.request_id.clone(), (request, result.clone()));
+        }
+        (result, effect)
+    }
+
+    fn acknowledge_start_before_effect(
+        &mut self,
+        binding_id: &str,
+        result: Result<VoiceSessionView, String>,
+        reply: Sender<Result<VoiceSessionView, String>>,
+    ) -> bool {
+        // Preparing 是“请求被协调器接纳”，不是 microphone-ready。接收方已经
+        // 放弃时不产生迟到的录音；此边界之后的断线由持久 ledger 保守处理。
+        if reply.send(result).is_err() {
+            self.on_start_result(binding_id, false);
+            false
+        } else {
+            true
+        }
+    }
+
+    fn apply_voice(
+        &mut self,
+        request: &VoiceRequest,
+        now: Instant,
+    ) -> (Result<VoiceSessionView, String>, Option<Effect>) {
+        if let Some(session) = self.voice_sessions.get(&request.session_id) {
+            if session.start.client_instance != request.client_instance
+                || session.start.server_instance != request.server_instance
+            {
+                return (Err("语音会话不属于此连接实例".into()), None);
+            }
+            if matches!(request.command, VoiceCommand::Start { .. }) {
+                if session.start.command != request.command
+                    || session.start.policy_epoch != request.policy_epoch
+                {
+                    return (
+                        Err("重复 Start 的目标、选项或策略与原会话冲突".into()),
+                        None,
+                    );
+                }
+                return (self.voice_view(&request.session_id), None);
+            }
+        } else if !matches!(request.command, VoiceCommand::Start { .. }) {
+            return (Err("未知语音会话".into()), None);
+        }
+        let effect = match &request.command {
+            VoiceCommand::Start { post_process, .. } => {
+                if self.stage != Stage::Idle || self.pending_press.is_some() {
+                    return (Err("录音或处理流水线忙，不能开始新语音会话".into()), None);
+                }
+                if self.voice_sessions.len() >= MAX_VOICE_SESSIONS || self.generation == u64::MAX {
+                    return (Err("语音会话账本已满；拒绝新会话".into()), None);
+                }
+                let binding_id = if *post_process {
+                    "transcribe_with_post_process"
+                } else {
+                    "transcribe"
+                }
+                .to_owned();
+                let effect =
+                    self.begin_recording(binding_id.clone(), "inputia-session".into(), now, true);
+                self.voice_sessions.insert(
+                    request.session_id.clone(),
+                    OwnedVoiceSession {
+                        start: request.clone(),
+                        view_generation: 1,
+                        binding_id,
+                        microphone_generation: None,
+                        microphone_ready: false,
+                        terminal: None,
+                    },
+                );
+                self.active_voice = Some(request.session_id.clone());
+                Some(effect)
+            }
+            VoiceCommand::Stop => {
+                if self.active_voice.as_deref() == Some(&request.session_id) {
+                    if let Stage::Recording(binding) = &self.stage {
+                        Some(self.begin_processing(binding.clone(), "inputia-session".into()))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            VoiceCommand::Cancel => {
+                let active = self.active_voice.as_deref() == Some(&request.session_id)
+                    && self
+                        .voice_sessions
+                        .get(&request.session_id)
+                        .is_some_and(|session| session.terminal.is_none());
+                if active {
+                    self.on_cancel(matches!(self.stage, Stage::Recording(_)));
+                    Some(Effect::Cancel)
+                } else {
+                    None
+                }
+            }
+            VoiceCommand::Status => None,
+        };
+        (self.voice_view(&request.session_id), effect)
+    }
+
+    fn on_recording_requested(
+        &mut self,
+        binding_id: &str,
+        generation: u64,
+        session_id: Option<&str>,
+    ) {
+        if self.active_voice.as_deref() != session_id
+            || !matches!(&self.stage, Stage::Recording(id) if id == binding_id)
+        {
+            return;
+        }
+        if let Some(session) = session_id.and_then(|id| self.voice_sessions.get_mut(id)) {
+            if session.terminal.is_none() && session.microphone_generation.is_none() {
+                session.microphone_generation = Some(generation);
+            }
+        }
+    }
+
+    fn on_recording_ready(&mut self, binding_id: &str, generation: u64) {
+        if !matches!(&self.stage, Stage::Recording(id) if id == binding_id) {
+            return;
+        }
+        if let Some(session) = self
+            .active_voice
+            .as_ref()
+            .and_then(|id| self.voice_sessions.get_mut(id))
+        {
+            if session.terminal.is_none()
+                && !session.microphone_ready
+                && session.microphone_generation == Some(generation)
+            {
+                session.microphone_ready = true;
+                session.view_generation += 1;
+            }
+        }
+    }
+
+    fn on_preparation_failed(&mut self, binding_id: &str, generation: u64) -> Option<Effect> {
+        if !matches!(&self.stage, Stage::Recording(id) if id == binding_id) {
+            return None;
+        }
+        let current_preparing = self
+            .active_voice
+            .as_ref()
+            .and_then(|id| self.voice_sessions.get(id))
+            .is_some_and(|session| {
+                session.binding_id == binding_id
+                    && session.terminal.is_none()
+                    && !session.microphone_ready
+                    && session.microphone_generation == Some(generation)
+            });
+        if !current_preparing {
+            return None;
+        }
+        // 已知没有进入 ready；保留 Failed，而不是把清理副作用误记为用户取消。
+        // 清理前清除 active_voice；raw cleanup 不会再发迟到的取消通知。
+        self.on_start_result(binding_id, false);
+        Some(Effect::Cancel)
     }
 }
 
@@ -532,6 +886,7 @@ impl CoordinatorState {
 /// returned [`Effect`]s.
 pub struct TranscriptionCoordinator {
     tx: Sender<Command>,
+    voice_projection: Arc<VoiceProjection>,
 }
 
 pub fn is_transcribe_binding(id: &str) -> bool {
@@ -541,6 +896,8 @@ pub fn is_transcribe_binding(id: &str) -> bool {
 impl TranscriptionCoordinator {
     pub fn new(app: AppHandle) -> Self {
         let (tx, rx) = mpsc::channel();
+        let voice_projection = Arc::new(VoiceProjection::default());
+        let projection = voice_projection.clone();
 
         thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -552,7 +909,7 @@ impl TranscriptionCoordinator {
                             Ok(cmd) => cmd,
                             Err(mpsc::RecvTimeoutError::Timeout) => {
                                 if let Some(effect) = state.on_grace_expired() {
-                                    run_effect(&app, &mut state, effect);
+                                    run_effect(&app, &mut state, effect, &projection);
                                 }
                                 continue;
                             }
@@ -565,21 +922,10 @@ impl TranscriptionCoordinator {
                         }
                     };
 
-                    match cmd {
-                        Command::Input(input) => {
-                            if let Some(effect) = state.on_input(input, Instant::now()) {
-                                run_effect(&app, &mut state, effect);
-                            }
-                        }
-                        Command::Cancel {
-                            recording_was_active,
-                        } => state.on_cancel(recording_was_active),
-                        Command::ProcessingFinished => {
-                            if let Some(effect) = state.on_processing_finished() {
-                                run_effect(&app, &mut state, effect);
-                            }
-                        }
-                    }
+                    dispatch_command(&mut state, cmd, Instant::now(), &mut |state, effect| {
+                        run_effect(&app, state, effect, &projection);
+                    });
+                    publish_projection(&state, &projection);
                 }
                 debug!("Transcription coordinator exited");
             }));
@@ -588,7 +934,85 @@ impl TranscriptionCoordinator {
             }
         });
 
-        Self { tx }
+        Self {
+            tx,
+            voice_projection,
+        }
+    }
+
+    /// 仅入队，Start 排队上限 15 秒；调用方在后台等待回执。
+    /// 首次 Start 的 Preparing 只确认接纳准备，不代表麦克风开始录音；后续
+    /// 失败/硬件 ready 必须通过会话视图查询，不能把初始回执当作录音成功。
+    /// 认证/profile/策略校验由服务入口完成。
+    pub fn control_voice(
+        &self,
+        request: VoiceRequest,
+    ) -> mpsc::Receiver<Result<VoiceSessionView, String>> {
+        let (reply, receiver) = mpsc::channel();
+        if let Err(error) = self.tx.send(Command::Voice {
+            request: Box::new(request),
+            reply,
+            deadline: Instant::now() + VOICE_START_QUEUE_TIMEOUT,
+        }) {
+            if let Command::Voice { reply, .. } = error.0 {
+                let _ = reply.send(Err("语音协调器已经退出".into()));
+            }
+        }
+        receiver
+    }
+
+    /// 内部只读查询，不重放 Start，也不创建请求回执。外部调用须先验证会话归属。
+    pub fn voice_session_view(
+        &self,
+        session_id: &str,
+    ) -> mpsc::Receiver<Result<VoiceSessionView, String>> {
+        let (reply, receiver) = mpsc::channel();
+        if let Err(error) = self.tx.send(Command::VoiceSessionView {
+            session_id: session_id.into(),
+            reply,
+        }) {
+            if let Command::VoiceSessionView { reply, .. } = error.0 {
+                let _ = reply.send(Err("语音协调器已经退出".into()));
+            }
+        }
+        receiver
+    }
+
+    /// actions 在启动录音请求返回 generation 后调用；冻结请求所属会话。
+    pub fn notify_recording_requested(&self, binding_id: &str, generation: u64) {
+        let session_id = self
+            .voice_output_context()
+            .map(|request| request.session_id);
+        let _ = self.tx.send(Command::RecordingRequested {
+            binding_id: binding_id.into(),
+            generation,
+            session_id,
+        });
+    }
+
+    /// 仅真实麦克风 ready 且 generation 仍有效时调用，不以启动进程成功代替。
+    pub fn notify_recording_ready(&self, binding_id: &str, generation: u64) {
+        let _ = self.tx.send(Command::RecordingReady {
+            binding_id: binding_id.into(),
+            generation,
+        });
+    }
+
+    /// owned 会话等待首帧失败/超时；仅当前尚未 ready 的麦克风 generation 可清理。
+    pub fn notify_preparation_failed(&self, binding_id: &str, microphone_generation: u64) {
+        let _ = self.tx.send(Command::PreparationFailed {
+            binding_id: binding_id.into(),
+            generation: microphone_generation,
+        });
+    }
+
+    /// 只读冻结的输出归属元数据，不等待录音/转写完成。
+    pub fn voice_output_context(&self) -> Option<VoiceRequest> {
+        self.voice_projection
+            .context
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
     }
 
     /// Send a keyboard input event for a transcribe binding. `hold_threshold`
@@ -649,16 +1073,10 @@ impl TranscriptionCoordinator {
         }
     }
 
-    pub fn notify_cancel(&self, recording_was_active: bool) {
-        if self
-            .tx
-            .send(Command::Cancel {
-                recording_was_active,
-            })
-            .is_err()
-        {
-            warn!("Transcription coordinator channel closed");
-        }
+    /// 全局用户取消按队列顺序处理当前生命周期和 pending press；不先清理再通知。
+    /// false 表示通道确实已关闭，调用方无需等待，可执行无 worker 紧急清理。
+    pub fn request_cancel(&self) -> bool {
+        self.tx.send(Command::GlobalCancel).is_ok()
     }
 
     pub fn notify_processing_finished(&self) {
@@ -668,7 +1086,85 @@ impl TranscriptionCoordinator {
     }
 }
 
-fn run_effect(app: &AppHandle, state: &mut CoordinatorState, effect: Effect) {
+fn publish_projection(state: &CoordinatorState, projection: &VoiceProjection) {
+    if let Ok(mut context) = projection.context.lock() {
+        *context = state.voice_context();
+    }
+}
+
+/// 生产与时序回归共用同一分派入口；executor 返回前不处理下一条 Start/Finish。
+fn dispatch_command(
+    state: &mut CoordinatorState,
+    command: Command,
+    now: Instant,
+    execute: &mut impl FnMut(&mut CoordinatorState, Effect),
+) {
+    match command {
+        Command::Input(input) => {
+            if let Some(effect) = state.on_input(input, now) {
+                execute(state, effect);
+            }
+        }
+        Command::GlobalCancel => {
+            state.on_cancel(matches!(state.stage, Stage::Recording(_)));
+            execute(state, Effect::Cancel);
+        }
+        Command::ProcessingFinished => {
+            if let Some(effect) = state.on_processing_finished() {
+                execute(state, effect);
+            }
+        }
+        Command::Voice {
+            request,
+            reply,
+            deadline,
+        } => {
+            let session_id = request.session_id.clone();
+            let (result, effect) = state.on_voice_before_deadline(*request, deadline, now);
+            if let Some(Effect::Start { ref binding_id, .. }) = effect {
+                if state.acknowledge_start_before_effect(binding_id, result, reply) {
+                    if let Some(effect) = effect {
+                        execute(state, effect);
+                    }
+                }
+            } else {
+                if let Some(effect) = effect {
+                    execute(state, effect);
+                }
+                let _ = reply.send(result.and_then(|_| state.voice_view(&session_id)));
+            }
+        }
+        Command::VoiceSessionView { session_id, reply } => {
+            let _ = reply.send(state.voice_view(&session_id));
+        }
+        Command::RecordingRequested {
+            binding_id,
+            generation,
+            session_id,
+        } => state.on_recording_requested(&binding_id, generation, session_id.as_deref()),
+        Command::RecordingReady {
+            binding_id,
+            generation,
+        } => state.on_recording_ready(&binding_id, generation),
+        Command::PreparationFailed {
+            binding_id,
+            generation,
+        } => {
+            if let Some(effect) = state.on_preparation_failed(&binding_id, generation) {
+                execute(state, effect);
+            }
+        }
+    }
+}
+
+fn run_effect(
+    app: &AppHandle,
+    state: &mut CoordinatorState,
+    effect: Effect,
+    projection: &VoiceProjection,
+) {
+    // action.start/stop 会同步读取此镜像，必须先于副作用发布当前归属。
+    publish_projection(state, projection);
     match effect {
         Effect::Start {
             binding_id,
@@ -681,7 +1177,9 @@ fn run_effect(app: &AppHandle, state: &mut CoordinatorState, effect: Effect) {
             binding_id,
             hotkey_string,
         } => stop(app, &binding_id, &hotkey_string),
+        Effect::Cancel => crate::utils::cancel_current_operation_raw(app),
     }
+    publish_projection(state, projection);
 }
 
 /// Execute a start effect; returns whether recording actually began, so the
@@ -712,6 +1210,889 @@ fn stop(app: &AppHandle, binding_id: &str, hotkey_string: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn voice_start(session_id: &str, request_id: &str) -> VoiceRequest {
+        use inputia_handy_runtime::voice_protocol::{HostTargetToken, VoiceTermsVersion};
+        VoiceRequest {
+            request_id: request_id.into(),
+            session_id: session_id.into(),
+            server_instance: "server-one".into(),
+            client_instance: "host-one".into(),
+            policy_epoch: 4,
+            command: VoiceCommand::Start {
+                target: HostTargetToken {
+                    target_id: "field-token".into(),
+                    host_instance: "host-one".into(),
+                    controller_id: "controller-one".into(),
+                    activation_generation: 1,
+                    field_id: Some("field-one".into()),
+                    selection_generation: 1,
+                    composition_generation: 1,
+                    source_app: Some("synthetic.editor".into()),
+                },
+                post_process: false,
+                terms: VoiceTermsVersion {
+                    policy_epoch: 4,
+                    learning_generation: 2,
+                },
+            },
+        }
+    }
+
+    fn voice_command(
+        start: &VoiceRequest,
+        request_id: &str,
+        command: VoiceCommand,
+    ) -> VoiceRequest {
+        VoiceRequest {
+            request_id: request_id.into(),
+            command,
+            ..start.clone()
+        }
+    }
+
+    #[test]
+    fn owned_start_is_not_toggle_and_only_current_microphone_ready_is_recording() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let start = voice_start("session-one", "start-one");
+        let (view, effect) = state.on_voice(start.clone(), now);
+        assert!(matches!(effect, Some(Effect::Start { .. })));
+        assert_eq!(view.unwrap().phase, VoicePhase::Preparing);
+        assert!(state.on_voice(start.clone(), now).1.is_none());
+        assert!(state
+            .on_voice(
+                VoiceRequest {
+                    request_id: "start-two".into(),
+                    ..start.clone()
+                },
+                now
+            )
+            .1
+            .is_none());
+        state.on_start_result("transcribe", true);
+        assert_eq!(
+            state.voice_view("session-one").unwrap().phase,
+            VoicePhase::Preparing
+        );
+        state.on_recording_ready("transcribe", 10);
+        assert_eq!(
+            state.voice_view("session-one").unwrap().phase,
+            VoicePhase::Preparing
+        );
+        state.on_recording_requested("transcribe", 10, Some("session-one"));
+        state.on_recording_ready("transcribe", 9);
+        assert_eq!(
+            state.voice_view("session-one").unwrap().phase,
+            VoicePhase::Preparing
+        );
+        state.on_recording_ready("transcribe", 10);
+        assert_eq!(
+            state.on_voice(start, now).0.unwrap().phase,
+            VoicePhase::Recording
+        );
+    }
+
+    #[test]
+    fn owned_session_rejects_foreign_client_server_and_request_or_start_conflicts() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let start = voice_start("session-one", "start-one");
+        assert!(state.on_voice(start.clone(), now).0.is_ok());
+        let reused = voice_command(&start, "start-one", VoiceCommand::Stop);
+        assert!(state.on_voice(reused, now).0.is_err());
+        for command in [
+            VoiceCommand::Stop,
+            VoiceCommand::Cancel,
+            VoiceCommand::Status,
+            start.command.clone(),
+        ] {
+            let mut request = voice_command(&start, &format!("foreign-{command:?}"), command);
+            request.client_instance = "host-other".into();
+            let (result, effect) = state.on_voice(request, now);
+            assert!(result.is_err());
+            assert!(effect.is_none());
+        }
+        let mut other_server = voice_command(&start, "other-server", VoiceCommand::Stop);
+        other_server.server_instance = "server-other".into();
+        assert!(state.on_voice(other_server, now).0.is_err());
+        let mut changed = start.clone();
+        changed.request_id = "changed-target".into();
+        if let VoiceCommand::Start {
+            target,
+            post_process,
+            ..
+        } = &mut changed.command
+        {
+            target.target_id = "field-other".into();
+            *post_process = true;
+        }
+        assert!(state.on_voice(changed, now).0.is_err());
+        assert_eq!(state.stage, Stage::Recording("transcribe".into()));
+    }
+
+    #[test]
+    fn owned_stop_cancel_are_idempotent_and_drain_does_not_claim_delivery() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let start = voice_start("session-one", "start-one");
+        assert!(state.on_voice(start.clone(), now).0.is_ok());
+        let stop = voice_command(&start, "stop-one", VoiceCommand::Stop);
+        let (view, effect) = state.on_voice(stop.clone(), now);
+        assert!(matches!(effect, Some(Effect::Stop { .. })));
+        assert_eq!(view.unwrap().phase, VoicePhase::Processing);
+        assert!(state.on_voice(stop, now).1.is_none());
+        assert!(state
+            .on_voice(voice_command(&start, "stop-two", VoiceCommand::Stop), now)
+            .1
+            .is_none());
+        let cancel = voice_command(&start, "cancel-one", VoiceCommand::Cancel);
+        assert_eq!(state.on_voice(cancel.clone(), now).1, Some(Effect::Cancel));
+        assert!(state.on_voice(cancel, now).1.is_none());
+        assert_eq!(state.stage, Stage::Processing);
+        assert!(state.voice_context().is_none());
+        state.on_processing_finished();
+        assert_eq!(
+            state.voice_view("session-one").unwrap().phase,
+            VoicePhase::Cancelled
+        );
+        assert!(state.on_voice(start, now).1.is_none());
+        assert_eq!(state.stage, Stage::Idle);
+    }
+
+    #[test]
+    fn cancelled_session_and_queued_old_readiness_cannot_affect_replacement() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let old = voice_start("old-session", "old-start");
+        assert!(state.on_voice(old.clone(), now).0.is_ok());
+        assert!(state
+            .on_voice(voice_command(&old, "old-cancel", VoiceCommand::Cancel), now)
+            .0
+            .is_ok());
+        let next = voice_start("next-session", "next-start");
+        assert!(state.on_voice(next.clone(), now).0.is_ok());
+        state.on_recording_requested("transcribe", 10, Some("old-session"));
+        state.on_recording_ready("transcribe", 10);
+        assert_eq!(
+            state.voice_view("next-session").unwrap().phase,
+            VoicePhase::Preparing
+        );
+        state.on_recording_requested("transcribe", 11, Some("next-session"));
+        state.on_recording_ready("transcribe", 10);
+        assert_eq!(
+            state.voice_view("next-session").unwrap().phase,
+            VoicePhase::Preparing
+        );
+        state.on_recording_ready("transcribe", 11);
+        assert_eq!(
+            state.voice_view("next-session").unwrap().phase,
+            VoicePhase::Recording
+        );
+        assert!(state
+            .on_voice(
+                voice_command(&old, "late-old-cancel", VoiceCommand::Cancel),
+                now
+            )
+            .1
+            .is_none());
+        assert_eq!(state.voice_context(), Some(next));
+    }
+
+    #[test]
+    fn busy_owned_start_rejection_is_not_later_replayed_as_a_start() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        state.on_input(toggle_input(true), now);
+        let request = voice_start("session-one", "busy-start");
+        assert!(state.on_voice(request.clone(), now).0.is_err());
+        state.on_cancel(true);
+        assert!(state.on_voice(request.clone(), now).0.is_err());
+        assert_eq!(state.stage, Stage::Idle);
+        let fresh = VoiceRequest {
+            request_id: "fresh-start".into(),
+            ..request
+        };
+        assert!(matches!(
+            state.on_voice(fresh, now).1,
+            Some(Effect::Start { .. })
+        ));
+    }
+
+    #[test]
+    fn shortcut_stops_owned_recording_without_replacing_owner_and_preserves_processing_drain() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let start = voice_start("session-one", "start-one");
+        assert!(state.on_voice(start.clone(), now).0.is_ok());
+        assert!(state.on_input(ptt_input(false), now).is_none());
+        assert!(state.pending_release.is_none());
+        assert!(matches!(
+            state.on_input(toggle_input(true), now),
+            Some(Effect::Stop { .. })
+        ));
+        assert_eq!(state.voice_context(), Some(start.clone()));
+        assert!(state
+            .on_voice(voice_command(&start, "stop-one", VoiceCommand::Stop), now)
+            .0
+            .is_ok());
+        state.on_input(toggle_input(true), now);
+        assert!(state.pending_press.is_some());
+        assert!(matches!(
+            state.on_processing_finished(),
+            Some(Effect::Start { .. })
+        ));
+        assert_eq!(
+            state.voice_view("session-one").unwrap().phase,
+            VoicePhase::Interrupted
+        );
+        assert!(state.voice_context().is_none());
+        assert_eq!(state.stage, Stage::Recording("transcribe".into()));
+        assert!(matches!(
+            state.on_input(toggle_input(true), now),
+            Some(Effect::Stop { .. })
+        ));
+    }
+
+    #[test]
+    fn failed_owned_start_is_terminal_and_late_ready_does_not_revive_it() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let start = voice_start("session-one", "start-one");
+        assert!(state.on_voice(start.clone(), now).0.is_ok());
+        state.on_start_result("transcribe", false);
+        state.on_recording_requested("transcribe", 1, Some("session-one"));
+        state.on_recording_ready("transcribe", 1);
+        assert_eq!(
+            state.on_voice(start, now).0.unwrap().phase,
+            VoicePhase::Failed
+        );
+        assert_eq!(state.stage, Stage::Idle);
+        assert!(state.voice_context().is_none());
+    }
+
+    #[test]
+    fn owned_session_capacity_never_evicts_old_start_identity() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let first = voice_start("first", "first-start");
+        for index in 0..MAX_VOICE_SESSIONS {
+            let start = if index == 0 {
+                first.clone()
+            } else {
+                voice_start(&format!("session-{index}"), &format!("start-{index}"))
+            };
+            assert!(state.on_voice(start.clone(), now).0.is_ok());
+            assert!(state
+                .on_voice(
+                    voice_command(&start, &format!("cancel-{index}"), VoiceCommand::Cancel),
+                    now,
+                )
+                .0
+                .is_ok());
+        }
+        assert!(state
+            .on_voice(voice_start("overflow", "overflow-start"), now)
+            .0
+            .is_err());
+        assert_eq!(
+            state.on_voice(first, now).0.unwrap().phase,
+            VoicePhase::Cancelled
+        );
+        assert_eq!(state.stage, Stage::Idle);
+    }
+
+    #[test]
+    fn voice_control_only_enqueues_and_reports_closed_channel() {
+        let (tx, rx) = mpsc::channel();
+        let coordinator = TranscriptionCoordinator {
+            tx,
+            voice_projection: Arc::new(VoiceProjection::default()),
+        };
+        let request = voice_start("session-one", "start-one");
+        let result = coordinator.control_voice(request.clone());
+        assert!(matches!(result.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        let Command::Voice {
+            request: queued,
+            reply,
+            ..
+        } = rx.try_recv().unwrap()
+        else {
+            panic!("expected voice command")
+        };
+        assert_eq!(*queued, request);
+        reply.send(Err("synthetic refusal".into())).unwrap();
+        assert_eq!(result.recv().unwrap(), Err("synthetic refusal".into()));
+        drop(rx);
+        assert!(coordinator.control_voice(request).recv().unwrap().is_err());
+    }
+
+    #[test]
+    fn microphone_requested_hook_captures_identity_before_delayed_delivery() {
+        let (tx, rx) = mpsc::channel();
+        let projection = Arc::new(VoiceProjection::default());
+        let coordinator = TranscriptionCoordinator {
+            tx,
+            voice_projection: projection.clone(),
+        };
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let old = voice_start("old-session", "old-start");
+        assert!(state.on_voice(old.clone(), now).0.is_ok());
+        publish_projection(&state, &projection);
+        coordinator.notify_recording_requested("transcribe", 10);
+        assert!(state
+            .on_voice(voice_command(&old, "cancel", VoiceCommand::Cancel), now)
+            .0
+            .is_ok());
+        assert!(state
+            .on_voice(voice_start("new-session", "new-start"), now)
+            .0
+            .is_ok());
+        publish_projection(&state, &projection);
+        let Command::RecordingRequested {
+            binding_id,
+            generation,
+            session_id,
+        } = rx.try_recv().unwrap()
+        else {
+            panic!("expected microphone request")
+        };
+        assert_eq!(session_id.as_deref(), Some("old-session"));
+        state.on_recording_requested(&binding_id, generation, session_id.as_deref());
+        state.on_recording_ready(&binding_id, generation);
+        assert_eq!(
+            state.voice_view("new-session").unwrap().phase,
+            VoicePhase::Preparing
+        );
+    }
+
+    #[test]
+    fn owned_view_revision_changes_only_when_observable_phase_changes() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let start = voice_start("session-one", "start-one");
+        let preparing = state.on_voice(start.clone(), now).0.unwrap();
+        let lifecycle_generation = state.generation;
+        assert_eq!(preparing.generation, 1);
+        state.on_recording_requested("transcribe", 20, Some("session-one"));
+        state.on_recording_requested("transcribe", 20, Some("session-one"));
+        assert_eq!(state.voice_view("session-one").unwrap(), preparing);
+        state.on_recording_ready("transcribe", 20);
+        let recording = state.voice_view("session-one").unwrap();
+        assert_eq!(recording.phase, VoicePhase::Recording);
+        assert_eq!(recording.generation, preparing.generation + 1);
+        state.on_recording_ready("transcribe", 20);
+        state.on_recording_ready("transcribe", 19);
+        assert_eq!(state.on_voice(start.clone(), now).0.unwrap(), recording);
+        let stop = voice_command(&start, "stop", VoiceCommand::Stop);
+        let processing = state.on_voice(stop.clone(), now).0.unwrap();
+        assert_eq!(processing.phase, VoicePhase::Processing);
+        assert_eq!(processing.generation, recording.generation + 1);
+        assert_eq!(state.on_voice(stop, now).0.unwrap(), processing);
+        let cancel = voice_command(&start, "cancel", VoiceCommand::Cancel);
+        let cancelled = state.on_voice(cancel.clone(), now).0.unwrap();
+        assert_eq!(cancelled.phase, VoicePhase::Cancelled);
+        assert_eq!(cancelled.generation, processing.generation + 1);
+        assert_eq!(state.on_voice(cancel, now).0.unwrap(), cancelled);
+        state.on_cancel(true);
+        state.on_processing_finished();
+        assert_eq!(state.voice_view("session-one").unwrap(), cancelled);
+        assert_eq!(state.generation, lifecycle_generation);
+        let next = state
+            .on_voice(voice_start("session-two", "start-two"), now)
+            .0
+            .unwrap();
+        assert_eq!(state.generation, lifecycle_generation + 1);
+        assert_eq!(next.generation, 1);
+    }
+
+    #[test]
+    fn owned_interrupted_and_failed_views_have_new_revisions() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let start = voice_start("session-one", "start-one");
+        assert!(state.on_voice(start.clone(), now).0.is_ok());
+        let processing = state
+            .on_voice(voice_command(&start, "stop", VoiceCommand::Stop), now)
+            .0
+            .unwrap();
+        state.on_processing_finished();
+        let interrupted = state.voice_view("session-one").unwrap();
+        assert_eq!(interrupted.phase, VoicePhase::Interrupted);
+        assert_eq!(interrupted.generation, processing.generation + 1);
+        state.on_processing_finished();
+        assert_eq!(state.voice_view("session-one").unwrap(), interrupted);
+        let next = state
+            .on_voice(voice_start("session-two", "start-two"), now)
+            .0
+            .unwrap();
+        state.on_start_result("transcribe", false);
+        let failed = state.voice_view("session-two").unwrap();
+        assert_eq!(failed.phase, VoicePhase::Failed);
+        assert_eq!(failed.generation, next.generation + 1);
+    }
+
+    #[test]
+    fn local_owned_stop_preserves_debounce_binding_and_frozen_context() {
+        for mode in [ShortcutActivation::Toggle, ShortcutActivation::HoldOrToggle] {
+            let mut state = CoordinatorState::new();
+            let now = Instant::now();
+            let start = voice_start("session-one", "start-one");
+            assert!(state.on_voice(start.clone(), now).0.is_ok());
+            assert!(state.on_input(input(mode, false), now).is_none());
+            assert!(state.on_input(ptt_input(true), now).is_none());
+            let mut other = input(mode, true);
+            other.binding_id = "transcribe_with_post_process".into();
+            assert!(state.on_input(other, now).is_none());
+            state.last_press = Some(now);
+            assert!(state
+                .on_input(input(mode, true), now + Duration::from_millis(5))
+                .is_none());
+            assert_eq!(state.stage, Stage::Recording("transcribe".into()));
+            let effect = state.on_input(input(mode, true), now + DEBOUNCE);
+            assert!(
+                matches!(effect, Some(Effect::Stop { binding_id, .. }) if binding_id == "transcribe")
+            );
+            assert_eq!(state.voice_context(), Some(start));
+            assert_eq!(
+                state.voice_view("session-one").unwrap().phase,
+                VoicePhase::Processing
+            );
+            assert!(state
+                .on_input(input(mode, true), now + DEBOUNCE + Duration::from_millis(1))
+                .is_none());
+            assert!(state.pending_press.is_none());
+        }
+    }
+
+    #[test]
+    fn status_polling_does_not_grow_request_receipts() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let start = voice_start("session-one", "start-one");
+        assert!(state.on_voice(start.clone(), now).0.is_ok());
+        for index in 0..MAX_VOICE_REQUESTS + 2 {
+            assert!(state
+                .on_voice(
+                    voice_command(&start, &format!("status-{index}"), VoiceCommand::Status),
+                    now
+                )
+                .0
+                .is_ok());
+        }
+        assert_eq!(state.voice_requests.len(), 1);
+    }
+
+    #[test]
+    fn full_request_ledger_keeps_stop_cancel_available_without_growing_or_reviving_start() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let start = voice_start("session-one", "start-one");
+        assert!(state.on_voice(start.clone(), now).0.is_ok());
+        for index in 1..MAX_VOICE_REQUESTS {
+            let rejected = voice_start("busy-other-session", &format!("busy-start-{index}"));
+            assert!(state.on_voice(rejected, now).0.is_err());
+        }
+        assert_eq!(state.voice_requests.len(), MAX_VOICE_REQUESTS);
+        for index in 0..MAX_VOICE_REQUESTS + 2 {
+            assert!(state
+                .on_voice(
+                    voice_command(&start, &format!("status-{index}"), VoiceCommand::Status),
+                    now
+                )
+                .0
+                .is_ok());
+            let (view, effect) = state.on_voice(
+                voice_command(&start, &format!("stop-{index}"), VoiceCommand::Stop),
+                now,
+            );
+            assert_eq!(view.unwrap().phase, VoicePhase::Processing);
+            assert_eq!(effect.is_some(), index == 0);
+        }
+        assert_eq!(state.voice_requests.len(), MAX_VOICE_REQUESTS);
+        for index in 0..MAX_VOICE_REQUESTS + 2 {
+            let (view, effect) = state.on_voice(
+                voice_command(&start, &format!("cancel-{index}"), VoiceCommand::Cancel),
+                now,
+            );
+            assert_eq!(view.unwrap().phase, VoicePhase::Cancelled);
+            assert_eq!(effect.is_some(), index == 0);
+        }
+        assert_eq!(state.voice_requests.len(), MAX_VOICE_REQUESTS);
+        assert!(state
+            .on_voice(
+                voice_command(&start, "start-one", VoiceCommand::Cancel),
+                now
+            )
+            .0
+            .is_err());
+        state.on_processing_finished();
+        assert!(state
+            .on_voice(voice_start("new-session", "new-start"), now)
+            .0
+            .is_err());
+        let (old, effect) = state.on_voice(start, now);
+        assert_eq!(old.unwrap().phase, VoicePhase::Cancelled);
+        assert!(effect.is_none());
+        assert_eq!(state.stage, Stage::Idle);
+    }
+
+    #[test]
+    fn internal_voice_view_query_is_async_read_only_and_handles_closed_channel() {
+        let (tx, rx) = mpsc::channel();
+        let coordinator = TranscriptionCoordinator {
+            tx,
+            voice_projection: Arc::new(VoiceProjection::default()),
+        };
+        let mut state = CoordinatorState::new();
+        let start = voice_start("session-one", "start-one");
+        assert!(state.on_voice(start, Instant::now()).0.is_ok());
+        let count = state.voice_requests.len();
+        let result = coordinator.voice_session_view("session-one");
+        assert!(matches!(result.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        let Command::VoiceSessionView { session_id, reply } = rx.try_recv().unwrap() else {
+            panic!("expected read-only query")
+        };
+        reply.send(state.voice_view(&session_id)).unwrap();
+        assert_eq!(result.recv().unwrap().unwrap().phase, VoicePhase::Preparing);
+        assert_eq!(state.voice_requests.len(), count);
+        assert_eq!(state.stage, Stage::Recording("transcribe".into()));
+        drop(rx);
+        assert!(coordinator
+            .voice_session_view("session-one")
+            .recv()
+            .unwrap()
+            .is_err());
+    }
+
+    #[test]
+    fn expired_queued_start_is_rejected_without_effect_and_cannot_be_replayed() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let request = voice_start("session-one", "start-one");
+        let (result, effect) = state.on_voice_before_deadline(request.clone(), now, now);
+        assert!(result.is_err());
+        assert!(effect.is_none());
+        assert_eq!(state.stage, Stage::Idle);
+        assert!(state.voice_context().is_none());
+        assert!(state
+            .on_voice_before_deadline(request, now + VOICE_START_QUEUE_TIMEOUT, now)
+            .0
+            .is_err());
+        assert_eq!(state.stage, Stage::Idle);
+    }
+
+    #[test]
+    fn expired_stop_cancel_still_close_existing_session() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let start = voice_start("session-one", "start-one");
+        assert!(state.on_voice(start.clone(), now).0.is_ok());
+        let (_, stop) = state.on_voice_before_deadline(
+            voice_command(&start, "stop", VoiceCommand::Stop),
+            now,
+            now,
+        );
+        assert!(matches!(stop, Some(Effect::Stop { .. })));
+        let (view, cancel) = state.on_voice_before_deadline(
+            voice_command(&start, "cancel", VoiceCommand::Cancel),
+            now,
+            now,
+        );
+        assert_eq!(cancel, Some(Effect::Cancel));
+        assert_eq!(view.unwrap().phase, VoicePhase::Cancelled);
+    }
+
+    #[test]
+    fn dropped_start_receiver_prevents_effect_dispatch_and_preserves_failed_identity() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let request = voice_start("session-one", "start-one");
+        let (result, effect) = state.on_voice(request.clone(), now);
+        let Some(Effect::Start { binding_id, .. }) = effect else {
+            panic!("expected prepared start")
+        };
+        let (reply, receiver) = mpsc::channel();
+        drop(receiver);
+        assert!(!state.acknowledge_start_before_effect(&binding_id, result, reply));
+        assert_eq!(state.stage, Stage::Idle);
+        assert!(state.voice_context().is_none());
+        let (view, replay) = state.on_voice(request, now);
+        assert_eq!(view.unwrap().phase, VoicePhase::Failed);
+        assert!(replay.is_none());
+    }
+
+    #[test]
+    fn accepted_start_receipt_is_preparing_not_recording() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let (result, _) = state.on_voice(voice_start("session-one", "start-one"), now);
+        let (reply, receiver) = mpsc::channel();
+        assert!(state.acknowledge_start_before_effect("transcribe", result, reply));
+        assert_eq!(
+            receiver.recv().unwrap().unwrap().phase,
+            VoicePhase::Preparing
+        );
+        assert_eq!(
+            state.voice_view("session-one").unwrap().phase,
+            VoicePhase::Preparing
+        );
+        state.on_recording_requested("transcribe", 10, Some("session-one"));
+        assert_eq!(
+            state.voice_view("session-one").unwrap().phase,
+            VoicePhase::Preparing
+        );
+        state.on_start_result("transcribe", false);
+        assert_eq!(
+            state.voice_view("session-one").unwrap().phase,
+            VoicePhase::Failed
+        );
+        state.on_recording_ready("transcribe", 10);
+        assert_eq!(
+            state.voice_view("session-one").unwrap().phase,
+            VoicePhase::Failed
+        );
+    }
+
+    #[test]
+    fn preparation_timeout_fails_once_and_cleanup_cannot_relabel_or_revive_it() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let start = voice_start("session-one", "start-one");
+        let preparing = state.on_voice(start.clone(), now).0.unwrap();
+        state.on_recording_requested("transcribe", 10, Some("session-one"));
+        assert_eq!(
+            state.on_preparation_failed("transcribe", 10),
+            Some(Effect::Cancel)
+        );
+        let failed = state.voice_view("session-one").unwrap();
+        assert_eq!(failed.phase, VoicePhase::Failed);
+        assert_eq!(failed.generation, preparing.generation + 1);
+        assert_eq!(state.stage, Stage::Idle);
+        assert!(state.voice_context().is_none());
+        assert!(state.on_preparation_failed("transcribe", 10).is_none());
+        state.on_cancel(true);
+        state.on_recording_ready("transcribe", 10);
+        assert_eq!(state.voice_view("session-one").unwrap(), failed);
+        let (view, effect) = state.on_voice(start, now);
+        assert_eq!(view.unwrap(), failed);
+        assert!(effect.is_none());
+    }
+
+    #[test]
+    fn preparation_failure_rejects_unknown_old_binding_generation_and_newer_session() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let first = voice_start("session-one", "start-one");
+        assert!(state.on_voice(first, now).0.is_ok());
+        assert!(state.on_preparation_failed("transcribe", 10).is_none());
+        state.on_recording_requested("transcribe", 10, Some("session-one"));
+        assert!(state.on_preparation_failed("transcribe", 9).is_none());
+        assert!(state
+            .on_preparation_failed("transcribe_with_post_process", 10)
+            .is_none());
+        assert_eq!(
+            state.on_preparation_failed("transcribe", 10),
+            Some(Effect::Cancel)
+        );
+        let next = voice_start("session-two", "start-two");
+        assert!(state.on_voice(next.clone(), now).0.is_ok());
+        state.on_recording_requested("transcribe", 11, Some("session-two"));
+        assert!(state.on_preparation_failed("transcribe", 10).is_none());
+        assert_eq!(state.voice_context(), Some(next));
+        assert_eq!(
+            state.voice_view("session-two").unwrap().phase,
+            VoicePhase::Preparing
+        );
+    }
+
+    #[test]
+    fn preparation_failure_after_ready_or_stop_does_not_cancel_the_session() {
+        let now = Instant::now();
+        for stopped in [false, true] {
+            let mut state = CoordinatorState::new();
+            let start = voice_start("session-one", "start-one");
+            assert!(state.on_voice(start.clone(), now).0.is_ok());
+            state.on_recording_requested("transcribe", 10, Some("session-one"));
+            if stopped {
+                assert!(state
+                    .on_voice(voice_command(&start, "stop", VoiceCommand::Stop), now)
+                    .0
+                    .is_ok());
+            } else {
+                state.on_recording_ready("transcribe", 10);
+            }
+            let view = state.voice_view("session-one").unwrap();
+            assert!(state.on_preparation_failed("transcribe", 10).is_none());
+            assert_eq!(state.voice_view("session-one").unwrap(), view);
+            assert_eq!(state.voice_context(), Some(start));
+        }
+    }
+
+    #[test]
+    fn preparation_failure_does_not_apply_to_legacy_shortcut_recording() {
+        let mut state = CoordinatorState::new();
+        state.on_input(toggle_input(true), Instant::now());
+        state.on_recording_requested("transcribe", 10, None);
+        assert!(state.on_preparation_failed("transcribe", 10).is_none());
+        assert_eq!(state.stage, Stage::Recording("transcribe".into()));
+    }
+
+    fn processing_with_pending_shortcut(now: Instant) -> CoordinatorState {
+        let mut state = CoordinatorState::new();
+        assert!(matches!(
+            state.on_input(toggle_input(true), now),
+            Some(Effect::Start { .. })
+        ));
+        assert!(matches!(
+            state.on_input(toggle_input(true), now),
+            Some(Effect::Stop { .. })
+        ));
+        assert!(state.on_input(toggle_input(true), now).is_none());
+        assert!(state.pending_press.is_some());
+        state
+    }
+
+    #[test]
+    fn real_cancel_route_before_old_finish_clears_pending_before_cleanup_and_drain() {
+        let now = Instant::now();
+        let mut state = processing_with_pending_shortcut(now);
+        let (tx, rx) = mpsc::channel();
+        let coordinator = TranscriptionCoordinator {
+            tx,
+            voice_projection: Arc::new(VoiceProjection::default()),
+        };
+        crate::utils::route_cancellation(Some(&coordinator), || {
+            panic!("live worker must not use emergency cleanup")
+        });
+        coordinator.notify_processing_finished();
+        // 公共入口只排队；此时还没有清理，也没有提前修改 actor 状态。
+        assert!(state.pending_press.is_some());
+        let mut effects = Vec::new();
+        for _ in 0..2 {
+            dispatch_command(
+                &mut state,
+                rx.try_recv().unwrap(),
+                now,
+                &mut |state, effect| {
+                    if effect == Effect::Cancel {
+                        assert!(state.pending_press.is_none());
+                    }
+                    effects.push(effect);
+                },
+            );
+        }
+        assert_eq!(effects, vec![Effect::Cancel]);
+        assert_eq!(state.stage, Stage::Idle);
+        assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    }
+
+    #[test]
+    fn real_cancel_route_after_old_finish_cancels_the_new_current_recording() {
+        let now = Instant::now();
+        let mut state = processing_with_pending_shortcut(now);
+        let (tx, rx) = mpsc::channel();
+        let coordinator = TranscriptionCoordinator {
+            tx,
+            voice_projection: Arc::new(VoiceProjection::default()),
+        };
+        coordinator.notify_processing_finished();
+        crate::utils::route_cancellation(Some(&coordinator), || panic!("unexpected emergency"));
+        let mut effects = Vec::new();
+        for _ in 0..2 {
+            dispatch_command(
+                &mut state,
+                rx.try_recv().unwrap(),
+                now,
+                &mut |state, effect| {
+                    if effect == Effect::Cancel {
+                        assert_eq!(state.stage, Stage::Idle);
+                    }
+                    effects.push(effect);
+                },
+            );
+        }
+        assert!(matches!(effects.first(), Some(Effect::Start { .. })));
+        assert_eq!(effects.last(), Some(&Effect::Cancel));
+        assert_eq!(state.stage, Stage::Idle);
+        assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    }
+
+    #[test]
+    fn cleanup_serialization_prevents_new_start_from_crossing_cleanup() {
+        let now = Instant::now();
+        let state = processing_with_pending_shortcut(now);
+        let (tx, rx) = mpsc::channel();
+        let coordinator = TranscriptionCoordinator {
+            tx,
+            voice_projection: Arc::new(VoiceProjection::default()),
+        };
+        let (events, received) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let mut state = state;
+            for _ in 0..3 {
+                let command = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+                dispatch_command(&mut state, command, Instant::now(), &mut |state, effect| {
+                    match effect {
+                        Effect::Cancel => {
+                            assert!(state.pending_press.is_none());
+                            events.send("cleanup-start").unwrap();
+                            released.recv_timeout(Duration::from_secs(2)).unwrap();
+                            events.send("cleanup-finished").unwrap();
+                        }
+                        Effect::Start { .. } => {
+                            events.send("start").unwrap();
+                        }
+                        Effect::Stop { .. } => panic!("unexpected stop"),
+                    }
+                });
+            }
+            state.stage
+        });
+        crate::utils::route_cancellation(Some(&coordinator), || panic!("unexpected emergency"));
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(2)).unwrap(),
+            "cleanup-start"
+        );
+        coordinator.notify_processing_finished();
+        coordinator.send_external_input("transcribe", "synthetic-after-cancel");
+        assert!(matches!(
+            received.recv_timeout(Duration::from_millis(20)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        release.send(()).unwrap();
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(2)).unwrap(),
+            "cleanup-finished"
+        );
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(2)).unwrap(),
+            "start"
+        );
+        assert_eq!(
+            worker.join().unwrap(),
+            Stage::Recording("transcribe".into())
+        );
+    }
+
+    #[test]
+    fn real_cancel_route_uses_emergency_only_when_worker_is_absent_or_channel_closed() {
+        let (tx, rx) = mpsc::channel();
+        let coordinator = TranscriptionCoordinator {
+            tx,
+            voice_projection: Arc::new(VoiceProjection::default()),
+        };
+        let count = std::cell::Cell::new(0);
+        crate::utils::route_cancellation(Some(&coordinator), || count.set(count.get() + 1));
+        assert_eq!(count.get(), 0);
+        assert!(matches!(rx.try_recv().unwrap(), Command::GlobalCancel));
+        drop(rx);
+        crate::utils::route_cancellation(Some(&coordinator), || count.set(count.get() + 1));
+        crate::utils::route_cancellation(None, || count.set(count.get() + 1));
+        assert_eq!(count.get(), 2);
+    }
 
     #[test]
     fn push_to_talk_release_while_recording_defers_release() {
@@ -920,6 +2301,7 @@ mod tests {
             match effect {
                 Some(Effect::Start { .. }) => starts += 1,
                 Some(Effect::Stop { .. }) => stops += 1,
+                Some(Effect::Cancel) => panic!("普通按键不应产生远程会话取消 effect"),
                 None => {}
             }
         }

@@ -14,6 +14,43 @@ fn insert(conn: &Connection, text: &str) {
 }
 
 #[test]
+fn successful_voice_without_wav_is_retained_and_replayed_without_fake_attachment() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("history.db");
+    let mut conn = Connection::open(&path).unwrap();
+    history(&conn);
+    let outbox = SourceOutbox::install(&mut conn, SourceTable::History).unwrap();
+    conn.execute("INSERT INTO transcription_history(file_name,timestamp,title,transcription_text,post_processed_text) VALUES('',1,'fixture','原始转写','成功文字')", []).unwrap();
+    let first = outbox.read_batch(&conn, 0, 100).unwrap();
+    assert_eq!(first.len(), 1);
+    let payload = first[0].payload.as_ref().unwrap();
+    assert_eq!(payload.text.as_deref(), Some("成功文字"));
+    assert_eq!(payload.asset_ref, None);
+    assert_eq!(
+        payload.source_kind,
+        inputia_handy_runtime::store::SourceKind::Voice
+    );
+    drop(conn);
+    let mut conn = Connection::open(&path).unwrap();
+    let reopened = SourceOutbox::install(&mut conn, SourceTable::History).unwrap();
+    assert_eq!(reopened.read_batch(&conn, 0, 100).unwrap(), first);
+    assert_eq!(
+        conn.query_row(
+            "SELECT transcription_text FROM transcription_history",
+            [],
+            |row| row.get::<_, String>(0)
+        )
+        .unwrap(),
+        "原始转写"
+    );
+    conn.execute("DELETE FROM transcription_history", [])
+        .unwrap();
+    let events = reopened.read_batch(&conn, first[0].seq, 100).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].operation, SourceOperation::Delete);
+}
+
+#[test]
 fn source_mutation_and_outbox_rollback_together() {
     let mut conn = Connection::open_in_memory().unwrap();
     history(&conn);

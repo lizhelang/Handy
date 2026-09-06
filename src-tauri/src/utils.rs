@@ -81,9 +81,28 @@ fn native_windows_machine() -> Option<u16> {
     }
 }
 
-/// Centralized cancellation function that can be called from anywhere in the app.
-/// Handles cancelling both recording and transcription operations and updates UI state.
+/// 公共取消入口只入队。真实清理与所有新 Start 在同一协调器线程串行执行。
 pub fn cancel_current_operation(app: &AppHandle) {
+    let coordinator = app.try_state::<TranscriptionCoordinator>();
+    route_cancellation(coordinator.as_deref(), || {
+        log::warn!("Transcription coordinator unavailable; performing emergency cancellation");
+        cancel_current_operation_raw(app);
+    });
+}
+
+/// 可测试的真实入口路由：只有 worker 不存在/通道已关闭时才执行紧急清理。
+pub(crate) fn route_cancellation(
+    coordinator: Option<&TranscriptionCoordinator>,
+    emergency: impl FnOnce(),
+) {
+    if coordinator.is_some_and(TranscriptionCoordinator::request_cancel) {
+        return;
+    }
+    emergency();
+}
+
+/// 仅供协调器串行 effect 或明确的无 worker 紧急分支调用；不得再通知协调器。
+pub(crate) fn cancel_current_operation_raw(app: &AppHandle) {
     info!("Initiating operation cancellation...");
 
     // Unregister the cancel shortcut asynchronously
@@ -91,7 +110,6 @@ pub fn cancel_current_operation(app: &AppHandle) {
 
     // Cancel any ongoing recording
     let audio_manager = app.state::<Arc<AudioRecordingManager>>();
-    let recording_was_active = audio_manager.is_recording();
     audio_manager.cancel_recording();
 
     // Abandon any live streaming transcription
@@ -104,11 +122,6 @@ pub fn cancel_current_operation(app: &AppHandle) {
 
     // Unload model if immediate unload is enabled
     tm.maybe_unload_immediately("cancellation");
-
-    // Notify coordinator so it can keep lifecycle state coherent.
-    if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
-        coordinator.notify_cancel(recording_was_active);
-    }
 
     info!("Operation cancellation completed - returned to idle state");
 }

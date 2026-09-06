@@ -431,6 +431,24 @@ pub(crate) struct ProcessedTranscription {
     pub post_process_prompt: Option<String>,
 }
 
+/// 成功转写的唯一保存入口：附件状态只决定 file_name，不能绕过文字持久化。
+fn persist_completed_transcription<T>(
+    wav_saved: bool,
+    file_name: String,
+    transcription: String,
+    post_process: bool,
+    processed: &ProcessedTranscription,
+    save: impl FnOnce(String, String, bool, Option<String>, Option<String>) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    save(
+        if wav_saved { file_name } else { String::new() },
+        transcription,
+        post_process,
+        processed.post_processed_text.clone(),
+        processed.post_process_prompt.clone(),
+    )
+}
+
 /// Resolve the persisted language *intent* into the language the currently-loaded
 /// model will actually use — the same capability-aware coercion the transcription
 /// paths apply (see [`crate::managers::model::effective_language`]). Post-processing
@@ -596,11 +614,38 @@ impl ShortcutAction for TranscribeAction {
                     recording_start_time.elapsed()
                 );
                 let generation = readiness.generation();
+                if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
+                    coordinator.notify_recording_requested(&binding_id, generation);
+                }
+                let binding_for_ready = binding_id.to_owned();
+                let owned_voice = app
+                    .try_state::<TranscriptionCoordinator>()
+                    .and_then(|coordinator| coordinator.voice_output_context())
+                    .is_some();
                 let app_clone = app.clone();
                 let rm_clone = Arc::clone(&rm);
                 std::thread::spawn(move || {
-                    if !readiness.wait() {
-                        debug!("Microphone readiness wait ended without receiving samples");
+                    let ready = if owned_voice {
+                        readiness.wait_timeout(Duration::from_secs(15))
+                    } else if readiness.wait() {
+                        Ok(())
+                    } else {
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+                    };
+                    if let Err(error) = ready {
+                        // owned首帧前断开同样是准备失败；正常Stop/Cancel及旧generation
+                        // 由协调器的归属/阶段校验过滤，不能让等待线程退出后永远Preparing。
+                        if owned_voice {
+                            if let Some(coordinator) =
+                                app_clone.try_state::<TranscriptionCoordinator>()
+                            {
+                                coordinator
+                                    .notify_preparation_failed(&binding_for_ready, generation);
+                            }
+                        }
+                        debug!(
+                            "Microphone readiness wait ended without receiving samples: {error:?}"
+                        );
                         return;
                     }
 
@@ -625,6 +670,9 @@ impl ShortcutAction for TranscribeAction {
                     }
 
                     debug!("Microphone is receiving samples; recording is ready");
+                    if let Some(coordinator) = app_clone.try_state::<TranscriptionCoordinator>() {
+                        coordinator.notify_recording_ready(&binding_for_ready, generation);
+                    }
                     utils::emit_recording_ready(&app_clone);
 
                     // The start chime is a readiness cue, so it must follow the
@@ -842,17 +890,18 @@ impl ShortcutAction for TranscribeAction {
                                 return;
                             }
 
-                            // Save to history if WAV was saved
-                            if wav_saved {
-                                if let Err(err) = hm.save_entry(
-                                    file_name,
-                                    transcription,
-                                    post_process,
-                                    processed.post_processed_text.clone(),
-                                    processed.post_process_prompt.clone(),
-                                ) {
-                                    error!("Failed to save history entry: {}", err);
-                                }
+                            // 文字是主体，音频只是可选附件；音频写盘/验证失败不能丢掉成功文字。
+                            if let Err(err) = persist_completed_transcription(
+                                wav_saved,
+                                file_name,
+                                transcription,
+                                post_process,
+                                &processed,
+                                |file, text, requested, processed_text, prompt| {
+                                    hm.save_entry(file, text, requested, processed_text, prompt)
+                                },
+                            ) {
+                                error!("Failed to save history entry: {}", err);
                             }
 
                             if processed.final_text.is_empty() {
@@ -1026,6 +1075,91 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn successful_transcription_persists_to_real_sqlite_when_wav_write_or_verification_fails() {
+        use crate::managers::history::{insert_entry_with_conn, HistoryEntry};
+        for scenario in ["write-failure", "verification-failure", "verified"] {
+            let temp = tempfile::tempdir().unwrap();
+            let database = temp.path().join("history.db");
+            let wav = temp.path().join("synthetic.wav");
+            let samples = vec![0.1, -0.2, 0.3];
+            let wav_saved = if scenario == "write-failure" {
+                std::fs::create_dir(&wav).unwrap();
+                assert!(crate::audio_toolkit::save_wav_file(&wav, &samples).is_err());
+                false
+            } else {
+                crate::audio_toolkit::save_wav_file(&wav, &samples).unwrap();
+                let expected = if scenario == "verification-failure" {
+                    samples.len() + 1
+                } else {
+                    samples.len()
+                };
+                let verification = crate::audio_toolkit::verify_wav_file(&wav, expected);
+                assert_eq!(verification.is_ok(), scenario == "verified");
+                verification.is_ok()
+            };
+            let conn = rusqlite::Connection::open(&database).unwrap();
+            conn.execute_batch("CREATE TABLE transcription_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, file_name TEXT NOT NULL, timestamp INTEGER NOT NULL,
+                saved BOOLEAN NOT NULL, title TEXT NOT NULL, transcription_text TEXT NOT NULL,
+                post_processed_text TEXT, post_process_prompt TEXT, post_process_requested BOOLEAN NOT NULL);").unwrap();
+            let processed = super::ProcessedTranscription {
+                final_text: "成功文字".into(),
+                post_processed_text: Some("成功文字".into()),
+                post_process_prompt: Some("合成提示".into()),
+            };
+            let mut saves = 0;
+            let saved = super::persist_completed_transcription(
+                wav_saved,
+                "synthetic.wav".into(),
+                "原始文字".into(),
+                true,
+                &processed,
+                |file_name,
+                 transcription_text,
+                 post_process_requested,
+                 post_processed_text,
+                 post_process_prompt| {
+                    saves += 1;
+                    insert_entry_with_conn(
+                        &conn,
+                        HistoryEntry {
+                            id: 0,
+                            file_name,
+                            timestamp: 10,
+                            saved: false,
+                            title: "合成历史".into(),
+                            transcription_text,
+                            post_process_requested,
+                            post_processed_text,
+                            post_process_prompt,
+                        },
+                    )
+                },
+            )
+            .unwrap();
+            assert_eq!(saves, 1, "{scenario} 不能跳过成功文字保存");
+            assert_eq!(
+                saved.file_name,
+                if wav_saved { "synthetic.wav" } else { "" }
+            );
+            drop(conn);
+            let reopened = rusqlite::Connection::open(database).unwrap();
+            let row = reopened.query_row("SELECT file_name,transcription_text,post_processed_text,post_process_prompt,post_process_requested FROM transcription_history",
+                [], |row| Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?, row.get::<_,String>(2)?, row.get::<_,String>(3)?, row.get::<_,bool>(4)?))).unwrap();
+            assert_eq!(
+                row,
+                (
+                    saved.file_name,
+                    "原始文字".into(),
+                    "成功文字".into(),
+                    "合成提示".into(),
+                    true
+                )
+            );
+        }
+    }
 
     #[test]
     fn clipboard_history_binding_has_an_action() {

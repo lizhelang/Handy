@@ -40,6 +40,9 @@ pub async fn get_audio_file_path(
     history_manager: State<'_, Arc<HistoryManager>>,
     file_name: String,
 ) -> Result<String, String> {
+    if file_name.is_empty() {
+        return Err("This history entry has no recording".to_owned());
+    }
     let path = history_manager.get_audio_file_path(&file_name);
     path.to_str()
         .ok_or_else(|| "Invalid file path".to_string())
@@ -83,19 +86,10 @@ pub(crate) async fn retry_history_entry_checked(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("History entry {} not found", id))?;
 
-    let audio_path = history_manager
-        .get_audio_file_path(&entry.file_name)
-        .canonicalize()
-        .map_err(|_| "Recording file is unavailable".to_owned())?;
-    let recordings = history_manager
-        .recordings_dir()
-        .canonicalize()
-        .map_err(|_| "Recordings directory is unavailable".to_owned())?;
-    if !audio_path.starts_with(recordings) {
-        return Err("Recording is outside managed storage".into());
-    }
-    let samples = crate::audio_toolkit::read_wav_samples(&audio_path)
-        .map_err(|e| format!("Failed to load audio: {}", e))?;
+    let samples =
+        read_retry_recording(history_manager.recordings_dir(), &entry.file_name, |path| {
+            crate::audio_toolkit::read_wav_samples(path)
+        })?;
 
     if samples.is_empty() {
         return Err("Recording has no audio samples".to_string());
@@ -125,6 +119,61 @@ pub(crate) async fn retry_history_entry_checked(
         )
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// 重转写的实际读取边界：无附件在路径解析、目录读取和模型启动之前返回。
+fn read_retry_recording(
+    recordings: &std::path::Path,
+    file_name: &str,
+    read: impl FnOnce(&std::path::Path) -> anyhow::Result<Vec<f32>>,
+) -> Result<Vec<f32>, String> {
+    if file_name.is_empty() {
+        return Err("This history entry has no recording".into());
+    }
+    let audio_path = recordings
+        .join(file_name)
+        .canonicalize()
+        .map_err(|_| "Recording file is unavailable".to_owned())?;
+    let recordings = recordings
+        .canonicalize()
+        .map_err(|_| "Recordings directory is unavailable".to_owned())?;
+    if !audio_path.starts_with(recordings) {
+        return Err("Recording is outside managed storage".into());
+    }
+    read(&audio_path).map_err(|error| format!("Failed to load audio: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_retry_recording;
+    #[test]
+    fn empty_attachment_retranscription_never_reads_the_recordings_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut reads = 0;
+        let result = read_retry_recording(temp.path(), "", |_| {
+            reads += 1;
+            Ok(vec![0.1])
+        });
+        assert!(result.is_err());
+        assert_eq!(reads, 0);
+        assert!(temp.path().is_dir());
+    }
+
+    #[test]
+    fn valid_managed_attachment_is_read_for_retranscription() {
+        let temp = tempfile::tempdir().unwrap();
+        let wav = temp.path().join("synthetic.wav");
+        crate::audio_toolkit::save_wav_file(&wav, &[0.1, -0.2, 0.3]).unwrap();
+        let mut reads = 0;
+        let samples = read_retry_recording(temp.path(), "synthetic.wav", |path| {
+            reads += 1;
+            assert_eq!(path, wav.canonicalize().unwrap());
+            crate::audio_toolkit::read_wav_samples(path)
+        })
+        .unwrap();
+        assert_eq!(reads, 1);
+        assert_eq!(samples.len(), 3);
+    }
 }
 
 #[tauri::command]

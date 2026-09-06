@@ -65,6 +65,48 @@ pub struct HistoryEntry {
     pub post_process_requested: bool,
 }
 
+/// 生产与故障回归共用的 SQLite 插入边界；不依赖窗口或录音文件写入成功。
+pub(crate) fn insert_entry_with_conn(
+    conn: &Connection,
+    mut entry: HistoryEntry,
+) -> Result<HistoryEntry> {
+    conn.execute(
+        "INSERT INTO transcription_history (
+            file_name, timestamp, saved, title, transcription_text,
+            post_processed_text, post_process_prompt, post_process_requested
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            &entry.file_name,
+            entry.timestamp,
+            entry.saved,
+            &entry.title,
+            &entry.transcription_text,
+            &entry.post_processed_text,
+            &entry.post_process_prompt,
+            entry.post_process_requested
+        ],
+    )?;
+    entry.id = conn.last_insert_rowid();
+    Ok(entry)
+}
+
+/// 空文件名表示无附件，不能把 recordings 目录交给文件删除操作。
+fn remove_recording_attachment(
+    recordings: &std::path::Path,
+    file_name: &str,
+    remove_file: impl FnOnce(&std::path::Path) -> std::io::Result<()>,
+) -> std::io::Result<bool> {
+    if file_name.is_empty() {
+        return Ok(false);
+    }
+    let path = recordings.join(file_name);
+    if !path.exists() {
+        return Ok(false);
+    }
+    remove_file(&path)?;
+    Ok(true)
+}
+
 pub struct HistoryManager {
     app_handle: AppHandle,
     recordings_dir: PathBuf,
@@ -215,7 +257,7 @@ impl HistoryManager {
     }
 
     /// Save a new history entry to the database.
-    /// The WAV file should already have been written to the recordings directory.
+    /// Non-empty file_name references a verified WAV; empty means text without an audio attachment.
     pub fn save_entry(
         &self,
         file_name: String,
@@ -229,40 +271,20 @@ impl HistoryManager {
         let title = self.format_timestamp_title(timestamp);
 
         let conn = self.get_connection()?;
-        conn.execute(
-            "INSERT INTO transcription_history (
+        let entry = insert_entry_with_conn(
+            &conn,
+            HistoryEntry {
+                id: 0,
                 file_name,
                 timestamp,
-                saved,
+                saved: false,
                 title,
                 transcription_text,
                 post_processed_text,
                 post_process_prompt,
-                post_process_requested
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                &file_name,
-                timestamp,
-                false,
-                &title,
-                &transcription_text,
-                &post_processed_text,
-                &post_process_prompt,
                 post_process_requested,
-            ],
+            },
         )?;
-
-        let entry = HistoryEntry {
-            id: conn.last_insert_rowid(),
-            file_name,
-            timestamp,
-            saved: false,
-            title,
-            transcription_text,
-            post_processed_text,
-            post_process_prompt,
-            post_process_requested,
-        };
 
         debug!("Saved history entry with id {}", entry.id);
 
@@ -381,14 +403,15 @@ impl HistoryManager {
             )?;
 
             // Delete WAV file
-            let file_path = self.recordings_dir.join(file_name);
-            if file_path.exists() {
-                if let Err(e) = fs::remove_file(&file_path) {
-                    error!("Failed to delete WAV file {}: {}", file_name, e);
-                } else {
+            match remove_recording_attachment(&self.recordings_dir, file_name, |path| {
+                fs::remove_file(path)
+            }) {
+                Err(e) => error!("Failed to delete WAV file {}: {}", file_name, e),
+                Ok(true) => {
                     debug!("Deleted old WAV file: {}", file_name);
                     deleted_count += 1;
                 }
+                Ok(false) => {}
             }
         }
 
@@ -633,12 +656,13 @@ impl HistoryManager {
         // Get the entry to find the file name
         if let Some(entry) = self.get_entry_by_id(id).await? {
             // Delete the audio file first
-            let file_path = self.get_audio_file_path(&entry.file_name);
-            if file_path.exists() {
-                if let Err(e) = fs::remove_file(&file_path) {
-                    error!("Failed to delete audio file {}: {}", entry.file_name, e);
-                    // Continue with database deletion even if file deletion fails
-                }
+            if let Err(e) =
+                remove_recording_attachment(&self.recordings_dir, &entry.file_name, |path| {
+                    fs::remove_file(path)
+                })
+            {
+                error!("Failed to delete audio file {}: {}", entry.file_name, e);
+                // Continue with database deletion even if file deletion fails
             }
         }
 
@@ -673,6 +697,36 @@ impl HistoryManager {
 mod tests {
     use super::*;
     use rusqlite::{params, Connection};
+
+    #[test]
+    fn no_attachment_never_calls_remove_on_recordings_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let recordings = temp.path().join("recordings");
+        std::fs::create_dir(&recordings).unwrap();
+        let neighbor = recordings.join("keep.wav");
+        std::fs::write(&neighbor, b"synthetic").unwrap();
+        let mut calls = 0;
+        let removed = remove_recording_attachment(&recordings, "", |path| {
+            calls += 1;
+            std::fs::remove_file(path)
+        })
+        .unwrap();
+        assert!(!removed);
+        assert_eq!(calls, 0);
+        assert!(recordings.is_dir());
+        assert!(neighbor.is_file());
+        assert!(
+            remove_recording_attachment(&recordings, "keep.wav", |path| {
+                calls += 1;
+                assert_eq!(path, neighbor);
+                std::fs::remove_file(path)
+            })
+            .unwrap()
+        );
+        assert_eq!(calls, 1);
+        assert!(recordings.is_dir());
+        assert!(!neighbor.exists());
+    }
 
     fn setup_conn() -> Connection {
         let conn = Connection::open_in_memory().expect("open in-memory db");

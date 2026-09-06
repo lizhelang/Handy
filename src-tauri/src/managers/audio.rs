@@ -365,8 +365,49 @@ impl RecordingReadiness {
         self.receiver.recv().is_ok()
     }
 
+    /// 有主会话的准备阶段必须有界；断开与超时分开，避免把正常停止误作超时。
+    pub fn wait_timeout(self, timeout: Duration) -> Result<(), mpsc::RecvTimeoutError> {
+        self.receiver.recv_timeout(timeout)
+    }
+
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+}
+
+#[cfg(test)]
+mod readiness_deadline_tests {
+    use super::*;
+    #[test]
+    fn readiness_distinguishes_ready_disconnect_and_timeout() {
+        let (send, receive) = mpsc::channel();
+        assert_eq!(
+            RecordingReadiness {
+                receiver: receive,
+                generation: 1
+            }
+            .wait_timeout(Duration::ZERO),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+        drop(send);
+        let (send, receive) = mpsc::channel();
+        drop(send);
+        assert_eq!(
+            RecordingReadiness {
+                receiver: receive,
+                generation: 2
+            }
+            .wait_timeout(Duration::ZERO),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        );
+        let (send, receive) = mpsc::channel();
+        send.send(()).unwrap();
+        assert!(RecordingReadiness {
+            receiver: receive,
+            generation: 3
+        }
+        .wait_timeout(Duration::ZERO)
+        .is_ok());
     }
 }
 
