@@ -138,3 +138,152 @@ impl VoiceConnection {
         result
     }
 }
+
+/// 接到实际候选App启动；日常构建不启用，缺少已签名配对材料时明确拒绝监听。
+pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    use std::{
+        io::Read,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+        time::Duration,
+    };
+    use tauri::Manager;
+    let Some(profile) = crate::candidate_profile::current().cloned() else {
+        return;
+    };
+    let Some(manager) = app.try_state::<Arc<crate::managers::integration::IntegrationManager>>()
+    else {
+        return;
+    };
+    let service = manager.service.clone();
+    let app = app.clone();
+    struct ListenerLifetime(Arc<AtomicBool>);
+    impl Drop for ListenerLifetime {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    app.manage(ListenerLifetime(stop.clone()));
+    std::thread::spawn(move || {
+        let run = || -> Result<(), String> {
+            let trust = crate::native_pair_auth::candidate_build_trust(&profile.profile_id)
+                .map_err(|_| "embedded_profile_mismatch")?
+                .ok_or("missing_embedded_pair_key")?;
+            let manifest_path = profile
+                .handy_root
+                .parent()
+                .ok_or("missing_profile_root")?
+                .join("pair-manifest.json");
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                // Darwin SDK sys/fcntl.h: O_NOFOLLOW = 0x00000100。
+                .custom_flags(0x00000100)
+                .open(&manifest_path)
+                .map_err(|_| "missing_pair_manifest")?;
+            let metadata = file.metadata().map_err(|_| "manifest_metadata")?;
+            // SAFETY: geteuid无指针或副作用，仅核对当前用户拥有的候选材料。
+            unsafe extern "C" {
+                fn geteuid() -> u32;
+            }
+            let uid = unsafe { geteuid() };
+            if !metadata.is_file()
+                || metadata.len() > 16_384
+                || metadata.uid() != uid
+                || metadata.nlink() != 1
+                || metadata.mode() & 0o022 != 0
+            {
+                return Err("unsafe_pair_manifest".into());
+            }
+            let mut bytes = Vec::new();
+            file.take(16_385)
+                .read_to_end(&mut bytes)
+                .map_err(|_| "manifest_read")?;
+            let manifest =
+                PairManifest::load(&bytes, &trust).map_err(|_| "pair_manifest_rejected")?;
+            let version = service.voice_terms_version()?;
+            let instance = inputia_handy_runtime::voice_protocol::VoicePolicyBarrier::new(version)
+                .map_err(|_| "instance_entropy")?
+                .barrier_id;
+            use sha2::{Digest, Sha256};
+            let profile_hash = format!("{:x}", Sha256::digest(profile.profile_id.as_bytes()));
+            let socket = std::path::PathBuf::from(format!(
+                "/private/tmp/handy-unified-{uid}-{}",
+                &profile_hash[..12]
+            ))
+            .join(format!("{}.sock", &instance[..24]));
+            let listener =
+                transport::PrivateListener::bind(&socket).map_err(|_| "listener_bind")?;
+            listener
+                .set_nonblocking(true)
+                .map_err(|_| "listener_nonblocking")?;
+            let discovery = serde_json::json!({"protocol_major":1,"profile_id":profile.profile_id,"server_instance":instance,"socket_path":socket});
+            let temporary = profile
+                .handy_root
+                .join(format!(".endpoint-{instance}.json"));
+            let mut output = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&temporary)
+                .map_err(|_| "endpoint_create")?;
+            use std::io::Write;
+            output
+                .write_all(&serde_json::to_vec(&discovery).map_err(|_| "endpoint_encode")?)
+                .map_err(|_| "endpoint_write")?;
+            output.sync_all().map_err(|_| "endpoint_sync")?;
+            std::fs::rename(
+                &temporary,
+                profile.handy_root.join("integration-endpoint.json"),
+            )
+            .map_err(|_| "endpoint_publish")?;
+            log::info!(
+                "unified_voice_listener_ready profile={}",
+                profile.profile_id
+            );
+            let server = Handshake {
+                protocol_major: 1,
+                protocol_minor: 0,
+                instance_id: instance,
+                profile_id: profile.profile_id.clone(),
+                policy_epoch: service.policy_epoch()?,
+                capabilities: vec![inputia_handy_runtime::voice_protocol::VOICE_CAPABILITY.into()],
+            };
+            while !stop.load(Ordering::Acquire) {
+                let stream = match listener.accept() {
+                    Ok(stream) => stream,
+                    Err(ProtocolError::Timeout) => {
+                        std::thread::sleep(Duration::from_millis(50));
+                        continue;
+                    }
+                    Err(_) => return Err("listener_accept".into()),
+                };
+                let mut connection =
+                    match VoiceConnection::accept(stream, &manifest, server.clone(), &service) {
+                        Ok(connection) => connection,
+                        Err(error) => {
+                            log::warn!("unified_voice_connection_rejected stage={error:?}");
+                            continue;
+                        }
+                    };
+                if connection.synchronize_policy(&service).is_err() {
+                    log::warn!("unified_voice_connection_rejected stage=policy_sync");
+                    continue;
+                }
+                let coordinator = app.state::<crate::TranscriptionCoordinator>();
+                while !stop.load(Ordering::Acquire) {
+                    if connection.process_one(&service, &*coordinator).is_err() {
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        };
+        if let Err(reason) = run() {
+            log::warn!("unified_voice_listener_unavailable reason={reason}");
+        }
+    });
+}
