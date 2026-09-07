@@ -359,6 +359,110 @@ impl IntegrationStore {
         Ok(crate::voice_ledger::get(&self.conn, session_id)?)
     }
 
+    /// 把当前语音结果与一个固定IME输出关联；原文仍只在历史/修订库，不另排全文队列。
+    /// 此操作不claim派发。调用方必须已保存源记录，并核验投影内容与本次结果一致。
+    pub fn prepare_voice_result(
+        &mut self,
+        session_id: &str,
+        client: &str,
+        server: &str,
+        item_id: &str,
+        revision: u64,
+    ) -> StoreResult<crate::output_ledger::OutputRecord> {
+        use crate::{
+            output_ledger::*,
+            voice_protocol::{VoiceCommand, VoicePhase},
+        };
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let session = crate::voice_ledger::get(&tx, session_id)?
+            .ok_or(StoreError::Invalid("voice session missing"))?;
+        if session.retired
+            || session.start.client_instance != client
+            || session.start.server_instance != server
+        {
+            return Err(StoreError::Invalid("voice result owner mismatch"));
+        }
+        let claimed: bool = tx.query_row(
+            "SELECT start_claimed FROM unified_voice_sessions WHERE session_id=?1",
+            [session_id],
+            |row| row.get(0),
+        )?;
+        if !claimed
+            || matches!(
+                session.view.phase,
+                VoicePhase::Cancelled | VoicePhase::Failed | VoicePhase::Interrupted
+            )
+        {
+            return Err(StoreError::Invalid("voice result is no longer eligible"));
+        }
+        let VoiceCommand::Start { target, .. } = &session.start.command else {
+            return Err(StoreError::Invalid("invalid voice start"));
+        };
+        let mut hash = Sha256::new();
+        hash.update(b"handy-owned-voice-result-v1\0");
+        hash.update(session_id.as_bytes());
+        let operation_id = format!("voice-{:x}", hash.finalize());
+        let intent = OutputIntent {
+            operation_id: operation_id.clone(),
+            item_id: item_id.into(),
+            revision,
+            target_id: Some(target.target_id.clone()),
+            owner: OutputOwner::Ime,
+            policy_epoch: session.start.policy_epoch,
+            action: OutputAction::InsertText,
+        };
+        let record = crate::output_ledger::prepare(&tx, &intent)?;
+        validate_output_item(&tx, &intent)?;
+        let kind: String = tx.query_row(
+            "SELECT source_kind FROM integration_items WHERE item_id=?1",
+            [item_id],
+            |row| row.get(0),
+        )?;
+        if kind != "voice" {
+            return Err(StoreError::Invalid(
+                "voice result must reference voice history",
+            ));
+        }
+        let existing: Option<String> = tx
+            .query_row(
+                "SELECT operation_id FROM unified_voice_results WHERE session_id=?1",
+                [session_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if existing.as_ref().is_some_and(|old| old != &operation_id) {
+            return Err(StoreError::Invalid("voice result operation conflict"));
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO unified_voice_results(session_id,operation_id) VALUES(?1,?2)",
+            params![session_id, operation_id],
+        )?;
+        tx.commit()?;
+        Ok(record)
+    }
+
+    /// 只读回执查询；外部入口必须先核验会话归属，不能据此重发正文。
+    pub fn voice_result(
+        &self,
+        session_id: &str,
+    ) -> StoreResult<Option<crate::output_ledger::OutputRecord>> {
+        let id: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT operation_id FROM unified_voice_results WHERE session_id=?1",
+                [session_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        id.map(|id| {
+            self.output_record(&id)?
+                .ok_or(StoreError::Invalid("voice result receipt missing"))
+        })
+        .transpose()
+    }
+
     pub fn initialize_outputs(&mut self) -> StoreResult<()> {
         let tx = self
             .conn

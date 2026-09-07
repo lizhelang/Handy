@@ -51,6 +51,11 @@ pub fn initialize(conn: &Connection) -> Result<()> {
       client_instance TEXT NOT NULL, request_id TEXT NOT NULL, session_id TEXT NOT NULL,
       request_digest TEXT NOT NULL, claimed INTEGER NOT NULL DEFAULT 0 CHECK(claimed IN(0,1)),
       PRIMARY KEY(client_instance,request_id), FOREIGN KEY(session_id) REFERENCES unified_voice_sessions(session_id));")?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS unified_voice_results(
+      session_id TEXT PRIMARY KEY REFERENCES unified_voice_sessions(session_id),
+      operation_id TEXT NOT NULL UNIQUE REFERENCES unified_output_operations(operation_id));",
+    )?;
     Ok(())
 }
 

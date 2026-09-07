@@ -67,3 +67,5 @@
 6. 继续 P3–P6 全范围，准备候选包后再处理必要原生测试安装权限。
 
 当前目标轮分类：有进展；最新接续证据见[9月6日接续检查点](./20260906-integration-checkpoint.md)，此前见[静态引擎与会话检查点](./static-rime-voice-checkpoint.md)与[配对与音频检查点](./pairing-corpus-checkpoint.md)。全部 A01–A12 仍未最终验收，goal 保持 active。
+
+9月7日接续：静态候选与构建公钥已提交`42e2e787`，认证请求分派与检查点已提交`c75733a4`。新增同session固定历史修订/目标/IME输出的原子关联，runtime111项测试通过；详见[语音结果关联](./voice-result-binding.md)。实际pipeline和Host交付尚未接入，仍是下一执行点。

@@ -384,6 +384,36 @@ impl HistoryService {
                 .map_err(|e| e.to_string())
         })
     }
+
+    /// 只用于本次转写已保存的源记录；有待消费的源变更先完成投影再准备。
+    pub fn prepare_voice_result(
+        &self,
+        session_id: String,
+        client: String,
+        server: String,
+        item_id: String,
+        revision: u64,
+    ) -> ServiceResult<crate::output_ledger::OutputRecord> {
+        self.call(move |worker| {
+            worker.sync_once()?;
+            worker
+                .store
+                .prepare_voice_result(&session_id, &client, &server, &item_id, revision)
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    pub fn voice_result(
+        &self,
+        session_id: String,
+    ) -> ServiceResult<Option<crate::output_ledger::OutputRecord>> {
+        self.call(move |worker| {
+            worker
+                .store
+                .voice_result(&session_id)
+                .map_err(|error| error.to_string())
+        })
+    }
     pub fn claim_output(&self, intent: crate::output_ledger::OutputIntent) -> ServiceResult<bool> {
         self.call(move |worker| {
             worker
