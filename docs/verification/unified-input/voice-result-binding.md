@@ -41,3 +41,5 @@ Host分帧实现：新增InputiaFramedConnection并加入Host编译源列表，�
 待插入取消修复：Cancel claim、尚未派发输出Prepared→Rejected和持久取消屏障合入同一Store事务；失败连claim一起回滚，同request ID可重试。屏障拒绝晚结果和晚Start claim，不删除历史；已派发/未知返回拒绝，不把actor改成Cancelled。dispatcher把资格提交到actor入队串行，入队后释放锁再等回执，防止跨连接Cancel越过已claim未入队的Start。生产`control`必须只入队，禁止等待actor/重入dispatcher。持久取消存在但actor仍活动或尚未观察到时，Status返回Unknown而非旧活动状态。
 
 Coordinator只取消指定PendingTarget结果，覆盖结果刚就绪、FinishGuard之后、下一录音已开始三种时序，不清理下一录音。主代理运行：voice_result9项、dispatcher12项、coordinator67项通过；Handy lib严格Clippy通过。独立审查确认原P2及“Cancel分离事务”和“Start/Cancel越序”两个衍生问题在该路径关闭，另独立重跑store_voice/voice_result共16项通过。此结论限定dispatcher→Coordinator路径；原生Host交付、全局快捷键取消与后续派发交错、跨进程回执恢复仍需完整测试。
+
+Host认证客户端追加：`InputiaVoiceServiceConnection`在候选配对构建中编译，要求候选profile与编译信任根一致，先校验签名manifest和真实socket对端再发送握手；核验服务profile/主版本/能力/epoch，后台接收策略屏障。共享状态清理接口成功返回后才发送两项确认，本地applied版本不冒称服务已接纳Start或已录音。代码以Swift warnings-as-errors实际编译通过；`InputiaVoiceServiceSelfCheck`7项合成状态测试通过（清理先于ACK、失败不ACK、非法屏障/旧epoch拒绝、Rust格式DTO读取），不是实际Host磁盘缓存已清理的证据。真实共享状态实现、主动唤起/重连、控制请求、服务listener及双端配对连线仍待完成。
