@@ -14,6 +14,9 @@ use inputia_handy_runtime::{
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
 
+// 同一Handy进程仅一个录音actor。只锁资格事务至入队，不持锁等待actor回执。
+static VOICE_ENQUEUE_ORDER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 enum PeerProof {
     Authenticated(crate::native_pair_auth::VerifiedPeer),
     #[cfg(test)]
@@ -94,6 +97,7 @@ pub enum DispatchError {
 }
 
 pub trait VoiceCoordinatorPort {
+    /// 生产实现必须仅入队：不能等待actor或重入dispatcher，否则会违反入队顺序锁合同。
     fn control(&self, request: VoiceRequest) -> Receiver<Result<VoiceSessionView, String>>;
     fn view(&self, session: &str) -> Receiver<Result<VoiceSessionView, String>>;
 }
@@ -186,6 +190,9 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
         if matches!(request.command, VoiceCommand::Status) {
             return self.status(context, &request.session_id);
         }
+        let order = VOICE_ENQUEUE_ORDER
+            .lock()
+            .map_err(|_| DispatchError::Unknown)?;
         if !matches!(request.command, VoiceCommand::Start { .. }) {
             self.owned_record(context, &request.session_id)?;
         }
@@ -217,10 +224,12 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
             )
             .map_err(|_| DispatchError::Unknown)?;
         if !claimed {
+            drop(order);
             return self.status(context, &request.session_id);
         }
         let is_start = matches!(request.command, VoiceCommand::Start { .. });
         let receiver = self.coordinator.control(request);
+        drop(order);
         match receiver.recv_timeout(self.reply_timeout) {
             Ok(Ok(view)) => self.project(context, record, view),
             Ok(Err(_)) => {
@@ -258,9 +267,35 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
             .view(session)
             .recv_timeout(self.reply_timeout)
         {
-            Ok(Ok(view)) => self.project(context, record, view),
+            Ok(Ok(view)) => {
+                if self
+                    .history
+                    .voice_cancellation_requested(session.into())
+                    .map_err(|_| DispatchError::Unknown)?
+                    && matches!(
+                        view.phase,
+                        VoicePhase::Preparing
+                            | VoicePhase::Recording
+                            | VoicePhase::Processing
+                            | VoicePhase::PendingTarget
+                    )
+                {
+                    return Err(DispatchError::Unknown);
+                }
+                self.project(context, record, view)
+            }
             // Coordinator 未观察到该session时返回持久Preparing，而非重新启动。
-            Ok(Err(_)) => Ok(record.view),
+            Ok(Err(_)) => {
+                if self
+                    .history
+                    .voice_cancellation_requested(session.into())
+                    .map_err(|_| DispatchError::Unknown)?
+                {
+                    Err(DispatchError::Unknown)
+                } else {
+                    Ok(record.view)
+                }
+            }
             Err(_) => Err(DispatchError::Unknown),
         }
     }
@@ -402,6 +437,165 @@ mod tests {
                 r.get(0)
             })
             .unwrap()
+    }
+
+    #[test]
+    fn cancel_checks_persistent_output_before_coordinator_can_report_cancelled() {
+        for claimed_output in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let history = service(root.path());
+            let coordinator = FakeCoordinator::default();
+            let dispatcher = VoiceDispatcher::new(&history, &coordinator);
+            let ctx = context("server");
+            let start = request("start", "server");
+            dispatcher.dispatch(&ctx, start.clone()).unwrap();
+            Connection::open(root.path().join("history.db"))
+                .unwrap()
+                .execute(
+                    "INSERT INTO transcription_history VALUES(1,'',1,0,'fixture','result',NULL)",
+                    [],
+                )
+                .unwrap();
+            let output = history
+                .prepare_saved_voice_result(start.clone(), 1, "result".into())
+                .unwrap();
+            if claimed_output {
+                assert!(history.claim_output(output.intent.clone()).unwrap());
+            }
+            let mut cancel = start;
+            cancel.request_id = "cancel".into();
+            cancel.command = VoiceCommand::Cancel;
+            let response = dispatcher.dispatch(&ctx, cancel);
+            if claimed_output {
+                assert_eq!(response, Err(DispatchError::Unknown));
+                assert_eq!(coordinator.controls.lock().unwrap().len(), 1);
+            } else {
+                assert_eq!(response.unwrap().phase, VoicePhase::Cancelled);
+                assert_eq!(coordinator.controls.lock().unwrap().len(), 2);
+                assert_eq!(
+                    history
+                        .voice_result("session".into())
+                        .unwrap()
+                        .unwrap()
+                        .state,
+                    inputia_handy_runtime::output_ledger::OutputState::Rejected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cancellation_barrier_without_actor_receipt_is_not_reported_as_current_recording() {
+        let root = tempfile::tempdir().unwrap();
+        let history = service(root.path());
+        let coordinator = FakeCoordinator::default();
+        let dispatcher = VoiceDispatcher::new(&history, &coordinator);
+        let ctx = context("server");
+        dispatcher
+            .dispatch(&ctx, request("start", "server"))
+            .unwrap();
+        assert!(history
+            .cancel_voice_result("session".into(), "host".into(), "server".into())
+            .unwrap());
+        assert_eq!(
+            dispatcher.status(&ctx, "session"),
+            Err(DispatchError::Unknown)
+        );
+        assert_eq!(coordinator.controls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn failed_cancel_barrier_does_not_consume_request_and_same_id_can_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let history = service(root.path());
+        let coordinator = FakeCoordinator::default();
+        let dispatcher = VoiceDispatcher::new(&history, &coordinator);
+        let ctx = context("server");
+        dispatcher
+            .dispatch(&ctx, request("start", "server"))
+            .unwrap();
+        let conn = Connection::open(root.path().join("integration.db")).unwrap();
+        conn.execute_batch("CREATE TRIGGER reject_cancel BEFORE INSERT ON unified_voice_cancellations BEGIN SELECT RAISE(ABORT,'fixture');END;").unwrap();
+        let mut cancel = request("cancel", "server");
+        cancel.command = VoiceCommand::Cancel;
+        assert_eq!(
+            dispatcher.dispatch(&ctx, cancel.clone()),
+            Err(DispatchError::Unknown)
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT claimed FROM unified_voice_requests WHERE request_id='cancel'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(coordinator.controls.lock().unwrap().len(), 1);
+        conn.execute_batch("DROP TRIGGER reject_cancel").unwrap();
+        assert_eq!(
+            dispatcher.dispatch(&ctx, cancel).unwrap().phase,
+            VoicePhase::Cancelled
+        );
+        assert_eq!(coordinator.controls.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn cancel_cannot_enqueue_ahead_of_a_claimed_start_on_another_connection() {
+        struct PausedPort {
+            inner: FakeCoordinator,
+            reached: std::sync::mpsc::Sender<()>,
+            resume: Mutex<std::sync::mpsc::Receiver<()>>,
+        }
+        impl VoiceCoordinatorPort for PausedPort {
+            fn control(&self, request: VoiceRequest) -> Receiver<Result<VoiceSessionView, String>> {
+                if matches!(request.command, VoiceCommand::Start { .. }) {
+                    self.reached.send(()).unwrap();
+                    self.resume
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap();
+                }
+                self.inner.control(request)
+            }
+            fn view(&self, session: &str) -> Receiver<Result<VoiceSessionView, String>> {
+                self.inner.view(session)
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let history = service(root.path());
+        let (reached, ready) = mpsc::channel();
+        let (resume, blocked) = mpsc::channel();
+        let port = PausedPort {
+            inner: FakeCoordinator::default(),
+            reached,
+            resume: Mutex::new(blocked),
+        };
+        std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                VoiceDispatcher::new(&history, &port)
+                    .dispatch(&context("server"), request("start", "server"))
+            });
+            ready.recv_timeout(Duration::from_secs(5)).unwrap();
+            let (attempt, attempted) = mpsc::channel();
+            let history_ref = &history;
+            let port_ref = &port;
+            let second = scope.spawn(move || {
+                let mut cancel = request("cancel", "server");
+                cancel.command = VoiceCommand::Cancel;
+                attempt.send(()).unwrap();
+                VoiceDispatcher::new(history_ref, port_ref).dispatch(&context("server"), cancel)
+            });
+            attempted.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(port.inner.controls.lock().unwrap().is_empty());
+            resume.send(()).unwrap();
+            first.join().unwrap().unwrap();
+            assert_eq!(second.join().unwrap().unwrap().phase, VoicePhase::Cancelled);
+        });
+        let controls = port.inner.controls.lock().unwrap();
+        assert!(matches!(controls[0].command, VoiceCommand::Start { .. }));
+        assert!(matches!(controls[1].command, VoiceCommand::Cancel));
     }
 
     #[test]

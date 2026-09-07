@@ -848,6 +848,14 @@ impl CoordinatorState {
                 }
             }
             VoiceCommand::Cancel => {
+                if let Some(session) = self.voice_sessions.get_mut(&request.session_id) {
+                    if session.terminal == Some(VoicePhase::PendingTarget) {
+                        // dispatcher已原子拒绝尚未claim输出；不清理下一录音。
+                        session.terminal = Some(VoicePhase::Cancelled);
+                        session.view_generation += 1;
+                        return (self.voice_view(&request.session_id), None);
+                    }
+                }
                 let active = self.active_voice.as_deref() == Some(&request.session_id)
                     && self
                         .voice_sessions
@@ -1366,6 +1374,45 @@ mod tests {
             ready
         );
         assert_eq!(state.voice_context(), Some(next));
+    }
+
+    #[test]
+    fn pending_result_cancel_preserves_history_identity_and_never_cancels_next_recording() {
+        for phase in 0..3 {
+            let mut state = CoordinatorState::new();
+            let now = Instant::now();
+            let old = voice_start("old", "start");
+            state.on_voice(old.clone(), now).0.unwrap();
+            state
+                .on_voice(voice_command(&old, "stop", VoiceCommand::Stop), now)
+                .0
+                .unwrap();
+            state
+                .on_voice_result_prepared(&old, "item".into(), "operation".into())
+                .unwrap();
+            if phase >= 1 {
+                state.on_processing_finished();
+            }
+            let next = voice_start("next", "new-start");
+            if phase == 2 {
+                state.on_voice(next.clone(), now).0.unwrap();
+            }
+            let (result, effect) =
+                state.on_voice(voice_command(&old, "cancel", VoiceCommand::Cancel), now);
+            let result = result.unwrap();
+            assert_eq!(result.phase, VoicePhase::Cancelled);
+            assert_eq!(result.item_id.as_deref(), Some("item"));
+            assert!(effect.is_none());
+            if phase == 2 {
+                assert_eq!(state.voice_context(), Some(next));
+            }
+            let duplicate = state.on_voice(
+                voice_command(&old, "cancel-again", VoiceCommand::Cancel),
+                now,
+            );
+            assert!(duplicate.1.is_none());
+            assert_eq!(duplicate.0.unwrap(), result);
+        }
     }
 
     #[test]

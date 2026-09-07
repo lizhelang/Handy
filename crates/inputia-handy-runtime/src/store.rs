@@ -336,6 +336,14 @@ impl IntegrationStore {
             .map_err(|_| StoreError::Invalid("voice permission changed before claim"))?;
         let claimed = crate::voice_ledger::claim(&tx, request)?;
         validate_voice_terms_version(&tx, request)?;
+        if claimed
+            && matches!(request.command, crate::voice_protocol::VoiceCommand::Cancel)
+            && !cancel_voice_result_in_transaction(&tx, &request.session_id, client, server)?
+        {
+            return Err(StoreError::Invalid(
+                "voice output already dispatched or uncertain",
+            ));
+        }
         tx.commit()?;
         Ok(claimed)
     }
@@ -378,6 +386,14 @@ impl IntegrationStore {
         })
     }
 
+    pub fn voice_cancellation_requested(&self, session_id: &str) -> StoreResult<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM unified_voice_cancellations WHERE session_id=?1)",
+            [session_id],
+            |row| row.get(0),
+        )?)
+    }
+
     /// 把当前语音结果与一个固定IME输出关联；原文仍只在历史/修订库，不另排全文队列。
     /// 此操作不claim派发。调用方必须已保存源记录，并核验投影内容与本次结果一致。
     pub fn prepare_voice_result(
@@ -397,6 +413,16 @@ impl IntegrationStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let session = crate::voice_ledger::get(&tx, session_id)?
             .ok_or(StoreError::Invalid("voice session missing"))?;
+        let cancelled: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM unified_voice_cancellations WHERE session_id=?1)",
+            [session_id],
+            |row| row.get(0),
+        )?;
+        if cancelled {
+            return Err(StoreError::Invalid(
+                "voice result cancelled before preparation",
+            ));
+        }
         if session.retired
             || session.start.client_instance != client
             || session.start.server_instance != server
@@ -480,6 +506,21 @@ impl IntegrationStore {
                 .ok_or(StoreError::Invalid("voice result receipt missing"))
         })
         .transpose()
+    }
+
+    /// false表示已派发/未知，不能假称取消成功。历史正文保留。
+    pub fn cancel_voice_result(
+        &mut self,
+        session_id: &str,
+        client: &str,
+        server: &str,
+    ) -> StoreResult<bool> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let cancelled = cancel_voice_result_in_transaction(&tx, session_id, client, server)?;
+        tx.commit()?;
+        Ok(cancelled)
     }
 
     pub fn initialize_outputs(&mut self) -> StoreResult<()> {
@@ -1258,6 +1299,46 @@ fn current_learning_generation(conn: &Connection) -> StoreResult<u64> {
             .parse::<u64>()
             .map_err(|_| StoreError::Invalid("invalid learning generation")),
     }
+}
+
+fn cancel_voice_result_in_transaction(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    client: &str,
+    server: &str,
+) -> StoreResult<bool> {
+    use crate::output_ledger::{OutputOutcome, OutputState};
+    let session = crate::voice_ledger::get(tx, session_id)?
+        .ok_or(StoreError::Invalid("voice session missing"))?;
+    if session.start.client_instance != client
+        || session.start.server_instance != server
+        || session.retired
+    {
+        return Err(StoreError::Invalid("voice cancellation owner mismatch"));
+    }
+    let operation: Option<String> = tx
+        .query_row(
+            "SELECT operation_id FROM unified_voice_results WHERE session_id=?1",
+            [session_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(operation) = operation {
+        let output = crate::output_ledger::get(tx, &operation)?
+            .ok_or(StoreError::Invalid("voice output missing"))?;
+        match output.state {
+            OutputState::Prepared => {
+                crate::output_ledger::finish(tx, &output.intent, OutputOutcome::Rejected)?;
+            }
+            OutputState::Rejected | OutputState::PendingTarget => {}
+            _ => return Ok(false),
+        }
+    }
+    tx.execute(
+        "INSERT OR IGNORE INTO unified_voice_cancellations(session_id) VALUES(?1)",
+        [session_id],
+    )?;
+    Ok(true)
 }
 
 fn validate_voice_terms_version(

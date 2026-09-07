@@ -353,6 +353,15 @@ impl HistoryService {
                 .map_err(|error| error.to_string())
         })
     }
+
+    pub fn voice_cancellation_requested(&self, session_id: String) -> ServiceResult<bool> {
+        self.call(move |worker| {
+            worker
+                .store
+                .voice_cancellation_requested(&session_id)
+                .map_err(|error| error.to_string())
+        })
+    }
     pub fn claim_voice_request(
         &self,
         request: crate::voice_protocol::VoiceRequest,
@@ -481,6 +490,21 @@ impl HistoryService {
                 .map_err(|error| error.to_string())
         })
     }
+    pub fn cancel_voice_result(
+        &self,
+        session_id: String,
+        client: String,
+        server: String,
+    ) -> ServiceResult<bool> {
+        self.call(move |worker| {
+            worker.revoke_outputs();
+            worker
+                .store
+                .cancel_voice_result(&session_id, &client, &server)
+                .map_err(|error| error.to_string())
+        })
+    }
+
     pub fn claim_output(&self, intent: crate::output_ledger::OutputIntent) -> ServiceResult<bool> {
         self.call(move |worker| {
             worker

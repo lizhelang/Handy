@@ -298,3 +298,107 @@ fn saved_source_bridge_uses_exact_record_and_text_not_latest_entry() {
         result.intent
     );
 }
+
+#[test]
+fn cancellation_rejects_prepared_output_and_blocks_late_result_without_deleting_history() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("integration.db");
+    let mut store = seeded(&path);
+    let id = item_id("voice-store", "one");
+    let result = store
+        .prepare_voice_result("session", "host", "server", &id, 1)
+        .unwrap();
+    assert!(store
+        .cancel_voice_result("session", "other", "server")
+        .is_err());
+    assert!(store
+        .cancel_voice_result("session", "host", "server")
+        .unwrap());
+    assert!(store
+        .cancel_voice_result("session", "host", "server")
+        .unwrap());
+    assert_eq!(
+        store.voice_result("session").unwrap().unwrap().state,
+        OutputState::Rejected
+    );
+    assert!(!store.claim_output(&result.intent).unwrap());
+    assert!(store
+        .prepare_voice_result("session", "host", "server", &id, 1)
+        .is_err());
+    assert!(store.get(&id).unwrap().is_some());
+    let mut early = start();
+    early.session_id = "early".into();
+    early.request_id = "early-start".into();
+    store
+        .prepare_voice_request(&early, "host", "server", Some(1))
+        .unwrap();
+    assert!(store
+        .cancel_voice_result("early", "host", "server")
+        .unwrap());
+    assert!(!store
+        .claim_voice_request(&early, "host", "server", Some(1))
+        .unwrap());
+}
+
+#[test]
+fn claimed_or_uncertain_output_cannot_be_reported_as_cancelled() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("integration.db");
+    let mut store = seeded(&path);
+    let result = store
+        .prepare_voice_result(
+            "session",
+            "host",
+            "server",
+            &item_id("voice-store", "one"),
+            1,
+        )
+        .unwrap();
+    assert!(store.claim_output(&result.intent).unwrap());
+    assert!(!store
+        .cancel_voice_result("session", "host", "server")
+        .unwrap());
+    assert_eq!(
+        store.voice_result("session").unwrap().unwrap().state,
+        OutputState::Dispatched
+    );
+    store
+        .finish_output(
+            &result.intent,
+            inputia_handy_runtime::output_ledger::OutputOutcome::Uncertain,
+        )
+        .unwrap();
+    assert!(!store
+        .cancel_voice_result("session", "host", "server")
+        .unwrap());
+    assert_eq!(
+        store.voice_result("session").unwrap().unwrap().state,
+        OutputState::Uncertain
+    );
+}
+
+#[test]
+fn cancellation_barrier_failure_rolls_back_output_rejection() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("integration.db");
+    let mut store = seeded(&path);
+    let result = store
+        .prepare_voice_result(
+            "session",
+            "host",
+            "server",
+            &item_id("voice-store", "one"),
+            1,
+        )
+        .unwrap();
+    let conn = Connection::open(path).unwrap();
+    conn.execute_batch("CREATE TRIGGER fail_cancel BEFORE INSERT ON unified_voice_cancellations BEGIN SELECT RAISE(ABORT,'fixture');END;").unwrap();
+    assert!(store
+        .cancel_voice_result("session", "host", "server")
+        .is_err());
+    assert_eq!(
+        store.voice_result("session").unwrap().unwrap().state,
+        OutputState::Prepared
+    );
+    assert!(store.claim_output(&result.intent).unwrap());
+}

@@ -37,3 +37,7 @@
 Host分帧实现：新增InputiaFramedConnection并加入Host编译源列表，后台非阻塞socket、长度上限256KiB、头/正文共用期限、SO_NOSIGPIPE、失败关闭和主线程拒绝。主代理与非作者均实际Swift编译运行9项检查及主线程拒绝，包含同一socketpair的100个单向消息；不是100次重连或往返。真正connect(path:)、最大合法帧、慢读写超时及正文分片仍缺测试；尚未接Host真实客户端。
 
 扩展测试范围的Clippy门禁暴露既有测试/bin风格债务（capability_contract的map_or、qwen工具计数循环、测试模块位置、repeat/take、测试as_deref/write换行）。本轮新添测试的未使用Result及SecureInput测试map写法已修；全tests严格Clippy尚未通过，不能用先前lib-only结果冒充。后续完整质量门禁需一并清除。
+
+待插入取消修复：Cancel claim、尚未派发输出Prepared→Rejected和持久取消屏障合入同一Store事务；失败连claim一起回滚，同request ID可重试。屏障拒绝晚结果和晚Start claim，不删除历史；已派发/未知返回拒绝，不把actor改成Cancelled。dispatcher把资格提交到actor入队串行，入队后释放锁再等回执，防止跨连接Cancel越过已claim未入队的Start。生产`control`必须只入队，禁止等待actor/重入dispatcher。持久取消存在但actor仍活动或尚未观察到时，Status返回Unknown而非旧活动状态。
+
+Coordinator只取消指定PendingTarget结果，覆盖结果刚就绪、FinishGuard之后、下一录音已开始三种时序，不清理下一录音。主代理运行：voice_result9项、dispatcher12项、coordinator67项通过；Handy lib严格Clippy通过。独立审查确认原P2及“Cancel分离事务”和“Start/Cancel越序”两个衍生问题在该路径关闭，另独立重跑store_voice/voice_result共16项通过。此结论限定dispatcher→Coordinator路径；原生Host交付、全局快捷键取消与后续派发交错、跨进程回执恢复仍需完整测试。

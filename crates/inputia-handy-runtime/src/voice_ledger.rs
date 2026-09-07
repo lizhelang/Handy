@@ -58,6 +58,10 @@ pub fn initialize(conn: &Connection) -> Result<()> {
       session_id TEXT PRIMARY KEY REFERENCES unified_voice_sessions(session_id),
       operation_id TEXT NOT NULL UNIQUE REFERENCES unified_output_operations(operation_id));",
     )?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS unified_voice_cancellations(
+      session_id TEXT PRIMARY KEY REFERENCES unified_voice_sessions(session_id));",
+    )?;
     Ok(())
 }
 
@@ -202,6 +206,14 @@ pub fn claim(conn: &Connection, request: &VoiceRequest) -> Result<bool> {
         return Err(VoiceLedgerError::Conflict);
     }
     if matches!(request.command, VoiceCommand::Start { .. }) {
+        let cancelled: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM unified_voice_cancellations WHERE session_id=?1)",
+            [&request.session_id],
+            |row| row.get(0),
+        )?;
+        if cancelled {
+            return Ok(false);
+        }
         if digest(&record.start, true)? != digest(request, true)? {
             return Err(VoiceLedgerError::Conflict);
         }
