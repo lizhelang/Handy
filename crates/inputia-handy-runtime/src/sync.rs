@@ -60,6 +60,10 @@ impl SourcePump {
         self.outbox.store_id()
     }
 
+    pub fn source_table(&self) -> SourceTable {
+        self.source
+    }
+
     pub fn update_record(
         &mut self,
         record_id: &str,

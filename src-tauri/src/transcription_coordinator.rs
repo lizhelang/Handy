@@ -187,6 +187,12 @@ enum Command {
         session_id: String,
         reply: Sender<Result<VoiceSessionView, String>>,
     },
+    VoiceResultPrepared {
+        start: Box<VoiceRequest>,
+        item_id: String,
+        operation_id: String,
+        reply: Sender<Result<VoiceSessionView, String>>,
+    },
     RecordingRequested {
         binding_id: String,
         generation: u64,
@@ -211,6 +217,7 @@ struct OwnedVoiceSession {
     microphone_generation: Option<u64>,
     microphone_ready: bool,
     terminal: Option<VoicePhase>,
+    result: Option<(String, String)>,
 }
 
 /// 给 actions 读取冻结输出身份，不承担生命周期转换。
@@ -666,9 +673,48 @@ impl CoordinatorState {
             generation: session.view_generation,
             phase,
             target_id,
-            item_id: None,
-            output_operation_id: None,
+            item_id: session.result.as_ref().map(|result| result.0.clone()),
+            output_operation_id: session.result.as_ref().map(|result| result.1.clone()),
         })
+    }
+
+    fn on_voice_result_prepared(
+        &mut self,
+        start: &VoiceRequest,
+        item_id: String,
+        operation_id: String,
+    ) -> Result<VoiceSessionView, String> {
+        let session = self
+            .voice_sessions
+            .get_mut(&start.session_id)
+            .ok_or("未知语音会话")?;
+        if &session.start != start
+            || item_id.is_empty()
+            || item_id.len() > 1024
+            || operation_id.is_empty()
+            || operation_id.len() > 256
+            || item_id.chars().any(char::is_control)
+            || operation_id.chars().any(char::is_control)
+        {
+            return Err("语音结果身份无效".into());
+        }
+        let result = (item_id, operation_id);
+        if let Some(previous) = &session.result {
+            if previous != &result {
+                return Err("语音结果不能替换已有输出".into());
+            }
+            return self.voice_view(&start.session_id);
+        }
+        if session.terminal.is_some()
+            || self.active_voice.as_deref() != Some(&start.session_id)
+            || !matches!(self.stage, Stage::Processing)
+        {
+            return Err("语音会话已关闭或尚未处理".into());
+        }
+        session.result = Some(result);
+        session.terminal = Some(VoicePhase::PendingTarget);
+        session.view_generation += 1;
+        self.voice_view(&start.session_id)
     }
 
     #[cfg(test)]
@@ -784,6 +830,7 @@ impl CoordinatorState {
                         microphone_generation: None,
                         microphone_ready: false,
                         terminal: None,
+                        result: None,
                     },
                 );
                 self.active_voice = Some(request.session_id.clone());
@@ -978,6 +1025,27 @@ impl TranscriptionCoordinator {
         receiver
     }
 
+    /// 仅本地转写保存/持久输出准备完成后调用；不代表已派发或已插入。
+    pub fn notify_voice_result_prepared(
+        &self,
+        start: VoiceRequest,
+        item_id: String,
+        operation_id: String,
+    ) -> mpsc::Receiver<Result<VoiceSessionView, String>> {
+        let (reply, receiver) = mpsc::channel();
+        if let Err(error) = self.tx.send(Command::VoiceResultPrepared {
+            start: Box::new(start),
+            item_id,
+            operation_id,
+            reply,
+        }) {
+            if let Command::VoiceResultPrepared { reply, .. } = error.0 {
+                let _ = reply.send(Err("语音协调器已经退出".into()));
+            }
+        }
+        receiver
+    }
+
     /// actions 在启动录音请求返回 generation 后调用；冻结请求所属会话。
     pub fn notify_recording_requested(&self, binding_id: &str, generation: u64) {
         let session_id = self
@@ -1137,6 +1205,14 @@ fn dispatch_command(
         Command::VoiceSessionView { session_id, reply } => {
             let _ = reply.send(state.voice_view(&session_id));
         }
+        Command::VoiceResultPrepared {
+            start,
+            item_id,
+            operation_id,
+            reply,
+        } => {
+            let _ = reply.send(state.on_voice_result_prepared(&start, item_id, operation_id));
+        }
         Command::RecordingRequested {
             binding_id,
             generation,
@@ -1249,6 +1325,67 @@ mod tests {
             command,
             ..start.clone()
         }
+    }
+
+    #[test]
+    fn prepared_result_survives_finish_and_cannot_be_replaced_or_move_next_session() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let start = voice_start("old", "start");
+        state.on_voice(start.clone(), now);
+        assert!(state
+            .on_voice_result_prepared(&start, "item".into(), "operation".into())
+            .is_err());
+        state.on_voice(voice_command(&start, "stop", VoiceCommand::Stop), now);
+        let ready = state
+            .on_voice_result_prepared(&start, "item".into(), "operation".into())
+            .unwrap();
+        assert_eq!(ready.phase, VoicePhase::PendingTarget);
+        assert_eq!(ready.item_id.as_deref(), Some("item"));
+        assert_eq!(ready.output_operation_id.as_deref(), Some("operation"));
+        assert_eq!(
+            state
+                .on_voice_result_prepared(&start, "item".into(), "operation".into())
+                .unwrap(),
+            ready
+        );
+        assert!(state
+            .on_voice_result_prepared(&start, "other".into(), "operation".into())
+            .is_err());
+        state.on_processing_finished();
+        assert_eq!(state.voice_view("old").unwrap(), ready);
+        let next = voice_start("next", "next-start");
+        state.on_voice(next.clone(), now);
+        assert_eq!(
+            state
+                .on_voice_result_prepared(&start, "item".into(), "operation".into())
+                .unwrap(),
+            ready
+        );
+        assert_eq!(state.voice_context(), Some(next));
+    }
+
+    #[test]
+    fn cancelled_or_foreign_result_cannot_turn_into_pending_output() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let start = voice_start("voice", "start");
+        state.on_voice(start.clone(), now);
+        state.on_voice(voice_command(&start, "stop", VoiceCommand::Stop), now);
+        let mut foreign = start.clone();
+        foreign.client_instance = "another-host".into();
+        assert!(state
+            .on_voice_result_prepared(&foreign, "item".into(), "operation".into())
+            .is_err());
+        state.on_voice(voice_command(&start, "cancel", VoiceCommand::Cancel), now);
+        assert!(state
+            .on_voice_result_prepared(&start, "item".into(), "operation".into())
+            .is_err());
+        assert_eq!(
+            state.voice_view("voice").unwrap().phase,
+            VoicePhase::Cancelled
+        );
+        assert!(state.voice_view("voice").unwrap().item_id.is_none());
     }
 
     #[test]

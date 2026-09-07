@@ -251,3 +251,50 @@ fn unclaimed_start_and_deleted_content_cannot_create_result_or_output() {
         0
     );
 }
+
+#[test]
+fn saved_source_bridge_uses_exact_record_and_text_not_latest_entry() {
+    use inputia_handy_runtime::service::HistoryService;
+    let temp = tempfile::tempdir().unwrap();
+    let history = Connection::open(temp.path().join("history.db")).unwrap();
+    history.execute_batch("CREATE TABLE transcription_history(id INTEGER PRIMARY KEY,file_name TEXT,timestamp INTEGER,saved INTEGER,title TEXT,transcription_text TEXT,post_processed_text TEXT);
+        INSERT INTO transcription_history VALUES(1,'',1,0,'fixture','original','expected');
+        INSERT INTO transcription_history VALUES(2,'',2,0,'newer','other',NULL);").unwrap();
+    Connection::open(temp.path().join("clipboard.db")).unwrap().execute_batch("CREATE TABLE clipboard_history(id INTEGER PRIMARY KEY,content_type TEXT,full_text TEXT,title TEXT,is_favorite INTEGER,is_pinned INTEGER,created_at INTEGER,image_path TEXT,source_app TEXT)").unwrap();
+    let service = HistoryService::start(temp.path().into(), "test".into(), |_| {}).unwrap();
+    let request = start();
+    service
+        .prepare_voice_request(request.clone(), "host".into(), "server".into(), Some(1))
+        .unwrap();
+    assert!(service
+        .claim_voice_request(request.clone(), "host".into(), "server".into(), Some(1))
+        .unwrap());
+    assert!(service
+        .prepare_saved_voice_result(request.clone(), 1, "wrong".into())
+        .is_err());
+    assert!(service
+        .prepare_saved_voice_result(request.clone(), 2, "expected".into())
+        .is_err());
+    assert!(service.voice_result("session".into()).unwrap().is_none());
+    let result = service
+        .prepare_saved_voice_result(request.clone(), 1, "expected".into())
+        .unwrap();
+    assert!(result.intent.item_id.ends_with("1:1"));
+    history
+        .execute(
+            "UPDATE transcription_history SET post_processed_text='changed' WHERE id=1",
+            [],
+        )
+        .unwrap();
+    assert!(service
+        .prepare_saved_voice_result(request, 1, "expected".into())
+        .is_err());
+    assert_eq!(
+        service
+            .voice_result("session".into())
+            .unwrap()
+            .unwrap()
+            .intent,
+        result.intent
+    );
+}

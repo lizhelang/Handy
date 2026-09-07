@@ -29,6 +29,38 @@ use tauri::{AppHandle, Emitter};
 
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
+async fn prepare_owned_voice_result(
+    app: &AppHandle,
+    start: inputia_handy_runtime::voice_protocol::VoiceRequest,
+    history_id: i64,
+    text: String,
+) -> Result<(), String> {
+    let service = app
+        .try_state::<Arc<crate::managers::integration::IntegrationManager>>()
+        .ok_or("统一历史服务不可用")?
+        .service
+        .clone();
+    let task_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let output = service.prepare_saved_voice_result(start.clone(), history_id, text)?;
+        let coordinator = task_app
+            .try_state::<TranscriptionCoordinator>()
+            .ok_or("语音协调器不可用")?;
+        let view = coordinator
+            .notify_voice_result_prepared(
+                start.clone(),
+                output.intent.item_id,
+                output.intent.operation_id,
+            )
+            .recv_timeout(Duration::from_secs(2))
+            .map_err(|_| "语音结果状态回执未知")??;
+        service.project_voice_session(start.client_instance, start.server_instance, view)?;
+        Ok(())
+    })
+    .await
+    .map_err(|_| "语音结果准备任务中断".to_owned())?
+}
+
 #[derive(Clone, serde::Serialize)]
 struct RecordingErrorEvent {
     error_type: String,
@@ -742,6 +774,9 @@ impl ShortcutAction for TranscribeAction {
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
         let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
+        let owned_voice = app
+            .try_state::<TranscriptionCoordinator>()
+            .and_then(|coordinator| coordinator.voice_output_context());
 
         set_tray_state(app, TrayIconState::Transcribing);
         // Stop should give immediate visual feedback. Live streaming can keep
@@ -891,7 +926,7 @@ impl ShortcutAction for TranscribeAction {
                             }
 
                             // 文字是主体，音频只是可选附件；音频写盘/验证失败不能丢掉成功文字。
-                            if let Err(err) = persist_completed_transcription(
+                            let saved_entry = persist_completed_transcription(
                                 wav_saved,
                                 file_name,
                                 transcription,
@@ -900,8 +935,34 @@ impl ShortcutAction for TranscribeAction {
                                 |file, text, requested, processed_text, prompt| {
                                     hm.save_entry(file, text, requested, processed_text, prompt)
                                 },
-                            ) {
+                            );
+                            if let Err(err) = &saved_entry {
                                 error!("Failed to save history entry: {}", err);
+                            }
+
+                            if let Some(start) = owned_voice {
+                                // 归属在Stop时冻结；准备失败也不能落入平台paste成为第二所有者。
+                                if !processed.final_text.is_empty() {
+                                    let result = match saved_entry {
+                                        Ok(entry) => {
+                                            prepare_owned_voice_result(
+                                                &ah,
+                                                start,
+                                                entry.id,
+                                                processed.final_text,
+                                            )
+                                            .await
+                                        }
+                                        Err(_) => Err("语音历史保存失败，未派发输入法输出".into()),
+                                    };
+                                    if let Err(error) = result {
+                                        error!("Owned voice result preparation failed: {error}");
+                                        let _ = ah.emit("paste-error", ());
+                                    }
+                                }
+                                utils::hide_recording_overlay(&ah);
+                                set_tray_state(&ah, TrayIconState::Idle);
+                                return;
                             }
 
                             if processed.final_text.is_empty() {

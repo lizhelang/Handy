@@ -385,6 +385,55 @@ impl HistoryService {
         })
     }
 
+    /// 按本次保存的源记录定位；不通过最新记录或全文搜索猜测身份。
+    pub fn prepare_saved_voice_result(
+        &self,
+        start: crate::voice_protocol::VoiceRequest,
+        history_id: i64,
+        expected_text: String,
+    ) -> ServiceResult<crate::output_ledger::OutputRecord> {
+        self.call(move |worker| {
+            if history_id <= 0 || expected_text.is_empty() {
+                return Err("invalid saved voice result".into());
+            }
+            worker.sync_once()?;
+            let source = worker
+                .sources
+                .iter()
+                .find(|source| source.source_table() == SourceTable::History)
+                .ok_or("history source unavailable")?;
+            let id = crate::store::item_id(source.store_id(), &history_id.to_string());
+            let item = worker
+                .store
+                .get(&id)
+                .map_err(|error| error.to_string())?
+                .ok_or("saved voice result is not projected")?;
+            if item.snapshot.source_kind != crate::store::SourceKind::Voice
+                || item.snapshot.text.as_deref() != Some(expected_text.as_str())
+            {
+                return Err("saved voice result changed before output preparation".into());
+            }
+            let session = worker
+                .store
+                .voice_session(&start.session_id)
+                .map_err(|error| error.to_string())?
+                .ok_or("voice session missing")?;
+            if session.start != start {
+                return Err("voice start identity changed".into());
+            }
+            worker
+                .store
+                .prepare_voice_result(
+                    &start.session_id,
+                    &start.client_instance,
+                    &start.server_instance,
+                    &id,
+                    item.revision,
+                )
+                .map_err(|error| error.to_string())
+        })
+    }
+
     /// 只用于本次转写已保存的源记录；有待消费的源变更先完成投影再准备。
     pub fn prepare_voice_result(
         &self,

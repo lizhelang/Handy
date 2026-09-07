@@ -13,3 +13,11 @@
 - 表内没有新增转写正文；删除后的旧关联不能通过当前内容校验重新输出。尚未执行完整兼容恢复和删除遗忘全链路演练，不能由这些单库测试宣称A08/A12通过。
 
 下一接线点：保存历史后以确切源记录/修订核对本次文本，准备该固定结果；Coordinator投影记录item/operation及待插入状态；Handy后台只对认证Host派发该操作，Host持久claim和主线程目标检查后报告事实。任何未知回执不得改为平台paste。以上尚未完成，不应安装本次中间包作为日常融合版本。
+
+后续协调器接线：新增异步 `notify_voice_result_prepared`，核对完整原Start身份、当前Processing及未取消状态，再记录固定item/operation为PendingTarget。重复相同通知不升代数；替换结果、外来身份、取消后迟到结果拒绝。正常FinishGuard不再把已准备结果覆盖为Interrupted，旧结果回执不改变下一会话。协调器66项定向测试通过，日志 `/tmp/handy-coordinator-result-20260907.log`；实际pipeline调用与Host交付仍未接入。
+
+生产pipeline追加：Stop时冻结owned Start身份；成功转写保存后通过`prepare_saved_voice_result`按本次history ID定位，并核对当前投影文字。随后在阻塞任务池准备固定IME输出、通知协调器并持久化PendingTarget事实；任何准备失败都不进入旧平台paste分支。普通非owned语音仍保留原平台路径。真实Host接收/claim/目标校验/上屏仍未实现，因此不得启用或宣称完整IME语音可用。
+
+新增真实HistoryService+两个源SQLite测试通过：较新记录不会替代本次ID；错误文字/错误记录拒绝；准备后源被改，旧文字重试不能换新修订。语音结果专项现为6项通过，严格Handy Clippy通过。尚需补原生录音到Host的端到端故障验证、保存失败时完整待处理UI，以及独立接线审查。
+
+整库回归原运行422通过/15失败/2忽略，失败集中在本地HTTP请求连接提前关闭，原日志`/tmp/handy-owned-result-pipeline-20260907.log`保留。仅对测试进程加`NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost`重跑全套，437通过/0失败/2既有忽略，日志`/tmp/handy-owned-result-loopback-direct-20260907.log`。这是回环直连条件下的实际完整重跑，不删除测试、不改系统代理，也不据此宣称已经定位所有系统网络配置。
