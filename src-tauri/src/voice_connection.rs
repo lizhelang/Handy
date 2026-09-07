@@ -1,6 +1,8 @@
 //! 产品后台连接的认证入口；消费socket所有权，任何失败直接关闭，不保留半认证连接。
 use crate::native_pair_auth::{PairManifest, PeerRole};
-use crate::voice_dispatch::AuthenticatedVoiceConnection;
+use crate::voice_dispatch::{
+    AuthenticatedVoiceConnection, DispatchError, VoiceCoordinatorPort, VoiceDispatcher,
+};
 use inputia_handy_runtime::{
     protocol::{Handshake, HandshakePolicy, ProtocolError},
     service::HistoryService,
@@ -15,6 +17,7 @@ pub enum ConnectionError {
     Handshake,
     MissingContext,
     PolicySync,
+    ControlFrame,
 }
 
 /// 持有原始已认证socket，禁止把该授权挪到其他fd；不提供裸context转移API。
@@ -95,11 +98,43 @@ impl VoiceConnection {
         result
     }
 
-    /// 仅在同一连接中执行handler；不允许将context提取并用于另一个连接。
-    pub fn handle<T>(
+    /// 一个有界控制帧对应一个带request_id回执；失败关闭，不在同一流上猜下一帧。
+    pub fn process_one(
         &mut self,
-        handler: impl FnOnce(&mut UnixStream, &mut AuthenticatedVoiceConnection) -> T,
-    ) -> T {
-        handler(&mut self.stream, &mut self.context)
+        history: &HistoryService,
+        coordinator: &impl VoiceCoordinatorPort,
+    ) -> Result<(), ConnectionError> {
+        use inputia_handy_runtime::voice_protocol::{VoiceReply, VoiceReplyError, VoiceRequest};
+        let result = (|| {
+            let request: VoiceRequest = transport::read_frame(&mut self.stream)
+                .map_err(|_| ConnectionError::ControlFrame)?;
+            if request.request_id.is_empty()
+                || request.request_id.len() > 256
+                || request.request_id.chars().any(char::is_control)
+            {
+                return Err(ConnectionError::ControlFrame);
+            }
+            let request_id = request.request_id.clone();
+            let reply = match VoiceDispatcher::new(history, coordinator)
+                .dispatch(&self.context, request)
+            {
+                Ok(view) => VoiceReply::Session { request_id, view },
+                Err(error) => VoiceReply::Rejected {
+                    request_id,
+                    code: match error {
+                        DispatchError::Unauthorized => VoiceReplyError::Unauthorized,
+                        DispatchError::MissingSession => VoiceReplyError::MissingSession,
+                        DispatchError::Unknown => VoiceReplyError::Unknown,
+                        DispatchError::CoordinatorRejected => VoiceReplyError::CoordinatorRejected,
+                    },
+                },
+            };
+            transport::write_frame(&mut self.stream, &reply)
+                .map_err(|_| ConnectionError::ControlFrame)
+        })();
+        if result.is_err() {
+            let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        }
+        result
     }
 }

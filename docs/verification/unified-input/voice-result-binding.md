@@ -43,3 +43,5 @@ Host分帧实现：新增InputiaFramedConnection并加入Host编译源列表，�
 Coordinator只取消指定PendingTarget结果，覆盖结果刚就绪、FinishGuard之后、下一录音已开始三种时序，不清理下一录音。主代理运行：voice_result9项、dispatcher12项、coordinator67项通过；Handy lib严格Clippy通过。独立审查确认原P2及“Cancel分离事务”和“Start/Cancel越序”两个衍生问题在该路径关闭，另独立重跑store_voice/voice_result共16项通过。此结论限定dispatcher→Coordinator路径；原生Host交付、全局快捷键取消与后续派发交错、跨进程回执恢复仍需完整测试。
 
 Host认证客户端追加：`InputiaVoiceServiceConnection`在候选配对构建中编译，要求候选profile与编译信任根一致，先校验签名manifest和真实socket对端再发送握手；核验服务profile/主版本/能力/epoch，后台接收策略屏障。共享状态清理接口成功返回后才发送两项确认，本地applied版本不冒称服务已接纳Start或已录音。代码以Swift warnings-as-errors实际编译通过；`InputiaVoiceServiceSelfCheck`7项合成状态测试通过（清理先于ACK、失败不ACK、非法屏障/旧epoch拒绝、Rust格式DTO读取），不是实际Host磁盘缓存已清理的证据。真实共享状态实现、主动唤起/重连、控制请求、服务listener及双端配对连线仍待完成。
+
+控制帧追加：Rust `VoiceReply`固定session/rejected两种响应与受限错误码；`VoiceConnection::process_one`读取有界请求、调用唯一dispatcher并回传对应request_id，收发错误关闭socket。移除可暴露原始连接context的通用handle入口。Swift已实现Start/Stop/Cancel/Status wire DTO及单次发送/回执核对；Start核对本地应用词库版本，错误回执不自动换路或重发。Rust协议专项8项通过、Swift严格编译与既有7项策略检查加4项控制DTO断言通过，Handy lib严格Clippy通过。实际listener与Host菜单/控制器入口仍未启用，尚未有真实两端完整控制帧往返和录音证据。

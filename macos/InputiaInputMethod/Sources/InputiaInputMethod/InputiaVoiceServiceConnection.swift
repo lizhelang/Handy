@@ -39,6 +39,58 @@ protocol InputiaSharedStateBarrierApplying {
 
 enum InputiaVoiceServiceError: Error { case profile, handshake, policy }
 
+struct InputiaVoiceTarget: Codable, Equatable {
+  let target_id: String
+  let host_instance: String
+  let controller_id: String
+  let activation_generation: UInt64
+  let field_id: String?
+  let selection_generation: UInt64
+  let composition_generation: UInt64
+  let source_app: String?
+}
+
+enum InputiaVoiceCommand: Encodable {
+  case start(target: InputiaVoiceTarget, postProcess: Bool, terms: InputiaVoiceTermsVersion)
+  case stop, cancel, status
+  private enum Keys: String, CodingKey { case kind, target, post_process, terms }
+  func encode(to encoder: Encoder) throws {
+    var values = encoder.container(keyedBy: Keys.self)
+    switch self {
+    case .start(let target, let postProcess, let terms):
+      try values.encode("start", forKey: .kind)
+      try values.encode(target, forKey: .target)
+      try values.encode(postProcess, forKey: .post_process)
+      try values.encode(terms, forKey: .terms)
+    case .stop: try values.encode("stop", forKey: .kind)
+    case .cancel: try values.encode("cancel", forKey: .kind)
+    case .status: try values.encode("status", forKey: .kind)
+    }
+  }
+}
+struct InputiaVoiceRequest: Encodable {
+  let request_id: String
+  let session_id: String
+  let server_instance: String
+  let client_instance: String
+  let policy_epoch: UInt64
+  let command: InputiaVoiceCommand
+}
+struct InputiaVoiceSessionView: Decodable {
+  let session_id: String
+  let generation: UInt64
+  let phase: String
+  let target_id: String?
+  let item_id: String?
+  let output_operation_id: String?
+}
+struct InputiaVoiceReply: Decodable {
+  let status: String
+  let request_id: String
+  let view: InputiaVoiceSessionView?
+  let code: String?
+}
+
 /// 单一后台队列拥有此客户端。构建公钥作为信任根，manifest只提供被签名的两端身份。
 final class InputiaVoiceServiceConnection {
   static let processInstance = UUID().uuidString
@@ -105,6 +157,40 @@ final class InputiaVoiceServiceConnection {
   }
 
   func close() { locallyAppliedVersion = nil; connection.close() }
+
+  /// 单次请求只写一次，读回执失败不重放Start/输出。调用者以同session的Status查询事实。
+  func request(sessionID: String, requestID: String, command: InputiaVoiceCommand) throws -> InputiaVoiceReply {
+    do {
+      guard !sessionID.isEmpty, sessionID.utf8.count <= 256,
+            !requestID.isEmpty, requestID.utf8.count <= 256,
+            !sessionID.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+            !requestID.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+        throw InputiaVoiceServiceError.handshake
+      }
+      if case .start(let target, _, let terms) = command {
+        guard target.host_instance == Self.processInstance, terms == locallyAppliedVersion else {
+          throw InputiaVoiceServiceError.policy
+        }
+      }
+      let request = InputiaVoiceRequest(request_id: requestID, session_id: sessionID,
+        server_instance: server.instance_id, client_instance: Self.processInstance,
+        policy_epoch: locallyAppliedVersion?.policy_epoch ?? server.policy_epoch, command: command)
+      try connection.write(request)
+      let reply = try connection.read(InputiaVoiceReply.self)
+      guard reply.request_id == requestID else { throw InputiaVoiceServiceError.handshake }
+      if reply.status == "session" {
+        guard let view = reply.view, view.session_id == sessionID,
+              ["preparing", "recording", "processing", "pending_target", "dispatched", "confirmed", "uncertain", "cancelled", "failed", "interrupted"].contains(view.phase),
+              reply.code == nil else { throw InputiaVoiceServiceError.handshake }
+      } else {
+        guard reply.status == "rejected", reply.view == nil, let code = reply.code,
+              ["unauthorized", "missing_session", "unknown", "coordinator_rejected"].contains(code) else {
+          throw InputiaVoiceServiceError.handshake
+        }
+      }
+      return reply
+    } catch { close(); throw error }
+  }
 
   #if INPUTIA_CONNECTION_SELF_CHECK
   static func checkPolicy(_ barrier: InputiaVoicePolicyBarrier, minimumEpoch: UInt64,

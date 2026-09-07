@@ -1,6 +1,42 @@
 use inputia_handy_runtime::voice_protocol::*;
 
 #[test]
+fn control_reply_is_bound_to_request_and_session_without_exposing_error_details() {
+    let request = request();
+    let view = VoiceSessionView {
+        session_id: request.session_id.clone(),
+        generation: 1,
+        phase: VoicePhase::Preparing,
+        target_id: Some("target-1".into()),
+        item_id: None,
+        output_operation_id: None,
+    };
+    let reply = VoiceReply::Session {
+        request_id: request.request_id.clone(),
+        view: view.clone(),
+    };
+    reply.validate_for(&request).unwrap();
+    let mut other = request.clone();
+    other.session_id = "another".into();
+    assert!(reply.validate_for(&other).is_err());
+    other = request.clone();
+    other.request_id = "another-request".into();
+    assert!(reply.validate_for(&other).is_err());
+    let error = VoiceReply::Rejected {
+        request_id: request.request_id.clone(),
+        code: VoiceReplyError::Unknown,
+    };
+    error.validate_for(&request).unwrap();
+    assert_eq!(
+        serde_json::to_string(&error).unwrap(),
+        r#"{"status":"rejected","request_id":"request-1","code":"unknown"}"#
+    );
+    let restored: VoiceReply =
+        serde_json::from_str(&serde_json::to_string(&reply).unwrap()).unwrap();
+    assert_eq!(restored, reply);
+}
+
+#[test]
 fn policy_barrier_requires_current_version_and_both_cleanup_receipts() {
     let version = VoiceTermsVersion {
         policy_epoch: 7,

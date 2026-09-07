@@ -127,6 +127,44 @@ pub struct VoiceSessionView {
     pub output_operation_id: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceReplyError {
+    Unauthorized,
+    MissingSession,
+    Unknown,
+    CoordinatorRejected,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum VoiceReply {
+    Session {
+        request_id: String,
+        view: VoiceSessionView,
+    },
+    Rejected {
+        request_id: String,
+        code: VoiceReplyError,
+    },
+}
+
+impl VoiceReply {
+    pub fn validate_for(&self, request: &VoiceRequest) -> Result<(), ProtocolError> {
+        let (request_id, view) = match self {
+            Self::Session { request_id, view } => (request_id, Some(view)),
+            Self::Rejected { request_id, .. } => (request_id, None),
+        };
+        if !id(request_id)
+            || request_id != &request.request_id
+            || view.is_some_and(|view| view.session_id != request.session_id)
+        {
+            return Err(ProtocolError::InvalidEnvelope);
+        }
+        Ok(())
+    }
+}
+
 /// 正文只通过认证私有连接传输；故意不实现 Debug，防止顺手记录全文。
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
