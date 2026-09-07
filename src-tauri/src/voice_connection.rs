@@ -160,12 +160,6 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
     };
     let service = manager.service.clone();
     let app = app.clone();
-    struct ListenerLifetime(Arc<AtomicBool>);
-    impl Drop for ListenerLifetime {
-        fn drop(&mut self) {
-            self.0.store(true, Ordering::Release);
-        }
-    }
     let stop = Arc::new(AtomicBool::new(false));
     app.manage(ListenerLifetime(stop.clone()));
     std::thread::spawn(move || {
@@ -286,4 +280,24 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
             log::warn!("unified_voice_listener_unavailable reason={reason}");
         }
     });
+}
+
+struct ListenerLifetime(std::sync::Arc<std::sync::atomic::AtomicBool>);
+impl Drop for ListenerLifetime {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
+pub(crate) fn stop_candidate_listener(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(lifetime) = app.try_state::<ListenerLifetime>() {
+        lifetime.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
+pub(crate) fn candidate_listener_stopping(app: &tauri::AppHandle) -> bool {
+    use tauri::Manager;
+    app.try_state::<ListenerLifetime>()
+        .is_some_and(|lifetime| lifetime.0.load(std::sync::atomic::Ordering::Acquire))
 }

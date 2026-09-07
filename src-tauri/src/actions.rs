@@ -566,6 +566,10 @@ pub(crate) async fn process_transcription_output(
 
 impl ShortcutAction for TranscribeAction {
     fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
+        #[cfg(target_os = "macos")]
+        if crate::voice_connection::candidate_listener_stopping(app) {
+            return;
+        }
         let start_time = Instant::now();
         debug!("TranscribeAction::start called for binding: {}", binding_id);
 

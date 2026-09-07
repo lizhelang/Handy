@@ -1,5 +1,6 @@
 import Cocoa
 import InputMethodKit
+import Carbon
 
 private struct InputiaAppContext: Equatable {
   let bundleId: String
@@ -90,6 +91,11 @@ enum InputiaHost {
 
 @objc(InputiaInputController)
 final class InputiaInputController: IMKInputController {
+  #if INPUTIA_PAIRED_BUILD
+  private let voiceControllerID = UUID().uuidString
+  private var voiceActivationGeneration: UInt64 = 0
+  private var voiceStatus = ""
+  #endif
   private let bridge = InputiaRustBridge.makeDefault()
   private var latestCandidates: [String] = []
   private var latestComposing = ""
@@ -149,6 +155,9 @@ final class InputiaInputController: IMKInputController {
   override func menu() -> NSMenu! {
     let voiceInput = NSMenuItem(title: "语音输入", action: #selector(toggleVoiceInput), keyEquivalent: "")
     voiceInput.target = self
+    #if INPUTIA_PAIRED_BUILD
+    if !voiceStatus.isEmpty { voiceInput.title = "语音输入：\(voiceStatus)" }
+    #endif
 
     let syncMemory = NSMenuItem(title: "同步语音/剪贴板记忆", action: #selector(syncHandyMemory), keyEquivalent: "")
     syncMemory.target = self
@@ -178,6 +187,19 @@ final class InputiaInputController: IMKInputController {
   }
 
   @objc private func toggleVoiceInput() {
+    #if INPUTIA_PAIRED_BUILD
+    var target: InputiaVoiceTarget?
+    if let client = client(), !IsSecureEventInputEnabled(),
+       let bundle = client.bundleIdentifier(), !bridge.isSensitiveApp(bundleId: bundle, windowTitle: appContext(for: client).windowTitle) {
+      target = InputiaVoiceTarget(target_id: UUID().uuidString, host_instance: InputiaVoiceServiceConnection.processInstance,
+        controller_id: voiceControllerID, activation_generation: voiceActivationGeneration,
+        field_id: nil, selection_generation: 0, composition_generation: latestComposing.isEmpty ? 0 : 1, source_app: bundle)
+    }
+    InputiaVoiceInputLauncher.triggerUnifiedVoice(target: target) { [weak self] message in
+      self?.voiceStatus = message
+    }
+    return
+    #else
     switch InputiaVoiceInputLauncher.triggerVoiceInput() {
     case .started:
       return
@@ -189,6 +211,7 @@ final class InputiaInputController: IMKInputController {
     case .failed(let message):
       showHostAlert(title: "无法启动语音输入", message: message)
     }
+    #endif
   }
 
   @objc private func syncHandyMemory() {
@@ -299,6 +322,9 @@ final class InputiaInputController: IMKInputController {
   }
 
   override func activateServer(_ sender: Any!) {
+    #if INPUTIA_PAIRED_BUILD
+    voiceActivationGeneration &+= 1
+    #endif
     InputiaHost.activeInputController = self
     if let client = sender as? IMKTextInput {
       if shouldUseSecureDirectMode(client) {
@@ -310,6 +336,9 @@ final class InputiaInputController: IMKInputController {
   }
 
   override func deactivateServer(_ sender: Any!) {
+    #if INPUTIA_PAIRED_BUILD
+    voiceActivationGeneration &+= 1
+    #endif
     commitComposition(sender)
     if InputiaHost.activeInputController === self {
       InputiaHost.activeInputController = nil

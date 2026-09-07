@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
+import tempfile
 
 
 def checked_file(path, limit):
@@ -92,7 +94,26 @@ def main():
     parser.add_argument("--public-key", type=Path)
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--emit", choices=["rust", "swift"])
+    parser.add_argument("--sign-pair", action="store_true")
+    parser.add_argument("--handy", type=Path)
+    parser.add_argument("--inputia", type=Path)
+    parser.add_argument("--build-tool", type=Path)
+    parser.add_argument("--private-key", type=Path)
+    parser.add_argument("--manifest", type=Path)
     args = parser.parse_args()
+    if args.sign_pair:
+        if args.emit or args.public_key or not all([args.handy, args.inputia, args.build_tool, args.private_key, args.manifest]):
+            parser.error("sign-pair requires both signed apps, build tool, private key and new manifest path")
+        metadata, _ = load(args.metadata, args.run_id)
+        peers = [json.loads(subprocess.check_output([str(args.build_tool), "identity", role, str(path)]))
+                 for role, path in [("handy", args.handy), ("inputia", args.inputia)]]
+        payload = {"schemaVersion": 1, "mode": "candidate", "keyID": metadata["key_id"],
+                   "runID": metadata["run_id"], "profileID": metadata["profile_id"], "protocolMajor": 1, "peers": peers}
+        with tempfile.TemporaryDirectory(prefix="pair-payload-") as temporary:
+            path = Path(temporary) / "payload.json"
+            write_new(path, json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+            subprocess.run([str(args.build_tool), "sign", str(args.private_key), str(path), str(args.manifest)], check=True)
+        return
     if args.public_key is not None:
         if args.emit:
             parser.error("creation and emission are separate build steps")

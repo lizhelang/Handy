@@ -1243,6 +1243,8 @@ pub fn run(cli_args: CliArgs) {
         // Teardown transcribe.cpp before exit
         tauri::RunEvent::Exit => {
             #[cfg(target_os = "macos")]
+            voice_connection::stop_candidate_listener(app);
+            #[cfg(target_os = "macos")]
             overlay::remove_clipboard_overlay_monitors(app);
             if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                 let _ = tm.unload_model();

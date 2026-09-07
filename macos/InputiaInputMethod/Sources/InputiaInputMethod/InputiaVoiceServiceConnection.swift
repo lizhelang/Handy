@@ -1,5 +1,6 @@
 #if INPUTIA_PAIRED_BUILD
 import Foundation
+import SQLite3
 
 /// Wire DTO字段与Rust JSON合同一致，不用于系统输入框或全文日志。
 struct InputiaVoiceHello: Codable, Equatable {
@@ -38,6 +39,57 @@ protocol InputiaSharedStateBarrierApplying {
 }
 
 enum InputiaVoiceServiceError: Error { case profile, handshake, policy }
+
+/// 实际入口使用的候选共享状态。未接入的旧格式/非空队列拒绝确认，绝不丢弃后冒称重核验。
+final class InputiaVoiceSharedState: InputiaSharedStateBarrierApplying {
+  private var database: OpaquePointer?
+  init(profile: InputiaProfile) throws {
+    guard !Thread.isMainThread, profile.isCandidate else { throw InputiaVoiceServiceError.profile }
+    try profile.validateCandidatePaths()
+    try FileManager.default.createDirectory(at: profile.root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    guard sqlite3_open_v2(profile.outbox.path, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOFOLLOW, nil) == SQLITE_OK else {
+      if let database { sqlite3_close(database) }; database = nil
+      throw InputiaVoiceServiceError.policy
+    }
+    do {
+      try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: profile.outbox.path)
+      sqlite3_busy_timeout(database, 1000)
+      let version = try integer("PRAGMA user_version")
+      if version == 0 {
+        guard try integer("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'") == 0 else { throw InputiaVoiceServiceError.policy }
+        try execute("BEGIN IMMEDIATE; CREATE TABLE shared_policy(epoch INTEGER NOT NULL,generation INTEGER NOT NULL); INSERT INTO shared_policy VALUES(0,0); CREATE TABLE shared_terms(term TEXT NOT NULL); CREATE TABLE shared_learning_outbox(event_id TEXT PRIMARY KEY, payload TEXT NOT NULL); PRAGMA user_version=1; COMMIT;")
+      } else if version != 1 { throw InputiaVoiceServiceError.policy }
+    } catch { sqlite3_close(database); database = nil; throw error }
+  }
+  deinit { if let database { sqlite3_close(database) } }
+  private func execute(_ sql: String) throws {
+    guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else { throw InputiaVoiceServiceError.policy }
+  }
+  private func integer(_ sql: String) throws -> Int64 {
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { throw InputiaVoiceServiceError.policy }
+    defer { sqlite3_finalize(statement) }
+    guard sqlite3_step(statement) == SQLITE_ROW else { throw InputiaVoiceServiceError.policy }
+    return sqlite3_column_int64(statement, 0)
+  }
+  func lastVersion() throws -> InputiaVoiceTermsVersion {
+    let epoch = try integer("SELECT epoch FROM shared_policy"), generation = try integer("SELECT generation FROM shared_policy")
+    guard epoch >= 0, generation >= 0 else { throw InputiaVoiceServiceError.policy }
+    return InputiaVoiceTermsVersion(policy_epoch: UInt64(epoch), learning_generation: UInt64(generation))
+  }
+  func applySharedStateBarrier(_ barrier: InputiaVoicePolicyBarrier) throws {
+    guard !Thread.isMainThread, barrier.version.policy_epoch <= UInt64(Int64.max),
+          barrier.version.learning_generation <= UInt64(Int64.max) else { throw InputiaVoiceServiceError.policy }
+    try execute("BEGIN IMMEDIATE")
+    do {
+      let old = try lastVersion()
+      guard barrier.version.policy_epoch >= old.policy_epoch,
+            barrier.version.learning_generation >= old.learning_generation,
+            try integer("SELECT COUNT(*) FROM shared_learning_outbox") == 0 else { throw InputiaVoiceServiceError.policy }
+      try execute("DELETE FROM shared_terms; UPDATE shared_policy SET epoch=\(barrier.version.policy_epoch),generation=\(barrier.version.learning_generation); COMMIT;")
+    } catch { try? execute("ROLLBACK"); throw error }
+  }
+}
 
 struct InputiaVoiceTarget: Codable, Equatable {
   let target_id: String
