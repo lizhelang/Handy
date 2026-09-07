@@ -1332,11 +1332,14 @@ mod tests {
         let mut state = CoordinatorState::new();
         let now = Instant::now();
         let start = voice_start("old", "start");
-        state.on_voice(start.clone(), now);
+        state.on_voice(start.clone(), now).0.unwrap();
         assert!(state
             .on_voice_result_prepared(&start, "item".into(), "operation".into())
             .is_err());
-        state.on_voice(voice_command(&start, "stop", VoiceCommand::Stop), now);
+        state
+            .on_voice(voice_command(&start, "stop", VoiceCommand::Stop), now)
+            .0
+            .unwrap();
         let ready = state
             .on_voice_result_prepared(&start, "item".into(), "operation".into())
             .unwrap();
@@ -1355,7 +1358,7 @@ mod tests {
         state.on_processing_finished();
         assert_eq!(state.voice_view("old").unwrap(), ready);
         let next = voice_start("next", "next-start");
-        state.on_voice(next.clone(), now);
+        state.on_voice(next.clone(), now).0.unwrap();
         assert_eq!(
             state
                 .on_voice_result_prepared(&start, "item".into(), "operation".into())
@@ -1370,14 +1373,20 @@ mod tests {
         let mut state = CoordinatorState::new();
         let now = Instant::now();
         let start = voice_start("voice", "start");
-        state.on_voice(start.clone(), now);
-        state.on_voice(voice_command(&start, "stop", VoiceCommand::Stop), now);
+        state.on_voice(start.clone(), now).0.unwrap();
+        state
+            .on_voice(voice_command(&start, "stop", VoiceCommand::Stop), now)
+            .0
+            .unwrap();
         let mut foreign = start.clone();
         foreign.client_instance = "another-host".into();
         assert!(state
             .on_voice_result_prepared(&foreign, "item".into(), "operation".into())
             .is_err());
-        state.on_voice(voice_command(&start, "cancel", VoiceCommand::Cancel), now);
+        state
+            .on_voice(voice_command(&start, "cancel", VoiceCommand::Cancel), now)
+            .0
+            .unwrap();
         assert!(state
             .on_voice_result_prepared(&start, "item".into(), "operation".into())
             .is_err());

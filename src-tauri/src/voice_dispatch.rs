@@ -7,7 +7,9 @@ use inputia_handy_runtime::protocol::Handshake;
 use inputia_handy_runtime::{
     service::HistoryService,
     voice_ledger::SessionRecord,
-    voice_protocol::{VoiceCommand, VoicePeer, VoicePhase, VoiceRequest, VoiceSessionView},
+    voice_protocol::{
+        VoiceCommand, VoicePeer, VoicePhase, VoiceRequest, VoiceSessionView, VoiceTermsVersion,
+    },
 };
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
@@ -21,7 +23,7 @@ enum PeerProof {
 pub struct AuthenticatedVoiceConnection {
     client: String,
     server: String,
-    applied_epoch: Option<u64>,
+    applied_version: Option<VoiceTermsVersion>,
     // 持有真实认证结果，不能从请求反序列化此上下文。
     proof: PeerProof,
 }
@@ -29,7 +31,7 @@ pub struct AuthenticatedVoiceConnection {
 impl AuthenticatedVoiceConnection {
     /// 发出新屏障或同步失败时立即关闭新Start授权；Stop/Cancel仍能关闭本人会话。
     pub fn invalidate_policy(&mut self) {
-        self.applied_epoch = None;
+        self.applied_version = None;
     }
     /// server 调用者须将握手绑定至同一已认证存活 socket，不能传 VoiceRequest 字段。
     /// 策略应用回执通过同连接单独确认；初始连接没有业务授权。
@@ -54,17 +56,26 @@ impl AuthenticatedVoiceConnection {
         Ok(Self {
             client: client.instance_id.clone(),
             server: server.instance_id.clone(),
-            applied_epoch: None,
+            applied_version: None,
             proof: PeerProof::Authenticated(verified),
         })
     }
 
     /// 仅 server 已验证的策略/遗忘应用回执可调用，不能由普通业务请求更新。
-    pub fn acknowledge_policy(&mut self, applied: u64, current: u64) -> Result<(), DispatchError> {
-        if applied != current || self.applied_epoch.is_some_and(|old| applied < old) {
+    pub fn acknowledge_policy(
+        &mut self,
+        applied: VoiceTermsVersion,
+        current: &VoiceTermsVersion,
+    ) -> Result<(), DispatchError> {
+        if &applied != current
+            || self.applied_version.as_ref().is_some_and(|old| {
+                applied.policy_epoch < old.policy_epoch
+                    || applied.learning_generation < old.learning_generation
+            })
+        {
             return Err(DispatchError::Unauthorized);
         }
-        self.applied_epoch = Some(applied);
+        self.applied_version = Some(applied);
         Ok(())
     }
 }
@@ -124,16 +135,22 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
             }
             _ => {}
         }
-        let epoch = self
+        let version = self
             .history
-            .policy_epoch()
+            .voice_terms_version()
             .map_err(|_| DispatchError::Unknown)?;
+        if let VoiceCommand::Start { terms, .. } = &request.command {
+            // 请求自报最新版本不能替代本连接真正完成的清理回执。
+            if context.applied_version.as_ref() != Some(terms) {
+                return Err(DispatchError::Unauthorized);
+            }
+        }
         request
             .validate_for(&VoicePeer {
                 client_instance: &context.client,
                 server_instance: &context.server,
-                policy_epoch: epoch,
-                policy_applied: context.applied_epoch == Some(epoch),
+                policy_epoch: version.policy_epoch,
+                policy_applied: context.applied_version.as_ref() == Some(&version),
             })
             .map_err(|_| DispatchError::Unauthorized)
     }
@@ -178,7 +195,10 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
                 request.clone(),
                 context.client.clone(),
                 context.server.clone(),
-                context.applied_epoch,
+                context
+                    .applied_version
+                    .as_ref()
+                    .map(|version| version.policy_epoch),
             )
             .map_err(|_| DispatchError::Unknown)?;
         if record.retired {
@@ -190,7 +210,10 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
                 request.clone(),
                 context.client.clone(),
                 context.server.clone(),
-                context.applied_epoch,
+                context
+                    .applied_version
+                    .as_ref()
+                    .map(|version| version.policy_epoch),
             )
             .map_err(|_| DispatchError::Unknown)?;
         if !claimed {
@@ -330,7 +353,10 @@ mod tests {
         AuthenticatedVoiceConnection {
             client: "host".into(),
             server: server.into(),
-            applied_epoch: Some(1),
+            applied_version: Some(VoiceTermsVersion {
+                policy_epoch: 1,
+                learning_generation: 0,
+            }),
             proof: PeerProof::Synthetic,
         }
     }
@@ -376,6 +402,40 @@ mod tests {
                 r.get(0)
             })
             .unwrap()
+    }
+
+    #[test]
+    fn same_epoch_new_generation_requires_a_new_connection_barrier_ack() {
+        let root = tempfile::tempdir().unwrap();
+        let history = service(root.path());
+        let coordinator = FakeCoordinator::default();
+        let dispatcher = VoiceDispatcher::new(&history, &coordinator);
+        let mut ctx = context("server");
+        Connection::open(root.path().join("integration.db"))
+            .unwrap()
+            .execute(
+                "UPDATE integration_meta SET value='1' WHERE key='learning_generation'",
+                [],
+            )
+            .unwrap();
+        let mut fresh = request("start-new-version", "server");
+        if let VoiceCommand::Start { terms, .. } = &mut fresh.command {
+            terms.learning_generation = 1;
+        }
+        assert_eq!(
+            dispatcher.dispatch(&ctx, fresh.clone()),
+            Err(DispatchError::Unauthorized)
+        );
+        assert!(coordinator.controls.lock().unwrap().is_empty());
+        assert_eq!(request_count(root.path()), 0);
+        let current = history.voice_terms_version().unwrap();
+        ctx.acknowledge_policy(current.clone(), &current).unwrap();
+        dispatcher.dispatch(&ctx, fresh).unwrap();
+        assert_eq!(coordinator.controls.lock().unwrap().len(), 1);
+        ctx.invalidate_policy();
+        let mut stop = request("stop-without-new-barrier", "server");
+        stop.command = VoiceCommand::Stop;
+        assert!(dispatcher.dispatch(&ctx, stop).is_ok());
     }
 
     #[test]
@@ -592,7 +652,7 @@ mod tests {
                 [],
             )
             .unwrap();
-        ctx.applied_epoch = None;
+        ctx.applied_version = None;
         assert_eq!(
             dispatcher.dispatch(&ctx, request("again", "server")),
             Err(DispatchError::Unauthorized)
@@ -606,7 +666,28 @@ mod tests {
             dispatcher.dispatch(&ctx, control).unwrap();
         }
         assert_eq!(coordinator.controls.lock().unwrap().len(), 3);
-        assert!(ctx.acknowledge_policy(1, 2).is_err());
-        ctx.acknowledge_policy(2, 2).unwrap();
+        assert!(ctx
+            .acknowledge_policy(
+                VoiceTermsVersion {
+                    policy_epoch: 1,
+                    learning_generation: 0
+                },
+                &VoiceTermsVersion {
+                    policy_epoch: 2,
+                    learning_generation: 0
+                }
+            )
+            .is_err());
+        ctx.acknowledge_policy(
+            VoiceTermsVersion {
+                policy_epoch: 2,
+                learning_generation: 0,
+            },
+            &VoiceTermsVersion {
+                policy_epoch: 2,
+                learning_generation: 0,
+            },
+        )
+        .unwrap();
     }
 }

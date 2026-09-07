@@ -815,9 +815,8 @@ mod reconciliation_tests {
             },
             Duration::from_secs(1),
         )
-        .and_then(|()| {
+        .map(|()| {
             order.lock().unwrap().push("new-primary-registered");
-            Ok(())
         })
         .unwrap();
         assert_eq!(
@@ -851,9 +850,8 @@ mod reconciliation_tests {
             Duration::from_secs(1),
         );
         let mut registered = false;
-        let result = cleanup_error.and_then(|()| {
+        let result = cleanup_error.map(|()| {
             registered = true;
-            Ok(())
         });
         assert!(result.is_err());
         assert!(!registered);

@@ -86,7 +86,7 @@ impl VoiceConnection {
                 .validate_ack(&ack, &current)
                 .map_err(|_| ConnectionError::PolicySync)?;
             self.context
-                .acknowledge_policy(current.policy_epoch, current.policy_epoch)
+                .acknowledge_policy(current.clone(), &current)
                 .map_err(|_| ConnectionError::PolicySync)
         })();
         if result.is_err() {
