@@ -36,6 +36,8 @@ mod tray_i18n;
 mod unified_target;
 mod utils;
 #[cfg(target_os = "macos")]
+pub mod voice_connection;
+#[cfg(target_os = "macos")]
 pub mod voice_dispatch;
 
 pub use cli::CliArgs;

@@ -41,6 +41,59 @@ fn policy() -> HandshakePolicy {
 }
 
 #[test]
+fn identity_binding_rejection_is_sent_before_any_accepted_reply() {
+    use inputia_handy_runtime::transport::server_handshake_checked;
+    let (mut client, mut server) = UnixStream::pair().unwrap();
+    let worker = thread::spawn(move || {
+        server_handshake_checked(&mut server, &handshake("server", 7), &policy(), |hello| {
+            assert_eq!(hello.instance_id, "client");
+            Err(ProtocolError::PeerIdentity)
+        })
+    });
+    write_frame(&mut client, &handshake("client", 7)).unwrap();
+    let reply: HandshakeReply = read_frame(&mut client).unwrap();
+    assert_eq!(
+        reply,
+        HandshakeReply::Rejected {
+            reason: HandshakeRejection::InvalidIdentity
+        }
+    );
+    assert!(matches!(
+        worker.join().unwrap(),
+        Err(ProtocolError::PeerIdentity)
+    ));
+}
+
+#[test]
+fn binding_completes_before_client_receives_accepted_and_invalid_profile_never_binds() {
+    use inputia_handy_runtime::transport::server_handshake_checked;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    for valid in [true, false] {
+        let bound = Arc::new(AtomicBool::new(false));
+        let worker_bound = bound.clone();
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let worker = thread::spawn(move || {
+            server_handshake_checked(&mut server, &handshake("server", 7), &policy(), |_| {
+                worker_bound.store(true, Ordering::Release);
+                Ok(())
+            })
+        });
+        let mut hello = handshake("client", 7);
+        if !valid {
+            hello.profile_id = "another-profile".into();
+        }
+        write_frame(&mut client, &hello).unwrap();
+        let reply: HandshakeReply = read_frame(&mut client).unwrap();
+        assert_eq!(matches!(reply, HandshakeReply::Accepted { .. }), valid);
+        assert_eq!(bound.load(Ordering::Acquire), valid);
+        assert_eq!(worker.join().unwrap().is_ok(), valid);
+    }
+}
+
+#[test]
 fn one_hundred_real_connections_handshake_status_and_disconnect() {
     let temp = tempfile::tempdir().unwrap();
     let socket = temp.path().join("private/control.sock");

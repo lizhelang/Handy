@@ -23,3 +23,5 @@
 整库回归原运行422通过/15失败/2忽略，失败集中在本地HTTP请求连接提前关闭，原日志`/tmp/handy-owned-result-pipeline-20260907.log`保留。仅对测试进程加`NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost`重跑全套，437通过/0失败/2既有忽略，日志`/tmp/handy-owned-result-loopback-direct-20260907.log`。这是回环直连条件下的实际完整重跑，不删除测试、不改系统代理，也不据此宣称已经定位所有系统网络配置。
 
 身份绑定追加：认证连接构造现在必须把VerifiedPeer中的内核audit token与握手client_instance在唯一HistoryService事务内绑定，不能从请求正文提供audit。绑定跨服务重启保留，同实例不同进程拒绝；数据库故障不授予资格。最多16384个身份且不驱逐旧绑定，达到上限明确拒绝新身份，不影响基础键盘；正式产品仍须提供对应容量诊断/维护。store_voice专项5项通过（包含新身份重启/故障测试），Handy严格Clippy通过。实际socket握手仍未接通，不能把此持久层测试当作端到端认证成功。
+
+连接入口追加：`VoiceConnection::accept`消费后台socket，先执行真实原生认证，再读握手；协议/profile合法后持久绑定实例，最后写Accepted。任何失败关闭该socket，连接context尚未确认策略，不授予Start。新增`server_handshake_checked`在成功回包前提供绑定门禁，原基础传输API保留。16项实际UDS传输测试通过，包含绑定拒绝不得出现Accepted及错误profile不调用绑定；Handy严格Clippy通过。此处尚无产品listener/client、策略同步协议或真实两端连线证据。Security与数据库认证阶段的整体准备时限仍需服务生命周期接线时统一约束，不能把帧的2秒deadline称作整条认证流程已测2秒。

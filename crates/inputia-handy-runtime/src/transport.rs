@@ -300,6 +300,16 @@ mod unix {
         server: &Handshake,
         policy: &HandshakePolicy,
     ) -> Result<Handshake> {
+        server_handshake_checked(stream, server, policy, |_| Ok(()))
+    }
+
+    /// 在Accepted写出前绑定已认证对端的实例；签名认证仍须在调用本函数前完成。
+    pub fn server_handshake_checked(
+        stream: &mut UnixStream,
+        server: &Handshake,
+        policy: &HandshakePolicy,
+        bind: impl FnOnce(&Handshake) -> Result<()>,
+    ) -> Result<Handshake> {
         server.validate(policy).map_err(ProtocolError::Handshake)?;
         if server.policy_epoch != policy.current_policy_epoch {
             return Err(ProtocolError::InvalidHandshakeReply);
@@ -315,6 +325,16 @@ mod unix {
                 deadline,
             )?;
             return Err(ProtocolError::Handshake(reason));
+        }
+        if bind(&client).is_err() {
+            write_until(
+                stream,
+                &HandshakeReply::Rejected {
+                    reason: crate::protocol::HandshakeRejection::InvalidIdentity,
+                },
+                deadline,
+            )?;
+            return Err(ProtocolError::PeerIdentity);
         }
         write_until(
             stream,
