@@ -344,6 +344,15 @@ impl HistoryService {
                 .map_err(|error| error.to_string())
         })
     }
+
+    pub fn voice_terms_version(&self) -> ServiceResult<crate::voice_protocol::VoiceTermsVersion> {
+        self.call(|worker| {
+            worker
+                .store
+                .voice_terms_version()
+                .map_err(|error| error.to_string())
+        })
+    }
     pub fn claim_voice_request(
         &self,
         request: crate::voice_protocol::VoiceRequest,

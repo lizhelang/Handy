@@ -157,3 +157,87 @@ fn peer_binding_database_failure_does_not_authorize_or_consume_identity() {
     store.bind_voice_peer("host", &[2; 32]).unwrap();
     assert!(store.bind_voice_peer("host", &[1; 32]).is_err());
 }
+
+#[test]
+fn changed_terms_generation_revokes_start_claim_but_not_owned_stop() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("integration.db");
+    let mut store = IntegrationStore::open(&path, "fixture").unwrap();
+    store.initialize_voice_sessions().unwrap();
+    let original = request();
+    store
+        .prepare_voice_request(&original, "host", "server", Some(1))
+        .unwrap();
+    let conn = Connection::open(&path).unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO integration_meta(key,value) VALUES('learning_generation','1')",
+        [],
+    )
+    .unwrap();
+    assert_eq!(
+        store.voice_terms_version().unwrap(),
+        VoiceTermsVersion {
+            policy_epoch: 1,
+            learning_generation: 1
+        }
+    );
+    assert!(store
+        .claim_voice_request(&original, "host", "server", Some(1))
+        .is_err());
+    assert_eq!(
+        conn.query_row(
+            "SELECT start_claimed FROM unified_voice_sessions",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    let mut fresh = request();
+    fresh.session_id = "new-session".into();
+    fresh.request_id = "fresh-start".into();
+    if let VoiceCommand::Start { terms, .. } = &mut fresh.command {
+        terms.learning_generation = 1;
+    }
+    store
+        .prepare_voice_request(&fresh, "host", "server", Some(1))
+        .unwrap();
+    assert!(store
+        .claim_voice_request(&fresh, "host", "server", Some(1))
+        .unwrap());
+    conn.execute(
+        "UPDATE integration_meta SET value='2' WHERE key='learning_generation'",
+        [],
+    )
+    .unwrap();
+    fresh.request_id = "stop".into();
+    fresh.command = VoiceCommand::Stop;
+    store
+        .prepare_voice_request(&fresh, "host", "server", Some(1))
+        .unwrap();
+    assert!(store
+        .claim_voice_request(&fresh, "host", "server", Some(1))
+        .unwrap());
+}
+
+#[test]
+fn future_or_corrupt_terms_version_never_leaves_prepared_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("integration.db");
+    let mut store = IntegrationStore::open(&path, "fixture").unwrap();
+    store.initialize_voice_sessions().unwrap();
+    let mut fresh = request();
+    if let VoiceCommand::Start { terms, .. } = &mut fresh.command {
+        terms.learning_generation = 5;
+    }
+    assert!(store
+        .prepare_voice_request(&fresh, "host", "server", Some(1))
+        .is_err());
+    assert!(store.voice_session(&fresh.session_id).unwrap().is_none());
+    Connection::open(path).unwrap().execute("INSERT OR REPLACE INTO integration_meta(key,value) VALUES('learning_generation','corrupt')", []).unwrap();
+    assert!(store.voice_terms_version().is_err());
+    assert!(store
+        .prepare_voice_request(&request(), "host", "server", Some(1))
+        .is_err());
+    assert!(store.voice_session(&fresh.session_id).unwrap().is_none());
+}

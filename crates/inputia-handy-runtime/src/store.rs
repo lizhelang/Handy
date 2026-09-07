@@ -309,6 +309,7 @@ impl IntegrationStore {
             policy_applied: applied_epoch == Some(current),
         };
         let record = crate::voice_ledger::prepare(&tx, request, &peer)?;
+        validate_voice_terms_version(&tx, request)?;
         tx.commit()?;
         Ok(record)
     }
@@ -334,6 +335,7 @@ impl IntegrationStore {
             .validate_for(&peer)
             .map_err(|_| StoreError::Invalid("voice permission changed before claim"))?;
         let claimed = crate::voice_ledger::claim(&tx, request)?;
+        validate_voice_terms_version(&tx, request)?;
         tx.commit()?;
         Ok(claimed)
     }
@@ -366,6 +368,14 @@ impl IntegrationStore {
         crate::voice_ledger::bind_peer(&tx, client, audit)?;
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn voice_terms_version(&self) -> StoreResult<crate::voice_protocol::VoiceTermsVersion> {
+        let tx = self.conn.unchecked_transaction()?;
+        Ok(crate::voice_protocol::VoiceTermsVersion {
+            policy_epoch: epoch(&tx)?,
+            learning_generation: current_learning_generation(&tx)?,
+        })
     }
 
     /// 把当前语音结果与一个固定IME输出关联；原文仍只在历史/修订库，不另排全文队列。
@@ -1232,6 +1242,36 @@ fn identifier(value: &str) -> StoreResult<()> {
     Identifier::parse(value)
         .map(|_| ())
         .map_err(StoreError::Invalid)
+}
+
+fn current_learning_generation(conn: &Connection) -> StoreResult<u64> {
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT value FROM integration_meta WHERE key='learning_generation'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match value {
+        None => Ok(0), // 旧库尚未启用学习时没有共享词快照。
+        Some(value) => value
+            .parse::<u64>()
+            .map_err(|_| StoreError::Invalid("invalid learning generation")),
+    }
+}
+
+fn validate_voice_terms_version(
+    conn: &Connection,
+    request: &crate::voice_protocol::VoiceRequest,
+) -> StoreResult<()> {
+    if let crate::voice_protocol::VoiceCommand::Start { terms, .. } = &request.command {
+        if terms.learning_generation != current_learning_generation(conn)? {
+            return Err(StoreError::Invalid(
+                "voice terms snapshot changed before start",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_output_item(
