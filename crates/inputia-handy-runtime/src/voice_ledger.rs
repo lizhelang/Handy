@@ -42,6 +42,8 @@ pub struct SessionRecord {
 }
 
 pub fn initialize(conn: &Connection) -> Result<()> {
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS unified_voice_peers(
+      client_instance TEXT PRIMARY KEY, audit_identity BLOB NOT NULL CHECK(length(audit_identity)=32));")?;
     conn.execute_batch("CREATE TABLE IF NOT EXISTS unified_voice_sessions(
       session_id TEXT PRIMARY KEY, client_instance TEXT NOT NULL, server_instance TEXT NOT NULL,
       start_json TEXT NOT NULL, start_digest TEXT NOT NULL, start_claimed INTEGER NOT NULL DEFAULT 0,
@@ -55,6 +57,43 @@ pub fn initialize(conn: &Connection) -> Result<()> {
         "CREATE TABLE IF NOT EXISTS unified_voice_results(
       session_id TEXT PRIMARY KEY REFERENCES unified_voice_sessions(session_id),
       operation_id TEXT NOT NULL UNIQUE REFERENCES unified_output_operations(operation_id));",
+    )?;
+    Ok(())
+}
+
+/// audit由原生认证从当前socket内核凭据提供；不能从握手或请求正文取值。
+/// 绑定跨服务重启保留，不驱逐旧身份，防止复用实例名接管持久会话。
+pub fn bind_peer(conn: &Connection, client: &str, audit: &[u8; 32]) -> Result<()> {
+    if client.is_empty()
+        || client.len() > 256
+        || client.chars().any(char::is_control)
+        || audit.iter().all(|byte| *byte == 0)
+    {
+        return Err(VoiceLedgerError::Invalid);
+    }
+    let previous: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT audit_identity FROM unified_voice_peers WHERE client_instance=?1",
+            [client],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(previous) = previous {
+        return if previous.as_slice() == audit {
+            Ok(())
+        } else {
+            Err(VoiceLedgerError::Conflict)
+        };
+    }
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM unified_voice_peers", [], |row| {
+        row.get(0)
+    })?;
+    if count >= 16_384 {
+        return Err(VoiceLedgerError::Invalid);
+    }
+    conn.execute(
+        "INSERT INTO unified_voice_peers(client_instance,audit_identity) VALUES(?1,?2)",
+        params![client, audit.as_slice()],
     )?;
     Ok(())
 }

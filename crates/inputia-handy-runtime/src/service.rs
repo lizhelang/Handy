@@ -335,6 +335,15 @@ impl HistoryService {
                 .map_err(|e| e.to_string())
         })
     }
+
+    pub fn bind_voice_peer(&self, client: String, audit: [u8; 32]) -> ServiceResult<()> {
+        self.call(move |worker| {
+            worker
+                .store
+                .bind_voice_peer(&client, &audit)
+                .map_err(|error| error.to_string())
+        })
+    }
     pub fn claim_voice_request(
         &self,
         request: crate::voice_protocol::VoiceRequest,

@@ -33,6 +33,7 @@ impl AuthenticatedVoiceConnection {
         verified: crate::native_pair_auth::VerifiedPeer,
         client: &Handshake,
         server: &Handshake,
+        history: &HistoryService,
     ) -> Result<Self, DispatchError> {
         if verified.role() != crate::native_pair_auth::PeerRole::Inputia
             || client.profile_id != server.profile_id
@@ -43,6 +44,9 @@ impl AuthenticatedVoiceConnection {
         {
             return Err(DispatchError::Unauthorized);
         }
+        history
+            .bind_voice_peer(client.instance_id.clone(), *verified.audit_token())
+            .map_err(|_| DispatchError::Unauthorized)?;
         Ok(Self {
             client: client.instance_id.clone(),
             server: server.instance_id.clone(),

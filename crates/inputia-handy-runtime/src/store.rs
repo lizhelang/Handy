@@ -359,6 +359,15 @@ impl IntegrationStore {
         Ok(crate::voice_ledger::get(&self.conn, session_id)?)
     }
 
+    pub fn bind_voice_peer(&mut self, client: &str, audit: &[u8; 32]) -> StoreResult<()> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        crate::voice_ledger::bind_peer(&tx, client, audit)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// 把当前语音结果与一个固定IME输出关联；原文仍只在历史/修订库，不另排全文队列。
     /// 此操作不claim派发。调用方必须已保存源记录，并核验投影内容与本次结果一致。
     pub fn prepare_voice_result(
