@@ -35,3 +35,18 @@
 随后按明确重装请求，将已验证候选复制到 `/Applications/Handy Unified Candidate.app`，未覆盖 `/Applications/Handy.app`，未修改候选或日常数据。停止原开发目录候选进程后从新位置启动，实际PID93907路径确认新安装。签名验证通过，主程序SHA仍为 `4ec40525f5dee7ce212ef7819976059fcf505f0f43a843bb282b9d5a60c7c3dc`，配对身份没有因移动位置改变。
 
 原生UI实际已显示“通用”设置页、Qwen3-ASR 0.6B及v0.10.0，不再停在权限页；日志显示Enigo已初始化，listener再次ready。没有通过修改权限数据库或伪造已授权状态解决。Inputia候选仍未安装，真实菜单→录音→历史→上屏闭环仍未执行；当前下一阻塞仍是安全菜单接线及候选输入法并存安装。
+
+## 实际菜单接线批次
+
+候选 `toggleVoiceInput` 已调用后台认证客户端，不再用旧进程toggle；重复菜单操作停止同一session，状态查询只更新菜单/日志，不激活窗口抢焦点。已配对候选才进入新路径，未配对候选明确拒绝，日常分支保持原样。输入来源未知/敏感/SecureInput不产生新Start；字段身份目前为nil，因此尚不自动上屏，不能冒称正常插入闭环通过。
+
+共享状态接口已接实际候选SQLite，事务清理共享词快照并保存双版本；当前新候选无待同步学习队列。非空队列或未知旧格式明确拒绝确认，不删除队列假称重核验；完整学习同步仍在剩余范围。
+
+本批失败与实验：
+
+1. 初次构建未启动，检查确认旧 `/tmp/handy-loop-preflight.uYXmzl` 和 `/private/tmp/handy-paired-build.BdoZjO` 已不存在；不能继续引用它们为当前可用备份或签名材料。现已迁到持久私有目录 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/loop-20260908.r0xugn`，生成新配对材料并备份已安装Handy为`Handy-before.app`。旧已安装应用不改动，运行中的旧配对不因构建新key被重置。
+2. Inputia完整构建到实际main入口时失败：Swift中的`IsSecureEventInputEnabled()`是Bool，不能与整数0比较。只改为布尔取反后重建成功；原失败日志`inputia-menu-build.log`与成功日志`inputia-menu-build-retry.log`均在该持久目录。
+3. 审查发现漏传配对构建参数的候选会走日常Handy分支，已加候选未配对拒绝。含日志阶段定位和该修复的完整包构建成功，日志`inputia-menu-final-build.log`。此时仍未安装或从菜单实际录音。
+4. 新配对key要求Handy同步重建，当前构建日志`handy-menu-pair-build.log`。下一步只进行配套清单签名、包校验与用户级候选安装确认，然后从实际菜单运行；不继续扩未消费接口。
+
+本批尚未新增菜单→录音的运行证据。当前唯一关键阻塞：候选Inputia尚未并存安装/选中；安装前先完成配套Handy构建和签名清单。原框正常插入及焦点变化演示均未完成。

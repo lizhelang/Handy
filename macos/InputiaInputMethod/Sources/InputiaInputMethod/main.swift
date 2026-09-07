@@ -199,6 +199,8 @@ final class InputiaInputController: IMKInputController {
       self?.voiceStatus = message
     }
     return
+    #elseif INPUTIA_UNIFIED_CANDIDATE
+    showHostAlert(title: "候选语音尚未配对", message: "此候选没有配对构建材料，不会启动或切换日常 Handy。")
     #else
     switch InputiaVoiceInputLauncher.triggerVoiceInput() {
     case .started:
