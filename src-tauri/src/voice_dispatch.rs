@@ -27,6 +27,10 @@ pub struct AuthenticatedVoiceConnection {
 }
 
 impl AuthenticatedVoiceConnection {
+    /// 发出新屏障或同步失败时立即关闭新Start授权；Stop/Cancel仍能关闭本人会话。
+    pub fn invalidate_policy(&mut self) {
+        self.applied_epoch = None;
+    }
     /// server 调用者须将握手绑定至同一已认证存活 socket，不能传 VoiceRequest 字段。
     /// 策略应用回执通过同连接单独确认；初始连接没有业务授权。
     pub fn from_verified_peer(

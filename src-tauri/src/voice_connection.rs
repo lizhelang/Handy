@@ -14,6 +14,7 @@ pub enum ConnectionError {
     PolicyUnavailable,
     Handshake,
     MissingContext,
+    PolicySync,
 }
 
 /// 持有原始已认证socket，禁止把该授权挪到其他fd；不提供裸context转移API。
@@ -60,6 +61,38 @@ impl VoiceConnection {
 
     pub fn client_instance(&self) -> &str {
         &self.client.instance_id
+    }
+
+    /// 后台同连接完成全量失效屏障；读写错误后关闭socket避免帧边界不确定继续使用。
+    pub fn synchronize_policy(&mut self, history: &HistoryService) -> Result<(), ConnectionError> {
+        use inputia_handy_runtime::voice_protocol::{
+            VoicePolicyAcknowledgement, VoicePolicyBarrier,
+        };
+        self.context.invalidate_policy();
+        let result = (|| {
+            let version = history
+                .voice_terms_version()
+                .map_err(|_| ConnectionError::PolicyUnavailable)?;
+            let barrier =
+                VoicePolicyBarrier::new(version).map_err(|_| ConnectionError::PolicySync)?;
+            transport::write_frame(&mut self.stream, &barrier)
+                .map_err(|_| ConnectionError::PolicySync)?;
+            let ack: VoicePolicyAcknowledgement =
+                transport::read_frame(&mut self.stream).map_err(|_| ConnectionError::PolicySync)?;
+            let current = history
+                .voice_terms_version()
+                .map_err(|_| ConnectionError::PolicyUnavailable)?;
+            barrier
+                .validate_ack(&ack, &current)
+                .map_err(|_| ConnectionError::PolicySync)?;
+            self.context
+                .acknowledge_policy(current.policy_epoch, current.policy_epoch)
+                .map_err(|_| ConnectionError::PolicySync)
+        })();
+        if result.is_err() {
+            let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        }
+        result
     }
 
     /// 仅在同一连接中执行handler；不允许将context提取并用于另一个连接。

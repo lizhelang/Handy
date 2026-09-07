@@ -165,3 +165,52 @@ pub enum HostOutputReceipt {
     PendingTarget,
     Uncertain,
 }
+
+/// 认证连接上的全量失效屏障；不携带词库正文，不让旧离线快照绕过遗忘传播。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoicePolicyBarrier {
+    pub barrier_id: String,
+    pub version: VoiceTermsVersion,
+    pub clear_shared_personalization: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoicePolicyAcknowledgement {
+    pub barrier_id: String,
+    pub version: VoiceTermsVersion,
+    pub shared_cache_cleared: bool,
+    pub offline_queue_revalidated: bool,
+}
+
+impl VoicePolicyBarrier {
+    pub fn new(version: VoiceTermsVersion) -> Result<Self, ProtocolError> {
+        let mut nonce = [0u8; 32];
+        getrandom::getrandom(&mut nonce).map_err(|_| ProtocolError::PeerIdentity)?;
+        Ok(Self {
+            barrier_id: nonce.iter().map(|byte| format!("{byte:02x}")).collect(),
+            version,
+            clear_shared_personalization: true,
+        })
+    }
+
+    /// current必须重新从服务读取，不能使用发出请求时缓存的版本。
+    pub fn validate_ack(
+        &self,
+        ack: &VoicePolicyAcknowledgement,
+        current: &VoiceTermsVersion,
+    ) -> Result<(), ProtocolError> {
+        if !self.clear_shared_personalization
+            || !id(&self.barrier_id)
+            || ack.barrier_id != self.barrier_id
+            || ack.version != self.version
+            || current != &self.version
+            || !ack.shared_cache_cleared
+            || !ack.offline_queue_revalidated
+        {
+            return Err(ProtocolError::PolicyRefreshRequired);
+        }
+        Ok(())
+    }
+}

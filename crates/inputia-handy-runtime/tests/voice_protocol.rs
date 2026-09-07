@@ -1,5 +1,65 @@
 use inputia_handy_runtime::voice_protocol::*;
 
+#[test]
+fn policy_barrier_requires_current_version_and_both_cleanup_receipts() {
+    let version = VoiceTermsVersion {
+        policy_epoch: 7,
+        learning_generation: 11,
+    };
+    let barrier = VoicePolicyBarrier::new(version.clone()).unwrap();
+    let ack = VoicePolicyAcknowledgement {
+        barrier_id: barrier.barrier_id.clone(),
+        version: version.clone(),
+        shared_cache_cleared: true,
+        offline_queue_revalidated: true,
+    };
+    assert!(barrier.validate_ack(&ack, &version).is_ok());
+    for kind in 0..5 {
+        let mut invalid = ack.clone();
+        match kind {
+            0 => invalid.barrier_id = "old-connection".into(),
+            1 => invalid.version.policy_epoch += 1,
+            2 => invalid.version.learning_generation += 1,
+            3 => invalid.shared_cache_cleared = false,
+            _ => invalid.offline_queue_revalidated = false,
+        }
+        assert!(barrier.validate_ack(&invalid, &version).is_err());
+    }
+    for current in [
+        VoiceTermsVersion {
+            policy_epoch: 8,
+            learning_generation: 11,
+        },
+        VoiceTermsVersion {
+            policy_epoch: 7,
+            learning_generation: 12,
+        },
+    ] {
+        assert!(barrier.validate_ack(&ack, &current).is_err());
+    }
+}
+
+#[test]
+fn new_policy_barrier_never_accepts_previous_connection_ack() {
+    let version = VoiceTermsVersion {
+        policy_epoch: 1,
+        learning_generation: 0,
+    };
+    let first = VoicePolicyBarrier::new(version.clone()).unwrap();
+    let second = VoicePolicyBarrier::new(version.clone()).unwrap();
+    assert_ne!(first.barrier_id, second.barrier_id);
+    let ack = VoicePolicyAcknowledgement {
+        barrier_id: first.barrier_id,
+        version: version.clone(),
+        shared_cache_cleared: true,
+        offline_queue_revalidated: true,
+    };
+    assert!(second.validate_ack(&ack, &version).is_err());
+    let raw = serde_json::to_string(&second).unwrap();
+    assert!(!raw.contains("terms\":"));
+    assert!(serde_json::from_str::<VoicePolicyAcknowledgement>(r#"{"barrier_id":"x","version":{"policy_epoch":1,"learning_generation":0},"shared_cache_cleared":true}"#).is_err());
+}
+
 fn request() -> VoiceRequest {
     VoiceRequest {
         request_id: "request-1".into(),
