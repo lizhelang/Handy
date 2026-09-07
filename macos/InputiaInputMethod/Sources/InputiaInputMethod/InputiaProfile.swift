@@ -34,6 +34,17 @@ struct InputiaProfile: Equatable {
 
   static let current: InputiaProfile = {
     do {
+      #if INPUTIA_UNIFIED_CANDIDATE
+      #if INPUTIA_SETTINGS_LAUNCHER
+      let expectedCandidate = "com.inputia.settings.UnifiedCandidate"
+      #else
+      let expectedCandidate = "com.inputia.inputmethod.Inputia.UnifiedCandidate"
+      #endif
+      #else
+      let expectedCandidate: String? = nil
+      #endif
+      try validateCompiledIdentity(bundleIdentifier: Bundle.main.bundleIdentifier,
+                                   expectedCandidate: expectedCandidate)
       let profile = try resolve(
         bundleIdentifier: Bundle.main.bundleIdentifier,
         info: Bundle.main.infoDictionary ?? [:],
@@ -46,6 +57,14 @@ struct InputiaProfile: Equatable {
       exit(78)
     }
   }()
+
+  static func validateCompiledIdentity(bundleIdentifier: String?, expectedCandidate: String?) throws {
+    if let expectedCandidate {
+      guard bundleIdentifier == expectedCandidate else { throw InputiaProfileError.unauthorizedCandidate }
+    } else if bundleIdentifier?.hasSuffix(".UnifiedCandidate") == true {
+      throw InputiaProfileError.unauthorizedCandidate
+    }
+  }
 
   static func resolve(
     bundleIdentifier: String?,

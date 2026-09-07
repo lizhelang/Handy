@@ -74,12 +74,23 @@ RIME_DATA_BUILD_DIR="$BUILD_DIR/RimeData"
 SIGN_IDENTITY="${INPUTIA_CODESIGN_IDENTITY:--}"
 if [[ -n "${INPUTIA_CODESIGN_OPTIONS+x}" ]]; then
   SIGN_OPTIONS="$INPUTIA_CODESIGN_OPTIONS"
-elif [[ "$SIGN_IDENTITY" == "-" ]]; then
+elif [[ "$SIGN_IDENTITY" == "-" && "$IS_CANDIDATE" != "1" ]]; then
   SIGN_OPTIONS=""
 else
   SIGN_OPTIONS="--options runtime"
 fi
 ENTITLEMENTS="${INPUTIA_CODESIGN_ENTITLEMENTS:-$ROOT_DIR/InputiaInputMethod.entitlements}"
+if [[ "$IS_CANDIDATE" == "1" ]]; then
+  if [[ -n "${INPUTIA_CODESIGN_ENTITLEMENTS:-}" && "$INPUTIA_CODESIGN_ENTITLEMENTS" != "$ROOT_DIR/InputiaUnifiedCandidate.entitlements" ]]; then
+    echo "candidate requires its strict runtime entitlements" >&2
+    exit 2
+  fi
+  if [[ "$SIGN_OPTIONS" != "--options runtime" ]]; then
+    echo "candidate requires hardened runtime signing" >&2
+    exit 2
+  fi
+  ENTITLEMENTS="$ROOT_DIR/InputiaUnifiedCandidate.entitlements"
+fi
 if [[ "${INPUTIA_CODESIGN_AS_ROOT:-0}" == "1" ]]; then
   CODESIGN_KEYCHAIN="${INPUTIA_CODESIGN_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
 fi
@@ -88,6 +99,25 @@ BUILD_GROUP="$(/usr/bin/id -gn)"
 MIN_MACOS_VERSION="13.0"
 TARGET_TRIPLE="$(uname -m)-apple-macos$MIN_MACOS_VERSION"
 CAPI_MANIFEST="$ROOT_DIR/../../crates/inputia-capi/Cargo.toml"
+CAPI_FEATURE_ARGS=()
+HOST_SWIFT_DEFINES=()
+SETTINGS_SWIFT_DEFINES=()
+PAIR_SWIFT_SOURCES=()
+if [[ -n "${INPUTIA_PAIR_BUILD_METADATA:-}" && "$IS_CANDIDATE" != "1" ]]; then
+  echo "pair build metadata requires explicit candidate mode" >&2
+  exit 2
+fi
+if [[ "$IS_CANDIDATE" == "1" ]]; then
+  HOST_SWIFT_DEFINES=(-D INPUTIA_UNIFIED_CANDIDATE)
+  SETTINGS_SWIFT_DEFINES=(-D INPUTIA_UNIFIED_CANDIDATE -D INPUTIA_SETTINGS_LAUNCHER)
+  static_repository_root="$(cd "$ROOT_DIR/../.." && pwd -P)"
+  export INPUTIA_STATIC_RIME_DIR="${INPUTIA_STATIC_RIME_DIR:-$static_repository_root/native/static-rime/artifacts/output/$(uname -m)}"
+  if [[ ! -f "$INPUTIA_STATIC_RIME_DIR/lib/libinputia_rime_static.a" ]]; then
+    echo "build static Rime first with native/static-rime/build.sh; no dynamic fallback is allowed" >&2
+    exit 2
+  fi
+  CAPI_FEATURE_ARGS=(--features bundled-static-rime)
+fi
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/../../crates/inputia-capi/target}"
 if [[ "$IS_CANDIDATE" == "1" ]]; then
   export CARGO_TARGET_DIR="$BUILD_DIR/cargo-target"
@@ -197,6 +227,14 @@ inputia_build_artifact_acquire_lock build
 trap inputia_build_artifact_release_lock EXIT
 require_no_verification_processes
 
+if [[ -n "${INPUTIA_PAIR_BUILD_METADATA:-}" ]]; then
+  pair_source="$BUILD_DIR/InputiaEmbeddedPairTrust.swift"
+  /usr/bin/python3 "$ROOT_DIR/../../native/unified-pair-auth/build_trust.py" \
+    --metadata "$INPUTIA_PAIR_BUILD_METADATA" --run-id "$RUN_ID" --emit swift > "$pair_source"
+  PAIR_SWIFT_SOURCES=("$pair_source" "$ROOT_DIR/../../native/unified-pair-auth/UnifiedPairAuth.swift")
+  HOST_SWIFT_DEFINES+=(-D INPUTIA_PAIRED_BUILD)
+fi
+
 rm -rf "$APP_DIR" "$SETTINGS_APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$SETTINGS_MACOS_DIR" "$SETTINGS_RESOURCES_DIR"
 
@@ -208,7 +246,7 @@ fi
 /bin/zsh "$ROOT_DIR/Tools/verify-imk-event-route.sh" \
   "$ROOT_DIR/Sources/InputiaInputMethod/main.swift"
 
-CAPI_LIB="$(run_cargo build --release --manifest-path "$CAPI_MANIFEST" --message-format=json-render-diagnostics |
+CAPI_LIB="$(run_cargo build --release --manifest-path "$CAPI_MANIFEST" "${CAPI_FEATURE_ARGS[@]}" --message-format=json-render-diagnostics |
   /usr/bin/python3 -c '
 import json, sys
 libraries = []
@@ -227,6 +265,10 @@ if [[ ! -f "$CAPI_LIB" ]]; then
 fi
 # 不仅检查最终可执行文件：链接器仍可能接受带更高 minOS 的 archive 成员。
 check_macos_deployment "$CAPI_LIB"
+CAPI_LINK_ARGS=("$CAPI_LIB")
+if [[ "$IS_CANDIDATE" == "1" ]]; then
+  CAPI_LINK_ARGS=(-Xlinker -force_load -Xlinker "$CAPI_LIB" -lc++)
+fi
 
 /usr/bin/swiftc \
   "$ROOT_DIR/Tools/UnifiedInputProfileSelfCheck.swift" \
@@ -237,6 +279,9 @@ check_macos_deployment "$CAPI_LIB"
 
 /usr/bin/swiftc \
   "$ROOT_DIR/Sources/InputiaInputMethod/main.swift" \
+  "${HOST_SWIFT_DEFINES[@]}" \
+  "${PAIR_SWIFT_SOURCES[@]}" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRuntimeDiagnostics.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHostTextPolicy.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
@@ -247,12 +292,13 @@ check_macos_deployment "$CAPI_LIB"
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaCandidatePanel.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsWindow.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
-  "$CAPI_LIB" \
+  "${CAPI_LINK_ARGS[@]}" \
   -parse-as-library \
   -target "$TARGET_TRIPLE" \
   -module-name InputiaInputMethod \
   -framework Cocoa \
   -framework InputMethodKit \
+  -framework Security \
   -o "$MACOS_DIR/InputiaInputMethod"
 
 cp "$ROOT_DIR/Info.plist" "$CONTENTS_DIR/Info.plist"
@@ -276,12 +322,17 @@ fi
 cp -R "$ROOT_DIR/Resources/." "$RESOURCES_DIR/"
 /usr/bin/python3 "$ROOT_DIR/Tools/generate_inputia_icons.py" --resources-dir "$RESOURCES_DIR"
 /bin/rm -rf "$RESOURCES_DIR/RimeData"
-INPUTIA_RIME_DATA_BUILD_DIR="$RIME_DATA_BUILD_DIR" "$ROOT_DIR/prepare-rime-data.sh" >/dev/null
+if [[ "$IS_CANDIDATE" == "1" ]]; then
+  /usr/bin/python3 "$ROOT_DIR/candidate-rime-data/prepare.py" --run-id "$RUN_ID" --output "$RIME_DATA_BUILD_DIR"
+else
+  INPUTIA_RIME_DATA_BUILD_DIR="$RIME_DATA_BUILD_DIR" "$ROOT_DIR/prepare-rime-data.sh" >/dev/null
+fi
 cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
 /usr/bin/plutil -lint "$CONTENTS_DIR/Info.plist"
 
 /usr/bin/swiftc \
   "$ROOT_DIR/SettingsLauncher/main.swift" \
+  "${SETTINGS_SWIFT_DEFINES[@]}" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   -parse-as-library \
   -target "$TARGET_TRIPLE" \
@@ -311,7 +362,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaInputTextRouter.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaShortcutClassifier.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
-  "$CAPI_LIB" \
+  "${CAPI_LINK_ARGS[@]}" \
   -target "$TARGET_TRIPLE" \
   -framework AppKit \
   -o "$BUILD_DIR/inputia-input-text-router-self-check"
@@ -321,7 +372,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
-  "$CAPI_LIB" \
+  "${CAPI_LINK_ARGS[@]}" \
   -target "$TARGET_TRIPLE" \
   -framework AppKit \
   -o "$BUILD_DIR/inputia-handy-memory-sync-self-check"
@@ -354,7 +405,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsWindow.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
-  "$CAPI_LIB" \
+  "${CAPI_LINK_ARGS[@]}" \
   -target "$TARGET_TRIPLE" \
   -framework AppKit \
   -o "$BUILD_DIR/inputia-settings-window-self-check"
@@ -363,7 +414,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "$ROOT_DIR/Tools/InputiaBridgePrivacySelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
-  "$CAPI_LIB" \
+  "${CAPI_LINK_ARGS[@]}" \
   -target "$TARGET_TRIPLE" \
   -framework Foundation \
   -o "$BUILD_DIR/inputia-bridge-privacy-self-check"
@@ -372,7 +423,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "$ROOT_DIR/Tools/InputiaBridgeCandidateCountSelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
-  "$CAPI_LIB" \
+  "${CAPI_LINK_ARGS[@]}" \
   -target "$TARGET_TRIPLE" \
   -framework Foundation \
   -o "$BUILD_DIR/inputia-bridge-candidate-count-self-check"

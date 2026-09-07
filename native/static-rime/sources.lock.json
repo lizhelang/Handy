@@ -1,0 +1,103 @@
+{
+  "librime_version": "1.16.0",
+  "librime_commit": "a251145d3aafa33871824a40bbec04c966bd8b56",
+  "minimum_macos": "13.0",
+  "release_metadata": "https://api.github.com/repos/rime/librime/releases/tags/1.16.0",
+  "dependency_commits": {
+    "glog": "7b134a5c82c0c0b5698bb6bf7a835b230c5638e4",
+    "leveldb": "99b3c03b3284f5886f9ef9a4ef703d57373e61be",
+    "marisa-trie": "3e87d53b78e15f2f43783d5e376561a8c9722051",
+    "opencc": "556ed22496d650bd0b13b6c163be9814637970ae",
+    "yaml-cpp": "2f86d13775d119edbb69af52e5f566fd65c6953b"
+  },
+  "archives": [
+    {
+      "file": "rime-a251145-macOS-universal.tar.bz2",
+      "url": "https://github.com/rime/librime/releases/download/1.16.0/rime-a251145-macOS-universal.tar.bz2",
+      "sha256": "e4c9a8767a456f2550f1242921b7656c6e6be088c89a921274bd5d4404f58b99",
+      "destination": "release"
+    },
+    {
+      "file": "rime-deps-a251145-macOS-universal.tar.bz2",
+      "url": "https://github.com/rime/librime/releases/download/1.16.0/rime-deps-a251145-macOS-universal.tar.bz2",
+      "sha256": "087e753056f092f644cc4a470f64ecf2cd9de18e684b220e0588f86f6b91dfcc",
+      "destination": "deps"
+    },
+    {
+      "file": "librime-a251145.tar.gz",
+      "url": "https://codeload.github.com/rime/librime/tar.gz/a251145d3aafa33871824a40bbec04c966bd8b56",
+      "sha256": "50a5de897def5eb7f183190bc662a7677e123e12f287acfe067cf116a0cb1cf0",
+      "destination": "sources"
+    },
+    {
+      "file": "librime-lua.tar.gz",
+      "url": "https://codeload.github.com/hchunhui/librime-lua/tar.gz/68f9c364a2d25a04c7d4794981d7c796b05ab627",
+      "sha256": "3c4a60bacf8dd6389ca1b4b4889207b8f6c0c6a43e7b848cdac570d592a640b5",
+      "destination": "sources"
+    },
+    {
+      "file": "librime-octagram.tar.gz",
+      "url": "https://codeload.github.com/lotem/librime-octagram/tar.gz/dfcc15115788c828d9dd7b4bff68067d3ce2ffb8",
+      "sha256": "7da3df7a5dae82557f7a4842b94dfe81dd21ef7e036b132df0f462f2dae18393",
+      "destination": "sources"
+    },
+    {
+      "file": "librime-predict.tar.gz",
+      "commit": "920bd41ebf6f9bf6855d14fbe80212e54e749791",
+      "url": "https://codeload.github.com/rime/librime-predict/tar.gz/920bd41",
+      "sha256": "27c5202e16bee807dc1d60adeef42f07930561ea4ed58935212d1ee7a29dac47",
+      "destination": "sources"
+    },
+    {
+      "file": "lua-thirdparty.tar.gz",
+      "version": "5.4.8",
+      "url": "https://codeload.github.com/hchunhui/librime-lua/tar.gz/0752fb3246c528f07feceb68972e5ac6b7f0436a",
+      "sha256": "9d0740af5b1728cb36f23670ae4f6d99905554f05ea2ec42d729cea42c04c22d",
+      "destination": "sources"
+    },
+    {
+      "file": "boost_1_89_0.tar.bz2",
+      "url": "https://archives.boost.io/release/1.89.0/source/boost_1_89_0.tar.bz2",
+      "sha256": "85a33fa22621b4f314f8e85e1a5e2a9363d22e4f4992925d4bb3bc631b5a0c7a",
+      "destination": "sources",
+      "include": ["boost_1_89_0/boost", "boost_1_89_0/LICENSE_1_0.txt"]
+    }
+  ],
+  "files": [
+    {
+      "path": "licenses/glog-COPYING",
+      "url": "https://raw.githubusercontent.com/google/glog/7b134a5c82c0c0b5698bb6bf7a835b230c5638e4/COPYING",
+      "sha256": "136d48dea7a681413691f3db3098f6cf5ffaa3119d96d97bb83b8cff3ce38c4a"
+    },
+    {
+      "path": "licenses/leveldb-LICENSE",
+      "url": "https://raw.githubusercontent.com/google/leveldb/99b3c03b3284f5886f9ef9a4ef703d57373e61be/LICENSE",
+      "sha256": "ccc19f1da0798ed666609b65a5b44dd8b3abe6fc08b9c0592eb76e82e174db19"
+    },
+    {
+      "path": "licenses/marisa-COPYING.md",
+      "url": "https://raw.githubusercontent.com/s-yata/marisa-trie/3e87d53b78e15f2f43783d5e376561a8c9722051/COPYING.md",
+      "sha256": "edf58dab34c3dc239ba4ba2d5d3d844d8c5b442aa4dd1149fac81b2d8c6cb8d1"
+    },
+    {
+      "path": "licenses/opencc-LICENSE",
+      "url": "https://raw.githubusercontent.com/BYVoid/OpenCC/556ed22496d650bd0b13b6c163be9814637970ae/LICENSE",
+      "sha256": "b534e465949558eec2597b04f5092b5e161236a68dfbfd04d547592ac3964308"
+    },
+    {
+      "path": "licenses/yaml-cpp-LICENSE",
+      "url": "https://raw.githubusercontent.com/jbeder/yaml-cpp/2f86d13775d119edbb69af52e5f566fd65c6953b/LICENSE",
+      "sha256": "aa6fcc27be034e41e21dd832f9175bfe694a48491d9e14ff0fa278e19ad14f1b"
+    },
+    {
+      "path": "licenses/double-pinyin-LICENSE",
+      "url": "https://raw.githubusercontent.com/rime/rime-double-pinyin/01a13287cbd27819be1c34fa1ddc1b3643d5001b/LICENSE",
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    },
+    {
+      "path": "downloads/double_pinyin_flypy.schema.yaml",
+      "url": "https://raw.githubusercontent.com/rime/rime-double-pinyin/01a13287cbd27819be1c34fa1ddc1b3643d5001b/double_pinyin_flypy.schema.yaml",
+      "sha256": "6b522a7e9cb743474287a14678597460bd124369f32573dd63e8f04e7c41d4b9"
+    }
+  ]
+}

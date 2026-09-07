@@ -7,6 +7,7 @@ use std::ptr::{null, null_mut, NonNull};
 use std::sync::{Mutex, OnceLock};
 
 use inputia_core::{Candidate, CandidateSelection, CandidateSource, ChineseEngine};
+#[cfg(not(feature = "bundled-static-rime"))]
 use libloading::Library;
 
 type Bool = c_int;
@@ -91,13 +92,54 @@ pub struct RimeSnapshot {
 }
 
 pub struct RimeEngine {
-    _library: Library,
+    library: RimeLibrary,
     api: NonNull<RimeApi>,
     config: RimeEngineConfig,
     cstrings: RimeCStringConfig,
     output_options: Vec<(CString, Bool)>,
     evaluation_lock: Mutex<()>,
     live_session: Mutex<Option<RimeLiveSession>>,
+}
+
+enum RimeLibrary {
+    #[cfg(feature = "bundled-static-rime")]
+    Static,
+    #[cfg(not(feature = "bundled-static-rime"))]
+    Dynamic { _handle: Library },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 构建期确定的引擎来源，不在运行时在静态和动态库之间切换。
+pub enum RimeBackendKind {
+    Static,
+    Dynamic,
+}
+
+impl RimeLibrary {
+    fn load(config: &RimeEngineConfig) -> Result<(Self, NonNull<RimeApi>)> {
+        #[cfg(feature = "bundled-static-rime")]
+        {
+            // 保留配置字段兼容，但静态构建绝不 dlopen 该路径或任何后备 dylib。
+            let _ = config;
+            unsafe extern "C" {
+                #[link_name = "rime_get_api"]
+                fn static_rime_get_api() -> *mut RimeApi;
+            }
+            let api = NonNull::new(unsafe { static_rime_get_api() })
+                .ok_or(Error::Rime("statically linked rime_get_api returned null"))?;
+            Ok((Self::Static, api))
+        }
+        #[cfg(not(feature = "bundled-static-rime"))]
+        {
+            let library = unsafe { Library::new(&config.dylib_path) }?;
+            let get_api = unsafe {
+                library.get::<unsafe extern "C" fn() -> *mut RimeApi>(b"rime_get_api\0")
+            }?;
+            let api = NonNull::new(unsafe { get_api() })
+                .ok_or(Error::Rime("rime_get_api returned null"))?;
+            Ok((Self::Dynamic { _handle: library }, api))
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -110,11 +152,7 @@ struct RimeLiveSession {
 impl RimeEngine {
     pub fn open(config: RimeEngineConfig) -> Result<Self> {
         std::fs::create_dir_all(&config.user_data_dir)?;
-        let library = unsafe { Library::new(&config.dylib_path) }?;
-        let get_api =
-            unsafe { library.get::<unsafe extern "C" fn() -> *mut RimeApi>(b"rime_get_api\0") }?;
-        let api =
-            NonNull::new(unsafe { get_api() }).ok_or(Error::Rime("rime_get_api returned null"))?;
+        let (library, api) = RimeLibrary::load(&config)?;
         let cstrings = RimeCStringConfig::new(&config)?;
         let output_options = config
             .output_options
@@ -123,7 +161,7 @@ impl RimeEngine {
             .collect::<Result<Vec<_>>>()?;
 
         let engine = Self {
-            _library: library,
+            library,
             api,
             config,
             cstrings,
@@ -133,6 +171,16 @@ impl RimeEngine {
         };
         engine.initialize()?;
         Ok(engine)
+    }
+
+    /// 返回实际持有的库生命周期类型，供集成诊断区分显式静态/动态模式。
+    pub fn backend_kind(&self) -> RimeBackendKind {
+        match &self.library {
+            #[cfg(feature = "bundled-static-rime")]
+            RimeLibrary::Static => RimeBackendKind::Static,
+            #[cfg(not(feature = "bundled-static-rime"))]
+            RimeLibrary::Dynamic { .. } => RimeBackendKind::Dynamic,
+        }
     }
 
     pub fn evaluate(&self, key_sequence: &str) -> Result<RimeSnapshot> {
@@ -794,7 +842,7 @@ impl Drop for RimeEngine {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RimeRuntimeSignature {
-    dylib_path: PathBuf,
+    dylib_path: Option<PathBuf>,
     shared_data_dir: PathBuf,
     user_data_dir: PathBuf,
 }
@@ -802,7 +850,11 @@ struct RimeRuntimeSignature {
 impl From<&RimeEngineConfig> for RimeRuntimeSignature {
     fn from(config: &RimeEngineConfig) -> Self {
         Self {
-            dylib_path: config.dylib_path.clone(),
+            dylib_path: if cfg!(feature = "bundled-static-rime") {
+                None
+            } else {
+                Some(config.dylib_path.clone())
+            },
             shared_data_dir: config.shared_data_dir.clone(),
             user_data_dir: config.user_data_dir.clone(),
         }

@@ -24,6 +24,13 @@ struct UnifiedInputProfileSelfCheck {
       catch { check(false, "unexpected error") }
     }
     let daily = try InputiaProfile.resolve(bundleIdentifier: "com.inputia.inputmethod.Inputia", info: [:], environment: [:], applicationSupport: base)
+    for identity: String? in [nil, "com.inputia.inputmethod.Inputia", "com.inputia.settings.UnifiedCandidate"] {
+      rejects(.unauthorizedCandidate) { try InputiaProfile.validateCompiledIdentity(bundleIdentifier: identity, expectedCandidate: candidateID) }
+    }
+    rejects(.unauthorizedCandidate) { try InputiaProfile.validateCompiledIdentity(bundleIdentifier: candidateID, expectedCandidate: nil) }
+    try InputiaProfile.validateCompiledIdentity(bundleIdentifier: candidateID, expectedCandidate: candidateID)
+    try InputiaProfile.validateCompiledIdentity(bundleIdentifier: nil, expectedCandidate: nil)
+    check(true, "compiled and bundle candidate identities agree")
     check(daily.root == base.appendingPathComponent("Inputia", isDirectory: true), "daily root retained")
     check(daily.handyRoot == base.appendingPathComponent("com.pais.handy", isDirectory: true), "daily Handy root retained")
     rejects(.unauthorizedCandidate) {

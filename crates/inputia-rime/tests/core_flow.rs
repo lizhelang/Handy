@@ -5,12 +5,33 @@ use inputia_rime::{RimeEngine, RimeEngineConfig};
 
 static RIME_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+fn test_config(config: RimeEngineConfig) -> RimeEngineConfig {
+    #[cfg(feature = "bundled-static-rime")]
+    {
+        let shared = PathBuf::from(
+            std::env::var_os("INPUTIA_RIME_SHARED_DATA_DIR")
+                .expect("static tests require explicit candidate RimeData"),
+        );
+        assert!(shared.is_absolute() && shared.join("luna_pinyin_simp.schema.yaml").is_file());
+        config
+            .with_shared_data_dir(shared)
+            .with_dylib_path("/synthetic/never-open.dylib")
+    }
+    #[cfg(not(feature = "bundled-static-rime"))]
+    {
+        config
+    }
+}
+
 #[test]
 fn rime_engine_drives_inputia_core_full_pinyin_flow_when_available() {
     let _guard = RIME_TEST_LOCK.lock().unwrap();
     let temp = tempfile::tempdir().unwrap();
     let config = RimeEngineConfig::squirrel_luna_pinyin_simp(temp.path().join("rime-user"));
-    if !config.dylib_path.exists() || !config.shared_data_dir.exists() {
+    let config = test_config(config);
+    if !cfg!(feature = "bundled-static-rime")
+        && (!config.dylib_path.exists() || !config.shared_data_dir.exists())
+    {
         eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
     }
@@ -56,7 +77,10 @@ fn rime_engine_exposes_rime_second_page_to_core_paging_when_available() {
     let _guard = RIME_TEST_LOCK.lock().unwrap();
     let temp = tempfile::tempdir().unwrap();
     let config = RimeEngineConfig::squirrel_luna_pinyin_simp(temp.path().join("rime-user"));
-    if !config.dylib_path.exists() || !config.shared_data_dir.exists() {
+    let config = test_config(config);
+    if !cfg!(feature = "bundled-static-rime")
+        && (!config.dylib_path.exists() || !config.shared_data_dir.exists())
+    {
         eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
     }
@@ -89,7 +113,10 @@ fn rime_engine_exposes_deeper_single_character_candidates_when_available() {
     let _guard = RIME_TEST_LOCK.lock().unwrap();
     let temp = tempfile::tempdir().unwrap();
     let config = RimeEngineConfig::squirrel_luna_pinyin_simp(temp.path().join("rime-user"));
-    if !config.dylib_path.exists() || !config.shared_data_dir.exists() {
+    let config = test_config(config);
+    if !cfg!(feature = "bundled-static-rime")
+        && (!config.dylib_path.exists() || !config.shared_data_dir.exists())
+    {
         eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
     }
@@ -128,12 +155,22 @@ fn rime_engine_exposes_deeper_single_character_candidates_when_available() {
 #[test]
 fn rime_engine_drives_inputia_core_double_pinyin_flow_when_prepared() {
     let _guard = RIME_TEST_LOCK.lock().unwrap();
+    #[cfg(feature = "bundled-static-rime")]
+    let shared_data_dir = PathBuf::from(
+        std::env::var_os("INPUTIA_RIME_SHARED_DATA_DIR")
+            .expect("static tests require candidate RimeData"),
+    );
+    #[cfg(not(feature = "bundled-static-rime"))]
     let shared_data_dir = PathBuf::from("/tmp/inputia-rime-shared-double-pinyin");
-    let user_data_dir = PathBuf::from("/tmp/inputia-rime-user-double-pinyin");
+    let user_temp = tempfile::tempdir().unwrap();
+    let user_data_dir = user_temp.path().to_path_buf();
     if !shared_data_dir
         .join("double_pinyin_flypy.schema.yaml")
         .exists()
     {
+        if cfg!(feature = "bundled-static-rime") {
+            panic!("static double pinyin data cannot be skipped");
+        }
         eprintln!(
             "skip: run spikes/inputia-rime/prepare-double-pinyin-data.sh double_pinyin_flypy first"
         );
@@ -143,7 +180,7 @@ fn rime_engine_drives_inputia_core_double_pinyin_flow_when_prepared() {
     let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
         .with_shared_data_dir(shared_data_dir)
         .with_schema("double_pinyin_flypy");
-    if !config.dylib_path.exists() {
+    if !cfg!(feature = "bundled-static-rime") && !config.dylib_path.exists() {
         eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
     }

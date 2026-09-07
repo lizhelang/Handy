@@ -25,7 +25,7 @@ trap 'if [[ -f "$bridge_dir/build-private.x963" ]]; then rm -- "$bridge_dir/buil
 libtool -static -o "$bridge_dir/libunified_pair_auth.a" "$bridge_dir/bridge.o"
 export UIPA_FIXTURE_PUBLIC_KEY="$bridge_dir/public.x963"
 export MACOSX_DEPLOYMENT_TARGET=13.0
-rust_args=(--edition=2021 --target "$rust_target" -D warnings --check-cfg 'cfg(pair_host_fixture)' \
+rust_args=(--edition=2021 --target "$rust_target" -D warnings --check-cfg 'cfg(pair_host_fixture)' --check-cfg 'cfg(unified_paired_build)' \
   -L "native=$bridge_dir" -L "native=$swift_runtime" -L "native=$sdk/usr/lib/swift" \
   -l static=unified_pair_auth -l framework=Foundation -l framework=Security -C link-arg=-Wl,-rpath,/usr/lib/swift)
 rustc "${rust_args[@]}" "$source_dir/PairAuthBridgeCheck.rs" -o "$bridge_dir/HandyFixture"

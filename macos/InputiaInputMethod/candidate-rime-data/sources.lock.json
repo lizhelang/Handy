@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "base": {
+    "file": "Squirrel-1.1.2.pkg",
+    "url": "https://github.com/rime/squirrel/releases/download/1.1.2/Squirrel-1.1.2.pkg",
+    "sha256": "614746013212937623d5bbab9901e9c43d1ec937aa32307d6b6092a05e308287",
+    "release_metadata": "https://api.github.com/repos/rime/squirrel/releases/tags/1.1.2",
+    "shared_support": "Payload/Squirrel.app/Contents/SharedSupport",
+    "license": "Payload/Squirrel.app/Contents/Resources/LICENSE.txt"
+  },
+  "schemas": [
+    {
+      "file": "double-pinyin-01a13287.tar.gz",
+      "url": "https://codeload.github.com/rime/rime-double-pinyin/tar.gz/01a13287cbd27819be1c34fa1ddc1b3643d5001b",
+      "sha256": "606fcc81195a04be52f15746dc4652454156e75e17417008772670859e31b208",
+      "prefix": "rime-double-pinyin-01a13287cbd27819be1c34fa1ddc1b3643d5001b",
+      "files": {
+        "AUTHORS": "rime-double-pinyin.AUTHORS",
+        "LICENSE": "rime-double-pinyin.LICENSE",
+        "double_pinyin.schema.yaml": "double_pinyin.schema.yaml",
+        "double_pinyin_abc.schema.yaml": "double_pinyin_abc.schema.yaml",
+        "double_pinyin_flypy.schema.yaml": "double_pinyin_flypy.schema.yaml",
+        "double_pinyin_mspy.schema.yaml": "double_pinyin_mspy.schema.yaml",
+        "double_pinyin_pyjj.schema.yaml": "double_pinyin_pyjj.schema.yaml",
+        "double_pinyin_st.schema.yaml": "double_pinyin_st.schema.yaml"
+      }
+    },
+    {
+      "file": "guobiao-1283ba5b.tar.gz",
+      "url": "https://codeload.github.com/baopaau/rime-guobiao-quick/tar.gz/1283ba5b6980b54348904be2b582f7cd4d101fd2",
+      "sha256": "95de986dbfa72c8414784052139a1596ace8ffc34f3130b7b57bd12f17c12ffe",
+      "prefix": "rime-guobiao-quick-1283ba5b6980b54348904be2b582f7cd4d101fd2",
+      "files": {
+        "README.md": "rime-guobiao-quick.README.md",
+        "guobiao_bispell.schema.yaml": "guobiao_bispell.schema.yaml"
+      }
+    }
+  ]
+}

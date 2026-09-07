@@ -8,6 +8,10 @@ publish = false
 name = "inputia_rime"
 path = "src/lib.rs"
 
+[features]
+default = []
+bundled-static-rime = []
+
 [dependencies]
 inputia-core = { path = "../inputia-core" }
 libloading = "0.8"

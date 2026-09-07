@@ -28,3 +28,5 @@ src-tauri/src/catalog/catalog.json
 .omx
 macos/InputiaInputMethod/candidate-builds/
 tools/unified-voice-benchmark/artifacts/
+native/static-rime/artifacts/
+macos/InputiaInputMethod/candidate-rime-data/artifacts/

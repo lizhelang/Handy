@@ -1335,6 +1335,15 @@ struct InputiaInputMethodApp {
 
   static func main() {
     autoreleasepool {
+      // 候选编译身份必须在创建IMK连接、设置窗口或诊断会话前与包身份一致。
+      _ = InputiaProfile.current
+      #if INPUTIA_PAIRED_BUILD
+      guard InputiaProfile.current.isCandidate,
+            InputiaProfile.current.runID == InputiaEmbeddedPairTrust.runID else {
+        NSLog("Inputia embedded pair trust does not match candidate profile")
+        exit(78)
+      }
+      #endif
       if CommandLine.arguments.contains("--open-settings") {
         runSettingsOnly()
         return
@@ -1388,6 +1397,9 @@ final class InputiaInputMethodDiagnostics {
 
     let diagnostics = InputiaInputMethodDiagnostics()
     switch command {
+    case "--unified-runtime-self-check":
+      InputiaRuntimeDiagnostics.run()
+      return true
     case "--self-check":
       diagnostics.selfCheck()
       return true

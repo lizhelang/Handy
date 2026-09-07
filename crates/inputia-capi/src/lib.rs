@@ -1,3 +1,21 @@
+//! C ABI 的内存安全由调用方提供，null 检查不能证明任意非空指针有效。
+//!
+//! 非空输入字符串须在调用期间指向可读、NUL 结尾且不被并发修改的缓冲区；
+//! 函数会复制需要保留的字符串。session 必须来自本库成功的构造函数，仍存活且独占使用。
+//! 同一活跃 Rime 运行时的 session 操作/创建/释放须在单一所有者线程串行执行。
+//! 返回的 JSON 字符串独立归调用方持有，只能交回本库 inputia_string_free 一次。
+//! Rust 的 unsafe 声明不改变 C/Swift ABI；各函数保留现有 null 返回或错误 JSON 行为。
+//!
+//! 即使具体调用使用允许的 null，Rust 调用点也必须明确承担 FFI 合同：
+//! ```compile_fail
+//! inputia_capi::inputia_session_new_luna_pinyin_simp(std::ptr::null(), 5);
+//! ```
+//! ```compile_fail
+//! inputia_capi::inputia_session_handle_char(std::ptr::null_mut(), 'a' as u32);
+//! ```
+
+#![deny(unsafe_op_in_unsafe_fn)]
+
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
 use std::ptr::null_mut;
@@ -93,16 +111,26 @@ impl ChineseEngine for RankedRimeEngine {
     }
 }
 
+/// 使用默认全拼配置创建 session。
+///
+/// # Safety
+/// 非空 user_data_dir 必须满足模块的 C 字符串合同；创建须与所有活跃 Rime 调用串行。
+/// 返回的非空 session 由调用方独占持有，并最终交给 inputia_session_free 一次。
 #[no_mangle]
-pub extern "C" fn inputia_session_new_luna_pinyin_simp(
+pub unsafe extern "C" fn inputia_session_new_luna_pinyin_simp(
     user_data_dir: *const c_char,
     candidate_page_size: usize,
 ) -> *mut InputiaSession {
     new_session("luna_pinyin_simp", user_data_dir, candidate_page_size, None)
 }
 
+/// 创建带本地记忆的默认全拼 session。
+///
+/// # Safety
+/// 两个非空路径指针须在调用期间保持有效的可读 NUL 结尾字符串；遵守单一所有者线程合同。
+/// 返回 session 的所有权和释放要求同 inputia_session_new_luna_pinyin_simp。
 #[no_mangle]
-pub extern "C" fn inputia_session_new_luna_pinyin_simp_with_memory(
+pub unsafe extern "C" fn inputia_session_new_luna_pinyin_simp_with_memory(
     user_data_dir: *const c_char,
     memory_db_path: *const c_char,
     candidate_page_size: usize,
@@ -118,8 +146,13 @@ pub extern "C" fn inputia_session_new_luna_pinyin_simp_with_memory(
     )
 }
 
+/// 使用指定 schema 创建 session。
+///
+/// # Safety
+/// 非空 schema_id 和 user_data_dir 须满足 C 字符串合同；创建须与其他 Rime 调用串行。
+/// 返回的非空 session 必须保持独占并且只释放一次。
 #[no_mangle]
-pub extern "C" fn inputia_session_new_with_schema(
+pub unsafe extern "C" fn inputia_session_new_with_schema(
     schema_id: *const c_char,
     user_data_dir: *const c_char,
     candidate_page_size: usize,
@@ -130,8 +163,14 @@ pub extern "C" fn inputia_session_new_with_schema(
     new_session(&schema_id, user_data_dir, candidate_page_size, None)
 }
 
+/// 使用显式引擎和数据路径创建 session。
+///
+/// # Safety
+/// 所有非空字符串参数须在调用期间可读、NUL 结尾且不被修改；创建须与其他 Rime 调用串行。
+/// 静态 feature 下仍要求 dylib_path 指针有效，虽然该配置路径不会被加载。
+/// 返回的非空 session 必须保持独占并且只释放一次。
 #[no_mangle]
-pub extern "C" fn inputia_session_new_with_paths(
+pub unsafe extern "C" fn inputia_session_new_with_paths(
     schema_id: *const c_char,
     dylib_path: *const c_char,
     shared_data_dir: *const c_char,
@@ -168,8 +207,13 @@ pub extern "C" fn inputia_session_new_with_paths(
     })
 }
 
+/// 从设置文件创建 session。
+///
+/// # Safety
+/// 非空 settings_path 须满足 C 字符串合同；创建须与其他 Rime 调用串行。
+/// 返回的非空 session 由调用方独占，最终只释放一次。
 #[no_mangle]
-pub extern "C" fn inputia_session_new_from_settings(
+pub unsafe extern "C" fn inputia_session_new_from_settings(
     settings_path: *const c_char,
 ) -> *mut InputiaSession {
     let Some(settings_path) = (unsafe { optional_c_string(settings_path) }) else {
@@ -184,8 +228,13 @@ pub extern "C" fn inputia_session_new_from_settings(
     new_session_with_options(options)
 }
 
+/// 保留设置中的输入行为，但不打开记忆库。
+///
+/// # Safety
+/// 非空 settings_path 须满足 C 字符串合同；创建须与其他 Rime 调用串行。
+/// 返回的非空 session 由调用方独占，最终只释放一次。
 #[no_mangle]
-pub extern "C" fn inputia_session_new_from_settings_without_memory(
+pub unsafe extern "C" fn inputia_session_new_from_settings_without_memory(
     settings_path: *const c_char,
 ) -> *mut InputiaSession {
     let Some(settings_path) = (unsafe { optional_c_string(settings_path) }) else {
@@ -201,15 +250,24 @@ pub extern "C" fn inputia_session_new_from_settings_without_memory(
     new_session_with_options(options)
 }
 
+/// 释放 session；null 是无操作。
+///
+/// # Safety
+/// 非空 session 必须是本库返回的原始、对齐且尚未释放的指针；不能是副本分配或内部地址。
+/// 调用前须结束所有借用/操作，不得并发使用或释放；同一指针只释放一次。
 #[no_mangle]
-pub extern "C" fn inputia_session_free(session: *mut InputiaSession) {
+pub unsafe extern "C" fn inputia_session_free(session: *mut InputiaSession) {
     if !session.is_null() {
         unsafe { drop(Box::from_raw(session)) };
     }
 }
 
+/// 处理一个 Unicode scalar，返回调用方所有的 JSON。
+///
+/// # Safety
+/// 非空 session 必须仍存活且来自本库；在其所有者线程独占串行调用，不与任何 Rime 操作并发。
 #[no_mangle]
-pub extern "C" fn inputia_session_handle_char(
+pub unsafe extern "C" fn inputia_session_handle_char(
     session: *mut InputiaSession,
     unicode_scalar: u32,
 ) -> *mut c_char {
@@ -219,8 +277,12 @@ pub extern "C" fn inputia_session_handle_char(
     with_session(session, |session| session.core.handle_key(Key::Char(ch)))
 }
 
+/// 处理数字候选选择键，返回调用方所有的 JSON。
+///
+/// # Safety
+/// 非空 session 必须仍存活且来自本库；在其所有者线程独占串行调用，不与任何 Rime 操作并发。
 #[no_mangle]
-pub extern "C" fn inputia_session_handle_digit(
+pub unsafe extern "C" fn inputia_session_handle_digit(
     session: *mut InputiaSession,
     digit: u8,
 ) -> *mut c_char {
@@ -229,8 +291,12 @@ pub extern "C" fn inputia_session_handle_digit(
     })
 }
 
+/// 处理特殊键，返回调用方所有的 JSON。
+///
+/// # Safety
+/// 非空 session 必须仍存活且来自本库；在其所有者线程独占串行调用，不与任何 Rime 操作并发。
 #[no_mangle]
-pub extern "C" fn inputia_session_handle_special(
+pub unsafe extern "C" fn inputia_session_handle_special(
     session: *mut InputiaSession,
     special_key: c_int,
 ) -> *mut c_char {
@@ -250,8 +316,12 @@ pub extern "C" fn inputia_session_handle_special(
     with_session(session, |session| session.core.handle_key(key))
 }
 
+/// 读取 session 快照，返回调用方所有的 JSON。
+///
+/// # Safety
+/// 非空 session 必须是本库仍存活的原始指针；读取也须独占串行，不能与更新/释放并发。
 #[no_mangle]
-pub extern "C" fn inputia_session_snapshot(session: *mut InputiaSession) -> *mut c_char {
+pub unsafe extern "C" fn inputia_session_snapshot(session: *mut InputiaSession) -> *mut c_char {
     if session.is_null() {
         return error_json("session is null");
     }
@@ -259,8 +329,12 @@ pub extern "C" fn inputia_session_snapshot(session: *mut InputiaSession) -> *mut
     outcome_json(OutputEnvelope::ok(None, false, session.core.snapshot()))
 }
 
+/// 显式设置中英文模式。
+///
+/// # Safety
+/// 非空 session 必须仍存活且来自本库；在其所有者线程独占串行调用，不与任何 Rime 操作并发。
 #[no_mangle]
-pub extern "C" fn inputia_session_set_input_mode(
+pub unsafe extern "C" fn inputia_session_set_input_mode(
     session: *mut InputiaSession,
     input_mode: c_int,
 ) -> *mut c_char {
@@ -272,8 +346,13 @@ pub extern "C" fn inputia_session_set_input_mode(
     with_session(session, |session| session.core.set_mode(mode))
 }
 
+/// 设置应用上下文。
+///
+/// # Safety
+/// 非空 session 必须独占、存活且来自本库；bundle_id 非空时须满足 C 字符串合同。
+/// 调用须遵守模块的单一所有者线程和串行访问要求。
 #[no_mangle]
-pub extern "C" fn inputia_session_set_app_context(
+pub unsafe extern "C" fn inputia_session_set_app_context(
     session: *mut InputiaSession,
     bundle_id: *const c_char,
 ) -> *mut c_char {
@@ -288,8 +367,13 @@ pub extern "C" fn inputia_session_set_app_context(
     learning_json(LearningEnvelope::context_set())
 }
 
+/// 设置应用与可选窗口上下文。
+///
+/// # Safety
+/// 非空 session 必须独占、存活且来自本库；两个非空字符串须满足 C 字符串合同。
+/// window_title 可以为 null；调用须与其他 session 操作/释放串行。
 #[no_mangle]
-pub extern "C" fn inputia_session_set_app_context_with_window(
+pub unsafe extern "C" fn inputia_session_set_app_context_with_window(
     session: *mut InputiaSession,
     bundle_id: *const c_char,
     window_title: *const c_char,
@@ -309,8 +393,13 @@ pub extern "C" fn inputia_session_set_app_context_with_window(
     learning_json(LearningEnvelope::context_set())
 }
 
+/// 按既有隐私策略记录学习证据。
+///
+/// # Safety
+/// 非空 session 必须独占、存活且来自本库；非空 text/bundle_id 必须满足 C 字符串合同。
+/// 调用须在运行时所有者线程串行，返回 JSON 由调用方按模块合同回收。
 #[no_mangle]
-pub extern "C" fn inputia_session_learn(
+pub unsafe extern "C" fn inputia_session_learn(
     session: *mut InputiaSession,
     source: c_int,
     text: *const c_char,
@@ -349,8 +438,13 @@ pub extern "C" fn inputia_session_learn(
     }
 }
 
+/// 按既有规则导入历史。
+///
+/// # Safety
+/// 非空 session 必须独占、存活且来自本库；两个非空字符串须满足 C 字符串合同。
+/// 导入与其他 session 操作/释放必须串行，返回 JSON 由调用方回收。
 #[no_mangle]
-pub extern "C" fn inputia_session_import_handy_history(
+pub unsafe extern "C" fn inputia_session_import_handy_history(
     session: *mut InputiaSession,
     history_db_path: *const c_char,
     bundle_id: *const c_char,
@@ -380,8 +474,13 @@ pub extern "C" fn inputia_session_import_handy_history(
     }
 }
 
+/// 按既有规则导入剪贴板记录。
+///
+/// # Safety
+/// 非空 session 必须独占、存活且来自本库；两个非空字符串须满足 C 字符串合同。
+/// 导入与其他 session 操作/释放必须串行，返回 JSON 由调用方回收。
 #[no_mangle]
-pub extern "C" fn inputia_session_import_handy_clipboard(
+pub unsafe extern "C" fn inputia_session_import_handy_clipboard(
     session: *mut InputiaSession,
     clipboard_db_path: *const c_char,
     bundle_id: *const c_char,
@@ -411,8 +510,12 @@ pub extern "C" fn inputia_session_import_handy_clipboard(
     }
 }
 
+/// 获取语音热词 JSON。
+///
+/// # Safety
+/// 非空 session 必须是本库仍存活的原始指针；读取也须独占串行，不能与更新/释放并发。
 #[no_mangle]
-pub extern "C" fn inputia_session_voice_hotwords(
+pub unsafe extern "C" fn inputia_session_voice_hotwords(
     session: *mut InputiaSession,
     limit: usize,
 ) -> *mut c_char {
@@ -432,8 +535,12 @@ pub extern "C" fn inputia_session_voice_hotwords(
     }
 }
 
+/// 获取剪贴板候选 JSON。
+///
+/// # Safety
+/// 非空 session 必须是本库仍存活的原始指针；读取也须独占串行，不能与更新/释放并发。
 #[no_mangle]
-pub extern "C" fn inputia_session_clipboard_candidates(
+pub unsafe extern "C" fn inputia_session_clipboard_candidates(
     session: *mut InputiaSession,
     limit: usize,
 ) -> *mut c_char {
@@ -455,8 +562,13 @@ pub extern "C" fn inputia_session_clipboard_candidates(
     }
 }
 
+/// 获取英文补全候选 JSON。
+///
+/// # Safety
+/// 非空 session 必须独占、存活且来自本库；非空 prefix 必须满足 C 字符串合同。
+/// 调用须与其他 session 操作/释放串行，返回 JSON 由调用方回收。
 #[no_mangle]
-pub extern "C" fn inputia_session_completion_candidates(
+pub unsafe extern "C" fn inputia_session_completion_candidates(
     session: *mut InputiaSession,
     prefix: *const c_char,
     limit: usize,
@@ -482,8 +594,13 @@ pub extern "C" fn inputia_session_completion_candidates(
     }
 }
 
+/// 释放本库分配的返回字符串；null 是无操作。
+///
+/// # Safety
+/// 非空 value 必须是本库返回且尚未释放的原始指针，不得偏移、替换分配器或改变首个 NUL 位置。
+/// 释放时不能再有借用/并发访问；同一分配只释放一次，不可使用 C free 或其他释放函数。
 #[no_mangle]
-pub extern "C" fn inputia_string_free(value: *mut c_char) {
+pub unsafe extern "C" fn inputia_string_free(value: *mut c_char) {
     if !value.is_null() {
         unsafe { drop(CString::from_raw(value)) };
     }
@@ -715,7 +832,12 @@ unsafe fn optional_c_string(value: *const c_char) -> Option<String> {
     if value.is_null() {
         return None;
     }
-    Some(CStr::from_ptr(value).to_string_lossy().into_owned())
+    // SAFETY: 调用方提供本次调用期间有效的 NUL 结尾字符串；null 已在上方处理。
+    Some(
+        unsafe { CStr::from_ptr(value) }
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 fn outcome_json(envelope: OutputEnvelope) -> *mut c_char {
@@ -976,40 +1098,208 @@ mod tests {
 
     static RIME_CAPI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    // SAFETY: 下方显式 unsafe 调用只使用存活 CString/本库 session/本库 JSON 指针。
+    // RIME_CAPI_TEST_LOCK 串行化运行时，测试在最后使用后释放 session，handle_json 复制正文后释放返回值。
+
+    #[test]
+    fn ffi_exports_keep_c_abi_with_explicit_unsafe_contract() {
+        let _: unsafe extern "C" fn(*const c_char, usize) -> *mut InputiaSession =
+            super::inputia_session_new_luna_pinyin_simp;
+        let _: unsafe extern "C" fn(
+            *const c_char,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+            usize,
+        ) -> *mut InputiaSession = super::inputia_session_new_with_paths;
+        let _: unsafe extern "C" fn(*mut InputiaSession, u32) -> *mut c_char =
+            super::inputia_session_handle_char;
+        let _: unsafe extern "C" fn(*mut InputiaSession) = super::inputia_session_free;
+        let _: unsafe extern "C" fn(*mut c_char) = super::inputia_string_free;
+    }
+
+    #[test]
+    fn ffi_null_contract_preserves_error_results_and_noop_free() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        // SAFETY: 本库为 null 明确保留错误/无操作合同；返回 JSON 是本库的独占分配。
+        unsafe {
+            assert!(super::inputia_session_new_luna_pinyin_simp(std::ptr::null(), 5).is_null());
+            assert!(super::inputia_session_new_luna_pinyin_simp_with_memory(
+                std::ptr::null(),
+                std::ptr::null(),
+                5
+            )
+            .is_null());
+            assert!(
+                super::inputia_session_new_with_schema(std::ptr::null(), std::ptr::null(), 5)
+                    .is_null()
+            );
+            assert!(super::inputia_session_new_with_paths(
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                5
+            )
+            .is_null());
+            assert!(super::inputia_session_new_from_settings(std::ptr::null()).is_null());
+            assert!(
+                super::inputia_session_new_from_settings_without_memory(std::ptr::null()).is_null()
+            );
+            for result in [
+                super::inputia_session_handle_char(null_mut(), 'a' as u32),
+                super::inputia_session_handle_digit(null_mut(), 1),
+                super::inputia_session_handle_special(null_mut(), KEY_SPACE),
+                super::inputia_session_snapshot(null_mut()),
+                super::inputia_session_set_input_mode(null_mut(), INPUT_MODE_CHINESE),
+                super::inputia_session_set_app_context(null_mut(), std::ptr::null()),
+                super::inputia_session_set_app_context_with_window(
+                    null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                ),
+                super::inputia_session_learn(
+                    null_mut(),
+                    SOURCE_TYPED,
+                    std::ptr::null(),
+                    std::ptr::null(),
+                ),
+                super::inputia_session_import_handy_history(
+                    null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    10,
+                ),
+                super::inputia_session_import_handy_clipboard(
+                    null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    10,
+                ),
+                super::inputia_session_voice_hotwords(null_mut(), 10),
+                super::inputia_session_clipboard_candidates(null_mut(), 10),
+                super::inputia_session_completion_candidates(null_mut(), std::ptr::null(), 10),
+            ] {
+                assert_eq!(handle_json(result)["ok"], false);
+            }
+            super::inputia_session_free(null_mut());
+            super::inputia_string_free(null_mut());
+        }
+    }
+
+    fn unavailable(message: &str) {
+        #[cfg(feature = "bundled-static-rime")]
+        panic!("static CAPI test cannot skip: {message}");
+        #[cfg(not(feature = "bundled-static-rime"))]
+        eprintln!("{message}");
+    }
+
+    #[cfg(feature = "bundled-static-rime")]
+    fn static_test_data() -> std::path::PathBuf {
+        let path = std::path::PathBuf::from(
+            std::env::var_os("INPUTIA_RIME_SHARED_DATA_DIR")
+                .expect("static tests require explicit candidate INPUTIA_RIME_SHARED_DATA_DIR"),
+        );
+        assert!(path.is_absolute() && path.join("luna_pinyin_simp.schema.yaml").is_file());
+        path.canonicalize().unwrap()
+    }
+
+    #[cfg(feature = "bundled-static-rime")]
+    unsafe fn inputia_session_new_luna_pinyin_simp(
+        user: *const c_char,
+        count: usize,
+    ) -> *mut InputiaSession {
+        static_test_session(user, None, count)
+    }
+
+    #[cfg(feature = "bundled-static-rime")]
+    unsafe fn inputia_session_new_luna_pinyin_simp_with_memory(
+        user: *const c_char,
+        memory: *const c_char,
+        count: usize,
+    ) -> *mut InputiaSession {
+        static_test_session(user, Some(memory), count)
+    }
+
+    #[cfg(feature = "bundled-static-rime")]
+    fn static_test_session(
+        user: *const c_char,
+        memory: Option<*const c_char>,
+        count: usize,
+    ) -> *mut InputiaSession {
+        let user = std::path::PathBuf::from(unsafe { CStr::from_ptr(user) }.to_str().unwrap());
+        let path = user.join("capi-static-test-settings.json");
+        let settings = InputiaSettings {
+            candidate_page_size: count,
+            rime_user_data_dir: Some(user),
+            rime_shared_data_dir: Some(static_test_data()),
+            rime_dylib_path: Some("/synthetic/not-a-library.dylib".into()),
+            memory_enabled: memory.is_some(),
+            memory_db_path: memory.map(|pointer| {
+                std::path::PathBuf::from(unsafe { CStr::from_ptr(pointer) }.to_str().unwrap())
+            }),
+            ..InputiaSettings::default()
+        };
+        settings.save(&path).unwrap();
+        let path = CString::new(path.to_str().unwrap()).unwrap();
+        unsafe { super::inputia_session_new_from_settings(path.as_ptr()) }
+    }
+
+    #[cfg(feature = "bundled-static-rime")]
+    unsafe fn inputia_session_new_from_settings(path: *const c_char) -> *mut InputiaSession {
+        let file = unsafe { CStr::from_ptr(path) }.to_str().unwrap();
+        let mut settings = InputiaSettings::load(file).unwrap();
+        settings.rime_shared_data_dir = Some(static_test_data());
+        settings.rime_dylib_path = Some("/synthetic/not-a-library.dylib".into());
+        settings.save(file).unwrap();
+        unsafe { super::inputia_session_new_from_settings(path) }
+    }
+
+    #[cfg(feature = "bundled-static-rime")]
+    fn default_inputia_shared_data_dir() -> Option<std::path::PathBuf> {
+        Some(static_test_data())
+    }
+
+    #[cfg(feature = "bundled-static-rime")]
+    fn bundled_shared_data_dir() -> Option<std::path::PathBuf> {
+        Some(static_test_data())
+    }
+
     #[test]
     fn capi_drives_core_with_rime_full_pinyin_when_available() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
         let user_data_dir = CString::new(temp.path().to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 2);
+        let session = unsafe { inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 2) };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
-        let shift = handle_json(inputia_session_handle_special(session, KEY_SHIFT));
+        let shift = handle_json(unsafe { inputia_session_handle_special(session, KEY_SHIFT) });
         assert_eq!(shift["mode"], "Chinese");
 
         let mut latest = shift;
         for ch in "zhongguo".chars() {
-            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+            latest = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
         }
         assert_eq!(latest["composing"], "zhongguo");
         assert_eq!(latest["visible_candidates"][0]["text"], "中国");
 
-        let page_down = handle_json(inputia_session_handle_special(session, KEY_PAGE_DOWN));
+        let page_down =
+            handle_json(unsafe { inputia_session_handle_special(session, KEY_PAGE_DOWN) });
         assert_eq!(page_down["page"], 1);
         assert_ne!(page_down["visible_candidates"][0]["text"], "中国");
 
-        let page_up = handle_json(inputia_session_handle_special(session, KEY_PAGE_UP));
+        let page_up = handle_json(unsafe { inputia_session_handle_special(session, KEY_PAGE_UP) });
         assert_eq!(page_up["page"], 0);
         assert_eq!(page_up["visible_candidates"][0]["text"], "中国");
 
-        let commit = handle_json(inputia_session_handle_special(session, KEY_SPACE));
+        let commit = handle_json(unsafe { inputia_session_handle_special(session, KEY_SPACE) });
         assert_eq!(commit["commit"], "中国");
         assert_eq!(commit["composing"], "");
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1017,26 +1307,26 @@ mod tests {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
         let user_data_dir = CString::new(temp.path().to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 5);
+        let session = unsafe { inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 5) };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
         assert_eq!(
-            handle_json(inputia_session_handle_special(session, KEY_SHIFT))["mode"],
+            handle_json(unsafe { inputia_session_handle_special(session, KEY_SHIFT) })["mode"],
             "Chinese"
         );
         for ch in "ni".chars() {
-            let _ = handle_json(inputia_session_handle_char(session, ch as u32));
+            let _ = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
         }
 
-        let commit = handle_json(inputia_session_handle_special(session, KEY_ENTER));
+        let commit = handle_json(unsafe { inputia_session_handle_special(session, KEY_ENTER) });
         assert_eq!(commit["commit"], "ni");
         assert_eq!(commit["composing"], "");
         assert!(commit["visible_candidates"].as_array().unwrap().is_empty());
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1044,19 +1334,19 @@ mod tests {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
         let user_data_dir = CString::new(temp.path().to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 8);
+        let session = unsafe { inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 8) };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
         assert_eq!(
-            handle_json(inputia_session_handle_special(session, KEY_SHIFT))["mode"],
+            handle_json(unsafe { inputia_session_handle_special(session, KEY_SHIFT) })["mode"],
             "Chinese"
         );
         let mut latest = Value::Null;
         for ch in "ba".chars() {
-            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+            latest = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
         }
         assert_eq!(latest["visible_candidates"][0]["text"], "吧");
         assert!(!latest["visible_candidates"]
@@ -1065,7 +1355,8 @@ mod tests {
             .iter()
             .any(|candidate| candidate["text"] == "叭"));
 
-        let page_down = handle_json(inputia_session_handle_special(session, KEY_PAGE_DOWN));
+        let page_down =
+            handle_json(unsafe { inputia_session_handle_special(session, KEY_PAGE_DOWN) });
         assert_eq!(page_down["page"], 1);
         assert_eq!(page_down["visible_candidates"].as_array().unwrap().len(), 8);
         assert!(
@@ -1077,21 +1368,25 @@ mod tests {
             "CAPI must preserve deeper Rime candidates such as 叭 instead of truncating RankedRimeEngine to its shallow default"
         );
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
     fn capi_can_open_double_pinyin_schema_when_prepared() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
-        let shared_data_dir = std::path::PathBuf::from("/tmp/inputia-rime-shared-double-pinyin");
-        let user_data_dir = std::path::PathBuf::from("/tmp/inputia-rime-user-double-pinyin");
+        #[cfg(feature = "bundled-static-rime")]
+        let shared_data_dir = static_test_data();
+        #[cfg(not(feature = "bundled-static-rime"))]
+        let shared_data_dir = std::env::var_os("INPUTIA_RIME_SHARED_DATA_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("/tmp/inputia-rime-shared-double-pinyin"));
+        let user_temp = tempfile::tempdir().unwrap();
+        let user_data_dir = user_temp.path().to_path_buf();
         if !shared_data_dir
             .join("double_pinyin_flypy.schema.yaml")
             .exists()
         {
-            eprintln!(
-                "skip: run spikes/inputia-rime/prepare-double-pinyin-data.sh double_pinyin_flypy first"
-            );
+            unavailable("skip: run spikes/inputia-rime/prepare-double-pinyin-data.sh double_pinyin_flypy first");
             return;
         }
 
@@ -1101,32 +1396,34 @@ mod tests {
                 .unwrap();
         let shared = CString::new(shared_data_dir.to_string_lossy().as_bytes()).unwrap();
         let user = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_with_paths(
-            schema.as_ptr(),
-            dylib.as_ptr(),
-            shared.as_ptr(),
-            user.as_ptr(),
-            2,
-        );
+        let session = unsafe {
+            inputia_session_new_with_paths(
+                schema.as_ptr(),
+                dylib.as_ptr(),
+                shared.as_ptr(),
+                user.as_ptr(),
+                2,
+            )
+        };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
-        let shift = handle_json(inputia_session_handle_special(session, KEY_SHIFT));
+        let shift = handle_json(unsafe { inputia_session_handle_special(session, KEY_SHIFT) });
         assert_eq!(shift["mode"], "Chinese");
 
         let mut latest = shift;
         for ch in "vsgo".chars() {
-            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+            latest = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
         }
         assert_eq!(latest["composing"], "vsgo");
         assert_eq!(latest["visible_candidates"][0]["text"], "中国");
 
-        let commit = handle_json(inputia_session_handle_special(session, KEY_SPACE));
+        let commit = handle_json(unsafe { inputia_session_handle_special(session, KEY_SPACE) });
         assert_eq!(commit["commit"], "中国");
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1137,48 +1434,57 @@ mod tests {
         let memory_db = temp.path().join("inputia-memory.db");
         let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
         let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_luna_pinyin_simp_with_memory(
-            user_data_dir.as_ptr(),
-            memory_db.as_ptr(),
-            5,
-        );
+        let session = unsafe {
+            inputia_session_new_luna_pinyin_simp_with_memory(
+                user_data_dir.as_ptr(),
+                memory_db.as_ptr(),
+                5,
+            )
+        };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
         let source_app = CString::new("com.apple.TextEdit").unwrap();
         let remembered = CString::new("种过").unwrap();
-        let learned = handle_json(inputia_session_learn(
-            session,
-            SOURCE_CLIPBOARD,
-            remembered.as_ptr(),
-            source_app.as_ptr(),
-        ));
+        let learned = handle_json(unsafe {
+            inputia_session_learn(
+                session,
+                SOURCE_CLIPBOARD,
+                remembered.as_ptr(),
+                source_app.as_ptr(),
+            )
+        });
         assert_eq!(learned["decision"], "learn");
         assert_eq!(learned["term"], "种过");
 
         let sensitive_app = CString::new("com.1password.1password").unwrap();
         let sensitive_term = CString::new("密码 候选").unwrap();
-        let excluded = handle_json(inputia_session_learn(
-            session,
-            SOURCE_CLIPBOARD,
-            sensitive_term.as_ptr(),
-            sensitive_app.as_ptr(),
-        ));
+        let excluded = handle_json(unsafe {
+            inputia_session_learn(
+                session,
+                SOURCE_CLIPBOARD,
+                sensitive_term.as_ptr(),
+                sensitive_app.as_ptr(),
+            )
+        });
         assert_eq!(excluded["decision"], "excluded");
         assert!(excluded["term"].is_null());
 
         let voice_term = CString::new("语音 热词").unwrap();
-        let voice = handle_json(inputia_session_learn(
-            session,
-            SOURCE_VOICE,
-            voice_term.as_ptr(),
-            source_app.as_ptr(),
-        ));
+        let voice = handle_json(unsafe {
+            inputia_session_learn(
+                session,
+                SOURCE_VOICE,
+                voice_term.as_ptr(),
+                source_app.as_ptr(),
+            )
+        });
         assert_eq!(voice["decision"], "learn");
 
-        let clipboard_candidates = handle_json(inputia_session_clipboard_candidates(session, 10));
+        let clipboard_candidates =
+            handle_json(unsafe { inputia_session_clipboard_candidates(session, 10) });
         assert_eq!(clipboard_candidates["candidates"][0]["text"], "种过");
         assert_eq!(clipboard_candidates["candidates"][0]["source"], "clipboard");
         assert!(!clipboard_candidates["candidates"]
@@ -1187,33 +1493,33 @@ mod tests {
             .iter()
             .any(|candidate| candidate["text"] == "语音 热词"));
 
-        let shift = handle_json(inputia_session_handle_special(session, KEY_SHIFT));
+        let shift = handle_json(unsafe { inputia_session_handle_special(session, KEY_SHIFT) });
         assert_eq!(shift["mode"], "Chinese");
 
         let mut latest = shift;
         for ch in "zhongguo".chars() {
-            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+            latest = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
         }
         assert_eq!(latest["visible_candidates"][0]["text"], "种过");
         assert_eq!(latest["visible_candidates"][0]["source"], "clipboard");
 
-        let commit = handle_json(inputia_session_handle_special(session, KEY_SPACE));
+        let commit = handle_json(unsafe { inputia_session_handle_special(session, KEY_SPACE) });
         assert_eq!(commit["commit"], "种过");
 
-        let hotwords = handle_json(inputia_session_voice_hotwords(session, 10));
+        let hotwords = handle_json(unsafe { inputia_session_voice_hotwords(session, 10) });
         let hotword_values = hotwords["hotwords"].as_array().unwrap();
         assert!(hotword_values.iter().any(|value| value == "语音 热词"));
         assert!(hotword_values.iter().any(|value| value == "种过"));
         assert!(!hotword_values.iter().any(|value| value == "密码 候选"));
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
     fn capi_long_double_pinyin_input_keeps_phrase_ahead_of_single_character_memory() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let Some(shared_data_dir) = bundled_shared_data_dir() else {
-            eprintln!("skip: Inputia bundled RimeData is not available");
+            unavailable("skip: Inputia bundled RimeData is not available");
             return;
         };
 
@@ -1231,31 +1537,34 @@ mod tests {
         };
         settings.save(&settings_path).unwrap();
         let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_from_settings(settings_path.as_ptr());
+        let session = unsafe { inputia_session_new_from_settings(settings_path.as_ptr()) };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
         let source_app = CString::new("com.apple.TextEdit").unwrap();
         let single_char = CString::new("你").unwrap();
         for _ in 0..20 {
-            let learned = handle_json(inputia_session_learn(
-                session,
-                SOURCE_TYPED,
-                single_char.as_ptr(),
-                source_app.as_ptr(),
-            ));
+            let learned = handle_json(unsafe {
+                inputia_session_learn(
+                    session,
+                    SOURCE_TYPED,
+                    single_char.as_ptr(),
+                    source_app.as_ptr(),
+                )
+            });
             assert_eq!(learned["decision"], "learn");
         }
 
         assert_eq!(
-            handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
+            handle_json(unsafe { inputia_session_set_input_mode(session, INPUT_MODE_CHINESE) })
+                ["mode"],
             "Chinese"
         );
         let mut latest = Value::Null;
         for ch in "nilllema".chars() {
-            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+            latest = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
         }
 
         assert_eq!(latest["visible_candidates"][0]["text"], "你来了吗");
@@ -1265,15 +1574,13 @@ mod tests {
             .iter()
             .position(|candidate| candidate["text"] == "你")
             .expect("single-character candidate should remain visible");
-        let partial = handle_json(inputia_session_handle_digit(
-            session,
-            (single_index + 1) as u8,
-        ));
+        let partial =
+            handle_json(unsafe { inputia_session_handle_digit(session, (single_index + 1) as u8) });
         assert_eq!(partial["commit"], "你");
         assert_eq!(partial["composing"], "lllema");
         assert_eq!(partial["visible_candidates"][0]["text"], "来了吗");
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1284,13 +1591,15 @@ mod tests {
         let memory_db = temp.path().join("inputia-memory.db");
         let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
         let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_luna_pinyin_simp_with_memory(
-            user_data_dir.as_ptr(),
-            memory_db.as_ptr(),
-            5,
-        );
+        let session = unsafe {
+            inputia_session_new_luna_pinyin_simp_with_memory(
+                user_data_dir.as_ptr(),
+                memory_db.as_ptr(),
+                5,
+            )
+        };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
@@ -1298,39 +1607,33 @@ mod tests {
         let inputia = CString::new("Inputia").unwrap();
         let input_layer = CString::new("input-layer").unwrap();
         assert_eq!(
-            handle_json(inputia_session_learn(
-                session,
-                SOURCE_TYPED,
-                inputia.as_ptr(),
-                source_app.as_ptr(),
-            ))["decision"],
+            handle_json(unsafe {
+                inputia_session_learn(session, SOURCE_TYPED, inputia.as_ptr(), source_app.as_ptr())
+            })["decision"],
             "learn"
         );
         assert_eq!(
-            handle_json(inputia_session_learn(
-                session,
-                SOURCE_TYPED,
-                inputia.as_ptr(),
-                source_app.as_ptr(),
-            ))["decision"],
+            handle_json(unsafe {
+                inputia_session_learn(session, SOURCE_TYPED, inputia.as_ptr(), source_app.as_ptr())
+            })["decision"],
             "learn"
         );
         assert_eq!(
-            handle_json(inputia_session_learn(
-                session,
-                SOURCE_CLIPBOARD,
-                input_layer.as_ptr(),
-                source_app.as_ptr(),
-            ))["decision"],
+            handle_json(unsafe {
+                inputia_session_learn(
+                    session,
+                    SOURCE_CLIPBOARD,
+                    input_layer.as_ptr(),
+                    source_app.as_ptr(),
+                )
+            })["decision"],
             "learn"
         );
 
         let prefix = CString::new("in").unwrap();
-        let completions = handle_json(inputia_session_completion_candidates(
-            session,
-            prefix.as_ptr(),
-            5,
-        ));
+        let completions = handle_json(unsafe {
+            inputia_session_completion_candidates(session, prefix.as_ptr(), 5)
+        });
 
         assert_eq!(completions["ok"], true);
         assert_eq!(completions["candidates"][0]["text"], "Inputia");
@@ -1341,7 +1644,7 @@ mod tests {
             .iter()
             .any(|candidate| candidate["text"] == "input-layer"));
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1356,42 +1659,46 @@ mod tests {
         let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
         let history_db = CString::new(history_db.to_string_lossy().as_bytes()).unwrap();
         let bundle_id = CString::new("com.pais.handy").unwrap();
-        let session = inputia_session_new_luna_pinyin_simp_with_memory(
-            user_data_dir.as_ptr(),
-            memory_db.as_ptr(),
-            5,
-        );
+        let session = unsafe {
+            inputia_session_new_luna_pinyin_simp_with_memory(
+                user_data_dir.as_ptr(),
+                memory_db.as_ptr(),
+                5,
+            )
+        };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
-        let imported = handle_json(inputia_session_import_handy_history(
-            session,
-            history_db.as_ptr(),
-            bundle_id.as_ptr(),
-            10,
-        ));
+        let imported = handle_json(unsafe {
+            inputia_session_import_handy_history(
+                session,
+                history_db.as_ptr(),
+                bundle_id.as_ptr(),
+                10,
+            )
+        });
         assert_eq!(imported["ok"], true);
         assert_eq!(imported["imported"], 2);
 
-        let hotwords = handle_json(inputia_session_voice_hotwords(session, 10));
+        let hotwords = handle_json(unsafe { inputia_session_voice_hotwords(session, 10) });
         let hotword_values = hotwords["hotwords"].as_array().unwrap();
         assert!(hotword_values.iter().any(|value| value == "种过"));
         assert!(hotword_values.iter().any(|value| value == "语音 热词"));
 
         assert_eq!(
-            handle_json(inputia_session_handle_special(session, KEY_SHIFT))["mode"],
+            handle_json(unsafe { inputia_session_handle_special(session, KEY_SHIFT) })["mode"],
             "Chinese"
         );
         let mut latest = Value::Null;
         for ch in "zhongguo".chars() {
-            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+            latest = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
         }
         assert_eq!(latest["visible_candidates"][0]["text"], "种过");
         assert_eq!(latest["visible_candidates"][0]["source"], "voice");
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1406,26 +1713,31 @@ mod tests {
         let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
         let clipboard_db = CString::new(clipboard_db.to_string_lossy().as_bytes()).unwrap();
         let bundle_id = CString::new("com.pais.handy").unwrap();
-        let session = inputia_session_new_luna_pinyin_simp_with_memory(
-            user_data_dir.as_ptr(),
-            memory_db.as_ptr(),
-            5,
-        );
+        let session = unsafe {
+            inputia_session_new_luna_pinyin_simp_with_memory(
+                user_data_dir.as_ptr(),
+                memory_db.as_ptr(),
+                5,
+            )
+        };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
-        let imported = handle_json(inputia_session_import_handy_clipboard(
-            session,
-            clipboard_db.as_ptr(),
-            bundle_id.as_ptr(),
-            10,
-        ));
+        let imported = handle_json(unsafe {
+            inputia_session_import_handy_clipboard(
+                session,
+                clipboard_db.as_ptr(),
+                bundle_id.as_ptr(),
+                10,
+            )
+        });
         assert_eq!(imported["ok"], true);
         assert_eq!(imported["imported"], 1);
 
-        let clipboard_candidates = handle_json(inputia_session_clipboard_candidates(session, 10));
+        let clipboard_candidates =
+            handle_json(unsafe { inputia_session_clipboard_candidates(session, 10) });
         assert_eq!(clipboard_candidates["candidates"][0]["text"], "种过");
         assert_eq!(clipboard_candidates["candidates"][0]["source"], "clipboard");
         assert!(!clipboard_candidates["candidates"]
@@ -1435,17 +1747,17 @@ mod tests {
             .any(|candidate| candidate["text"] == "密码 候选"));
 
         assert_eq!(
-            handle_json(inputia_session_handle_special(session, KEY_SHIFT))["mode"],
+            handle_json(unsafe { inputia_session_handle_special(session, KEY_SHIFT) })["mode"],
             "Chinese"
         );
         let mut latest = Value::Null;
         for ch in "zhongguo".chars() {
-            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+            latest = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
         }
         assert_eq!(latest["visible_candidates"][0]["text"], "种过");
         assert_eq!(latest["visible_candidates"][0]["source"], "clipboard");
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1456,37 +1768,38 @@ mod tests {
         let memory_db = temp.path().join("inputia-memory.db");
         let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
         let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_luna_pinyin_simp_with_memory(
-            user_data_dir.as_ptr(),
-            memory_db.as_ptr(),
-            5,
-        );
+        let session = unsafe {
+            inputia_session_new_luna_pinyin_simp_with_memory(
+                user_data_dir.as_ptr(),
+                memory_db.as_ptr(),
+                5,
+            )
+        };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
         let sensitive_app = CString::new("com.1password.1password").unwrap();
-        let context = handle_json(inputia_session_set_app_context(
-            session,
-            sensitive_app.as_ptr(),
-        ));
+        let context = handle_json(unsafe {
+            inputia_session_set_app_context(session, sensitive_app.as_ptr())
+        });
         assert_eq!(context["decision"], "context_set");
 
-        let shift = handle_json(inputia_session_handle_special(session, KEY_SHIFT));
+        let shift = handle_json(unsafe { inputia_session_handle_special(session, KEY_SHIFT) });
         assert_eq!(shift["mode"], "Chinese");
 
         for ch in "zhongguo".chars() {
-            let _ = handle_json(inputia_session_handle_char(session, ch as u32));
+            let _ = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
         }
-        let commit = handle_json(inputia_session_handle_special(session, KEY_SPACE));
+        let commit = handle_json(unsafe { inputia_session_handle_special(session, KEY_SPACE) });
         assert_eq!(commit["commit"], "中国");
 
-        let hotwords = handle_json(inputia_session_voice_hotwords(session, 10));
+        let hotwords = handle_json(unsafe { inputia_session_voice_hotwords(session, 10) });
         let hotword_values = hotwords["hotwords"].as_array().unwrap();
         assert!(!hotword_values.iter().any(|value| value == "中国"));
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1497,50 +1810,51 @@ mod tests {
         let memory_db = temp.path().join("inputia-memory.db");
         let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
         let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_luna_pinyin_simp_with_memory(
-            user_data_dir.as_ptr(),
-            memory_db.as_ptr(),
-            5,
-        );
+        let session = unsafe {
+            inputia_session_new_luna_pinyin_simp_with_memory(
+                user_data_dir.as_ptr(),
+                memory_db.as_ptr(),
+                5,
+            )
+        };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
         let bundle_id = CString::new("com.apple.Safari").unwrap();
         let window_title = CString::new("Private Browsing - Bank Login").unwrap();
-        let context = handle_json(inputia_session_set_app_context_with_window(
-            session,
-            bundle_id.as_ptr(),
-            window_title.as_ptr(),
-        ));
+        let context = handle_json(unsafe {
+            inputia_session_set_app_context_with_window(
+                session,
+                bundle_id.as_ptr(),
+                window_title.as_ptr(),
+            )
+        });
         assert_eq!(context["decision"], "context_set");
 
         let secret = CString::new("secret phrase").unwrap();
-        let learned = handle_json(inputia_session_learn(
-            session,
-            SOURCE_TYPED,
-            secret.as_ptr(),
-            bundle_id.as_ptr(),
-        ));
+        let learned = handle_json(unsafe {
+            inputia_session_learn(session, SOURCE_TYPED, secret.as_ptr(), bundle_id.as_ptr())
+        });
         assert_eq!(learned["decision"], "excluded");
 
         assert_eq!(
-            handle_json(inputia_session_handle_special(session, KEY_SHIFT))["mode"],
+            handle_json(unsafe { inputia_session_handle_special(session, KEY_SHIFT) })["mode"],
             "Chinese"
         );
         for ch in "zhongguo".chars() {
-            let _ = handle_json(inputia_session_handle_char(session, ch as u32));
+            let _ = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
         }
-        let commit = handle_json(inputia_session_handle_special(session, KEY_SPACE));
+        let commit = handle_json(unsafe { inputia_session_handle_special(session, KEY_SPACE) });
         assert_eq!(commit["commit"], "中国");
 
-        let hotwords = handle_json(inputia_session_voice_hotwords(session, 10));
+        let hotwords = handle_json(unsafe { inputia_session_voice_hotwords(session, 10) });
         let hotword_values = hotwords["hotwords"].as_array().unwrap();
         assert!(!hotword_values.iter().any(|value| value == "中国"));
         assert!(!hotword_values.iter().any(|value| value == "secret phrase"));
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1557,18 +1871,18 @@ mod tests {
         };
         settings.save(&settings_path).unwrap();
         let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_from_settings(settings_path.as_ptr());
+        let session = unsafe { inputia_session_new_from_settings(settings_path.as_ptr()) };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
-        let shift = handle_json(inputia_session_handle_special(session, KEY_SHIFT));
+        let shift = handle_json(unsafe { inputia_session_handle_special(session, KEY_SHIFT) });
 
         assert_eq!(shift["consumed"], false);
         assert_eq!(shift["mode"], "English");
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1585,24 +1899,23 @@ mod tests {
         };
         settings.save(&settings_path).unwrap();
         let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_from_settings(settings_path.as_ptr());
+        let session = unsafe { inputia_session_new_from_settings(settings_path.as_ptr()) };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
-        let ignored_shift = handle_json(inputia_session_handle_special(session, KEY_SHIFT));
+        let ignored_shift =
+            handle_json(unsafe { inputia_session_handle_special(session, KEY_SHIFT) });
         assert_eq!(ignored_shift["mode"], "English");
         assert_eq!(ignored_shift["consumed"], false);
 
-        let remapped_toggle = handle_json(inputia_session_handle_special(
-            session,
-            KEY_TOGGLE_INPUT_MODE,
-        ));
+        let remapped_toggle =
+            handle_json(unsafe { inputia_session_handle_special(session, KEY_TOGGLE_INPUT_MODE) });
         assert_eq!(remapped_toggle["mode"], "Chinese");
         assert_eq!(remapped_toggle["consumed"], true);
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1610,28 +1923,30 @@ mod tests {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
         let user_data_dir = CString::new(temp.path().to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 5);
+        let session = unsafe { inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 5) };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
-        let set_chinese = handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE));
+        let set_chinese =
+            handle_json(unsafe { inputia_session_set_input_mode(session, INPUT_MODE_CHINESE) });
         assert_eq!(set_chinese["mode"], "Chinese");
         assert_eq!(set_chinese["consumed"], false);
 
-        let z = handle_json(inputia_session_handle_char(session, 'z' as u32));
+        let z = handle_json(unsafe { inputia_session_handle_char(session, 'z' as u32) });
         assert_eq!(z["mode"], "Chinese");
         assert_eq!(z["composing"], "z");
 
-        let set_english = handle_json(inputia_session_set_input_mode(session, INPUT_MODE_ENGLISH));
+        let set_english =
+            handle_json(unsafe { inputia_session_set_input_mode(session, INPUT_MODE_ENGLISH) });
         assert_eq!(set_english["mode"], "English");
 
-        let direct = handle_json(inputia_session_handle_char(session, 'x' as u32));
+        let direct = handle_json(unsafe { inputia_session_handle_char(session, 'x' as u32) });
         assert_eq!(direct["mode"], "English");
         assert_eq!(direct["commit"], "x");
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1648,36 +1963,36 @@ mod tests {
         };
         settings.save(&settings_path).unwrap();
         let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_from_settings(settings_path.as_ptr());
+        let session = unsafe { inputia_session_new_from_settings(settings_path.as_ptr()) };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
-        let shift = handle_json(inputia_session_handle_special(session, KEY_SHIFT));
+        let shift = handle_json(unsafe { inputia_session_handle_special(session, KEY_SHIFT) });
         assert_eq!(shift["mode"], "Chinese");
 
         let mut latest = shift;
         for ch in "zhongguo".chars() {
-            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+            latest = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
         }
         assert_eq!(latest["visible_candidates"].as_array().unwrap().len(), 2);
 
-        let comma = handle_json(inputia_session_handle_char(session, ',' as u32));
+        let comma = handle_json(unsafe { inputia_session_handle_char(session, ',' as u32) });
         assert_eq!(comma["commit"], "，");
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
     fn settings_fallback_without_memory_preserves_schema_and_candidate_count() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let Some(shared_data_dir) = default_inputia_shared_data_dir() else {
-            eprintln!("skip: Inputia RimeData is not installed on this machine");
+            unavailable("skip: Inputia RimeData is not installed on this machine");
             return;
         };
         if !shared_data_dir.join("double_pinyin.schema.yaml").exists() {
-            eprintln!("skip: double_pinyin schema is not available");
+            unavailable("skip: double_pinyin schema is not available");
             return;
         }
 
@@ -1698,21 +2013,22 @@ mod tests {
         settings.save(&settings_path).unwrap();
         let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
 
-        let failed = inputia_session_new_from_settings(settings_path.as_ptr());
+        let failed = unsafe { inputia_session_new_from_settings(settings_path.as_ptr()) };
         assert!(failed.is_null());
 
-        let session = inputia_session_new_from_settings_without_memory(settings_path.as_ptr());
+        let session =
+            unsafe { inputia_session_new_from_settings_without_memory(settings_path.as_ptr()) };
         assert!(!session.is_null());
-        let _ = handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE));
+        let _ = handle_json(unsafe { inputia_session_set_input_mode(session, INPUT_MODE_CHINESE) });
         let mut latest = serde_json::Value::Null;
         for ch in "yh".chars() {
-            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+            latest = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
         }
         let candidates = latest["visible_candidates"].as_array().unwrap();
         assert_eq!(candidates.len(), 8);
         assert!(candidates.iter().any(|candidate| candidate["text"] == "洋"));
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1728,27 +2044,28 @@ mod tests {
         };
         settings.save(&settings_path).unwrap();
         let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_from_settings(settings_path.as_ptr());
+        let session = unsafe { inputia_session_new_from_settings(settings_path.as_ptr()) };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
-        let direct = handle_json(inputia_session_handle_char(session, 'A' as u32));
+        let direct = handle_json(unsafe { inputia_session_handle_char(session, 'A' as u32) });
         assert_eq!(direct["mode"], "English");
         assert_eq!(direct["commit"], "Ａ");
 
         assert_eq!(
-            handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
+            handle_json(unsafe { inputia_session_set_input_mode(session, INPUT_MODE_CHINESE) })
+                ["mode"],
             "Chinese"
         );
         for ch in "ni".chars() {
-            let _ = handle_json(inputia_session_handle_char(session, ch as u32));
+            let _ = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
         }
-        let raw = handle_json(inputia_session_handle_special(session, KEY_ENTER));
+        let raw = handle_json(unsafe { inputia_session_handle_special(session, KEY_ENTER) });
         assert_eq!(raw["commit"], "ｎｉ");
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1764,23 +2081,24 @@ mod tests {
         };
         settings.save(&settings_path).unwrap();
         let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_from_settings(settings_path.as_ptr());
+        let session = unsafe { inputia_session_new_from_settings(settings_path.as_ptr()) };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
         assert_eq!(
-            handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
+            handle_json(unsafe { inputia_session_set_input_mode(session, INPUT_MODE_CHINESE) })
+                ["mode"],
             "Chinese"
         );
         let mut latest = Value::Null;
         for ch in "dagn".chars() {
-            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+            latest = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
         }
         assert_eq!(latest["visible_candidates"][0]["text"], "当");
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1797,7 +2115,7 @@ mod tests {
     fn capi_settings_schemas_commit_zhongguo_when_available() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let Some(shared_data_dir) = bundled_shared_data_dir() else {
-            eprintln!("skip: Inputia bundled RimeData is not available");
+            unavailable("skip: Inputia bundled RimeData is not available");
             return;
         };
 
@@ -1856,19 +2174,20 @@ mod tests {
             };
             settings.save(&settings_path).unwrap();
             let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
-            let session = inputia_session_new_from_settings(settings_path.as_ptr());
+            let session = unsafe { inputia_session_new_from_settings(settings_path.as_ptr()) };
             if session.is_null() {
-                eprintln!("skip: Squirrel librime runtime is not available");
+                unavailable("skip: Squirrel librime runtime is not available");
                 return;
             }
 
             assert_eq!(
-                handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
+                handle_json(unsafe { inputia_session_set_input_mode(session, INPUT_MODE_CHINESE) })
+                    ["mode"],
                 "Chinese"
             );
             let mut latest = Value::Null;
             for ch in case.keys.chars() {
-                latest = handle_json(inputia_session_handle_char(session, ch as u32));
+                latest = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
             }
             assert_eq!(latest["composing"], case.keys, "{}", case.schema);
             assert_eq!(
@@ -1878,10 +2197,10 @@ mod tests {
             );
             assert_eq!(latest["visible_candidates"].as_array().unwrap().len(), 7);
 
-            let commit = handle_json(inputia_session_handle_special(session, KEY_SPACE));
+            let commit = handle_json(unsafe { inputia_session_handle_special(session, KEY_SPACE) });
             assert_eq!(commit["commit"], "中国");
             assert_eq!(commit["composing"], "");
-            inputia_session_free(session);
+            unsafe { inputia_session_free(session) };
         }
     }
 
@@ -1889,7 +2208,7 @@ mod tests {
     fn capi_new_settings_session_survives_previous_session_free() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let Some(shared_data_dir) = bundled_shared_data_dir() else {
-            eprintln!("skip: Inputia bundled RimeData is not available");
+            unavailable("skip: Inputia bundled RimeData is not available");
             return;
         };
 
@@ -1904,31 +2223,30 @@ mod tests {
         };
         settings.save(&settings_path).unwrap();
         let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
-        let previous_session = inputia_session_new_from_settings(settings_path.as_ptr());
+        let previous_session = unsafe { inputia_session_new_from_settings(settings_path.as_ptr()) };
         if previous_session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
-        let next_session = inputia_session_new_from_settings(settings_path.as_ptr());
+        let next_session = unsafe { inputia_session_new_from_settings(settings_path.as_ptr()) };
         assert!(!next_session.is_null());
 
-        inputia_session_free(previous_session);
+        unsafe { inputia_session_free(previous_session) };
 
         assert_eq!(
-            handle_json(inputia_session_set_input_mode(
-                next_session,
-                INPUT_MODE_CHINESE
-            ))["mode"],
+            handle_json(unsafe {
+                inputia_session_set_input_mode(next_session, INPUT_MODE_CHINESE)
+            })["mode"],
             "Chinese"
         );
         let mut latest = Value::Null;
         for ch in "mlle".chars() {
-            latest = handle_json(inputia_session_handle_char(next_session, ch as u32));
+            latest = handle_json(unsafe { inputia_session_handle_char(next_session, ch as u32) });
         }
         assert_eq!(latest["composing"], "mlle");
         assert_eq!(latest["visible_candidates"][0]["text"], "买了");
 
-        inputia_session_free(next_session);
+        unsafe { inputia_session_free(next_session) };
     }
 
     #[test]
@@ -1936,49 +2254,49 @@ mod tests {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
         let user_data_dir = CString::new(temp.path().to_string_lossy().as_bytes()).unwrap();
-        let session = inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 5);
+        let session = unsafe { inputia_session_new_luna_pinyin_simp(user_data_dir.as_ptr(), 5) };
         if session.is_null() {
-            eprintln!("skip: Squirrel librime runtime is not available");
+            unavailable("skip: Squirrel librime runtime is not available");
             return;
         }
 
-        let half_width = handle_json(inputia_session_handle_char(session, 'A' as u32));
+        let half_width = handle_json(unsafe { inputia_session_handle_char(session, 'A' as u32) });
         assert_eq!(half_width["commit"], "A");
 
-        let toggle_width = handle_json(inputia_session_handle_special(
-            session,
-            KEY_TOGGLE_CHARACTER_WIDTH,
-        ));
+        let toggle_width = handle_json(unsafe {
+            inputia_session_handle_special(session, KEY_TOGGLE_CHARACTER_WIDTH)
+        });
         assert_eq!(toggle_width["mode"], "English");
         assert_eq!(toggle_width["consumed"], true);
 
-        let full_width = handle_json(inputia_session_handle_char(session, 'A' as u32));
+        let full_width = handle_json(unsafe { inputia_session_handle_char(session, 'A' as u32) });
         assert_eq!(full_width["commit"], "Ａ");
 
         assert_eq!(
-            handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
+            handle_json(unsafe { inputia_session_set_input_mode(session, INPUT_MODE_CHINESE) })
+                ["mode"],
             "Chinese"
         );
-        let english_punctuation = handle_json(inputia_session_handle_char(session, ',' as u32));
+        let english_punctuation =
+            handle_json(unsafe { inputia_session_handle_char(session, ',' as u32) });
         assert_eq!(english_punctuation["commit"], ",");
 
-        let toggle_punctuation = handle_json(inputia_session_handle_special(
-            session,
-            KEY_TOGGLE_PUNCTUATION,
-        ));
+        let toggle_punctuation =
+            handle_json(unsafe { inputia_session_handle_special(session, KEY_TOGGLE_PUNCTUATION) });
         assert_eq!(toggle_punctuation["mode"], "Chinese");
         assert_eq!(toggle_punctuation["consumed"], true);
 
-        let chinese_punctuation = handle_json(inputia_session_handle_char(session, ',' as u32));
+        let chinese_punctuation =
+            handle_json(unsafe { inputia_session_handle_char(session, ',' as u32) });
         assert_eq!(chinese_punctuation["commit"], "，");
 
-        inputia_session_free(session);
+        unsafe { inputia_session_free(session) };
     }
 
     fn handle_json(raw: *mut c_char) -> Value {
         assert!(!raw.is_null());
         let text = unsafe { CStr::from_ptr(raw).to_string_lossy().into_owned() };
-        inputia_string_free(raw);
+        unsafe { inputia_string_free(raw) };
         serde_json::from_str(&text).unwrap()
     }
 
@@ -2107,6 +2425,7 @@ mod tests {
         .unwrap();
     }
 
+    #[cfg(not(feature = "bundled-static-rime"))]
     fn bundled_shared_data_dir() -> Option<std::path::PathBuf> {
         if let Ok(path) = std::env::var("INPUTIA_RIME_SHARED_DATA_DIR") {
             let path = std::path::PathBuf::from(path);
@@ -2115,18 +2434,14 @@ mod tests {
             }
         }
 
-        for path in [
+        [
             std::path::PathBuf::from(
                 "/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/RimeData",
             ),
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../macos/InputiaInputMethod/build/RimeData"),
-        ] {
-            if path.exists() {
-                return Some(path);
-            }
-        }
-
-        None
+        ]
+        .into_iter()
+        .find(|path| path.exists())
     }
 }

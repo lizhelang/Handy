@@ -1,4 +1,5 @@
 fn main() {
+    build_unified_pair_trust();
     build_unified_pair_auth_bridge();
 
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -37,6 +38,44 @@ fn main() {
     stage_vc_runtime_dlls();
 
     tauri_build::build()
+}
+
+/// 配对公钥由离线构建步骤提供；没有输入时不生成任何默认/可写配置身份根。
+fn build_unified_pair_trust() {
+    use std::{env, path::PathBuf, process::Command};
+    println!("cargo:rustc-check-cfg=cfg(unified_paired_build)");
+    println!("cargo:rerun-if-env-changed=HANDY_UNIFIED_PAIR_BUILD");
+    let Some(metadata) = env::var_os("HANDY_UNIFIED_PAIR_BUILD") else {
+        return;
+    };
+    assert_eq!(env::var("CARGO_CFG_TARGET_OS").as_deref(), Ok("macos"));
+    let metadata = PathBuf::from(metadata);
+    let bytes = std::fs::read(&metadata).expect("read build-only public pair metadata");
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("parse public pair metadata");
+    let run = parsed["run_id"].as_str().expect("candidate run ID");
+    let script = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
+        .join("../native/unified-pair-auth/build_trust.py");
+    println!("cargo:rerun-if-changed={}", metadata.display());
+    println!("cargo:rerun-if-changed={}", script.display());
+    let generated = Command::new("/usr/bin/python3")
+        .arg(script)
+        .arg("--metadata")
+        .arg(&metadata)
+        .args(["--run-id", run, "--emit", "rust"])
+        .output()
+        .expect("generate embedded public pair trust");
+    assert!(
+        generated.status.success(),
+        "invalid public pair build metadata: {}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    std::fs::write(
+        PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("unified_pair_trust.rs"),
+        generated.stdout,
+    )
+    .expect("write generated public pair constants");
+    println!("cargo:rustc-cfg=unified_paired_build");
 }
 
 /// 按 Cargo 实际目标构建配对认证桥；不会改变 Apple Intelligence 原有构建分支。

@@ -14,6 +14,33 @@ pub enum PeerRole {
     Inputia = 2,
 }
 
+#[cfg(unified_paired_build)]
+mod embedded {
+    include!(concat!(env!("OUT_DIR"), "/unified_pair_trust.rs"));
+}
+
+/// 只供已经完成候选安装身份校验的后台服务使用。没有签前公钥则不开放认证服务。
+pub fn candidate_build_trust(profile_id: &str) -> Result<Option<EmbeddedPairTrust>, PairAuthError> {
+    #[cfg(unified_paired_build)]
+    {
+        if profile_id != embedded::PROFILE_ID {
+            return Err(PairAuthError::InvalidArgument);
+        }
+        Ok(Some(EmbeddedPairTrust::from_build_constants(
+            &embedded::PUBLIC_KEY,
+            embedded::KEY_ID,
+            embedded::RUN_ID,
+            embedded::PROFILE_ID,
+            PeerRole::Handy,
+        )))
+    }
+    #[cfg(not(unified_paired_build))]
+    {
+        let _ = profile_id;
+        Ok(None)
+    }
+}
+
 /// 仅由签名前生成的静态构建数据创建，不实现 Deserialize，也不读环境/设置/握手。
 pub struct EmbeddedPairTrust {
     public_key: &'static [u8; 65],
@@ -197,5 +224,32 @@ impl VerifiedPeer {
     }
     pub fn role(&self) -> PeerRole {
         self.role
+    }
+}
+
+#[cfg(test)]
+mod build_trust_tests {
+    use super::*;
+
+    #[test]
+    fn unconfigured_binary_never_uses_runtime_profile_as_a_trust_root() {
+        #[cfg(not(unified_paired_build))]
+        for profile in ["handy-local", "unified-candidate:trial-20260905", ""] {
+            assert!(candidate_build_trust(profile).unwrap().is_none());
+        }
+        #[cfg(unified_paired_build)]
+        {
+            let trust = candidate_build_trust(embedded::PROFILE_ID)
+                .unwrap()
+                .unwrap();
+            assert_eq!(trust.public_key, &embedded::PUBLIC_KEY);
+            assert_eq!(trust.run_id, embedded::RUN_ID);
+            for profile in ["handy-local", "unified-candidate:wrong-run", ""] {
+                assert!(matches!(
+                    candidate_build_trust(profile),
+                    Err(PairAuthError::InvalidArgument)
+                ));
+            }
+        }
     }
 }

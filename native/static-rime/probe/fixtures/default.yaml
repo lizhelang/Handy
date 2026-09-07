@@ -1,0 +1,12 @@
+config_version: "1.0"
+schema_list:
+  - schema: static_pinyin
+  - schema: static_double
+menu:
+  page_size: 5
+ascii_composer:
+  switch_key:
+    Shift_L: noop
+    Shift_R: noop
+    Control_L: noop
+    Control_R: noop

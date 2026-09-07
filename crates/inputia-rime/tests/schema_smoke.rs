@@ -15,7 +15,7 @@ fn bundled_rime_schemas_commit_zhongguo_when_available() {
 
     let dylib_path =
         PathBuf::from("/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib");
-    if !dylib_path.exists() {
+    if !cfg!(feature = "bundled-static-rime") && !dylib_path.exists() {
         eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
     }
@@ -68,11 +68,8 @@ fn bundled_rime_schemas_commit_zhongguo_when_available() {
             schema_file.display()
         );
 
-        let user_data_dir = std::env::temp_dir().join(format!(
-            "inputia-rime-schema-smoke-{}-{}",
-            std::process::id(),
-            case.schema
-        ));
+        let user_temp = tempfile::tempdir().unwrap();
+        let user_data_dir = user_temp.path().to_path_buf();
         let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
             .with_dylib_path(&dylib_path)
             .with_shared_data_dir(&shared_data_dir)
@@ -119,15 +116,13 @@ fn bundled_double_pinyin_reports_prefix_consumption_for_partial_candidate_commit
 
     let dylib_path =
         PathBuf::from("/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib");
-    if !dylib_path.exists() {
+    if !cfg!(feature = "bundled-static-rime") && !dylib_path.exists() {
         eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
     }
 
-    let user_data_dir = std::env::temp_dir().join(format!(
-        "inputia-rime-consumed-len-smoke-{}",
-        std::process::id()
-    ));
+    let user_temp = tempfile::tempdir().unwrap();
+    let user_data_dir = user_temp.path().to_path_buf();
     let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
         .with_dylib_path(&dylib_path)
         .with_shared_data_dir(&shared_data_dir)
@@ -160,15 +155,13 @@ fn bundled_double_pinyin_selection_preserves_remaining_input_for_partial_commit(
 
     let dylib_path =
         PathBuf::from("/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib");
-    if !dylib_path.exists() {
+    if !cfg!(feature = "bundled-static-rime") && !dylib_path.exists() {
         eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
     }
 
-    let user_data_dir = std::env::temp_dir().join(format!(
-        "inputia-rime-select-partial-smoke-{}",
-        std::process::id()
-    ));
+    let user_temp = tempfile::tempdir().unwrap();
+    let user_data_dir = user_temp.path().to_path_buf();
     let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
         .with_dylib_path(&dylib_path)
         .with_shared_data_dir(&shared_data_dir)
@@ -217,7 +210,7 @@ fn bundled_full_pinyin_promotes_spelling_corrections_when_available() {
 
     let dylib_path =
         PathBuf::from("/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib");
-    if !dylib_path.exists() {
+    if !cfg!(feature = "bundled-static-rime") && !dylib_path.exists() {
         eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
     }
@@ -229,11 +222,8 @@ fn bundled_full_pinyin_promotes_spelling_corrections_when_available() {
         ("tain", "天"),
     ];
     for (keys, expected) in cases {
-        let user_data_dir = std::env::temp_dir().join(format!(
-            "inputia-rime-correction-smoke-{}-{}",
-            std::process::id(),
-            keys
-        ));
+        let user_temp = tempfile::tempdir().unwrap();
+        let user_data_dir = user_temp.path().to_path_buf();
         let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
             .with_dylib_path(&dylib_path)
             .with_shared_data_dir(&shared_data_dir)
@@ -270,7 +260,7 @@ fn bundled_inputia_extension_lexicons_promote_poetry_idiom_and_rare_char_when_av
 
     let dylib_path =
         PathBuf::from("/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib");
-    if !dylib_path.exists() {
+    if !cfg!(feature = "bundled-static-rime") && !dylib_path.exists() {
         eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
     }
@@ -288,10 +278,8 @@ fn bundled_inputia_extension_lexicons_promote_poetry_idiom_and_rare_char_when_av
         );
     }
 
-    let user_data_dir = std::env::temp_dir().join(format!(
-        "inputia-rime-extension-smoke-{}",
-        std::process::id()
-    ));
+    let user_temp = tempfile::tempdir().unwrap();
+    let user_data_dir = user_temp.path().to_path_buf();
     let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
         .with_dylib_path(&dylib_path)
         .with_shared_data_dir(&shared_data_dir)
@@ -339,7 +327,7 @@ fn bundled_double_pinyin_schemas_expose_maile_candidates_when_available() {
 
     let dylib_path =
         PathBuf::from("/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib");
-    if !dylib_path.exists() {
+    if !cfg!(feature = "bundled-static-rime") && !dylib_path.exists() {
         eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
     }
@@ -366,12 +354,8 @@ fn bundled_double_pinyin_schemas_expose_maile_candidates_when_available() {
     ];
 
     for case in cases {
-        let user_data_dir = std::env::temp_dir().join(format!(
-            "inputia-rime-maile-smoke-{}-{}-{}",
-            std::process::id(),
-            case.schema,
-            case.keys
-        ));
+        let user_temp = tempfile::tempdir().unwrap();
+        let user_data_dir = user_temp.path().to_path_buf();
         let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
             .with_dylib_path(&dylib_path)
             .with_shared_data_dir(&shared_data_dir)
@@ -411,7 +395,7 @@ fn bundled_incremental_session_matches_cold_evaluate_when_available() {
 
     let dylib_path =
         PathBuf::from("/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib");
-    if !dylib_path.exists() {
+    if !cfg!(feature = "bundled-static-rime") && !dylib_path.exists() {
         eprintln!("skip: Squirrel librime runtime is not installed on this machine");
         return;
     }
@@ -424,12 +408,8 @@ fn bundled_incremental_session_matches_cold_evaluate_when_available() {
     ];
 
     for (schema, keys) in cases {
-        let user_data_dir = std::env::temp_dir().join(format!(
-            "inputia-rime-incremental-smoke-{}-{}-{}",
-            std::process::id(),
-            schema,
-            keys
-        ));
+        let user_temp = tempfile::tempdir().unwrap();
+        let user_data_dir = user_temp.path().to_path_buf();
         let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_data_dir)
             .with_dylib_path(&dylib_path)
             .with_shared_data_dir(&shared_data_dir)
@@ -497,6 +477,17 @@ impl<E: inputia_core::ChineseEngine> SnapshotOutcome for InputiaCore<E> {
     }
 }
 
+#[cfg(feature = "bundled-static-rime")]
+fn bundled_shared_data_dir() -> Option<PathBuf> {
+    let path = PathBuf::from(
+        std::env::var_os("INPUTIA_RIME_SHARED_DATA_DIR")
+            .expect("static schema tests require explicit candidate RimeData"),
+    );
+    assert!(path.is_absolute() && path.join("luna_pinyin_simp.schema.yaml").is_file());
+    Some(path)
+}
+
+#[cfg(not(feature = "bundled-static-rime"))]
 fn bundled_shared_data_dir() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("INPUTIA_RIME_SHARED_DATA_DIR") {
         let path = PathBuf::from(path);

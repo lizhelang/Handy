@@ -72,6 +72,7 @@ fn authenticate(stream: &UnixStream, manifest: &PairManifest) -> bool {
     }
 }
 fn main() {
+    assert!(native_pair_auth::candidate_build_trust("unified-candidate:trial-20260905").unwrap().is_none());
     let args: Vec<_> = std::env::args().collect();
     if args.len() == 4 && args[1] == "client" {
         let mut stream = UnixStream::connect(&args[2]).unwrap();

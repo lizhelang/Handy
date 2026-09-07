@@ -1,0 +1,12 @@
+# Rime YAML 头加 TSV 正文模板，不是标准的多文档 YAML；运行前原样复制为 .dict.yaml。
+# 专用合成词典，不复制或读取任何用户词库。
+---
+name: static_probe
+version: "1.0"
+sort: by_weight
+use_preset_vocabulary: false
+...
+你	ni	100
+好	hao	100
+你好	ni hao	1000
+测试	ce shi	1000
