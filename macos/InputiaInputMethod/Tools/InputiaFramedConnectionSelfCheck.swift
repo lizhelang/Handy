@@ -14,6 +14,35 @@ struct InputiaFramedConnectionSelfCheck {
     DispatchQueue.global().async {
       do {
         var checks = 0
+        // 使用真实命名套接字保护生产connect路径；socketpair不会经过路径校验。
+        let directory = "/private/tmp/inputia-connection-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let path = directory + "/voice.sock"
+        let listener = socket(AF_UNIX, SOCK_STREAM, 0)
+        require(listener >= 0)
+        defer { Darwin.close(listener) }
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+        let bytes = Array(path.utf8CString)
+        withUnsafeMutableBytes(of: &address.sun_path) { buffer in bytes.withUnsafeBytes { buffer.copyBytes(from: $0) } }
+        let bound = withUnsafePointer(to: &address) { pointer in
+          pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        require(bound == 0 && chmod(path, 0o600) == 0 && listen(listener, 1) == 0)
+        let named = try InputiaFramedConnection.connect(path: path)
+        let accepted = accept(listener, nil, nil)
+        require(accepted >= 0)
+        named.close(); Darwin.close(accepted); checks += 1
+        let alias = directory + "/alias.sock"
+        try FileManager.default.createSymbolicLink(atPath: alias, withDestinationPath: path)
+        do { _ = try InputiaFramedConnection.connect(path: alias); fatalError("symlink accepted") }
+        catch InputiaConnectionError.endpoint { checks += 1 }
+        require(chmod(directory, 0o755) == 0)
+        do { _ = try InputiaFramedConnection.connect(path: path); fatalError("public directory accepted") }
+        catch InputiaConnectionError.endpoint { checks += 1 }
+        require(chmod(directory, 0o700) == 0)
         let descriptors = try pair()
         let left = try InputiaFramedConnection.fixture(descriptor: descriptors[0])
         let right = try InputiaFramedConnection.fixture(descriptor: descriptors[1])
@@ -54,7 +83,7 @@ struct InputiaFramedConnectionSelfCheck {
         do { try auth.write(["forbidden": true]); fatalError("failed auth connection reused") }
         catch { checks += 1 }
         Darwin.close(denied[1])
-        print("inputia_framed_connection=pass checks=\(checks) frames=100 socketpair_only=true main_ui_started=false")
+        print("inputia_framed_connection=pass checks=\(checks) frames=100 named_socket=true main_ui_started=false")
       } catch { fatalError("synthetic connection test failed: \(error)") }
       finished.signal()
     }

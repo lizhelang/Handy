@@ -27,7 +27,10 @@ final class InputiaFramedConnection {
   static func connect(path: String) throws -> InputiaFramedConnection {
     guard !Thread.isMainThread else { throw InputiaConnectionError.mainThread }
     let endpoint = URL(fileURLWithPath: path)
-    guard endpoint.path == path, endpoint.resolvingSymlinksInPath().path == path else { throw InputiaConnectionError.endpoint }
+    // Foundation会将/private/tmp显示为/tmp；使用文件系统真实路径，仍严格拒绝符号链接别名。
+    guard endpoint.path == path, let resolved = realpath(path, nil) else { throw InputiaConnectionError.endpoint }
+    defer { free(resolved) }
+    guard String(cString: resolved) == path else { throw InputiaConnectionError.endpoint }
     var directory = stat(), node = stat()
     guard lstat(endpoint.deletingLastPathComponent().path, &directory) == 0,
           directory.st_mode & S_IFMT == S_IFDIR, directory.st_uid == geteuid(), directory.st_mode & 0o077 == 0,
