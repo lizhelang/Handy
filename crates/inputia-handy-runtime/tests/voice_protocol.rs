@@ -230,3 +230,68 @@ fn delivery_keeps_body_off_debug_and_bounds_wire_without_truncating_text() {
     assert!(delivery.validate().is_err());
     assert_eq!(delivery.text.len(), MAX_DELIVERY_TEXT_BYTES + 1);
 }
+
+#[test]
+fn wire_accepts_control_or_output_frames_without_mixing_contracts() {
+    let control = serde_json::to_value(request()).unwrap();
+    assert!(matches!(
+        serde_json::from_value::<VoiceWireRequest>(control).unwrap(),
+        VoiceWireRequest::Control(_)
+    ));
+    let fetch = serde_json::json!({
+        "request_id": "fetch-1",
+        "session_id": "session-1",
+        "server_instance": "server-1",
+        "client_instance": "host-1",
+        "policy_epoch": 7,
+        "output": {"kind": "fetch"}
+    });
+    let VoiceWireRequest::Output(output) =
+        serde_json::from_value::<VoiceWireRequest>(fetch).unwrap()
+    else {
+        panic!("expected output request")
+    };
+    output.validate_for(&peer()).unwrap();
+    assert!(matches!(output.output, VoiceOutputCommand::Fetch {}));
+    let mut extra = serde_json::to_value(output).unwrap();
+    extra["output"]["debug_text"] = "正文不能混入请求".into();
+    assert!(serde_json::from_value::<VoiceOutputRequest>(extra).is_err());
+}
+
+#[test]
+fn output_reply_shapes_match_swift_decoder_expectations() {
+    let delivery = VoiceDelivery {
+        operation_id: "output-1".into(),
+        session_id: "session-1".into(),
+        item_id: "voice-store:record-1".into(),
+        revision: 1,
+        policy_epoch: 7,
+        target_id: "target-1".into(),
+        text: "合成正文".into(),
+    };
+    let request = VoiceOutputRequest {
+        request_id: "fetch-1".into(),
+        session_id: "session-1".into(),
+        server_instance: "server-1".into(),
+        client_instance: "host-1".into(),
+        policy_epoch: 7,
+        output: VoiceOutputCommand::Fetch {},
+    };
+    let reply = VoiceOutputReply::Delivery {
+        request_id: "fetch-1".into(),
+        delivery,
+    };
+    reply.validate_for(&request).unwrap();
+    let raw = serde_json::to_value(&reply).unwrap();
+    assert_eq!(raw["status"], "delivery");
+    assert!(raw.get("state").is_none());
+    let state_reply = VoiceOutputReply::Output {
+        request_id: "receipt-1".into(),
+        operation_id: "output-1".into(),
+        state: inputia_handy_runtime::output_ledger::OutputState::DispatchedOnly,
+    };
+    let raw = serde_json::to_value(state_reply).unwrap();
+    assert_eq!(raw["status"], "output");
+    assert_eq!(raw["state"], "dispatched_only");
+    assert!(raw.get("delivery").is_none());
+}

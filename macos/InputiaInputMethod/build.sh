@@ -289,6 +289,7 @@ fi
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaShortcutClassifier.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExpandedCandidateGridNavigation.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceInputLauncher.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceTargetSnapshot.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaFramedConnection.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaCandidatePanel.swift" \
@@ -300,6 +301,7 @@ fi
   -module-name InputiaInputMethod \
   -framework Cocoa \
   -framework InputMethodKit \
+  -framework ApplicationServices \
   -framework Security \
   -o "$MACOS_DIR/InputiaInputMethod"
 
@@ -392,6 +394,21 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   -target "$TARGET_TRIPLE" \
   -framework Foundation \
   -o "$BUILD_DIR/inputia-host-text-policy-self-check"
+
+/usr/bin/swiftc \
+  "${HOST_SWIFT_DEFINES[@]}" \
+  "$ROOT_DIR/Tools/InputiaVoiceTargetSnapshotSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceTargetSnapshot.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaFramedConnection.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
+  "${PAIR_SWIFT_SOURCES[@]}" \
+  -target "$TARGET_TRIPLE" \
+  -framework AppKit \
+  -framework InputMethodKit \
+  -framework ApplicationServices \
+  -framework Security \
+  -o "$BUILD_DIR/inputia-voice-target-snapshot-self-check"
 
 /usr/bin/swiftc \
   "$ROOT_DIR/Tools/InputiaCandidatePanelLayoutSelfCheck.swift" \

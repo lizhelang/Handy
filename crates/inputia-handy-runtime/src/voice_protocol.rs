@@ -1,6 +1,7 @@
 //! Host 与唯一 TranscriptionCoordinator 之间的会话合同。
 //! 这里只定义消息与授权输入，不拥有另一套录音状态机，也不执行输出。
 
+use crate::output_ledger::OutputState;
 use crate::protocol::ProtocolError;
 use serde::{Deserialize, Serialize};
 
@@ -202,6 +203,106 @@ pub enum HostOutputReceipt {
     Confirmed,
     PendingTarget,
     Uncertain,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum VoiceOutputCommand {
+    Fetch {},
+    Receipt {
+        operation_id: String,
+        receipt: HostOutputReceipt,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceOutputRequest {
+    pub request_id: String,
+    pub session_id: String,
+    pub server_instance: String,
+    pub client_instance: String,
+    pub policy_epoch: u64,
+    pub output: VoiceOutputCommand,
+}
+
+impl VoiceOutputRequest {
+    pub fn validate_for(&self, peer: &VoicePeer<'_>) -> Result<(), ProtocolError> {
+        if !id(&self.request_id)
+            || !id(&self.session_id)
+            || !id(&self.server_instance)
+            || !id(&self.client_instance)
+            || self.server_instance != peer.server_instance
+            || self.client_instance != peer.client_instance
+            || self.policy_epoch != peer.policy_epoch
+            || !peer.policy_applied
+        {
+            return Err(ProtocolError::InvalidEnvelope);
+        }
+        if let VoiceOutputCommand::Receipt { operation_id, .. } = &self.output {
+            if !id(operation_id) {
+                return Err(ProtocolError::InvalidEnvelope);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum VoiceWireRequest {
+    Control(VoiceRequest),
+    Output(VoiceOutputRequest),
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum VoiceOutputReply {
+    Delivery {
+        request_id: String,
+        delivery: VoiceDelivery,
+    },
+    Output {
+        request_id: String,
+        operation_id: String,
+        state: OutputState,
+    },
+    Rejected {
+        request_id: String,
+        code: VoiceReplyError,
+    },
+}
+
+impl VoiceOutputReply {
+    pub fn validate_for(&self, request: &VoiceOutputRequest) -> Result<(), ProtocolError> {
+        match self {
+            Self::Delivery {
+                request_id,
+                delivery,
+            } => {
+                if request_id != &request.request_id || delivery.session_id != request.session_id {
+                    return Err(ProtocolError::InvalidEnvelope);
+                }
+                delivery.validate()
+            }
+            Self::Output {
+                request_id,
+                operation_id,
+                ..
+            } => {
+                if request_id != &request.request_id || !id(operation_id) {
+                    return Err(ProtocolError::InvalidEnvelope);
+                }
+                Ok(())
+            }
+            Self::Rejected { request_id, .. } => {
+                if request_id != &request.request_id {
+                    return Err(ProtocolError::InvalidEnvelope);
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 /// 认证连接上的全量失效屏障；不携带词库正文，不让旧离线快照绕过遗忘传播。

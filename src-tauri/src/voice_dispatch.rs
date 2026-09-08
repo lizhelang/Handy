@@ -3,12 +3,15 @@
 //! 连接服务仍须把握手 instance 与同一 socket 的 audit 身份绑定，重连时复核，
 //! 并验证策略/遗忘清除回执；此模块不能替代该认证握手，也不创建监听端口。
 
-use inputia_handy_runtime::protocol::Handshake;
+use inputia_handy_runtime::protocol::{Handshake, MAX_FRAME_BYTES};
 use inputia_handy_runtime::{
-    service::HistoryService,
+    output_ledger::{OutputAction, OutputIntent, OutputOutcome, OutputOwner, OutputState},
+    service::{HistoryService, OutputPermit},
     voice_ledger::SessionRecord,
     voice_protocol::{
-        VoiceCommand, VoicePeer, VoicePhase, VoiceRequest, VoiceSessionView, VoiceTermsVersion,
+        HostOutputReceipt, VoiceCommand, VoiceDelivery, VoiceOutputCommand, VoiceOutputReply,
+        VoiceOutputRequest, VoicePeer, VoicePhase, VoiceRequest, VoiceSessionView,
+        VoiceTermsVersion,
     },
 };
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
@@ -252,6 +255,144 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
         }
     }
 
+    pub fn fetch_output(
+        &self,
+        context: &AuthenticatedVoiceConnection,
+        request: VoiceOutputRequest,
+    ) -> Result<(VoiceOutputReply, Option<(OutputIntent, OutputPermit)>), DispatchError> {
+        self.authorize_output_fetch(context, &request)?;
+        if !matches!(request.output, VoiceOutputCommand::Fetch {}) {
+            return Err(DispatchError::Unauthorized);
+        }
+        let record = self.owned_record(context, &request.session_id)?;
+        if record.retired {
+            return Err(DispatchError::MissingSession);
+        }
+        if self
+            .history
+            .voice_cancellation_requested(request.session_id.clone())
+            .map_err(|_| DispatchError::Unknown)?
+        {
+            return Err(DispatchError::Unknown);
+        }
+        let VoiceCommand::Start { target, .. } = &record.start.command else {
+            return Err(DispatchError::Unknown);
+        };
+        if target.field_id.is_none() || record.view.phase != VoicePhase::PendingTarget {
+            return Err(DispatchError::Unauthorized);
+        }
+        let output = self
+            .history
+            .voice_result(request.session_id.clone())
+            .map_err(|_| DispatchError::Unknown)?
+            .ok_or(DispatchError::MissingSession)?;
+        self.validate_voice_output(&record, &output.intent)?;
+        if output.state != OutputState::Prepared {
+            return Ok((
+                VoiceOutputReply::Output {
+                    request_id: request.request_id,
+                    operation_id: output.intent.operation_id,
+                    state: output.state,
+                },
+                None,
+            ));
+        }
+        let item = self
+            .history
+            .indexed_item(output.intent.item_id.clone())
+            .map_err(|_| DispatchError::Unknown)?
+            .ok_or(DispatchError::Unknown)?;
+        if item.revision != output.intent.revision {
+            return Err(DispatchError::Unknown);
+        }
+        let text = item.snapshot.text.ok_or(DispatchError::Unknown)?;
+        if text.is_empty() {
+            return Err(DispatchError::Unknown);
+        }
+        let delivery = VoiceDelivery {
+            operation_id: output.intent.operation_id.clone(),
+            session_id: record.start.session_id.clone(),
+            item_id: output.intent.item_id.clone(),
+            revision: output.intent.revision,
+            policy_epoch: output.intent.policy_epoch,
+            target_id: target.target_id.clone(),
+            text,
+        };
+        if delivery.validate().is_err() {
+            let _ = self
+                .history
+                .finish_output(output.intent.clone(), OutputOutcome::NotDispatchedRejected);
+            return Err(DispatchError::Unknown);
+        }
+        let reply = VoiceOutputReply::Delivery {
+            request_id: request.request_id.clone(),
+            delivery,
+        };
+        if serde_json::to_vec(&reply)
+            .map_err(|_| DispatchError::Unknown)?
+            .len()
+            > MAX_FRAME_BYTES
+        {
+            return Err(DispatchError::Unauthorized);
+        }
+        let Some(permit) = self
+            .history
+            .claim_output_with_permit(output.intent.clone())
+            .map_err(|_| DispatchError::Unknown)?
+        else {
+            let current = self
+                .history
+                .output_record(output.intent.operation_id.clone())
+                .map_err(|_| DispatchError::Unknown)?
+                .ok_or(DispatchError::Unknown)?;
+            return Ok((
+                VoiceOutputReply::Output {
+                    request_id: request.request_id,
+                    operation_id: current.intent.operation_id,
+                    state: current.state,
+                },
+                None,
+            ));
+        };
+        Ok((reply, Some((output.intent, permit))))
+    }
+
+    pub fn receipt(
+        &self,
+        context: &AuthenticatedVoiceConnection,
+        request: VoiceOutputRequest,
+        dispatched: &OutputIntent,
+    ) -> Result<VoiceOutputReply, DispatchError> {
+        self.authorize_output_receipt(context, &request)?;
+        let VoiceOutputCommand::Receipt {
+            operation_id,
+            receipt,
+        } = &request.output
+        else {
+            return Err(DispatchError::Unauthorized);
+        };
+        if operation_id != &dispatched.operation_id {
+            return Err(DispatchError::Unauthorized);
+        }
+        let record = self.owned_record(context, &request.session_id)?;
+        self.validate_voice_output(&record, dispatched)?;
+        let outcome = match receipt {
+            HostOutputReceipt::Dispatched => OutputOutcome::DispatchedOnly,
+            HostOutputReceipt::PendingTarget => OutputOutcome::NotDispatchedPendingTarget,
+            HostOutputReceipt::Uncertain => OutputOutcome::Uncertain,
+            HostOutputReceipt::Confirmed => return Err(DispatchError::Unauthorized),
+        };
+        let output = self
+            .history
+            .finish_output(dispatched.clone(), outcome)
+            .map_err(|_| DispatchError::Unknown)?;
+        Ok(VoiceOutputReply::Output {
+            request_id: request.request_id,
+            operation_id: output.intent.operation_id,
+            state: output.state,
+        })
+    }
+
     /// 只查询持久事实及 Coordinator 当前视图，不调用 prepare/claim/control。
     pub fn status(
         &self,
@@ -260,7 +401,7 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
     ) -> Result<VoiceSessionView, DispatchError> {
         let record = self.owned_record(context, session)?;
         if record.retired {
-            return Ok(record.view);
+            return self.with_output_projection(record.view);
         }
         match self
             .coordinator
@@ -293,7 +434,7 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
                 {
                     Err(DispatchError::Unknown)
                 } else {
-                    Ok(record.view)
+                    self.with_output_projection(record.view)
                 }
             }
             Err(_) => Err(DispatchError::Unknown),
@@ -313,13 +454,123 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
             .project_voice_session(context.client.clone(), context.server.clone(), view)
             .map_err(|_| DispatchError::Unknown)?;
         // 写入被旧generation忽略时也返回持久最新事实，不把旧回执回传成当前状态。
-        Ok(self.owned_record(context, &record.start.session_id)?.view)
+        let projected = self.owned_record(context, &record.start.session_id)?.view;
+        self.with_output_projection(projected)
+    }
+
+    fn authorize_output_fetch(
+        &self,
+        context: &AuthenticatedVoiceConnection,
+        request: &VoiceOutputRequest,
+    ) -> Result<(), DispatchError> {
+        match &context.proof {
+            PeerProof::Authenticated(peer)
+                if peer.role() != crate::native_pair_auth::PeerRole::Inputia =>
+            {
+                return Err(DispatchError::Unauthorized);
+            }
+            _ => {}
+        }
+        let version = self
+            .history
+            .voice_terms_version()
+            .map_err(|_| DispatchError::Unknown)?;
+        request
+            .validate_for(&VoicePeer {
+                client_instance: &context.client,
+                server_instance: &context.server,
+                policy_epoch: version.policy_epoch,
+                policy_applied: context.applied_version.as_ref() == Some(&version),
+            })
+            .map_err(|_| DispatchError::Unauthorized)
+    }
+
+    fn authorize_output_receipt(
+        &self,
+        context: &AuthenticatedVoiceConnection,
+        request: &VoiceOutputRequest,
+    ) -> Result<(), DispatchError> {
+        match &context.proof {
+            PeerProof::Authenticated(peer)
+                if peer.role() != crate::native_pair_auth::PeerRole::Inputia =>
+            {
+                return Err(DispatchError::Unauthorized);
+            }
+            _ => {}
+        }
+        let current_epoch = self
+            .history
+            .voice_terms_version()
+            .map_err(|_| DispatchError::Unknown)?
+            .policy_epoch;
+        if !valid_id(&request.request_id)
+            || !valid_id(&request.session_id)
+            || request.server_instance != context.server
+            || request.client_instance != context.client
+            || request.policy_epoch > current_epoch
+        {
+            return Err(DispatchError::Unauthorized);
+        }
+        let VoiceOutputCommand::Receipt { operation_id, .. } = &request.output else {
+            return Err(DispatchError::Unauthorized);
+        };
+        if !valid_id(operation_id) {
+            return Err(DispatchError::Unauthorized);
+        }
+        Ok(())
+    }
+
+    fn validate_voice_output(
+        &self,
+        record: &SessionRecord,
+        intent: &OutputIntent,
+    ) -> Result<(), DispatchError> {
+        let VoiceCommand::Start { target, .. } = &record.start.command else {
+            return Err(DispatchError::Unknown);
+        };
+        if intent.owner != OutputOwner::Ime
+            || intent.action != OutputAction::InsertText
+            || intent.target_id.as_deref() != Some(target.target_id.as_str())
+            || intent.policy_epoch != record.start.policy_epoch
+        {
+            return Err(DispatchError::Unauthorized);
+        }
+        Ok(())
+    }
+
+    fn with_output_projection(
+        &self,
+        mut view: VoiceSessionView,
+    ) -> Result<VoiceSessionView, DispatchError> {
+        if let Some(output) = self
+            .history
+            .voice_result(view.session_id.clone())
+            .map_err(|_| DispatchError::Unknown)?
+        {
+            view.target_id = output.intent.target_id.clone();
+            view.item_id = Some(output.intent.item_id);
+            view.output_operation_id = Some(output.intent.operation_id);
+            view.phase = match output.state {
+                OutputState::Prepared | OutputState::PendingTarget => VoicePhase::PendingTarget,
+                // 账本claim不能证明Host已调用IMK；只有明确Host回执才展示已派发。
+                OutputState::Dispatched => VoicePhase::Uncertain,
+                OutputState::DispatchedOnly => VoicePhase::Dispatched,
+                OutputState::Confirmed => VoicePhase::Confirmed,
+                OutputState::Uncertain => VoicePhase::Uncertain,
+                OutputState::Rejected if view.phase == VoicePhase::Cancelled => {
+                    VoicePhase::Cancelled
+                }
+                OutputState::Rejected => VoicePhase::Failed,
+            };
+        }
+        Ok(view)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use inputia_handy_runtime::output_ledger::OutputState;
     use inputia_handy_runtime::voice_protocol::*;
     use rusqlite::Connection;
     use std::sync::{mpsc, Mutex};
@@ -437,6 +688,307 @@ mod tests {
                 r.get(0)
             })
             .unwrap()
+    }
+    fn prepare_pending_voice_output(
+        root: &std::path::Path,
+        history: &HistoryService,
+        start: &VoiceRequest,
+        text: &str,
+    ) -> inputia_handy_runtime::output_ledger::OutputRecord {
+        Connection::open(root.join("history.db"))
+            .unwrap()
+            .execute(
+                "INSERT INTO transcription_history VALUES(1,'',1,0,'fixture',?1,NULL)",
+                [text],
+            )
+            .unwrap();
+        let output = history
+            .prepare_saved_voice_result(start.clone(), 1, text.into())
+            .unwrap();
+        history
+            .project_voice_session(
+                start.client_instance.clone(),
+                start.server_instance.clone(),
+                VoiceSessionView {
+                    session_id: start.session_id.clone(),
+                    generation: 2,
+                    phase: VoicePhase::PendingTarget,
+                    target_id: output.intent.target_id.clone(),
+                    item_id: Some(output.intent.item_id.clone()),
+                    output_operation_id: Some(output.intent.operation_id.clone()),
+                },
+            )
+            .unwrap();
+        output
+    }
+
+    fn fetch_request(id: &str, start: &VoiceRequest) -> VoiceOutputRequest {
+        VoiceOutputRequest {
+            request_id: id.into(),
+            session_id: start.session_id.clone(),
+            server_instance: start.server_instance.clone(),
+            client_instance: start.client_instance.clone(),
+            policy_epoch: start.policy_epoch,
+            output: VoiceOutputCommand::Fetch {},
+        }
+    }
+
+    fn receipt_request(
+        id: &str,
+        start: &VoiceRequest,
+        operation: &str,
+        receipt: HostOutputReceipt,
+    ) -> VoiceOutputRequest {
+        VoiceOutputRequest {
+            request_id: id.into(),
+            session_id: start.session_id.clone(),
+            server_instance: start.server_instance.clone(),
+            client_instance: start.client_instance.clone(),
+            policy_epoch: start.policy_epoch,
+            output: VoiceOutputCommand::Receipt {
+                operation_id: operation.into(),
+                receipt,
+            },
+        }
+    }
+
+    #[test]
+    fn fetch_claims_once_then_receipt_records_dispatched_without_replaying_body() {
+        let root = tempfile::tempdir().unwrap();
+        let history = service(root.path());
+        let coordinator = FakeCoordinator::default();
+        let dispatcher = VoiceDispatcher::new(&history, &coordinator);
+        let ctx = context("server");
+        let start = request("start", "server");
+        dispatcher.dispatch(&ctx, start.clone()).unwrap();
+        let output = prepare_pending_voice_output(root.path(), &history, &start, "synthetic");
+        let (reply, sent) = dispatcher
+            .fetch_output(&ctx, fetch_request("fetch", &start))
+            .unwrap();
+        let intent = sent.unwrap().0;
+        assert_eq!(intent, output.intent);
+        match reply {
+            VoiceOutputReply::Delivery { delivery, .. } => {
+                assert_eq!(delivery.text, "synthetic");
+                assert_eq!(delivery.operation_id, output.intent.operation_id);
+            }
+            _ => panic!("expected delivery"),
+        }
+        assert_eq!(
+            history
+                .voice_result("session".into())
+                .unwrap()
+                .unwrap()
+                .state,
+            OutputState::Dispatched
+        );
+        let (again, sent_again) = dispatcher
+            .fetch_output(&ctx, fetch_request("fetch-again", &start))
+            .unwrap();
+        assert!(sent_again.is_none());
+        assert_eq!(
+            dispatcher.status(&ctx, "session").unwrap().phase,
+            VoicePhase::Uncertain
+        );
+        assert!(matches!(
+            again,
+            VoiceOutputReply::Output {
+                state: OutputState::Dispatched,
+                ..
+            }
+        ));
+        let receipt = dispatcher
+            .receipt(
+                &ctx,
+                receipt_request(
+                    "receipt",
+                    &start,
+                    &output.intent.operation_id,
+                    HostOutputReceipt::Dispatched,
+                ),
+                &intent,
+            )
+            .unwrap();
+        assert!(matches!(
+            receipt,
+            VoiceOutputReply::Output {
+                state: OutputState::DispatchedOnly,
+                ..
+            }
+        ));
+        assert_eq!(
+            dispatcher.status(&ctx, "session").unwrap().phase,
+            VoicePhase::Dispatched
+        );
+    }
+
+    #[test]
+    fn fetch_refuses_missing_field_cancelled_deleted_and_oversized_delivery_without_claim() {
+        let cases = ["missing-field", "cancelled", "deleted", "oversized"];
+        for case in cases {
+            let root = tempfile::tempdir().unwrap();
+            let history = service(root.path());
+            let coordinator = FakeCoordinator::default();
+            let dispatcher = VoiceDispatcher::new(&history, &coordinator);
+            let ctx = context("server");
+            let mut start = request("start", "server");
+            if case == "missing-field" {
+                if let VoiceCommand::Start { target, .. } = &mut start.command {
+                    target.field_id = None;
+                }
+            }
+            dispatcher.dispatch(&ctx, start.clone()).unwrap();
+            let text = if case == "oversized" {
+                "\"".repeat(inputia_handy_runtime::voice_protocol::MAX_DELIVERY_TEXT_BYTES)
+            } else {
+                "synthetic".into()
+            };
+            let output = prepare_pending_voice_output(root.path(), &history, &start, &text);
+            if case == "cancelled" {
+                assert!(history
+                    .cancel_voice_result("session".into(), "host".into(), "server".into())
+                    .unwrap());
+            }
+            if case == "deleted" {
+                Connection::open(root.path().join("history.db"))
+                    .unwrap()
+                    .execute("DELETE FROM transcription_history WHERE id=1", [])
+                    .unwrap();
+                let _ = history.synchronize();
+            }
+            assert!(dispatcher
+                .fetch_output(&ctx, fetch_request("fetch", &start))
+                .is_err());
+            let state = history
+                .voice_result("session".into())
+                .unwrap()
+                .unwrap()
+                .state;
+            match case {
+                "cancelled" => assert_eq!(state, OutputState::Rejected),
+                _ => assert_eq!(state, output.state),
+            }
+        }
+    }
+
+    #[test]
+    fn receipt_requires_the_same_connection_dispatched_intent() {
+        let root = tempfile::tempdir().unwrap();
+        let history = service(root.path());
+        let coordinator = FakeCoordinator::default();
+        let dispatcher = VoiceDispatcher::new(&history, &coordinator);
+        let ctx = context("server");
+        let start = request("start", "server");
+        dispatcher.dispatch(&ctx, start.clone()).unwrap();
+        let output = prepare_pending_voice_output(root.path(), &history, &start, "synthetic");
+        assert!(matches!(
+            dispatcher.receipt(
+                &ctx,
+                receipt_request(
+                    "receipt",
+                    &start,
+                    "voice-not-the-same-operation",
+                    HostOutputReceipt::Dispatched,
+                ),
+                &output.intent,
+            ),
+            Err(DispatchError::Unauthorized)
+        ));
+        assert_eq!(
+            history
+                .voice_result("session".into())
+                .unwrap()
+                .unwrap()
+                .state,
+            OutputState::Prepared
+        );
+    }
+
+    #[test]
+    fn uncertain_and_pending_target_receipts_close_the_claim_without_confirming() {
+        for (receipt, state, phase) in [
+            (
+                HostOutputReceipt::Uncertain,
+                OutputState::Uncertain,
+                VoicePhase::Uncertain,
+            ),
+            (
+                HostOutputReceipt::PendingTarget,
+                OutputState::PendingTarget,
+                VoicePhase::PendingTarget,
+            ),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let history = service(root.path());
+            let coordinator = FakeCoordinator::default();
+            let dispatcher = VoiceDispatcher::new(&history, &coordinator);
+            let ctx = context("server");
+            let start = request("start", "server");
+            dispatcher.dispatch(&ctx, start.clone()).unwrap();
+            let output = prepare_pending_voice_output(root.path(), &history, &start, "synthetic");
+            let (_, sent) = dispatcher
+                .fetch_output(&ctx, fetch_request("fetch", &start))
+                .unwrap();
+            let intent = sent.unwrap().0;
+            dispatcher
+                .receipt(
+                    &ctx,
+                    receipt_request("receipt", &start, &output.intent.operation_id, receipt),
+                    &intent,
+                )
+                .unwrap();
+            assert_eq!(
+                history
+                    .voice_result("session".into())
+                    .unwrap()
+                    .unwrap()
+                    .state,
+                state
+            );
+            assert_eq!(dispatcher.status(&ctx, "session").unwrap().phase, phase);
+        }
+    }
+
+    #[test]
+    fn receipt_can_record_an_old_epoch_dispatch_after_policy_moves_forward() {
+        let root = tempfile::tempdir().unwrap();
+        let history = service(root.path());
+        let coordinator = FakeCoordinator::default();
+        let dispatcher = VoiceDispatcher::new(&history, &coordinator);
+        let ctx = context("server");
+        let start = request("start", "server");
+        dispatcher.dispatch(&ctx, start.clone()).unwrap();
+        let output = prepare_pending_voice_output(root.path(), &history, &start, "synthetic");
+        let (_, sent) = dispatcher
+            .fetch_output(&ctx, fetch_request("fetch", &start))
+            .unwrap();
+        let intent = sent.unwrap().0;
+        Connection::open(root.path().join("integration.db"))
+            .unwrap()
+            .execute(
+                "UPDATE integration_meta SET value='2' WHERE key='policy_epoch'",
+                [],
+            )
+            .unwrap();
+        let reply = dispatcher
+            .receipt(
+                &ctx,
+                receipt_request(
+                    "receipt",
+                    &start,
+                    &output.intent.operation_id,
+                    HostOutputReceipt::Uncertain,
+                ),
+                &intent,
+            )
+            .unwrap();
+        assert!(matches!(
+            reply,
+            VoiceOutputReply::Output {
+                state: OutputState::Uncertain,
+                ..
+            }
+        ));
     }
 
     #[test]

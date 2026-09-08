@@ -1,6 +1,7 @@
 import Cocoa
 import InputMethodKit
 import Carbon
+import ApplicationServices
 
 private struct InputiaAppContext: Equatable {
   let bundleId: String
@@ -95,6 +96,9 @@ final class InputiaInputController: IMKInputController {
   private let voiceControllerID = UUID().uuidString
   private var voiceActivationGeneration: UInt64 = 0
   private var voiceStatus = ""
+  private var voiceTargetCaptureNotice: String?
+  private var voiceTargetSnapshots: [String: InputiaVoiceTargetSnapshot.Snapshot] = [:]
+  private var attemptedVoiceOutputOperations = Set<String>()
   #endif
   private let bridge = InputiaRustBridge.makeDefault()
   private var latestCandidates: [String] = []
@@ -156,7 +160,8 @@ final class InputiaInputController: IMKInputController {
     let voiceInput = NSMenuItem(title: "语音输入", action: #selector(toggleVoiceInput), keyEquivalent: "")
     voiceInput.target = self
     #if INPUTIA_PAIRED_BUILD
-    if !voiceStatus.isEmpty { voiceInput.title = "语音输入：\(voiceStatus)" }
+    // 只由IMK按键路径消费；不再注册菜单keyEquivalent，避免一次按键触发两次。
+    voiceInput.title = voiceStatus.isEmpty ? "语音输入（⌃⌥⇧V）" : "语音输入（⌃⌥⇧V）：\(voiceStatus)"
     #endif
 
     let syncMemory = NSMenuItem(title: "同步语音/剪贴板记忆", action: #selector(syncHandyMemory), keyEquivalent: "")
@@ -188,16 +193,7 @@ final class InputiaInputController: IMKInputController {
 
   @objc private func toggleVoiceInput() {
     #if INPUTIA_PAIRED_BUILD
-    var target: InputiaVoiceTarget?
-    if let client = client(), !IsSecureEventInputEnabled(),
-       let bundle = client.bundleIdentifier(), !bridge.isSensitiveApp(bundleId: bundle, windowTitle: appContext(for: client).windowTitle) {
-      target = InputiaVoiceTarget(target_id: UUID().uuidString, host_instance: InputiaVoiceServiceConnection.processInstance,
-        controller_id: voiceControllerID, activation_generation: voiceActivationGeneration,
-        field_id: nil, selection_generation: 0, composition_generation: latestComposing.isEmpty ? 0 : 1, source_app: bundle)
-    }
-    InputiaVoiceInputLauncher.triggerUnifiedVoice(target: target) { [weak self] message in
-      self?.voiceStatus = message
-    }
+    startUnifiedVoice(client: client())
     return
     #elseif INPUTIA_UNIFIED_CANDIDATE
     showHostAlert(title: "候选语音尚未配对", message: "此候选没有配对构建材料，不会启动或切换日常 Handy。")
@@ -454,6 +450,28 @@ final class InputiaInputController: IMKInputController {
 
   private func handleKeyDown(_ event: NSEvent, client: IMKTextInput) -> Bool {
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    #if INPUTIA_PAIRED_BUILD
+    if InputiaShortcutClassifier.isVoiceInput(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers ?? event.characters, modifiers: modifiers) {
+      if !event.isARepeat {
+        NSLog("inputia_unified_voice_shortcut_invoked")
+        let activationGeneration = voiceActivationGeneration
+        let originalClient = client as AnyObject
+        DispatchQueue.main.async { [weak self, weak originalClient] in
+          guard let self else { return }
+          guard let originalClient,
+                self.voiceActivationGeneration == activationGeneration,
+                let currentClient = self.client(),
+                ObjectIdentifier(currentClient as AnyObject) == ObjectIdentifier(originalClient)
+          else {
+            self.startUnifiedVoice(client: nil)
+            return
+          }
+          self.startUnifiedVoice(client: currentClient)
+        }
+      }
+      return true
+    }
+    #endif
     inputiaDebugLog(
       "keyDown keyCode=\(event.keyCode) modifiers=\(modifiers.rawValue) chars=\(event.characters ?? "") charsIgnoring=\(event.charactersIgnoringModifiers ?? "")"
     )
@@ -659,6 +677,126 @@ final class InputiaInputController: IMKInputController {
   ) {
     client.insertText(text, replacementRange: replacementRange)
   }
+
+  #if INPUTIA_PAIRED_BUILD
+  private func startUnifiedVoice(client: IMKTextInput?) {
+    var target: InputiaVoiceTarget?
+    voiceTargetCaptureNotice = nil
+    pruneVoiceTargetSnapshots()
+    if let client,
+       !IsSecureEventInputEnabled(),
+       let bundle = client.bundleIdentifier(),
+       !bridge.isSensitiveApp(bundleId: bundle, windowTitle: appContext(for: client, forceRefresh: true).windowTitle) {
+      let targetID = UUID().uuidString
+      if let snapshot = InputiaVoiceTargetSnapshot.capture(
+        client: client,
+        targetID: targetID,
+        hostInstance: InputiaVoiceServiceConnection.processInstance,
+        controllerID: voiceControllerID,
+        activationGeneration: voiceActivationGeneration,
+        compositionGeneration: latestComposing.isEmpty ? 0 : 1,
+        sourceApp: bundle
+      ) {
+        voiceTargetSnapshots[snapshot.targetID] = snapshot
+        target = snapshot.inputiaTarget
+      } else {
+        let reason = InputiaVoiceTargetSnapshot.lastCaptureFailureReason
+        let notice = voiceTargetCaptureStatus(reason: reason)
+        // 已知安全控件或App身份冲突不能降级为仅保存历史的录音。
+        if InputiaVoiceTargetSnapshot.allowsHistoryOnlyCapture(reason: reason) {
+          target = InputiaVoiceTarget(
+          target_id: targetID,
+          host_instance: InputiaVoiceServiceConnection.processInstance,
+          controller_id: voiceControllerID,
+          activation_generation: voiceActivationGeneration,
+          field_id: nil,
+          selection_generation: 0,
+          composition_generation: latestComposing.isEmpty ? 0 : 1,
+          source_app: bundle
+          )
+        }
+        voiceTargetCaptureNotice = notice
+        voiceStatus = notice
+      }
+    }
+    InputiaVoiceInputLauncher.triggerUnifiedVoice(target: target, deliver: { [weak self] delivery, acknowledge in
+      guard let self else {
+        acknowledge("pending_target")
+        return
+      }
+      self.deliverUnifiedVoice(delivery, acknowledge: acknowledge)
+    }) { [weak self] message in
+      guard let self else { return }
+      if let notice = self.voiceTargetCaptureNotice {
+        self.voiceStatus = "\(message)；\(notice)"
+      } else {
+        self.voiceStatus = message
+      }
+    }
+  }
+
+  private func deliverUnifiedVoice(_ delivery: InputiaVoiceDelivery, acknowledge: @escaping (String) -> Void) {
+    guard let snapshot = voiceTargetSnapshots[delivery.target_id] else {
+      acknowledge("pending_target")
+      return
+    }
+    defer { voiceTargetSnapshots.removeValue(forKey: delivery.target_id) }
+    guard !attemptedVoiceOutputOperations.contains(delivery.operation_id) else {
+      acknowledge("uncertain")
+      return
+    }
+    let decision = snapshot.dispatchDecision(
+      delivery: delivery,
+      client: client(),
+      controllerID: voiceControllerID,
+      activationGeneration: voiceActivationGeneration,
+      latestComposing: latestComposing,
+      isSensitiveApp: { [weak self] bundleID, windowTitle in
+        self?.bridge.isSensitiveApp(bundleId: bundleID, windowTitle: windowTitle) ?? true
+      },
+      windowTitle: { [weak self] bundleID in
+        self?.activeWindowTitle(forBundleId: bundleID)
+      }
+    )
+    guard case .dispatch(let client) = decision else {
+      acknowledge("pending_target")
+      return
+    }
+    guard InputiaVoiceTargetSnapshot.isWithinDispatchDeadline(delivery) else {
+      acknowledge("pending_target")
+      return
+    }
+    attemptedVoiceOutputOperations.insert(delivery.operation_id)
+    client.insertText(delivery.text, replacementRange: emptyReplacementRange)
+    acknowledge("dispatched")
+  }
+
+  private func voiceTargetCaptureStatus(reason: String) -> String {
+    switch reason {
+    case "accessibility_permission_required":
+      return "候选输入法需要辅助功能权限才能核对原输入框；转写仍会保存到统一历史。"
+    case "secure_input_enabled", "secure_text_field":
+      return "当前输入框受安全输入保护，未启动录音。"
+    case "field_unobservable", "selection_unobservable", "field_observer_unavailable", "unsupported_focused_role":
+      return "当前输入框暂时无法可靠观察；转写会保存到统一历史。"
+    case "focused_application_mismatch":
+      return "当前输入目标与前台应用不一致，未启动录音。"
+    default:
+      return "当前无法核对原输入框；转写会保存到统一历史。"
+    }
+  }
+
+  private func pruneVoiceTargetSnapshots() {
+    let now = ProcessInfo.processInfo.systemUptime
+    voiceTargetSnapshots = voiceTargetSnapshots.filter { now - $0.value.createdAt <= 120 }
+    if voiceTargetSnapshots.count > 16 {
+      voiceTargetSnapshots.removeAll()
+    }
+    if attemptedVoiceOutputOperations.count > 64 {
+      attemptedVoiceOutputOperations.removeAll(keepingCapacity: true)
+    }
+  }
+  #endif
 
   private func handleCandidateNavigation(
     _ navigation: InputiaCandidateNavigation,

@@ -4,10 +4,12 @@ use crate::voice_dispatch::{
     AuthenticatedVoiceConnection, DispatchError, VoiceCoordinatorPort, VoiceDispatcher,
 };
 use inputia_handy_runtime::{
+    output_ledger::{OutputIntent, OutputOutcome},
     protocol::{Handshake, HandshakePolicy, ProtocolError},
     service::HistoryService,
     transport,
 };
+use std::collections::HashMap;
 use std::os::{fd::AsFd, unix::net::UnixStream};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +27,7 @@ pub struct VoiceConnection {
     stream: UnixStream,
     context: AuthenticatedVoiceConnection,
     client: Handshake,
+    dispatched_outputs: HashMap<String, OutputIntent>,
 }
 
 impl VoiceConnection {
@@ -59,6 +62,7 @@ impl VoiceConnection {
             stream,
             context: context.ok_or(ConnectionError::MissingContext)?,
             client,
+            dispatched_outputs: HashMap::new(),
         })
     }
 
@@ -104,38 +108,125 @@ impl VoiceConnection {
         history: &HistoryService,
         coordinator: &impl VoiceCoordinatorPort,
     ) -> Result<(), ConnectionError> {
-        use inputia_handy_runtime::voice_protocol::{VoiceReply, VoiceReplyError, VoiceRequest};
+        use inputia_handy_runtime::voice_protocol::{
+            VoiceOutputCommand, VoiceOutputReply, VoiceReply, VoiceReplyError, VoiceWireRequest,
+        };
         let result = (|| {
-            let request: VoiceRequest = transport::read_frame(&mut self.stream)
+            let request: VoiceWireRequest = transport::read_frame(&mut self.stream)
                 .map_err(|_| ConnectionError::ControlFrame)?;
-            if request.request_id.is_empty()
-                || request.request_id.len() > 256
-                || request.request_id.chars().any(char::is_control)
-            {
-                return Err(ConnectionError::ControlFrame);
+            match request {
+                VoiceWireRequest::Control(request) => {
+                    if request.request_id.is_empty()
+                        || request.request_id.len() > 256
+                        || request.request_id.chars().any(char::is_control)
+                    {
+                        return Err(ConnectionError::ControlFrame);
+                    }
+                    let request_id = request.request_id.clone();
+                    let reply = match VoiceDispatcher::new(history, coordinator)
+                        .dispatch(&self.context, request)
+                    {
+                        Ok(view) => VoiceReply::Session { request_id, view },
+                        Err(error) => VoiceReply::Rejected {
+                            request_id,
+                            code: reply_error(error),
+                        },
+                    };
+                    transport::write_frame(&mut self.stream, &reply)
+                        .map_err(|_| ConnectionError::ControlFrame)
+                }
+                VoiceWireRequest::Output(request) => {
+                    if request.request_id.is_empty()
+                        || request.request_id.len() > 256
+                        || request.request_id.chars().any(char::is_control)
+                    {
+                        return Err(ConnectionError::ControlFrame);
+                    }
+                    let request_id = request.request_id.clone();
+                    let operation_id = match &request.output {
+                        VoiceOutputCommand::Receipt { operation_id, .. } => {
+                            Some(operation_id.clone())
+                        }
+                        VoiceOutputCommand::Fetch {} => None,
+                    };
+                    let dispatcher = VoiceDispatcher::new(history, coordinator);
+                    let (mut reply, sent_intent) = match operation_id {
+                        Some(operation_id) => {
+                            if let Some(intent) =
+                                self.dispatched_outputs.get(&operation_id).cloned()
+                            {
+                                match dispatcher.receipt(&self.context, request, &intent) {
+                                    Ok(reply) => (reply, None),
+                                    Err(error) => (
+                                        VoiceOutputReply::Rejected {
+                                            request_id: request_id.clone(),
+                                            code: reply_error(error),
+                                        },
+                                        None,
+                                    ),
+                                }
+                            } else {
+                                (
+                                    VoiceOutputReply::Rejected {
+                                        request_id: request_id.clone(),
+                                        code: VoiceReplyError::Unauthorized,
+                                    },
+                                    None,
+                                )
+                            }
+                        }
+                        None => match dispatcher.fetch_output(&self.context, request) {
+                            Ok(result) => result,
+                            Err(error) => (
+                                VoiceOutputReply::Rejected {
+                                    request_id: request_id.clone(),
+                                    code: reply_error(error),
+                                },
+                                None,
+                            ),
+                        },
+                    };
+                    let sent_intent = if let Some((intent, permit)) = sent_intent {
+                        if permit.check().is_err() {
+                            let output = history
+                                .finish_output(intent.clone(), OutputOutcome::NotDispatchedRejected)
+                                .map_err(|_| ConnectionError::ControlFrame)?;
+                            reply = VoiceOutputReply::Output {
+                                request_id: request_id.clone(),
+                                operation_id: output.intent.operation_id,
+                                state: output.state,
+                            };
+                            None
+                        } else {
+                            Some(intent)
+                        }
+                    } else {
+                        None
+                    };
+                    transport::write_frame(&mut self.stream, &reply)
+                        .map_err(|_| ConnectionError::ControlFrame)?;
+                    if let Some(intent) = sent_intent {
+                        self.dispatched_outputs
+                            .insert(intent.operation_id.clone(), intent);
+                    }
+                    Ok(())
+                }
             }
-            let request_id = request.request_id.clone();
-            let reply = match VoiceDispatcher::new(history, coordinator)
-                .dispatch(&self.context, request)
-            {
-                Ok(view) => VoiceReply::Session { request_id, view },
-                Err(error) => VoiceReply::Rejected {
-                    request_id,
-                    code: match error {
-                        DispatchError::Unauthorized => VoiceReplyError::Unauthorized,
-                        DispatchError::MissingSession => VoiceReplyError::MissingSession,
-                        DispatchError::Unknown => VoiceReplyError::Unknown,
-                        DispatchError::CoordinatorRejected => VoiceReplyError::CoordinatorRejected,
-                    },
-                },
-            };
-            transport::write_frame(&mut self.stream, &reply)
-                .map_err(|_| ConnectionError::ControlFrame)
         })();
         if result.is_err() {
             let _ = self.stream.shutdown(std::net::Shutdown::Both);
         }
         result
+    }
+}
+
+fn reply_error(error: DispatchError) -> inputia_handy_runtime::voice_protocol::VoiceReplyError {
+    use inputia_handy_runtime::voice_protocol::VoiceReplyError;
+    match error {
+        DispatchError::Unauthorized => VoiceReplyError::Unauthorized,
+        DispatchError::MissingSession => VoiceReplyError::MissingSession,
+        DispatchError::Unknown => VoiceReplyError::Unknown,
+        DispatchError::CoordinatorRejected => VoiceReplyError::CoordinatorRejected,
     }
 }
 

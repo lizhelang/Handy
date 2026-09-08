@@ -143,6 +143,43 @@ struct InputiaVoiceReply: Decodable {
   let code: String?
 }
 
+/// 正文只在已认证连接与原目标回调之间短暂存在，不写诊断或重放队列。
+struct InputiaVoiceDelivery: Codable {
+  let operation_id: String
+  let session_id: String
+  let item_id: String
+  let revision: UInt64
+  let policy_epoch: UInt64
+  let target_id: String
+  let text: String
+  var dispatchDeadline: TimeInterval = 0
+  private enum CodingKeys: String, CodingKey {
+    case operation_id, session_id, item_id, revision, policy_epoch, target_id, text
+  }
+}
+
+private struct InputiaVoiceOutputCommand: Encodable {
+  let kind: String
+  var operation_id: String? = nil
+  var receipt: String? = nil
+}
+private struct InputiaVoiceOutputRequest: Encodable {
+  let request_id: String
+  let session_id: String
+  let server_instance: String
+  let client_instance: String
+  let policy_epoch: UInt64
+  let output: InputiaVoiceOutputCommand
+}
+private struct InputiaVoiceOutputReply: Decodable {
+  let status: String
+  let request_id: String
+  let delivery: InputiaVoiceDelivery?
+  let operation_id: String?
+  let state: String?
+  let code: String?
+}
+
 /// 单一后台队列拥有此客户端。构建公钥作为信任根，manifest只提供被签名的两端身份。
 final class InputiaVoiceServiceConnection {
   static let processInstance = UUID().uuidString
@@ -210,6 +247,64 @@ final class InputiaVoiceServiceConnection {
 
   func close() { locallyAppliedVersion = nil; connection.close() }
 
+  /// 服务端在返回正文前持久claim；此方法绝不重试fetch，也不跨连接恢复正文。
+  func fetchDelivery(view: InputiaVoiceSessionView, target: InputiaVoiceTarget) throws -> InputiaVoiceDelivery? {
+    let deadline = ProcessInfo.processInfo.systemUptime + 2
+    let reply = try outputRequest(sessionID: view.session_id, output: InputiaVoiceOutputCommand(kind: "fetch"))
+    if reply.status == "output" { return nil }
+    guard reply.status == "delivery", var delivery = reply.delivery else {
+      close(); throw InputiaVoiceServiceError.handshake
+    }
+    do { try Self.validateDelivery(delivery, view: view, target: target, epoch: locallyAppliedVersion?.policy_epoch) }
+    catch { close(); throw error }
+    delivery.dispatchDeadline = deadline
+    return delivery
+  }
+
+  static func validateDelivery(_ delivery: InputiaVoiceDelivery, view: InputiaVoiceSessionView,
+                               target: InputiaVoiceTarget, epoch: UInt64?) throws {
+    guard delivery.session_id == view.session_id,
+          delivery.operation_id == view.output_operation_id,
+          delivery.item_id == view.item_id, delivery.target_id == target.target_id,
+          delivery.policy_epoch == epoch,
+          !delivery.text.isEmpty, delivery.text.utf8.count <= 192 * 1024 else {
+      throw InputiaVoiceServiceError.handshake
+    }
+  }
+
+  func acknowledgeDelivery(_ delivery: InputiaVoiceDelivery, receipt: String) throws {
+    guard ["dispatched", "pending_target", "uncertain"].contains(receipt) else {
+      close(); throw InputiaVoiceServiceError.handshake
+    }
+    let reply = try outputRequest(sessionID: delivery.session_id,
+      output: InputiaVoiceOutputCommand(kind: "receipt", operation_id: delivery.operation_id, receipt: receipt))
+    let expected = receipt == "dispatched" ? "dispatched_only" : receipt
+    guard reply.status == "output", reply.operation_id == delivery.operation_id, reply.state == expected else {
+      close(); throw InputiaVoiceServiceError.handshake
+    }
+  }
+
+  private func outputRequest(sessionID: String, output: InputiaVoiceOutputCommand) throws -> InputiaVoiceOutputReply {
+    do {
+      guard !Thread.isMainThread, let version = locallyAppliedVersion else { throw InputiaVoiceServiceError.policy }
+      let requestID = UUID().uuidString
+      try connection.write(InputiaVoiceOutputRequest(request_id: requestID, session_id: sessionID,
+        server_instance: server.instance_id, client_instance: Self.processInstance,
+        policy_epoch: version.policy_epoch, output: output))
+      let reply = try connection.read(InputiaVoiceOutputReply.self)
+      guard reply.request_id == requestID else { throw InputiaVoiceServiceError.handshake }
+      switch reply.status {
+      case "delivery":
+        guard output.kind == "fetch", reply.delivery != nil, reply.state == nil, reply.code == nil else { throw InputiaVoiceServiceError.handshake }
+      case "output":
+        guard reply.delivery == nil, let state = reply.state, reply.operation_id != nil, reply.code == nil,
+              ["prepared", "dispatched", "confirmed", "dispatched_only", "uncertain", "pending_target", "rejected"].contains(state) else { throw InputiaVoiceServiceError.handshake }
+      default: throw InputiaVoiceServiceError.handshake
+      }
+      return reply
+    } catch { close(); throw error }
+  }
+
   /// 单次请求只写一次，读回执失败不重放Start/输出。调用者以同session的Status查询事实。
   func request(sessionID: String, requestID: String, command: InputiaVoiceCommand) throws -> InputiaVoiceReply {
     do {
@@ -245,6 +340,11 @@ final class InputiaVoiceServiceConnection {
   }
 
   #if INPUTIA_CONNECTION_SELF_CHECK
+  static func fixture(descriptor: Int32, server: InputiaVoiceHello, version: InputiaVoiceTermsVersion) throws -> InputiaVoiceServiceConnection {
+    let value = InputiaVoiceServiceConnection(connection: try InputiaFramedConnection.fixture(descriptor: descriptor, timeout: 2), server: server)
+    value.locallyAppliedVersion = version
+    return value
+  }
   static func checkPolicy(_ barrier: InputiaVoicePolicyBarrier, minimumEpoch: UInt64,
                           state: InputiaSharedStateBarrierApplying, sent: () -> Void) throws {
     try applyAndAcknowledge(barrier, minimumEpoch: minimumEpoch, state: state) { _ in sent() }

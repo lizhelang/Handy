@@ -25,7 +25,9 @@ enum InputiaVoiceInputLauncher {
   private struct Endpoint: Decodable { let profile_id: String; let protocol_major: Int; let server_instance: String; let socket_path: String }
 
   /// 实际菜单仅入队，绝不在InputMethodKit主线程等待IPC或数据库。
-  static func triggerUnifiedVoice(target: InputiaVoiceTarget?, completion: @escaping (String) -> Void) {
+  static func triggerUnifiedVoice(target: InputiaVoiceTarget?,
+    deliver: @escaping (InputiaVoiceDelivery, @escaping (String) -> Void) -> Void,
+    completion: @escaping (String) -> Void) {
     voiceQueue.async {
       var stage = "candidate_profile"
       do {
@@ -64,7 +66,7 @@ enum InputiaVoiceInputLauncher {
         unifiedSession = session
         lastUnifiedPhase = nil
         DispatchQueue.main.async { completion("正在准备，再次点击停止") }
-        pollUnifiedVoice(connection: connection, session: session, completion: completion)
+        pollUnifiedVoice(connection: connection, session: session, target: target, deliver: deliver, completion: completion)
       } catch {
         unifiedConnection?.close(); unifiedConnection = nil; unifiedSession = nil
         NSLog("inputia_unified_voice_entry_failed stage=%@", stage)
@@ -73,7 +75,10 @@ enum InputiaVoiceInputLauncher {
     }
   }
 
-  private static func pollUnifiedVoice(connection: InputiaVoiceServiceConnection, session: String, completion: @escaping (String) -> Void) {
+  private static func pollUnifiedVoice(connection: InputiaVoiceServiceConnection, session: String,
+    target: InputiaVoiceTarget,
+    deliver: @escaping (InputiaVoiceDelivery, @escaping (String) -> Void) -> Void,
+    completion: @escaping (String) -> Void) {
     voiceQueue.asyncAfter(deadline: .now() + 0.25) {
       guard unifiedSession == session else { return }
       do {
@@ -85,7 +90,36 @@ enum InputiaVoiceInputLauncher {
           if view.phase == "recording" { DispatchQueue.main.async { completion("录音中，再次点击停止") } }
         }
         if ["preparing", "recording", "processing"].contains(view.phase) {
-          pollUnifiedVoice(connection: connection, session: session, completion: completion)
+          pollUnifiedVoice(connection: connection, session: session, target: target, deliver: deliver, completion: completion)
+        } else if view.phase == "pending_target", target.field_id != nil {
+          // 只有唯一fetch成功才会取得正文；失联/重复请求绝不换路或再次fetch。
+          guard let delivery = try connection.fetchDelivery(view: view, target: target) else {
+            connection.close(); unifiedConnection = nil; unifiedSession = nil
+            DispatchQueue.main.async { completion("结果已有输出状态，未重复插入。请在 Handy 查看历史。") }
+            return
+          }
+          DispatchQueue.main.async {
+            let acknowledge: (String) -> Void = { receipt in
+              voiceQueue.async {
+                guard unifiedSession == session else { return }
+                do {
+                  try connection.acknowledgeDelivery(delivery, receipt: receipt)
+                  NSLog("inputia_unified_voice_output_receipt=%@", receipt)
+                  DispatchQueue.main.async {
+                    completion(receipt == "dispatched" ? "已向原输入框派发文字。" : "结果保留在历史，未自动重试插入。")
+                  }
+                } catch {
+                  NSLog("inputia_unified_voice_output_receipt_unknown automatic_replay=false")
+                  DispatchQueue.main.async { completion("插入回执未知，未重放。请核对输入框和历史。") }
+                }
+                connection.close(); unifiedConnection = nil; unifiedSession = nil
+              }
+            }
+            guard ProcessInfo.processInfo.systemUptime < delivery.dispatchDeadline else {
+              acknowledge("pending_target"); return
+            }
+            deliver(delivery, acknowledge)
+          }
         } else {
           NSLog("inputia_unified_voice_session_terminal phase=%@", view.phase)
           connection.close(); unifiedConnection = nil; unifiedSession = nil

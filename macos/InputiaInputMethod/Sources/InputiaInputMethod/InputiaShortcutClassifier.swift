@@ -6,6 +6,10 @@ enum InputiaCandidateNavigation: Equatable {
 }
 
 struct InputiaShortcutClassifier {
+  static func isVoiceInput(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags) -> Bool {
+    let voiceKey = keyCode == 9 || characters?.lowercased() == "v" || characters == "\u{16}"
+    return voiceKey && modifiers.contains([.control, .option, .shift]) && !modifiers.contains(.command)
+  }
   private static let keyCodeSpace: UInt16 = 49
   private static let keyCodePeriod: UInt16 = 47
   private static let keyCodeDownArrow: UInt16 = 125

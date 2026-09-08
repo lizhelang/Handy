@@ -66,3 +66,40 @@
 当前运行位置停在实际菜单入口前：CUA无法取得TextInputMenuAgent/SystemUIServer这类无普通窗口进程的点击目标，两次查询超时；系统Ctrl+F8后未得到可操作的菜单状态。没有绕过限制直接调用toggleVoiceInput或其他底层接口，也没有注入最终文字。最近原生日志无inputia_unified_voice事件。
 
 下一步需要用户在当前空白文稿从实际输入法菜单选择“语音输入”、说测试句并再次点击停止；主代理随后核对实际记录和历史。尚无菜单录音、正常插入或焦点变化演示，里程碑未通过。测试结束应切回已记录的微信输入源。
+
+## 真实快捷键对照实验（未通过）
+
+因系统菜单工具不能取得点击目标，给同一候选入口增加可见`Control+Option+Shift+V`，仅IMK按键路径消费，不注册第二个菜单keyEquivalent，不改Handy原Option+Space。已构建、更新仅候选Inputia并刷新签名配对；原包保留于持久构建目录`Inputia-before-shortcut.app`，首个物理键码版本另存`Inputia-physical-shortcut.app`。
+
+第一次真实工具按键在TextEdit产生Control-V控制字符，语音会话数0、无入口日志。已撤销该字符。再用单字母n检查基础路径：实际出现选中的带下划线拼音组合，Escape清除，说明基础输入不是完全失效。
+
+第二次只增加V/Control-V语义字符兼容，保持修饰键不变；重新构建安装后结果仍为控制字符，已撤销。没有开始麦克风录音，没有播放测试音频，没有生成转写。此修改尚未被证明有效，当前源码与已安装候选为该实验状态，不能报快捷键已修复。
+
+按用户规则停止继续换键/改判定。当前假设是组合键未进入IMK或自动化修饰键传递差异，需要用户在同一空白测试文稿用实体键盘按一次该组合键进行区分。普通n/Escape对照与两次失败不替代真实语音入口证据。TextEdit把新测试文稿自动保存为自己的未命名7.rtf，正文已恢复为空；它是本次新建测试文件，不是原有用户文稿，后续测试应转入本地专用目录。
+
+## 2026-09-08 11:34 北京时间：菜单失败后的路径实验
+
+- 用户实体组合键和实际菜单均报告无录音浮窗；Option+Space能触发的是Handy全局入口，不算Inputia会话通过。
+- 候选outbox.db已经存在，schema=1、shared_policy=0/0、learning_outbox=0；Handy会话计数0。两端安装签名与配对清单一致，监听socket属于当前Handy进程且目录700/socket600。
+- 可重复阻塞：Foundation对实际`/private/tmp/...sock`调用`resolvingSymlinksInPath()`返回`/tmp/...sock`，严格字符串比较失败。Darwin.realpath返回原始规范路径。新增命名socket测试在旧实现失败endpoint，换为realpath严格比较后通过；没有移除符号链接、属主、模式或签名检查。
+- 证据根：`/Users/lzl/Library/Application Support/HandyUnifiedBuilds/loop-20260908.r0xugn`；`framed-path-before.log`为失败，`framed-path-after.log`为12检查/100帧及主线程拒绝通过，`inputia-path-fix-build.log`为完整候选构建与严格签名校验。此测试只证明传输路径，不是实际菜单/录音验收。
+- 已更新用户级候选Inputia，CDHash `705179631388e82c290ae564f6f61672257419fb`；`pair-path-fix.json`已签名安装。原包与清单保存在`Inputia-before-path-fix.app`、`Inputia-replaced-path-fix.app`、`pair-before-path-fix.json`，未动日常安装/数据。Handy重启后03:32:52 UTC监听ready；候选输入源selectStatus=0且selected=true。
+- 下一实验：在专用空白TextEdit从实际输入法菜单点击语音，核对认证peer、会话及录音浮窗。当前尚无修复后菜单运行、真实录音、正常插入或焦点变化证据，闭环未通过。
+- 路径修复提交`984ef71a`。独立原生子代理review_socket_path仅审查路径修复及命名socket测试，重新编译执行通过，无阻塞发现；未审查既有未提交快捷键实验，安装包包含这些既有实验改动，不是干净最终提交的发布包。
+
+## 2026-09-08 用户实体快捷键录音后的核验
+
+- 用户确认Control+Option+Shift+V能唤起浮窗但没有文字。实际认证peer计数1、owned会话2、结果关联2，两条会话均start_claimed=1且pending_target，关联history记录2/3。
+- 当日04:51:50、04:52:05 UTC日志分别显示24480/35520采样，完成本地识别耗时0.25/0.13秒，正文日志为REDACTED。不是未录音或ASR未完成。
+- 实际候选Handy界面点击历史后出现这两条语音记录，单击最新条目可看到非空转写预览。只查看，没有点击插入、复制或手工注入结果。
+- 当前最短阻塞是未实现Host结果接收与原输入框身份校验/唯一输出，不是权限或快捷键；现有Launcher终态只更新菜单状态并关闭连接。因此正常插入与焦点变化仍未验收，不能要求用户反复录音来替代这段实现。
+
+## 2026-09-08 本批：接通待插入后的实际交付路径（尚待原生运行）
+
+- 复用原输出账本，在已认证socket增加fetch/receipt；服务端核对owned session、最新策略、当前revision、取消屏障与field token，唯一claim后才交付正文；再次fetch只返回状态。正文回复没有Debug，JSON帧在claim前检查上限。
+- Inputia在原开始回调保留AX控件/client/controller/激活代数与选择范围；焦点、选择、值或销毁通知使快照永久失效。唯一正文送回主线程，重新核对隐私、组合、原控件、选择与本地2秒派发期限，再调用IMK insertText。无法确认时回pending_target；未知回执不重传，不调用平台paste。
+- 权限不足/字段不可观察可保留语音历史；已知安全字段、Secure Input、App身份冲突、未知错误不得降级录音。系统设置实际列表中Handy Unified Candidate已启用，候选Inputia尚无条目；要做AX原目标核验需用户授权候选Inputia，不能通过移除校验绕过。
+- 新鲜检查：客户端合成socketpair完成fetch→delivery→receipt，身份/epoch/空或超限正文拒绝；Host选区/期限与敏感失败拒绝自检通过；Rust voice_protocol 10、voice_result 9通过，主代理voice_dispatch 17通过。它们不替代原生插入证据。
+- 独立审查提出并已修复：Swift选区局部变量遮蔽导致编译失败；output账本claim未收到Host回执时必须映射uncertain，不展示已派发。修复后定向编译/测试通过。明确Host派发回执仍仅dispatched_only，不冒充应用级confirmed。
+- 构建/测试证据位于前述持久根：inputia-delivery-build.log、inputia-delivery-final-build.log、handy-delivery-build.log、voice-output-server-tests.log。Handy构建本节记录时仍运行。专用空白文稿为该目录native-output-check.rtf（本地，不是iCloud）。
+- 正常原框插入及转写期间焦点变化仍未运行，不能标记A04/A05或完整闭环通过；待配套候选安装和必要权限后继续。

@@ -585,6 +585,12 @@ impl HistoryService {
     ) -> ServiceResult<Option<crate::output_ledger::OutputRecord>> {
         self.call(move |worker| worker.store.output_record(&id).map_err(|e| e.to_string()))
     }
+    pub fn indexed_item(&self, id: String) -> ServiceResult<Option<IndexedItem>> {
+        self.call(move |worker| {
+            worker.sync_once()?;
+            worker.store.get(&id).map_err(|e| e.to_string())
+        })
+    }
 
     /// 模型调用方提供已捕获的真实目标策略；此方法不自行猜测前台来源。
     pub fn session_hotwords(
