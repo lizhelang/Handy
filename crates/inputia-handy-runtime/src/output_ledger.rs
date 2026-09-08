@@ -19,6 +19,7 @@ pub enum OutputAction {
     InsertText,
     PasteAsset,
     Copy,
+    CopyPlainText,
 }
 
 /// 一项操作只有一个执行所有者；重放不能换路线。
@@ -328,6 +329,7 @@ fn digest(intent: &OutputIntent) -> [u8; 32] {
         OutputAction::InsertText => 0,
         OutputAction::PasteAsset => 1,
         OutputAction::Copy => 2,
+        OutputAction::CopyPlainText => 3,
     }]);
     hash.finalize().into()
 }

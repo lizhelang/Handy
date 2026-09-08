@@ -26,6 +26,25 @@ fn database() -> Connection {
 }
 
 #[test]
+fn plain_text_copy_cannot_replay_native_copy_and_unknown_never_redispatches() {
+    let connection = database();
+    let mut request = intent("copy-format");
+    request.action = OutputAction::Copy;
+    ledger::prepare(&connection, &request).unwrap();
+    let mut plain = request.clone();
+    plain.action = OutputAction::CopyPlainText;
+    assert!(matches!(
+        ledger::prepare(&connection, &plain),
+        Err(OutputLedgerError::ReplayConflict)
+    ));
+    plain.operation_id = "explicit-plain".into();
+    ledger::prepare(&connection, &plain).unwrap();
+    assert!(ledger::claim_dispatch(&connection, &plain).unwrap());
+    ledger::finish(&connection, &plain, OutputOutcome::Uncertain).unwrap();
+    assert!(!ledger::claim_dispatch(&connection, &plain).unwrap());
+}
+
+#[test]
 fn a_hundred_identical_requests_dispatch_once_and_keep_confirmation() {
     let connection = database();
     let request = intent("confirmed-100");

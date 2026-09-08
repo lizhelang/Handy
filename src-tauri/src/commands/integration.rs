@@ -291,13 +291,77 @@ pub async fn copy_unified_history_item(
     expected_revision: u64,
     operation_id: String,
 ) -> Result<UnifiedOutputResult, String> {
+    copy_unified_history_item_impl(
+        app,
+        manager,
+        clipboard,
+        item_id,
+        expected_revision,
+        operation_id,
+        false,
+    )
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn delete_unified_history_item(
+    manager: State<'_, Arc<IntegrationManager>>,
+    item_id: String,
+    expected_revision: u64,
+    operation_id: String,
+) -> Result<bool, String> {
+    let service = manager.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service.delete_item(item_id, expected_revision, operation_id)
+    })
+    .await
+    .map_err(|_| "history deletion worker failed".to_owned())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn copy_unified_history_item_as_text(
+    app: AppHandle,
+    manager: State<'_, Arc<IntegrationManager>>,
+    clipboard: State<'_, Arc<ClipboardManager>>,
+    item_id: String,
+    expected_revision: u64,
+    operation_id: String,
+) -> Result<UnifiedOutputResult, String> {
+    copy_unified_history_item_impl(
+        app,
+        manager,
+        clipboard,
+        item_id,
+        expected_revision,
+        operation_id,
+        true,
+    )
+    .await
+}
+
+async fn copy_unified_history_item_impl(
+    app: AppHandle,
+    manager: State<'_, Arc<IntegrationManager>>,
+    clipboard: State<'_, Arc<ClipboardManager>>,
+    item_id: String,
+    expected_revision: u64,
+    operation_id: String,
+    as_text: bool,
+) -> Result<UnifiedOutputResult, String> {
     let service = manager.service.clone();
     let clipboard = Arc::clone(&clipboard);
     tauri::async_runtime::spawn_blocking(move || {
+        let action = if as_text {
+            OutputAction::CopyPlainText
+        } else {
+            OutputAction::Copy
+        };
         let intent = if let Some(record) = service.output_record(operation_id.clone())? {
             if record.intent.item_id != item_id
                 || record.intent.revision != expected_revision
-                || record.intent.action != OutputAction::Copy
+                || record.intent.action != action
             {
                 return Err("output operation identity conflict".into());
             }
@@ -313,15 +377,17 @@ pub async fn copy_unified_history_item(
                 target_id: None,
                 owner: OutputOwner::Platform,
                 policy_epoch: service.policy_epoch()?,
-                action: OutputAction::Copy,
+                action,
             }
         };
         service.prepare_output(intent.clone())?;
         let item = service.get_item(item_id, expected_revision)?;
-        if matches!(
-            item.snapshot.content_type,
-            ContentType::Html | ContentType::Rtf
-        ) {
+        if !as_text
+            && matches!(
+                item.snapshot.content_type,
+                ContentType::Html | ContentType::Rtf
+            )
+        {
             let record = service.finish_output(intent, OutputOutcome::Rejected)?;
             return Ok(output_result(operation_id, record.state));
         }
@@ -329,6 +395,7 @@ pub async fn copy_unified_history_item(
             ContentType::Text => "text",
             ContentType::Files => "files",
             ContentType::Image => "image",
+            ContentType::Html | ContentType::Rtf if as_text => "text",
             _ => "unsupported",
         };
         let expected_change_count = main_thread_call(&app, || {
@@ -341,15 +408,18 @@ pub async fn copy_unified_history_item(
                 None
             }
         })?;
-        let prepared =
-            match clipboard.prepare_unified_copy(kind, item.snapshot.text, item.snapshot.asset_ref)
-            {
-                Ok(prepared) => prepared,
-                Err(_) => {
-                    let record = service.finish_output(intent, OutputOutcome::Rejected)?;
-                    return Ok(output_result(operation_id, record.state));
-                }
-            };
+        let prepared_result = if as_text {
+            clipboard.prepare_unified_plain_text(kind, item.snapshot.text)
+        } else {
+            clipboard.prepare_unified_copy(kind, item.snapshot.text, item.snapshot.asset_ref)
+        };
+        let prepared = match prepared_result {
+            Ok(prepared) => prepared,
+            Err(_) => {
+                let record = service.finish_output(intent, OutputOutcome::Rejected)?;
+                return Ok(output_result(operation_id, record.state));
+            }
+        };
         let Some(permit) = service.claim_output_with_permit(intent.clone())? else {
             return Ok(output_result(operation_id, OutputState::Uncertain));
         };

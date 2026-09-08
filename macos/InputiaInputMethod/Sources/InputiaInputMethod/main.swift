@@ -217,7 +217,7 @@ final class InputiaInputController: IMKInputController {
       return item
     }
     _ = add("复制最新转写", "copy_latest")
-    _ = add("统一历史…", "history")
+    _ = add("剪贴历史…", "history")
     menu.addItem(.separator())
     let models = NSMenu(title: "语音模型")
     models.autoenablesItems = false
@@ -829,15 +829,15 @@ final class InputiaInputController: IMKInputController {
   private func voiceTargetCaptureStatus(reason: String) -> String {
     switch reason {
     case "accessibility_permission_required":
-      return "候选输入法需要辅助功能权限才能核对原输入框；转写仍会保存到统一历史。"
+      return "候选输入法需要辅助功能权限才能核对原输入框；转写仍会保存到剪贴历史。"
     case "secure_input_enabled", "secure_text_field":
       return "当前输入框受安全输入保护，未启动录音。"
     case "field_unobservable", "selection_unobservable", "field_observer_unavailable", "unsupported_focused_role":
-      return "当前输入框暂时无法可靠观察；转写会保存到统一历史。"
+      return "当前输入框暂时无法可靠观察；转写会保存到剪贴历史。"
     case "focused_application_mismatch":
       return "当前输入目标与前台应用不一致，未启动录音。"
     default:
-      return "当前无法核对原输入框；转写会保存到统一历史。"
+      return "当前无法核对原输入框；转写会保存到剪贴历史。"
     }
   }
 

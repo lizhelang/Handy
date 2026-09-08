@@ -259,6 +259,52 @@ impl HistoryService {
         })
     }
 
+    pub fn delete_item(
+        &self,
+        item_id: String,
+        expected_revision: u64,
+        operation_id: String,
+    ) -> ServiceResult<bool> {
+        self.call(move |worker| {
+            worker.revoke_outputs();
+            let mut replayed = false;
+            for source in &worker.sources {
+                replayed |= source
+                    .delete_receipt(&item_id, expected_revision, &operation_id)
+                    .map_err(|e| e.to_string())?
+                    .is_some();
+            }
+            if !replayed {
+                let item = worker
+                    .store
+                    .get(&item_id)
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| "history item no longer exists".to_owned())?;
+                let source = worker
+                    .sources
+                    .iter_mut()
+                    .find(|source| source.store_id() == item.store_id)
+                    .ok_or_else(|| "history source unavailable".to_owned())?;
+                source
+                    .delete_record(&item.record_id, expected_revision, &operation_id)
+                    .map_err(|e| e.to_string())?;
+            }
+            for _ in 0..100 {
+                worker.sync_once()?;
+                if worker
+                    .store
+                    .get(&item_id)
+                    .map_err(|e| e.to_string())?
+                    .is_none()
+                {
+                    worker.last_error = None;
+                    return Ok(true);
+                }
+            }
+            Err("source deleted but projection is still pending".into())
+        })
+    }
+
     pub fn update_item(
         &self,
         item_id: String,

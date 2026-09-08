@@ -322,17 +322,15 @@ fn menu_action(
                     return;
                 }
                 let result = match command {
-                    MenuCommand::History | MenuCommand::Settings => {
+                    MenuCommand::History => {
+                        // 先由召回浮窗捕获原目标，不打开控制中心抢走焦点。
+                        crate::overlay::show_clipboard_overlay(&handle);
+                        Ok(())
+                    }
+                    MenuCommand::Settings => {
                         crate::show_main_window(&handle);
                         handle
-                            .emit(
-                                "navigate-to",
-                                if command == MenuCommand::History {
-                                    "history"
-                                } else {
-                                    "general"
-                                },
-                            )
+                            .emit("navigate-to", "general")
                             .map_err(|_| DispatchError::Unknown)
                     }
                     MenuCommand::CheckUpdates => {

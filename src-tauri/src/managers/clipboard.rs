@@ -291,6 +291,22 @@ pub(crate) enum ClipboardWriteOutcome {
 }
 
 impl ClipboardManager {
+    /// 只有显式纯文本动作才能把文件列表转换为完整路径；图片不伪装成文本。
+    pub(crate) fn prepare_unified_plain_text(
+        &self,
+        content_type: &str,
+        text: Option<String>,
+    ) -> Result<PreparedClipboardCopy> {
+        let text = text.ok_or_else(|| anyhow!("Text unavailable"))?;
+        match content_type {
+            "text" => Ok(PreparedClipboardCopy::Text(text)),
+            "files" => restore_files_strict(&text, |paths| {
+                Ok(PreparedClipboardCopy::Text(paths.join("\n")))
+            }),
+            _ => Err(anyhow!("Plain text representation unavailable")),
+        }
+    }
+
     /// 慢解析、文件路径核验和图像解码在取得短期输出许可之前完成。
     pub(crate) fn prepare_unified_copy(
         &self,

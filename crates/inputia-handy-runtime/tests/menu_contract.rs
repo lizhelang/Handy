@@ -4,12 +4,22 @@ mod menu_contract_tests {
 
     #[test]
     fn recording_keeps_navigation_available_but_blocks_engine_changes() {
-        for command in [MenuCommand::Status, MenuCommand::History, MenuCommand::Settings,
-            MenuCommand::CheckUpdates, MenuCommand::CopyLatest] {
+        for command in [
+            MenuCommand::Status,
+            MenuCommand::History,
+            MenuCommand::Settings,
+            MenuCommand::CheckUpdates,
+            MenuCommand::CopyLatest,
+        ] {
             assert!(command.allowed_while_busy());
         }
-        for command in [MenuCommand::UnloadModel, MenuCommand::QuitService,
-            MenuCommand::SelectModel { model_id: "local".into() }] {
+        for command in [
+            MenuCommand::UnloadModel,
+            MenuCommand::QuitService,
+            MenuCommand::SelectModel {
+                model_id: "local".into(),
+            },
+        ] {
             assert!(!command.allowed_while_busy());
         }
     }

@@ -800,7 +800,11 @@
         "helpPlainTextCopy": "Copy as plain text",
         "helpPin": "Pin selected item",
         "helpPreview": "Hold to preview selected item",
-        "fileCount": "{{count}} items"
+        "fileCount": "{{count}} items",
+        "clipboardOnlyScope": "Statistics and clearing below apply only to copied content. Voice records are preserved.",
+        "deleteRecordTitle": "Delete only this history record?",
+        "deleteRecordDescription": "Only this history record will be deleted. Recordings and image attachments remain on this device; original files will not be deleted.",
+        "deleteRecordConfirm": "Delete record only"
       }
     }
   },

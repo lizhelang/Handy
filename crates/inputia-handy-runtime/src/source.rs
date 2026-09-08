@@ -494,6 +494,76 @@ impl SourceOutbox {
         })
     }
 
+    /// 删除记录与附件生命周期独立；本事务绝不删除 WAV、图片或用户文件。
+    pub fn delete_record(
+        &self,
+        conn: &mut Connection,
+        source: SourceTable,
+        record_id: &str,
+        expected_revision: u64,
+        operation_id: &str,
+    ) -> Result<MutationResult> {
+        Identifier::parse(record_id).map_err(|_| SourceError::InvalidIdentifier)?;
+        let item_id = crate::store::item_id(&self.store_id, record_id);
+        let logical: String = conn.query_row(
+            "SELECT logical_name FROM unified_source_meta WHERE singleton=1",
+            [],
+            |r| r.get(0),
+        )?;
+        if logical != source.logical_name() {
+            return Err(SourceError::WrongSource);
+        }
+        let digest = delete_digest(&item_id, expected_revision);
+        self.mutate_once(conn, operation_id, &digest, |tx| {
+            let logical: String = tx.query_row(
+                "SELECT logical_name FROM unified_source_meta WHERE singleton=1",
+                [],
+                |r| r.get(0),
+            )?;
+            if logical != source.logical_name() {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            let revision: u64 = tx.query_row(
+                "SELECT revision FROM unified_source_versions WHERE record_id=?1",
+                [record_id],
+                |r| r.get(0),
+            )?;
+            if revision != expected_revision {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
+            let changed = tx.execute(
+                &format!("DELETE FROM {} WHERE CAST(id AS TEXT)=?1", source.table()),
+                [record_id],
+            )?;
+            if changed != 1 {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
+            Ok("true".into())
+        })
+    }
+
+    /// 删除后的投影已不存在，仍可按原始请求身份查源事务回执。
+    pub fn delete_receipt(
+        &self,
+        conn: &Connection,
+        item_id: &str,
+        revision: u64,
+        operation_id: &str,
+    ) -> Result<Option<bool>> {
+        self.verify_identity(conn)?;
+        Identifier::parse(operation_id).map_err(|_| SourceError::InvalidIdentifier)?;
+        let prior: Option<(String,String)> = conn.query_row("SELECT request_digest,response FROM unified_source_operations WHERE operation_id=?1", [operation_id], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
+        match prior {
+            None => Ok(None),
+            Some((digest, response))
+                if digest == delete_digest(item_id, revision) && response == "true" =>
+            {
+                Ok(Some(true))
+            }
+            Some(_) => Err(SourceError::OperationConflict),
+        }
+    }
+
     /// 业务修改与去重回执在同一源事务；重复请求不再执行 toggle 等非幂等动作。
     pub fn mutate_once<F>(
         &self,
@@ -527,6 +597,13 @@ impl SourceOutbox {
             response,
         })
     }
+}
+
+fn delete_digest(item_id: &str, revision: u64) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(format!("delete-record:{item_id}:{revision}"))
+    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

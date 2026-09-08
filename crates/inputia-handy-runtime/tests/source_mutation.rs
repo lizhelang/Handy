@@ -11,6 +11,52 @@ fn fixture() -> (Connection, SourceOutbox) {
 }
 
 #[test]
+fn deletion_replays_after_projection_loss_and_rejects_changed_identity() {
+    let (mut conn, outbox) = fixture();
+    let id = inputia_handy_runtime::store::item_id(outbox.store_id(), "2");
+    assert!(outbox
+        .delete_record(&mut conn, SourceTable::Clipboard, "2", 2, "stale-delete")
+        .is_err());
+    assert!(outbox
+        .delete_record(&mut conn, SourceTable::History, "2", 1, "wrong-source")
+        .is_err());
+    let result = outbox
+        .delete_record(&mut conn, SourceTable::Clipboard, "2", 1, "delete-asset")
+        .unwrap();
+    assert_eq!(result.response, "true");
+    let events = outbox.read_batch(&conn, 0, 100).unwrap();
+    assert!(
+        outbox
+            .delete_record(&mut conn, SourceTable::Clipboard, "2", 1, "delete-asset")
+            .unwrap()
+            .replayed
+    );
+    assert_eq!(
+        outbox
+            .delete_receipt(&conn, &id, 1, "delete-asset")
+            .unwrap(),
+        Some(true)
+    );
+    assert!(outbox
+        .delete_receipt(&conn, &id, 2, "delete-asset")
+        .is_err());
+    assert!(outbox
+        .delete_receipt(&conn, "foreign-item", 1, "delete-asset")
+        .is_err());
+    assert!(outbox
+        .update_record(
+            &mut conn,
+            SourceTable::Clipboard,
+            "1",
+            1,
+            "delete-asset",
+            &HistoryPatch::default()
+        )
+        .is_err());
+    assert_eq!(events, outbox.read_batch(&conn, 0, 100).unwrap());
+}
+
+#[test]
 fn text_edits_are_atomic_idempotent_and_recompute_content_metadata() {
     let (mut conn, outbox) = fixture();
     let patch = HistoryPatch {

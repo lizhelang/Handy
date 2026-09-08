@@ -6,13 +6,14 @@ import React, {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AlignJustify,
   ArrowLeft,
   CircleHelp,
   FileText,
+  Mic,
   Image,
   Info,
   Pencil,
@@ -21,9 +22,20 @@ import {
   Star,
   X,
 } from "lucide-react";
-import { useClipboardStore } from "@/stores/clipboardStore";
+import { commands } from "@/bindings";
+import type { UnifiedOutputResult } from "@/bindings";
+import { useUnifiedHistoryStore } from "@/stores/unifiedHistoryStore";
+import {
+  useUnifiedOutputStore,
+  outputNeedsAcknowledgement,
+  type OutputAction,
+} from "@/stores/unifiedOutputStore";
+import {
+  useSharedClipboard,
+  useHistoryImage,
+  type OverlayHistoryItem,
+} from "./useSharedClipboard";
 import type {
-  ClipboardItem,
   ClipboardSettings,
   ClipboardStats,
   ClipboardContentTypeFilter,
@@ -36,7 +48,6 @@ import {
 } from "@/components/clipboard/utils";
 import "./ClipboardOverlay.css";
 
-const APP_NAME = "HANDY";
 type OverlayContentFilter = "all" | "text" | "image" | "file";
 type OverlayPanel = "list" | "help" | "about" | "settings";
 const COPY_FEEDBACK_TIMEOUT_MS = 1500;
@@ -99,7 +110,7 @@ const matchesWholeWord = (
 };
 
 const itemMatchesFilter = (
-  item: ClipboardItem,
+  item: OverlayHistoryItem,
   contentFilter: OverlayContentFilter,
 ) => {
   if (contentFilter === "all") return true;
@@ -113,7 +124,7 @@ const getDefaultItemTitle = (value: string) =>
   Array.from(value.replace(/\s+/g, " ").trim()).slice(0, 6).join("");
 
 const itemMatchesSearch = (
-  item: ClipboardItem,
+  item: OverlayHistoryItem,
   query: string,
   caseSensitive: boolean,
   wholeWord: boolean,
@@ -139,16 +150,6 @@ const itemMatchesSearch = (
   );
 };
 
-const getImageUrl = (path?: string) => {
-  if (!path) return null;
-
-  try {
-    return convertFileSrc(path);
-  } catch {
-    return null;
-  }
-};
-
 const formatClipboardTimestamp = (value: string) => {
   const date = new Date(value);
 
@@ -167,29 +168,49 @@ const formatClipboardTimestamp = (value: string) => {
 
 const ClipboardOverlay: React.FC = () => {
   const { t } = useTranslation();
-  const items = useClipboardStore((s) => s.items);
-  const itemOrder = useClipboardStore((s) => s.itemOrder);
-  const searchQuery = useClipboardStore((s) => s.searchQuery);
-  const initialized = useClipboardStore((s) => s.initialized);
-  const initialize = useClipboardStore((s) => s.initialize);
-  const search = useClipboardStore((s) => s.search);
-  const toggleFavorite = useClipboardStore((s) => s.toggleFavorite);
-  const togglePin = useClipboardStore((s) => s.togglePin);
-  const updateTitle = useClipboardStore((s) => s.updateTitle);
-  const deleteItem = useClipboardStore((s) => s.deleteItem);
-  const clearHistory = useClipboardStore((s) => s.clearHistory);
-  const settings = useClipboardStore((s) => s.settings);
-  const stats = useClipboardStore((s) => s.stats);
-  const updateSettings = useClipboardStore((s) => s.updateSettings);
-  const loadItems = useClipboardStore((s) => s.loadItems);
-  const loadFavorites = useClipboardStore((s) => s.loadFavorites);
-  const loadMore = useClipboardStore((s) => s.loadMore);
-  const hasMore = useClipboardStore((s) => s.hasMore);
-  const isLoading = useClipboardStore((s) => s.isLoading);
-  const isSearching = useClipboardStore((s) => s.isSearching);
-
-  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
-  const [copiedId, setCopiedId] = useState<number | null>(null);
+  const {
+    items: sharedItems,
+    settings,
+    stats,
+    error,
+    mutate,
+    clearHistory,
+    updateSettings,
+  } = useSharedClipboard();
+  const history = useUnifiedHistoryStore();
+  const output = useUnifiedOutputStore();
+  const [searchQuery, setSearchQuery] = useState("");
+  const search = useCallback(
+    (query: string, _filter?: ClipboardContentTypeFilter) =>
+      setSearchQuery(query),
+    [],
+  );
+  const toggleFavorite = (id: string) =>
+    mutate(id, {
+      starred: !sharedItems.find((item) => item.id === id)?.is_favorite,
+    });
+  const togglePin = (id: string) =>
+    mutate(id, {
+      pinned: !sharedItems.find((item) => item.id === id)?.is_pinned,
+    });
+  const updateTitle = (id: string, title: string) =>
+    mutate(id, { title: title || null, clear_title: !title });
+  const [deleteCandidate, setDeleteCandidate] =
+    useState<OverlayHistoryItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const deleteItem = (id: string) => {
+    setPreviewHeld(false);
+    setDeleteCandidate(sharedItems.find((item) => item.id === id) ?? null);
+  };
+  const { hasMore, loading: isLoading } = history;
+  const isSearching = isLoading;
+  const loadMore = useCallback(
+    () => useUnifiedHistoryStore.getState().load(true),
+    [],
+  );
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [contentFilter, setContentFilter] =
     useState<OverlayContentFilter>("all");
   const [favoritesOnly, setFavoritesOnly] = useState(false);
@@ -201,51 +222,31 @@ const ClipboardOverlay: React.FC = () => {
   const overlayRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const copyInFlightRef = useRef<Set<number>>(new Set());
   const copyFeedbackTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!initialized) initialize();
-  }, [initialized, initialize]);
-
-  useEffect(() => {
-    if (!initialized) return;
-
-    const overlayContentType = contentFilter as ClipboardContentTypeFilter;
-    if (searchQuery.trim()) {
-      void search(searchQuery, overlayContentType);
-      return;
-    }
-    if (favoritesOnly) {
-      void loadFavorites(overlayContentType);
-    } else {
-      void loadItems(true, {
-        contentType: overlayContentType,
-        favoriteOnly: false,
-      });
-    }
-  }, [
-    contentFilter,
-    favoritesOnly,
-    initialized,
-    loadFavorites,
-    loadItems,
-    search,
-    searchQuery,
-  ]);
+    history.setFilters({
+      source: "all",
+      search: searchQuery,
+      starredOnly: favoritesOnly,
+      contentType:
+        contentFilter === "file"
+          ? "files"
+          : contentFilter === "text"
+            ? "all"
+            : contentFilter,
+    });
+  }, [history.setFilters, searchQuery, favoritesOnly, contentFilter]);
 
   useEffect(() => {
     overlayRef.current?.focus();
   }, []);
 
   const filteredItems = useMemo(() => {
-    const orderedItems = itemOrder
-      .map((id) => items[id])
-      .filter(Boolean)
-      .sort((left, right) => {
-        if (left.is_pinned === right.is_pinned) return 0;
-        return left.is_pinned ? -1 : 1;
-      });
+    const orderedItems = [...sharedItems].sort((left, right) => {
+      if (left.is_pinned === right.is_pinned) return 0;
+      return left.is_pinned ? -1 : 1;
+    });
 
     return orderedItems.filter(
       (item) =>
@@ -257,8 +258,7 @@ const ClipboardOverlay: React.FC = () => {
     caseSensitive,
     contentFilter,
     favoritesOnly,
-    itemOrder,
-    items,
+    sharedItems,
     searchQuery,
     wholeWord,
   ]);
@@ -324,7 +324,7 @@ const ClipboardOverlay: React.FC = () => {
     }
   }, [hasMore, isLoading, isSearching, loadMore]);
 
-  const showCopyFeedback = useCallback((id: number) => {
+  const showCopyFeedback = useCallback((id: string) => {
     if (copyFeedbackTimeoutRef.current !== null) {
       window.clearTimeout(copyFeedbackTimeoutRef.current);
     }
@@ -345,75 +345,119 @@ const ClipboardOverlay: React.FC = () => {
     [],
   );
 
-  const copyOverlayItem = useCallback(async (item: ClipboardItem) => {
-    await invoke("copy_clipboard_to_system", { id: item.id });
-  }, []);
-
-  const handleCopy = useCallback(
-    async (item: ClipboardItem) => {
-      if (copyInFlightRef.current.has(item.id)) return;
-
-      copyInFlightRef.current.add(item.id);
-      showCopyFeedback(item.id);
-      try {
-        await copyOverlayItem(item);
-      } catch {
-        setCopiedId((currentId) => (currentId === item.id ? null : currentId));
-      } finally {
-        copyInFlightRef.current.delete(item.id);
-      }
-    },
-    [copyOverlayItem, showCopyFeedback],
-  );
-
   const hideAfterConfirm = useCallback(() => {
-    if (windowPinned) return;
-
-    void invoke("hide_clipboard_overlay").catch(() => undefined);
+    if (!windowPinned)
+      void invoke("hide_clipboard_overlay").catch(() =>
+        setFeedback("unifiedHistory.feedback.failed"),
+      );
   }, [windowPinned]);
 
-  const handleConfirmItem = useCallback(
-    (item: ClipboardItem) => {
+  const performOutput = useCallback(
+    async (
+      item: OverlayHistoryItem,
+      action: OutputAction,
+      plainText = false,
+      receiptOnly = false,
+    ) => {
       setSelectedItemId(item.id);
-      void handleCopy(item);
-      hideAfterConfirm();
+      const attempt = useUnifiedOutputStore
+        .getState()
+        .begin(item.id, item.original.revision, action, receiptOnly);
+      if (!attempt) {
+        setFeedback("unifiedHistory.feedback.uncertain");
+        return;
+      }
+      setFeedback("unifiedHistory.loading");
+      let status:
+        | "confirmed"
+        | "dispatched"
+        | "pending_target"
+        | "uncertain"
+        | "rejected"
+        | "failed" = "uncertain";
+      try {
+        let receipt: UnifiedOutputResult | null;
+        if (receiptOnly) {
+          const result = await commands.getUnifiedOutputReceipt(
+            attempt.operationId,
+          );
+          if (result.status === "error") throw new Error(result.error);
+          receipt = result.data;
+        } else if (plainText) {
+          receipt = await invoke<UnifiedOutputResult>(
+            "copy_unified_history_item_as_text",
+            {
+              itemId: item.id,
+              expectedRevision: attempt.revision,
+              operationId: attempt.operationId,
+            },
+          );
+        } else {
+          const result = await (
+            action === "copy"
+              ? commands.copyUnifiedHistoryItem
+              : commands.insertUnifiedHistoryItem
+          )(item.id, attempt.revision, attempt.operationId);
+          if (result.status === "error") throw new Error(result.error);
+          receipt = result.data;
+        }
+        if (receipt && receipt.operation_id === attempt.operationId) {
+          switch (receipt.status) {
+            case "confirmed":
+            case "dispatched":
+            case "pending_target":
+            case "uncertain":
+            case "rejected":
+            case "failed":
+              status = receipt.status;
+          }
+        }
+      } catch {
+        status = "uncertain";
+      }
+      useUnifiedOutputStore.getState().finish(attempt, status);
+      setFeedback(
+        status === "confirmed"
+          ? action === "copy"
+            ? "unifiedHistory.feedback.copied"
+            : "unifiedHistory.feedback.inserted"
+          : `unifiedHistory.feedback.${status}`,
+      );
+      if (status === "confirmed") {
+        showCopyFeedback(item.id);
+        hideAfterConfirm();
+      }
     },
-    [handleCopy, hideAfterConfirm],
+    [hideAfterConfirm, showCopyFeedback],
+  );
+
+  const handleConfirmItem = useCallback(
+    (item: OverlayHistoryItem) => {
+      if (!settings) {
+        setFeedback("unifiedHistory.feedback.failed");
+        return;
+      }
+      void performOutput(
+        item,
+        settings.confirm_mode === "paste" ? "insert" : "copy",
+      );
+    },
+    [performOutput, settings],
   );
 
   const handleConfirmItemAsPlainText = useCallback(
-    (item: ClipboardItem) => {
-      if (item.content_type === "image") {
-        handleConfirmItem(item);
-        return;
-      }
-
-      const text =
-        item.content_type === "file"
-          ? getClipboardFilePaths(item).join("\n")
-          : getClipboardItemBodyText(item);
-
-      if (!text) {
-        handleConfirmItem(item);
-        return;
-      }
-
-      setSelectedItemId(item.id);
-      showCopyFeedback(item.id);
-      void invoke("copy_clipboard_content_to_system", {
-        contentType: "text",
-        text,
-        imagePath: null,
-      }).catch(() => {
-        setCopiedId((currentId) => (currentId === item.id ? null : currentId));
-      });
-      hideAfterConfirm();
+    (item: OverlayHistoryItem) => {
+      void performOutput(item, "copy", item.content_type !== "image");
     },
-    [handleConfirmItem, hideAfterConfirm, showCopyFeedback],
+    [performOutput],
   );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (deleteCandidate) {
+        e.preventDefault();
+        return;
+      }
       const isEditableTarget = isEditableKeyboardTarget(e.target);
 
       switch (e.key) {
@@ -574,6 +618,7 @@ const ClipboardOverlay: React.FC = () => {
       toggleFavorite,
       togglePin,
       deleteItem,
+      deleteCandidate,
       search,
       searchQuery,
       activePanel,
@@ -608,7 +653,7 @@ const ClipboardOverlay: React.FC = () => {
     if (selectedItemId === null) return;
 
     const selected = listRef.current?.querySelector<HTMLElement>(
-      `[data-clipboard-item-id="${selectedItemId}"]`,
+      `[data-clipboard-item-id="${CSS.escape(selectedItemId)}"]`,
     );
     selected?.scrollIntoView({ block: "nearest" });
   }, [selectedItemId, filteredItemIdKey]);
@@ -627,7 +672,9 @@ const ClipboardOverlay: React.FC = () => {
           data-tauri-drag-region
           onMouseDown={handleStartDrag}
         >
-          <div className="clipboard-overlay-brand">{APP_NAME}</div>
+          <div className="clipboard-overlay-brand">
+            {t("unifiedHistory.heading")}
+          </div>
           <div
             className="clipboard-overlay-window-actions"
             onMouseDown={(event) => event.stopPropagation()}
@@ -681,6 +728,144 @@ const ClipboardOverlay: React.FC = () => {
           </div>
         </div>
 
+        {(error || feedback) && (
+          <div role="status">{t(error ?? feedback ?? "")}</div>
+        )}
+        {deleteCandidate && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 50,
+              display: "grid",
+              placeItems: "center",
+              background: "rgba(0,0,0,0.65)",
+              padding: 24,
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Escape" && !deleting) {
+                setDeleteCandidate(null);
+                overlayRef.current?.focus();
+              }
+              if (event.key === "Tab") {
+                const buttons =
+                  event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                    "button:not(:disabled)",
+                  );
+                if (!buttons.length) {
+                  event.preventDefault();
+                  return;
+                }
+                if (event.shiftKey && document.activeElement === buttons[0]) {
+                  event.preventDefault();
+                  buttons[buttons.length - 1].focus();
+                } else if (
+                  !event.shiftKey &&
+                  document.activeElement === buttons[buttons.length - 1]
+                ) {
+                  event.preventDefault();
+                  buttons[0].focus();
+                }
+              }
+            }}
+          >
+            <div
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="delete-record-title"
+              aria-describedby="delete-record-description"
+              style={{
+                background: "var(--color-mid-gray, #282828)",
+                color: "var(--color-text, white)",
+                borderRadius: 16,
+                padding: 20,
+              }}
+            >
+              <strong id="delete-record-title">
+                {t("settings.clipboard.overlay.deleteRecordTitle")}
+              </strong>
+              <p id="delete-record-description">
+                {t("settings.clipboard.overlay.deleteRecordDescription")}
+              </p>
+              <button
+                autoFocus
+                disabled={deleting}
+                onClick={() => {
+                  setDeleteCandidate(null);
+                  overlayRef.current?.focus();
+                }}
+              >
+                {t("unifiedHistory.cancel")}
+              </button>
+              <button
+                disabled={deleting}
+                onClick={async () => {
+                  setDeleting(true);
+                  await mutate(
+                    deleteCandidate.id,
+                    undefined,
+                    deleteCandidate.original,
+                  );
+                  setDeleting(false);
+                  setDeleteCandidate(null);
+                  overlayRef.current?.focus();
+                }}
+              >
+                {t("settings.clipboard.overlay.deleteRecordConfirm")}
+              </button>
+            </div>
+          </div>
+        )}
+        {activePanel === "list" && selectedItem && (
+          <div className="clipboard-overlay-controls">
+            {(["copy", "insert"] as const).map((action) => {
+              const attempt = Object.values(output.attempts).find(
+                (value) =>
+                  value.itemId === selectedItem.id && value.action === action,
+              );
+              return (
+                <React.Fragment key={action}>
+                  <button
+                    disabled={
+                      Object.values(output.attempts).some(
+                        (value) => value.status === "inflight",
+                      ) ||
+                      outputNeedsAcknowledgement(attempt) ||
+                      output.storageFailed
+                    }
+                    onClick={() => void performOutput(selectedItem, action)}
+                  >
+                    {t(`unifiedHistory.${action}`)}
+                  </button>
+                  {outputNeedsAcknowledgement(attempt) && (
+                    <>
+                      <button
+                        onClick={() =>
+                          void performOutput(selectedItem, action, false, true)
+                        }
+                      >
+                        {t("unifiedHistory.checkOutputReceipt")}
+                      </button>
+                      <button
+                        onClick={() => {
+                          output.acknowledge(selectedItem.id, action);
+                          setFeedback(null);
+                        }}
+                      >
+                        {t(
+                          action === "copy"
+                            ? "unifiedHistory.allowAnotherCopy"
+                            : "unifiedHistory.allowAnotherInsert",
+                        )}
+                      </button>
+                    </>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </div>
+        )}
         {activePanel === "list" ? (
           <>
             <div className="clipboard-overlay-controls">
@@ -814,6 +999,11 @@ const ClipboardOverlay: React.FC = () => {
                   />
                 ))
               )}
+              {hasMore && (
+                <button disabled={isLoading} onClick={() => void loadMore()}>
+                  {t("unifiedHistory.loadMore")}
+                </button>
+              )}
             </div>
 
             <div className="clipboard-overlay-bottom-fade" />
@@ -838,14 +1028,14 @@ const ClipboardOverlay: React.FC = () => {
   );
 };
 
-const OverlayQuickPreview: React.FC<{ item: ClipboardItem }> = ({ item }) => {
+const OverlayQuickPreview: React.FC<{ item: OverlayHistoryItem }> = ({
+  item,
+}) => {
   const { t } = useTranslation();
   const [imageError, setImageError] = useState(false);
   const itemText = getClipboardItemBodyText(item);
-  const imageUrl =
-    item.content_type === "image" && item.image_path && !imageError
-      ? getImageUrl(item.image_path)
-      : null;
+  const resolvedImage = useHistoryImage(item);
+  const imageUrl = imageError ? null : resolvedImage;
   const title = item.title?.trim() || getClipboardItemLabel(t, item);
   const typeLabel = getClipboardTypeLabel(t, item.content_type);
 
@@ -872,7 +1062,7 @@ const OverlayQuickPreview: React.FC<{ item: ClipboardItem }> = ({ item }) => {
 };
 
 interface OverlayItemProps {
-  item: ClipboardItem;
+  item: OverlayHistoryItem;
   isSelected: boolean;
   isCopied: boolean;
   onToggleFavorite: () => void;
@@ -989,6 +1179,7 @@ const OverlayPanelView: React.FC<OverlayPanelViewProps> = ({
             </div>
           </div>
 
+          <p>{t("settings.clipboard.overlay.clipboardOnlyScope")}</p>
           <div className="clipboard-overlay-stats-grid">
             <span>{stats?.total_items ?? 0}</span>
             <span>{stats?.favorites_count ?? 0}</span>
@@ -1104,10 +1295,8 @@ const OverlayItem: React.FC<OverlayItemProps> = ({
     (item.is_favorite
       ? derivedTitle || getDefaultItemTitle(itemText)
       : derivedTitle);
-  const imageUrl =
-    item.content_type === "image" && !imageError
-      ? getImageUrl(item.image_path)
-      : null;
+  const resolvedImage = useHistoryImage(item);
+  const imageUrl = imageError ? null : resolvedImage;
   const isLongItem = itemText.length > 56;
   const shouldShowTitleLine =
     isEditingTitle || item.is_favorite || item.content_type === "file";
@@ -1211,6 +1400,9 @@ const OverlayItem: React.FC<OverlayItemProps> = ({
         <p className="clipboard-overlay-item-text">{itemText}</p>
         <div className="clipboard-overlay-item-meta">
           <span className="clipboard-overlay-item-index">{index + 1}</span>
+          {item.original.source_kind === "voice" && (
+            <Mic aria-label={t("unifiedHistory.sources.voice")} size={12} />
+          )}
           <span>{formatClipboardTimestamp(item.created_at)}</span>
         </div>
       </div>

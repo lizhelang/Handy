@@ -1,6 +1,11 @@
 import type { TFunction } from "i18next";
 import type { ClipboardItem } from "@/lib/types/clipboard";
 
+type ClipboardDisplayItem = Pick<
+  ClipboardItem,
+  "content_type" | "full_text" | "content_preview"
+>;
+
 const imagePreviewPattern = /^Image\s+(\d+)x(\d+)$/i;
 
 const normalizeStoredFilePath = (value: string) => value.trim();
@@ -60,7 +65,7 @@ export function getClipboardTypeLabel(
   }
 }
 
-export function getClipboardFilePaths(item: ClipboardItem): string[] {
+export function getClipboardFilePaths(item: ClipboardDisplayItem): string[] {
   if (item.content_type !== "file") {
     return [];
   }
@@ -85,7 +90,7 @@ export function getClipboardFilePaths(item: ClipboardItem): string[] {
   return [];
 }
 
-export function getClipboardItemBodyText(item: ClipboardItem): string {
+export function getClipboardItemBodyText(item: ClipboardDisplayItem): string {
   const filePaths = getClipboardFilePaths(item);
   if (filePaths.length > 0) {
     return filePaths.join("\n");
@@ -96,7 +101,7 @@ export function getClipboardItemBodyText(item: ClipboardItem): string {
 
 export function getClipboardItemLabel(
   t: TFunction,
-  item: ClipboardItem,
+  item: ClipboardDisplayItem,
 ): string {
   if (item.content_type === "file") {
     const filePaths = getClipboardFilePaths(item);

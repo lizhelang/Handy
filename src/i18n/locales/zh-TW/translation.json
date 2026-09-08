@@ -4,7 +4,7 @@
     "allowAnotherCopy": "我已檢查剪貼簿，允許再次複製",
     "allowAnotherInsert": "我已檢查結果，允許再次插入",
     "previewHint": "Select a history item to preview. Double-click to insert.",
-    "heading": "History",
+    "heading": "剪貼歷史",
     "refresh": "Refresh",
     "search": "Search voice and copied content",
     "sourceFilter": "Source",
@@ -30,7 +30,7 @@
     "pin": "Pin",
     "unpin": "Unpin",
     "unknownSource": "Source unknown",
-    "entries": "History entries",
+    "entries": "剪貼歷史",
     "preview": "Preview",
     "closePreview": "Close preview",
     "loading": "Loading…",
@@ -77,14 +77,14 @@
     "quit": "結束",
     "cancel": "取消",
     "secureInputWarning": "⚠ 快捷鍵被 Secure Input 阻擋",
-    "clipboardHistory": "剪貼簿歷史"
+    "clipboardHistory": "剪貼歷史"
   },
   "sidebar": {
     "general": "一般",
     "models": "模型",
     "advanced": "進階",
     "postProcessing": "後處理",
-    "history": "歷史紀錄",
+    "history": "剪貼歷史",
     "debug": "偵錯",
     "about": "關於",
     "clipboard": "剪貼歷史"
@@ -545,7 +545,7 @@
       }
     },
     "history": {
-      "title": "歷史紀錄",
+      "title": "剪貼歷史",
       "openFolder": "開啟錄音資料夾",
       "loading": "載入歷史紀錄中...",
       "empty": "還沒有轉錄紀錄。開始錄製以建立您的歷史紀錄！",
@@ -727,7 +727,7 @@
     },
     "clipboard": {
       "title": "剪貼歷史",
-      "searchPlaceholder": "搜尋剪貼簿歷史...",
+      "searchPlaceholder": "搜尋剪貼歷史...",
       "filterAll": "全部",
       "filterText": "文字",
       "filterImage": "圖片",
@@ -785,7 +785,7 @@
         "helpFavorite": "收藏所選項目",
         "helpDelete": "刪除所選項目",
         "helpEscape": "清空搜尋或離開面板",
-        "aboutCopy": "Inputia 剪貼簿管理器，採用類似 Ropy 的互動風格，並連接到 Inputia 本機剪貼簿歷史。",
+        "aboutCopy": "Inputia 剪貼歷史：保留 Ropy 快速召回體驗，集中檢視語音與複製內容。",
         "editTitle": "編輯標題",
         "titlePlaceholder": "新增標題",
         "pinToTop": "置頂視窗",
@@ -800,7 +800,11 @@
         "helpPlainTextCopy": "以純文字複製",
         "helpPin": "置頂所選項目",
         "helpPreview": "按住預覽所選項目",
-        "fileCount": "共 {{count}} 項"
+        "fileCount": "共 {{count}} 項",
+        "clipboardOnlyScope": "以下統計與清空僅針對複製來源，語音記錄會保留。",
+        "deleteRecordTitle": "僅刪除歷史記錄？",
+        "deleteRecordDescription": "僅刪除這條歷史記錄；錄音、圖片附件仍保留在本機，原始檔案不會刪除。",
+        "deleteRecordConfirm": "僅刪除記錄"
       }
     }
   },

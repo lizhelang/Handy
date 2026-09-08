@@ -272,7 +272,10 @@ pub enum MenuCommand {
 impl MenuCommand {
     /// 录音时仍可查看历史/设置；仅引擎变更和退出与采集冲突。
     pub fn allowed_while_busy(&self) -> bool {
-        !matches!(self, Self::UnloadModel | Self::SelectModel { .. } | Self::QuitService)
+        !matches!(
+            self,
+            Self::UnloadModel | Self::SelectModel { .. } | Self::QuitService
+        )
     }
 }
 
@@ -325,7 +328,6 @@ pub enum MenuReply {
         code: VoiceReplyError,
     },
 }
-
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]

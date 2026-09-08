@@ -159,7 +159,7 @@ enum InputiaVoiceInputLauncher {
         } else {
           NSLog("inputia_unified_voice_session_terminal phase=%@", view.phase)
           connection.close(); unifiedConnection = nil; unifiedSession = nil
-          DispatchQueue.main.async { completion(view.phase == "pending_target" ? "转写已保存到统一历史，结果待插入。" : "语音会话已结束。") }
+          DispatchQueue.main.async { completion(view.phase == "pending_target" ? "转写已保存到剪贴历史，结果待插入。" : "语音会话已结束。") }
         }
       } catch {
         connection.close(); unifiedConnection = nil; unifiedSession = nil

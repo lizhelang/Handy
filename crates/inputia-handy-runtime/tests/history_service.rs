@@ -146,6 +146,36 @@ fn background_service_combines_real_sources_and_notifies_revisions() {
         inputia_handy_runtime::output_ledger::OutputState::Uncertain
     );
     assert_eq!(restarted.query(HistoryQuery::default()).unwrap().len(), 1);
+    let remaining = restarted.query(HistoryQuery::default()).unwrap().remove(0);
+    assert!(restarted
+        .delete_item(
+            remaining.item_id.clone(),
+            remaining.revision + 1,
+            "stale-delete".into()
+        )
+        .is_err());
+    assert!(restarted
+        .delete_item(
+            remaining.item_id.clone(),
+            remaining.revision,
+            "delete-final".into()
+        )
+        .unwrap());
+    assert!(restarted
+        .delete_item(
+            remaining.item_id.clone(),
+            remaining.revision,
+            "delete-final".into()
+        )
+        .unwrap());
+    assert!(restarted
+        .delete_item(
+            "foreign-item".into(),
+            remaining.revision,
+            "delete-final".into()
+        )
+        .is_err());
+    assert!(restarted.query(HistoryQuery::default()).unwrap().is_empty());
 }
 
 #[test]

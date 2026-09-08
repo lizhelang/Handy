@@ -81,6 +81,32 @@ impl SourcePump {
         )?)
     }
 
+    pub fn delete_record(
+        &mut self,
+        record_id: &str,
+        revision: u64,
+        operation_id: &str,
+    ) -> Result<crate::source::MutationResult, SyncError> {
+        Ok(self.outbox.delete_record(
+            &mut self.connection,
+            self.source,
+            record_id,
+            revision,
+            operation_id,
+        )?)
+    }
+
+    pub fn delete_receipt(
+        &self,
+        item_id: &str,
+        revision: u64,
+        operation_id: &str,
+    ) -> Result<Option<bool>, SyncError> {
+        Ok(self
+            .outbox
+            .delete_receipt(&self.connection, item_id, revision, operation_id)?)
+    }
+
     /// 每次处理最多 2000 事件，允许外层服务公平处理 UI 和停止请求。
     pub fn sync_batch(&mut self, store: &mut IntegrationStore) -> Result<SyncReport, SyncError> {
         self.sync_batch_before_apply(store, || {})

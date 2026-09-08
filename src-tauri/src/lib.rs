@@ -821,6 +821,8 @@ pub fn run(cli_args: CliArgs) {
             commands::integration::retranscribe_unified_history_item,
             commands::integration::insert_unified_history_item,
             commands::integration::copy_unified_history_item,
+            commands::integration::copy_unified_history_item_as_text,
+            commands::integration::delete_unified_history_item,
             commands::integration::update_unified_history_item,
             commands::integration::get_unified_history_asset,
             commands::integration::get_unified_terms,

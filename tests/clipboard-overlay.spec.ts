@@ -45,147 +45,239 @@ const mockItems: MockClipboardItem[] = [
   },
 ];
 
-async function installTauriMocks(page: Page) {
-  await page.addInitScript((items) => {
-    type InvokeRecord = { cmd: string; args?: Record<string, unknown> };
-    const records: InvokeRecord[] = [];
-    const callbacks = new Map<number, (payload: unknown) => void>();
-    let callbackId = 1;
-    const currentItems = (items as MockClipboardItem[]).map((item) => ({
-      ...item,
-    }));
+async function installTauriMocks(
+  page: Page,
+  status = "confirmed",
+  mode = "copy",
+) {
+  await page.addInitScript(
+    ({ items, status, mode }) => {
+      type InvokeRecord = { cmd: string; args?: Record<string, unknown> };
+      const records: InvokeRecord[] = [];
+      const callbacks = new Map<number, (payload: unknown) => void>();
+      let callbackId = 1;
+      const currentItems = (items as MockClipboardItem[]).map((item) => ({
+        ...item,
+      }));
 
-    Object.assign(window, {
-      __HANDY_PLAYWRIGHT_INVOKES__: records,
-    });
+      Object.assign(window, {
+        __HANDY_PLAYWRIGHT_INVOKES__: records,
+      });
 
-    Object.assign(window, {
-      __TAURI_EVENT_PLUGIN_INTERNALS__: {
-        unregisterListener: (_event: string, id: number) => {
-          callbacks.delete(id);
+      Object.assign(window, {
+        __TAURI_EVENT_PLUGIN_INTERNALS__: {
+          unregisterListener: (_event: string, id: number) => {
+            callbacks.delete(id);
+          },
         },
-      },
-      __TAURI_INTERNALS__: {
-        callbacks,
-        metadata: {
-          currentWindow: { label: "clipboard_overlay" },
-          currentWebview: { label: "clipboard_overlay" },
-        },
-        transformCallback: (
-          callback?: (payload: unknown) => void,
-          once = false,
-        ) => {
-          const id = callbackId++;
-          callbacks.set(id, (payload: unknown) => {
-            if (once) {
-              callbacks.delete(id);
+        __TAURI_INTERNALS__: {
+          callbacks,
+          metadata: {
+            currentWindow: { label: "clipboard_overlay" },
+            currentWebview: { label: "clipboard_overlay" },
+          },
+          transformCallback: (
+            callback?: (payload: unknown) => void,
+            once = false,
+          ) => {
+            const id = callbackId++;
+            callbacks.set(id, (payload: unknown) => {
+              if (once) {
+                callbacks.delete(id);
+              }
+              callback?.(payload);
+            });
+            return id;
+          },
+          unregisterCallback: (id: number) => {
+            callbacks.delete(id);
+          },
+          runCallback: (id: number, payload: unknown) => {
+            callbacks.get(id)?.(payload);
+          },
+          convertFileSrc: (filePath: string, protocol = "asset") =>
+            `${protocol}://localhost/${encodeURIComponent(filePath)}`,
+          invoke: async (cmd: string, args?: Record<string, unknown>) => {
+            records.push({ cmd, args });
+
+            if (cmd === "plugin:event|listen") {
+              return Number(args?.handler ?? 0);
             }
-            callback?.(payload);
-          });
-          return id;
-        },
-        unregisterCallback: (id: number) => {
-          callbacks.delete(id);
-        },
-        runCallback: (id: number, payload: unknown) => {
-          callbacks.get(id)?.(payload);
-        },
-        convertFileSrc: (filePath: string, protocol = "asset") =>
-          `${protocol}://localhost/${encodeURIComponent(filePath)}`,
-        invoke: async (cmd: string, args?: Record<string, unknown>) => {
-          records.push({ cmd, args });
-
-          if (cmd === "plugin:event|listen") {
-            return Number(args?.handler ?? 0);
-          }
-          if (cmd === "plugin:event|unlisten") {
-            return null;
-          }
-          if (cmd === "get_clipboard_stats") {
-            return {
-              total_items: currentItems.length,
-              favorites_count: currentItems.filter((item) => item.is_favorite)
-                .length,
-              pinned_count: currentItems.filter((item) => item.is_pinned)
-                .length,
-              total_size_bytes: currentItems.reduce(
-                (total, item) => total + item.size_bytes,
-                0,
-              ),
-            };
-          }
-          if (cmd === "get_clipboard_settings") {
-            return {
-              max_records: 500,
-              hotkey: "Alt+Shift+Space",
-              confirm_mode: "copy",
-            };
-          }
-          if (cmd === "get_clipboard_items") {
-            return { items: currentItems, has_more: false };
-          }
-          if (cmd === "search_clipboard") {
-            const query = String(args?.query ?? "").toLowerCase();
-            return currentItems.filter((item) =>
+            if (cmd === "plugin:event|unlisten") {
+              return null;
+            }
+            if (cmd === "get_clipboard_stats") {
+              return {
+                total_items: currentItems.length,
+                favorites_count: currentItems.filter((item) => item.is_favorite)
+                  .length,
+                pinned_count: currentItems.filter((item) => item.is_pinned)
+                  .length,
+                total_size_bytes: currentItems.reduce(
+                  (total, item) => total + item.size_bytes,
+                  0,
+                ),
+              };
+            }
+            if (cmd === "get_clipboard_settings") {
+              return {
+                max_records: 500,
+                hotkey: "Alt+Shift+Space",
+                confirm_mode: mode,
+              };
+            }
+            if (cmd === "get_unified_history") {
+              const query = args?.query as {
+                search?: string;
+                content_type?: string;
+                starred_only?: boolean;
+              };
+              return currentItems
+                .map((item) => ({
+                  item_id: `clipboard:store:${item.id}`,
+                  store_id: "store",
+                  record_id: String(item.id),
+                  revision: 3,
+                  source_kind: item.id === 101 ? "voice" : "clipboard",
+                  content_type:
+                    item.content_type === "file" ? "files" : item.content_type,
+                  text: item.full_text ?? null,
+                  title: item.title ?? null,
+                  starred: item.is_favorite,
+                  pinned: item.is_pinned,
+                  created_at_ms: Date.parse(item.created_at),
+                  asset_ref: item.id === 101 ? "recording:opaque" : null,
+                  source_app: item.source_app,
+                }))
+                .filter(
+                  (item) =>
+                    (!query.search ||
+                      item.text
+                        ?.toLowerCase()
+                        .includes(query.search.toLowerCase())) &&
+                    (!query.content_type ||
+                      item.content_type === query.content_type) &&
+                    (!query.starred_only || item.starred),
+                );
+            }
+            if (cmd === "update_unified_history_item") {
+              const item = currentItems.find(
+                (item) => `clipboard:store:${item.id}` === args?.itemId,
+              );
+              const patch = args?.patch as {
+                starred?: boolean;
+                pinned?: boolean;
+                title?: string;
+              };
+              if (item) {
+                if (patch.starred !== null)
+                  item.is_favorite = Boolean(patch.starred);
+                if (patch.pinned !== null)
+                  item.is_pinned = Boolean(patch.pinned);
+                if (patch.title !== null) item.title = patch.title;
+              }
+              return 4;
+            }
+            if (cmd === "delete_unified_history_item") {
+              const index = currentItems.findIndex(
+                (item) => `clipboard:store:${item.id}` === args?.itemId,
+              );
+              if (index >= 0) currentItems.splice(index, 1);
+              return true;
+            }
+            if (
               [
-                item.title,
-                item.content_preview,
-                item.full_text,
-                item.source_app,
-              ]
-                .filter(Boolean)
-                .join("\n")
-                .toLowerCase()
-                .includes(query),
-            );
-          }
-          if (cmd === "toggle_clipboard_favorite") {
-            const item = currentItems.find((entry) => entry.id === args?.id);
-            if (item) {
-              item.is_favorite = !item.is_favorite;
+                "copy_unified_history_item",
+                "insert_unified_history_item",
+                "copy_unified_history_item_as_text",
+              ].includes(cmd)
+            ) {
+              const persisted = JSON.parse(
+                localStorage.getItem("handy.unified-output-metadata.v1") ||
+                  "[]",
+              );
+              if (
+                !persisted.some(
+                  (entry: { operationId: string }) =>
+                    entry.operationId === args?.operationId,
+                )
+              )
+                throw new Error("Missing persisted UUID");
+              return { operation_id: args?.operationId, status };
             }
-            return null;
-          }
-          if (cmd === "toggle_clipboard_pin") {
-            const item = currentItems.find((entry) => entry.id === args?.id);
-            if (item) {
-              item.is_pinned = !item.is_pinned;
+            if (cmd === "get_unified_output_receipt")
+              return { operation_id: args?.operationId, status };
+            if (cmd === "get_clipboard_items") {
+              return { items: currentItems, has_more: false };
             }
-            return null;
-          }
-          if (cmd === "delete_clipboard_item") {
-            const index = currentItems.findIndex(
-              (entry) => entry.id === args?.id,
-            );
-            if (index >= 0) {
-              currentItems.splice(index, 1);
+            if (cmd === "search_clipboard") {
+              const query = String(args?.query ?? "").toLowerCase();
+              return currentItems.filter((item) =>
+                [
+                  item.title,
+                  item.content_preview,
+                  item.full_text,
+                  item.source_app,
+                ]
+                  .filter(Boolean)
+                  .join("\n")
+                  .toLowerCase()
+                  .includes(query),
+              );
             }
-            return null;
-          }
-          if (
-            cmd === "copy_clipboard_to_system" ||
-            cmd === "copy_clipboard_content_to_system" ||
-            cmd === "hide_clipboard_overlay" ||
-            cmd === "set_clipboard_overlay_pinned"
-          ) {
-            return null;
-          }
+            if (cmd === "update_unified_history_item") {
+              const item = currentItems.find((entry) => entry.id === args?.id);
+              if (item) {
+                item.is_favorite = !item.is_favorite;
+              }
+              return null;
+            }
+            if (cmd === "update_unified_history_item") {
+              const item = currentItems.find((entry) => entry.id === args?.id);
+              if (item) {
+                item.is_pinned = !item.is_pinned;
+              }
+              return null;
+            }
+            if (cmd === "delete_unified_history_item") {
+              const index = currentItems.findIndex(
+                (entry) => entry.id === args?.id,
+              );
+              if (index >= 0) {
+                currentItems.splice(index, 1);
+              }
+              return null;
+            }
+            if (
+              cmd === "copy_unified_history_item" ||
+              cmd === "copy_unified_history_item_as_text" ||
+              cmd === "hide_clipboard_overlay" ||
+              cmd === "set_clipboard_overlay_pinned"
+            ) {
+              return null;
+            }
 
-          throw new Error(`Unhandled mock invoke: ${cmd}`);
+            throw new Error(`Unhandled mock invoke: ${cmd}`);
+          },
         },
-      },
-    });
-  }, mockItems);
+      });
+    },
+    { items: mockItems, status, mode },
+  );
 }
 
-async function openClipboardOverlay(page: Page) {
+async function openClipboardOverlay(
+  page: Page,
+  status = "confirmed",
+  mode = "copy",
+) {
   const consoleErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") {
       consoleErrors.push(message.text());
     }
   });
-  await installTauriMocks(page);
+  await installTauriMocks(page, status, mode);
   await page.setViewportSize({ width: 400, height: 550 });
   await page.goto("/src/overlay/clipboard/index.html");
   await expect(page.locator(".clipboard-overlay")).toBeVisible();
@@ -294,6 +386,7 @@ test.describe("clipboard overlay", () => {
 
     const controlsFit = await page
       .locator(".clipboard-overlay-controls")
+      .last()
       .evaluate((node) => node.scrollWidth === node.clientWidth);
     expect(controlsFit).toBe(true);
   });
@@ -304,7 +397,7 @@ test.describe("clipboard overlay", () => {
     await openClipboardOverlay(page);
     await page.getByTitle(/files/i).click();
 
-    const item = page.locator('[data-clipboard-item-id="202"]');
+    const item = page.locator('[data-clipboard-item-id="clipboard:store:202"]');
     await expect(item.locator(".clipboard-overlay-item-title")).toContainText(
       "Videos",
     );
@@ -337,7 +430,7 @@ test.describe("clipboard overlay", () => {
     await page.keyboard.press("1");
 
     const commands = await invokeCommands(page);
-    expect(commands).toContain("copy_clipboard_to_system");
+    expect(commands).toContain("copy_unified_history_item");
     expect(commands).toContain("hide_clipboard_overlay");
   });
 
@@ -348,10 +441,12 @@ test.describe("clipboard overlay", () => {
     await page.keyboard.press("p");
 
     const commands = await invokeCommands(page);
-    expect(commands).toContain("toggle_clipboard_pin");
+    expect(commands).toContain("update_unified_history_item");
     await expect(
       page
-        .locator('[data-clipboard-item-id="101"] .clipboard-overlay-pin-button')
+        .locator(
+          '[data-clipboard-item-id="clipboard:store:101"] .clipboard-overlay-pin-button',
+        )
         .first(),
     ).toHaveClass(/pinned/);
   });
@@ -363,10 +458,10 @@ test.describe("clipboard overlay", () => {
     await page.keyboard.press("f");
 
     const commands = await invokeCommands(page);
-    expect(commands).toContain("toggle_clipboard_favorite");
+    expect(commands).toContain("update_unified_history_item");
     await expect(
       page.locator(
-        '[data-clipboard-item-id="101"] .clipboard-overlay-star-button',
+        '[data-clipboard-item-id="clipboard:store:101"] .clipboard-overlay-star-button',
       ),
     ).toHaveClass(/favorited/);
   });
@@ -381,12 +476,12 @@ test.describe("clipboard overlay", () => {
     await page.keyboard.press("Shift+Enter");
 
     const plainTextCopy = (await invokeRecords(page)).find(
-      (record) => record.cmd === "copy_clipboard_content_to_system",
+      (record) => record.cmd === "copy_unified_history_item_as_text",
     );
     expect(plainTextCopy?.args).toMatchObject({
-      contentType: "text",
-      text: "Ropy parity text item",
-      imagePath: null,
+      itemId: "clipboard:store:101",
+      expectedRevision: 3,
+      operationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
   });
 
@@ -397,8 +492,14 @@ test.describe("clipboard overlay", () => {
 
     await page.keyboard.press("d");
 
+    await expect(page.getByRole("alertdialog")).toBeVisible();
+    expect(await invokeCommands(page)).not.toContain(
+      "delete_unified_history_item",
+    );
+    await page.getByRole("alertdialog").getByRole("button").last().click();
+
     const commands = await invokeCommands(page);
-    expect(commands).toContain("delete_clipboard_item");
+    expect(commands).toContain("delete_unified_history_item");
   });
 
   test("deletes the selected result when Delete is pressed", async ({
@@ -410,8 +511,14 @@ test.describe("clipboard overlay", () => {
 
     await page.keyboard.press("Delete");
 
+    await expect(page.getByRole("alertdialog")).toBeVisible();
+    expect(await invokeCommands(page)).not.toContain(
+      "delete_unified_history_item",
+    );
+    await page.getByRole("alertdialog").getByRole("button").last().click();
+
     const commands = await invokeCommands(page);
-    expect(commands).toContain("delete_clipboard_item");
+    expect(commands).toContain("delete_unified_history_item");
   });
 
   test("ignores item shortcuts while the search field is focused", async ({
@@ -429,10 +536,10 @@ test.describe("clipboard overlay", () => {
     await page.keyboard.press("Shift+Enter");
 
     const commands = await invokeCommands(page);
-    expect(commands).not.toContain("toggle_clipboard_pin");
-    expect(commands).not.toContain("toggle_clipboard_favorite");
-    expect(commands).not.toContain("copy_clipboard_to_system");
-    expect(commands).not.toContain("copy_clipboard_content_to_system");
+    expect(commands).not.toContain("update_unified_history_item");
+    expect(commands).not.toContain("update_unified_history_item");
+    expect(commands).not.toContain("copy_unified_history_item");
+    expect(commands).not.toContain("copy_unified_history_item_as_text");
     expect(commands).not.toContain("hide_clipboard_overlay");
     await expect(page.locator(".clipboard-overlay-preview")).toBeHidden();
   });
@@ -463,4 +570,167 @@ test.describe("clipboard overlay", () => {
 
     await expect(page.locator(".clipboard-overlay-preview")).toBeHidden();
   });
+});
+
+test("shared voice identity preserves recording attachment and explicit insert", async ({
+  page,
+}) => {
+  await openClipboardOverlay(page, "confirmed", "paste");
+  await page.locator('[data-clipboard-item-id="clipboard:store:101"]').click();
+  const records = await invokeRecords(page);
+  expect(
+    records.find((record) => record.cmd === "insert_unified_history_item")
+      ?.args,
+  ).toMatchObject({
+    itemId: "clipboard:store:101",
+    expectedRevision: 3,
+    operationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+  });
+  expect(
+    records.some((record) => record.cmd === "get_unified_history_asset"),
+  ).toBe(false);
+  expect(records.some((record) => record.cmd === "get_clipboard_items")).toBe(
+    false,
+  );
+});
+
+for (const status of ["dispatched", "uncertain", "future_status"]) {
+  test(`blocks replay and keeps window open for ${status}`, async ({
+    page,
+  }) => {
+    await openClipboardOverlay(page, status);
+    const item = page.locator('[data-clipboard-item-id="clipboard:store:101"]');
+    await item.click();
+    await expect(
+      page.getByRole("button", { name: "Check previous output receipt" }),
+    ).toBeVisible();
+    await item.click();
+    expect(
+      (await invokeCommands(page)).filter(
+        (cmd) => cmd === "copy_unified_history_item",
+      ),
+    ).toHaveLength(1);
+    expect(await invokeCommands(page)).not.toContain("hide_clipboard_overlay");
+    await page
+      .getByRole("button", { name: "Check previous output receipt" })
+      .click();
+    expect(await invokeCommands(page)).toContain("get_unified_output_receipt");
+    expect(
+      (await invokeCommands(page)).filter(
+        (cmd) => cmd === "copy_unified_history_item",
+      ),
+    ).toHaveLength(1);
+    await page
+      .getByRole("button", {
+        name: "I checked the clipboard; allow another copy",
+      })
+      .click();
+    await page.getByRole("button", { name: "Copy", exact: true }).click();
+    expect(
+      (await invokeCommands(page)).filter(
+        (cmd) => cmd === "copy_unified_history_item",
+      ),
+    ).toHaveLength(2);
+  });
+}
+
+test("cancelling record deletion never mutates or triggers underlying shortcuts", async ({
+  page,
+}) => {
+  await openClipboardOverlay(page);
+  await blurSearch(page);
+  await clearInvokes(page);
+  await page.keyboard.press("Delete");
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  for (const key of ["d", "f", "p", "1"]) await page.keyboard.press(key);
+  // 即使外部焦点移动，底层列表也不能执行快捷键。
+  await page.locator(".clipboard-overlay").focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Delete");
+  const commands = await invokeCommands(page);
+  expect(commands).not.toContain("delete_unified_history_item");
+  expect(commands).not.toContain("copy_unified_history_item");
+  expect(commands).not.toContain("update_unified_history_item");
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Cancel" })
+    .click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(
+    page.locator('[data-clipboard-item-id="clipboard:store:101"]'),
+  ).toBeVisible();
+  expect(await invokeCommands(page)).not.toContain(
+    "delete_unified_history_item",
+  );
+});
+
+test("pending target leaves the overlay open without success feedback", async ({
+  page,
+}) => {
+  await openClipboardOverlay(page, "pending_target", "paste");
+  await page.locator('[data-clipboard-item-id="clipboard:store:101"]').click();
+  await expect(page.getByRole("status")).toContainText(
+    "Waiting for a valid input target",
+  );
+  expect(await invokeCommands(page)).not.toContain("hide_clipboard_overlay");
+  await expect(page.locator(".clipboard-overlay-item.copied")).toHaveCount(0);
+});
+
+test("image preview resolves the managed asset instead of using the opaque reference", async ({
+  page,
+}) => {
+  await installTauriMocks(page);
+  await page.addInitScript(() => {
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (
+            cmd: string,
+            args?: Record<string, unknown>,
+          ) => Promise<unknown>;
+          convertFileSrc: (path: string) => string;
+        };
+      }
+    ).__TAURI_INTERNALS__;
+    const originalInvoke = internals.invoke;
+    internals.invoke = async (cmd, args) => {
+      if (cmd === "get_unified_history") {
+        return [
+          {
+            item_id: "clipboard:asset:image",
+            store_id: "asset",
+            record_id: "image",
+            revision: 9,
+            source_kind: "clipboard",
+            content_type: "image",
+            text: null,
+            title: null,
+            starred: false,
+            pinned: false,
+            created_at_ms: 1,
+            asset_ref: "opaque:must-not-be-a-path",
+            source_app: null,
+          },
+        ];
+      }
+      if (cmd === "get_unified_history_asset") {
+        if (
+          args?.itemId !== "clipboard:asset:image" ||
+          args?.expectedRevision !== 9
+        )
+          throw new Error("Wrong asset identity");
+        return "/managed/safe-image.png";
+      }
+      return originalInvoke(cmd, args);
+    };
+    internals.convertFileSrc = (path) => {
+      if (path !== "/managed/safe-image.png")
+        throw new Error("Opaque reference used as path");
+      return "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'/%3E";
+    };
+  });
+  await page.goto("/src/overlay/clipboard/index.html");
+  await expect(
+    page.locator(".clipboard-overlay-image-preview img"),
+  ).toHaveAttribute("src", /^data:image/);
 });

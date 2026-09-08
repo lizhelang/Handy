@@ -4,7 +4,7 @@
     "allowAnotherCopy": "I checked the clipboard; allow another copy",
     "allowAnotherInsert": "I checked the result; allow another insertion",
     "previewHint": "Select a history item to preview. Double-click to insert.",
-    "heading": "History",
+    "heading": "Clipboard history",
     "refresh": "Refresh",
     "search": "Search voice and copied content",
     "sourceFilter": "Source",
@@ -77,14 +77,14 @@
     "quit": "Quit",
     "cancel": "Cancel",
     "secureInputWarning": "⚠ Shortcuts blocked by Secure Input",
-    "clipboardHistory": "Clipboard History"
+    "clipboardHistory": "Clipboard history"
   },
   "sidebar": {
     "general": "General",
     "models": "Models",
     "advanced": "Advanced",
     "postProcessing": "Post Process",
-    "history": "History",
+    "history": "Clipboard history",
     "debug": "Debug",
     "about": "About",
     "clipboard": "Clipboard"
@@ -726,7 +726,7 @@
       }
     },
     "clipboard": {
-      "title": "Clipboard Manager",
+      "title": "Clipboard history",
       "searchPlaceholder": "Search clipboard history...",
       "filterAll": "All",
       "filterText": "Text",
@@ -785,7 +785,7 @@
         "helpFavorite": "Favorite selected item",
         "helpDelete": "Delete selected item",
         "helpEscape": "Clear search or leave panel",
-        "aboutCopy": "Inputia history, styled after Ropy and connected to Inputia's local clipboard history.",
+        "aboutCopy": "Inputia clipboard history: Ropy-style quick recall for voice and copied content.",
         "editTitle": "Edit title",
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
@@ -800,7 +800,11 @@
         "helpPlainTextCopy": "Copy as plain text",
         "helpPin": "Pin selected item",
         "helpPreview": "Hold to preview selected item",
-        "fileCount": "{{count}} items"
+        "fileCount": "{{count}} items",
+        "clipboardOnlyScope": "Statistics and clearing below apply only to copied content. Voice records are preserved.",
+        "deleteRecordTitle": "Delete only this history record?",
+        "deleteRecordDescription": "Only this history record will be deleted. Recordings and image attachments remain on this device; original files will not be deleted.",
+        "deleteRecordConfirm": "Delete record only"
       }
     }
   },
