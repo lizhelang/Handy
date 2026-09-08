@@ -23,3 +23,13 @@ Sidebar 中原 ClipboardSettings 页面仍存在，却由 clipboard_enabled 控�
 50 项完整前端回归通过，lint、翻译键一致性、Rust fmt 与相关前端格式检查通过。独立只读审查未发现本批入口/采集隐私/浮窗接线阻塞。控制中心与输入法候选均已使用专用本地身份构建、严格签名验证；控制中心包含 Qwen helper 的签名也通过检查，隔离 profile 自检未打开日常数据。原生操作验收仍未因构建通过而成立。
 
 本批不宣称完整共享输出、跨应用语音、图片文件插入、富文本原格式、迁移回滚及 P0–P6/A01–A12 全部完成。
+
+## 安装后的实际验证（北京时间 2026-09-09 05:03–05:06）
+
+实现提交 5520bf7d。只更新 /Applications/Inputia Candidate.app 和用户级 InputiaUnifiedCandidate.app，旧包与候选数据保存于上述构建根的 control-center-before-fixed.app、inputia-before-fixed.app、profile-before-fixed；三个数据库 quick_check 均为 ok。日常包和数据未修改，未从备份覆盖现用数据库。
+
+真实控制中心先显示新权限页，随后进入通用页。工具读取到两个实际 sidebar 入口：“历史记录”和“剪贴历史”。点击后者，原 ClipboardSettings 原生截图显示：0 条、0 B、搜索、来源筛选、排序、列表/网格切换、采集开关 off 与暂停提示；不是共享语音历史页换名。
+
+第一次操作浮窗按钮时界面已变化，工具拒绝失效编号，未继续按旧编号操作；刷新完整原生状态后重新进入“剪贴历史”，点击实际“打开快捷浮窗”按钮。真实 NSPanel（Clipboard）出现，截图/AX 显示 Ropy 风格快捷召回、文本/图片/文件过滤、收藏、编辑标题及语音来源标识。此证据来自安装后的真实 UI 控件，不是 mock 页面、直接底层 invoke 或注入最终文字。日志 21:05:55 UTC 为 Clipboard overlay window shown。
+
+验证后设置文件仍 clipboard_enabled=false、clipboard_hotkey_enabled=false。此次没有开启真实剪贴板监听，没有复制/插入用户正文或更改真实文稿。因为候选复制库为空，图片/文件实际采集与复制输出尚未验证；Inputia 系统菜单打开路径也不以控制中心按钮路径代替验收。浮窗保留打开供用户查看。
