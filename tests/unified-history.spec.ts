@@ -586,11 +586,11 @@ test("pagination retains unique results and requests the next offset", async ({
     h.emit();
   });
   await expect(
-    page.getByRole("list", { name: "History entries" }).locator("li"),
+    page.getByRole("list", { name: "History", exact: true }).locator("li"),
   ).toHaveCount(40);
   await page.getByRole("button", { name: "Load more" }).click();
   await expect(
-    page.getByRole("list", { name: "History entries" }).locator("li"),
+    page.getByRole("list", { name: "History", exact: true }).locator("li"),
   ).toHaveCount(45);
   await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
 });

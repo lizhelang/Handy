@@ -151,6 +151,14 @@ pub fn hide_clipboard_overlay(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 查看召回浮窗不等于开启采集；实际插入仍由既有目标校验保护。
+#[tauri::command]
+#[specta::specta]
+pub fn show_clipboard_overlay(app: AppHandle) -> Result<(), String> {
+    crate::overlay::show_clipboard_overlay(&app);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn get_clipboard_stats(

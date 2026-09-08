@@ -1,16 +1,24 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Trash2 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { ExternalLink, Trash2 } from "lucide-react";
 import { useClipboardStore } from "@/stores/clipboardStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { ClipboardStatsBar } from "./ClipboardStats";
 import { ClipboardToolbar } from "./ClipboardToolbar";
 import { ClipboardList } from "./ClipboardList";
 import { ClipboardGrid } from "./ClipboardGrid";
 import { ClipboardPreview } from "./ClipboardPreview";
+import { ClipboardExperimentalToggle } from "../settings/ClipboardExperimentalToggle";
 import { Button } from "../ui/Button";
+
+type ClipboardFeatureSettings = {
+  clipboard_enabled?: boolean;
+};
 
 export const ClipboardSettings: React.FC = () => {
   const { t } = useTranslation();
+  const appSettings = useSettingsStore((s) => s.settings);
   const initialized = useClipboardStore((s) => s.initialized);
   const viewMode = useClipboardStore((s) => s.viewMode);
   const previewItem = useClipboardStore((s) => s.previewItem);
@@ -24,6 +32,9 @@ export const ClipboardSettings: React.FC = () => {
 
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [keepPinned, setKeepPinned] = useState(true);
+  const clipboardCaptureEnabled = Boolean(
+    (appSettings as ClipboardFeatureSettings | null)?.clipboard_enabled,
+  );
 
   useEffect(() => {
     if (!initialized) {
@@ -36,6 +47,12 @@ export const ClipboardSettings: React.FC = () => {
     setShowClearConfirm(false);
   };
 
+  const handleOpenOverlay = () => {
+    void invoke("show_clipboard_overlay").catch((error) => {
+      console.error("Failed to show clipboard overlay:", error);
+    });
+  };
+
   return (
     <div className="max-w-5xl w-full mx-auto space-y-3">
       <div className="px-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -45,15 +62,35 @@ export const ClipboardSettings: React.FC = () => {
           </h2>
           <ClipboardStatsBar stats={stats} className="px-0 py-0" />
         </div>
-        <Button
-          onClick={() => setShowClearConfirm(true)}
-          variant="danger-ghost"
-          size="sm"
-          className="flex items-center gap-1.5 self-start sm:self-auto"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-          <span>{t("settings.clipboard.clearHistory")}</span>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <Button
+            onClick={handleOpenOverlay}
+            variant="secondary"
+            size="sm"
+            className="flex items-center gap-1.5"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            <span>{t("settings.clipboard.openOverlay")}</span>
+          </Button>
+          <Button
+            onClick={() => setShowClearConfirm(true)}
+            variant="danger-ghost"
+            size="sm"
+            className="flex items-center gap-1.5"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>{t("settings.clipboard.clearHistory")}</span>
+          </Button>
+        </div>
+      </div>
+
+      <div className="px-4 space-y-3">
+        <ClipboardExperimentalToggle descriptionMode="inline" grouped />
+        {!clipboardCaptureEnabled && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-text/70">
+            {t("settings.clipboard.capturePaused")}
+          </div>
+        )}
       </div>
 
       <div className="bg-background border border-mid-gray/20 rounded-lg overflow-visible">

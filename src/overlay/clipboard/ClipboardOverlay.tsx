@@ -673,7 +673,7 @@ const ClipboardOverlay: React.FC = () => {
           onMouseDown={handleStartDrag}
         >
           <div className="clipboard-overlay-brand">
-            {t("unifiedHistory.heading")}
+            {t("settings.clipboard.title")}
           </div>
           <div
             className="clipboard-overlay-window-actions"

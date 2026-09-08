@@ -40,13 +40,6 @@ interface SectionConfig {
   enabled: (settings: any) => boolean;
 }
 
-type ClipboardFeatureSettings =
-  | {
-      clipboard_enabled?: boolean;
-    }
-  | null
-  | undefined;
-
 export const SECTIONS_CONFIG = {
   general: {
     labelKey: "sidebar.general",
@@ -64,8 +57,7 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.clipboard",
     icon: ClipboardList,
     component: ClipboardSettings,
-    enabled: (settings) =>
-      Boolean((settings as ClipboardFeatureSettings)?.clipboard_enabled),
+    enabled: () => true,
   },
   models: {
     labelKey: "sidebar.models",

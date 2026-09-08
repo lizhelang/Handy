@@ -839,6 +839,7 @@ pub fn run(cli_args: CliArgs) {
             commands::clipboard::copy_clipboard_content_to_system,
             commands::clipboard::set_clipboard_overlay_pinned,
             commands::clipboard::hide_clipboard_overlay,
+            commands::clipboard::show_clipboard_overlay,
             commands::clipboard::get_clipboard_stats,
             commands::clipboard::get_clipboard_settings,
             commands::clipboard::update_clipboard_settings,

@@ -4,7 +4,7 @@
     "allowAnotherCopy": "我已檢查剪貼簿，允許再次複製",
     "allowAnotherInsert": "我已檢查結果，允許再次插入",
     "previewHint": "Select a history item to preview. Double-click to insert.",
-    "heading": "剪貼歷史",
+    "heading": "歷史記錄",
     "refresh": "Refresh",
     "search": "Search voice and copied content",
     "sourceFilter": "Source",
@@ -30,7 +30,7 @@
     "pin": "Pin",
     "unpin": "Unpin",
     "unknownSource": "Source unknown",
-    "entries": "剪貼歷史",
+    "entries": "歷史記錄",
     "preview": "Preview",
     "closePreview": "Close preview",
     "loading": "Loading…",
@@ -84,7 +84,7 @@
     "models": "模型",
     "advanced": "進階",
     "postProcessing": "後處理",
-    "history": "剪貼歷史",
+    "history": "歷史記錄",
     "debug": "偵錯",
     "about": "關於",
     "clipboard": "剪貼歷史"
@@ -475,8 +475,8 @@
         "description": "從轉錄中移除常見的語助詞。關閉此選項即可保留這些詞。"
       },
       "clipboardFeature": {
-        "label": "剪貼簿管理器（實驗性）",
-        "description": "啟用實驗性的剪貼簿管理器。開啟後，左側側邊欄會顯示剪貼歷史，並開始記錄剪貼簿歷史。"
+        "label": "記錄複製內容",
+        "description": "開啟後記錄之後複製的內容。關閉只暫停擷取，不隱藏剪貼歷史，也不刪除已有記錄。"
       }
     },
     "postProcessing": {
@@ -548,7 +548,7 @@
       }
     },
     "history": {
-      "title": "剪貼歷史",
+      "title": "歷史記錄",
       "openFolder": "開啟錄音資料夾",
       "loading": "載入歷史紀錄中...",
       "empty": "還沒有轉錄紀錄。開始錄製以建立您的歷史紀錄！",
@@ -808,7 +808,9 @@
         "deleteRecordTitle": "僅刪除歷史記錄？",
         "deleteRecordDescription": "僅刪除這條歷史記錄；錄音、圖片附件仍保留在本機，原始檔案不會刪除。",
         "deleteRecordConfirm": "僅刪除記錄"
-      }
+      },
+      "openOverlay": "開啟快捷浮窗",
+      "capturePaused": "剪貼簿擷取已暫停。已有記錄仍可檢視；開啟此頁面不會開始擷取。"
     }
   },
   "footer": {

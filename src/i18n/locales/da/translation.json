@@ -475,8 +475,8 @@
         "description": "Fjerner almindelige tøveord fra transskriptioner. Slå fra for at beholde dem."
       },
       "clipboardFeature": {
-        "label": "Clipboard manager (experimental)",
-        "description": "Enable the experimental clipboard manager. When enabled, Clipboard appears in the sidebar and starts tracking clipboard history."
+        "label": "Record copied content",
+        "description": "Record content copied after enabling. Turning this off pauses capture without hiding clipboard history or deleting existing records."
       }
     },
     "postProcessing": {
@@ -808,7 +808,9 @@
         "deleteRecordTitle": "Delete only this history record?",
         "deleteRecordDescription": "Only this history record will be deleted. Recordings and image attachments remain on this device; original files will not be deleted.",
         "deleteRecordConfirm": "Delete record only"
-      }
+      },
+      "openOverlay": "Open clipboard overlay",
+      "capturePaused": "Clipboard capture is paused. Existing items stay available, and opening this page will not start monitoring."
     }
   },
   "footer": {
