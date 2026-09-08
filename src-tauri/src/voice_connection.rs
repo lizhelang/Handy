@@ -108,6 +108,15 @@ impl VoiceConnection {
         history: &HistoryService,
         coordinator: &impl VoiceCoordinatorPort,
     ) -> Result<(), ConnectionError> {
+        self.process_one_with_app(history, coordinator, None)
+    }
+
+    pub fn process_one_with_app(
+        &mut self,
+        history: &HistoryService,
+        coordinator: &impl VoiceCoordinatorPort,
+        app: Option<&tauri::AppHandle>,
+    ) -> Result<(), ConnectionError> {
         use inputia_handy_runtime::voice_protocol::{
             VoiceOutputCommand, VoiceOutputReply, VoiceReply, VoiceReplyError, VoiceWireRequest,
         };
@@ -115,6 +124,19 @@ impl VoiceConnection {
             let request: VoiceWireRequest = transport::read_frame(&mut self.stream)
                 .map_err(|_| ConnectionError::ControlFrame)?;
             match request {
+                VoiceWireRequest::Menu(request) => {
+                    use inputia_handy_runtime::voice_protocol::MenuReply;
+                    let request_id = request.request_id.clone();
+                    let result = self.context.authorize_menu(&request, history)
+                        .and_then(|()| app.ok_or(DispatchError::Unauthorized))
+                        .and_then(|app| menu_action(app, &request));
+                    let reply = result.unwrap_or_else(|error| MenuReply::Rejected {
+                        request_id,
+                        code: reply_error(error),
+                    });
+                    transport::write_frame(&mut self.stream, &reply)
+                        .map_err(|_| ConnectionError::ControlFrame)
+                }
                 VoiceWireRequest::Control(request) => {
                     if request.request_id.is_empty()
                         || request.request_id.len() > 256
@@ -360,7 +382,7 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
                 }
                 let coordinator = app.state::<crate::TranscriptionCoordinator>();
                 while !stop.load(Ordering::Acquire) {
-                    if connection.process_one(&service, &*coordinator).is_err() {
+                    if connection.process_one_with_app(&service, &*coordinator, Some(&app)).is_err() {
                         break;
                     }
                 }

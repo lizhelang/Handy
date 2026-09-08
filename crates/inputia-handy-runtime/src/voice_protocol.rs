@@ -253,6 +253,59 @@ impl VoiceOutputRequest {
 pub enum VoiceWireRequest {
     Control(VoiceRequest),
     Output(VoiceOutputRequest),
+    Menu(MenuRequest),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MenuCommand {
+    Status,
+    CopyLatest,
+    History,
+    Settings,
+    CheckUpdates,
+    UnloadModel,
+    SelectModel { model_id: String },
+    QuitService,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MenuRequest {
+    pub request_id: String,
+    pub client_instance: String,
+    pub server_instance: String,
+    pub policy_epoch: u64,
+    pub menu: MenuCommand,
+}
+
+impl MenuRequest {
+    pub fn validate_for(&self, peer: &VoicePeer<'_>) -> Result<(), ProtocolError> {
+        if !id(&self.request_id) || !id(&self.client_instance) || !id(&self.server_instance)
+            || self.client_instance != peer.client_instance
+            || self.server_instance != peer.server_instance
+            || self.policy_epoch != peer.policy_epoch || !peer.policy_applied
+            || matches!(&self.menu, MenuCommand::SelectModel { model_id } if !id(model_id))
+        {
+            return Err(ProtocolError::InvalidEnvelope);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MenuModel {
+    pub id: String,
+    pub name: String,
+    pub available: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MenuReply {
+    Menu { request_id: String, selected_model: String, models: Vec<MenuModel>, busy: bool },
+    Rejected { request_id: String, code: VoiceReplyError },
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
