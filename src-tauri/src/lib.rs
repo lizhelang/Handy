@@ -918,6 +918,14 @@ pub fn run(cli_args: CliArgs) {
             eprintln!("candidate storage routing mismatch");
             std::process::exit(78);
         }
+        #[cfg(target_os = "macos")]
+        if !matches!(
+            native_pair_auth::candidate_build_trust(&profile.profile_id),
+            Ok(Some(_))
+        ) {
+            eprintln!("candidate diagnostic requires embedded public pairing trust");
+            std::process::exit(78);
+        }
         println!("unified_candidate_profile_self_check=pass profile_id={} handy_root={} inputia_root={} daily_data_opened=false tauri_started=false", profile.profile_id, profile.handy_root.display(), profile.inputia_root.display());
         return;
     }

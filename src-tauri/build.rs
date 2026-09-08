@@ -45,7 +45,20 @@ fn build_unified_pair_trust() {
     use std::{env, path::PathBuf, process::Command};
     println!("cargo:rustc-check-cfg=cfg(unified_paired_build)");
     println!("cargo:rerun-if-env-changed=HANDY_UNIFIED_PAIR_BUILD");
+    println!("cargo:rerun-if-env-changed=TAURI_CONFIG");
+    let candidate = env::var("TAURI_CONFIG").ok().is_some_and(|config| {
+        let config: serde_json::Value =
+            serde_json::from_str(&config).expect("valid Tauri build configuration");
+        config["identifier"]
+            .as_str()
+            .is_some_and(|id| id.ends_with(".UnifiedCandidate"))
+            || matches!(
+                config["productName"].as_str(),
+                Some("Inputia Candidate" | "Handy Unified Candidate")
+            )
+    });
     let Some(metadata) = env::var_os("HANDY_UNIFIED_PAIR_BUILD") else {
+        assert!(!candidate, "Inputia candidate requires HANDY_UNIFIED_PAIR_BUILD public pairing metadata; refusing an unpaired product bundle");
         return;
     };
     assert_eq!(env::var("CARGO_CFG_TARGET_OS").as_deref(), Ok("macos"));

@@ -134,3 +134,11 @@
 - 本轮验证通过：`bun run build`、`bun run lint`、`bun run check:translations`、`bun run format:check`、`macos/InputiaInputMethod/validation-policy-self-check.sh`、`InputiaVoiceInputLauncherSelfCheck`、`cargo +1.96.0 test independent_tray_cannot_be_enabled_by_legacy_settings_or_cli --manifest-path src-tauri/Cargo.toml`。额外手动单编译`InputiaHandyMemorySyncSelfCheck`因未链接Rust C API失败，属调用方式无效，未作为产品失败证据。
 - 独立复核结果：未发现`handle_inputia_menu_cli`、`recreate_tray_icon`、`Handy v`、旧Logo组件或用户可见托盘设置入口残留。剩余`Handy`字符串集中在兼容路径、内部函数名、旧数据导入、测试路径、上游许可致谢和历史数据根；不作为独立产品入口。
 - 尚未完成：最新唯一Inputia候选尚未安装到并存测试位置并从真实系统输入法菜单重跑“录音→本地转写→统一历史→原框插入/焦点变化待插入”。因此A04/A05和端到端闭环仍未通过，完整goal保持进行中。
+
+## 2026-09-08 19:26 北京时间：最新候选安装态与自动化入口边界
+
+- `/Applications/Inputia Candidate.app`已是最新主候选，运行PID 16619，cdhash `75a30e494006613486b24a895207c5b7adb90ad0`；`~/Library/Input Methods/InputiaUnifiedCandidate.app`已是最新用户级候选，cdhash `2f60451b3e1ddbe3fdf7d0f69b1a8a3ba690ab4e`。日常`/Applications/Handy.app`和系统正式`/Library/Input Methods/InputiaInputMethod.app`未替换。
+- 已用持久根`signing-private.x963`离线签署新清单`pair-inputia-product.json`，并安装到`~/Library/Application Support/HandyUnifiedCandidate/trial-20260905/pair-manifest.json`；旧清单备份为`pair-before-inputia-product.json`。清单只列入上述两端最新cdhash。
+- 候选主服务重启后写出`Handy/integration-endpoint.json`，mode 600，profile为`unified-candidate:trial-20260905`，socket在私有`/private/tmp/handy-unified-501-*`目录。输入源通过候选TIS工具选中，当前ID为`com.inputia.inputmethod.Inputia.UnifiedCandidate.Hans`，`selectCurrentMatchesTarget=true`。
+- CUA在专用TextEdit `native-output-check.rtf` 中发送`Control+Option+Shift+V`仍只产生Control-V控制字符；已立即Undo，文稿恢复为空，历史计数仍为5。此自动化失败不等于实体键盘失败，不能替代真实菜单/实体入口验收。
+- CUA只暴露TextEdit窗口，不暴露系统输入法菜单栏进程或全屏菜单栏坐标；本轮未能自动点击真实输入法菜单。下一步需要用户在当前专用TextEdit中用实体键盘`Control+Option+Shift+V`或系统输入法菜单“语音输入”触发并停止一次，随后继续核对会话、历史、原框插入/待插入结果。
