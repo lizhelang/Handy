@@ -101,9 +101,9 @@ enum InputiaHandyMemorySync {
     let hasHistory = fileExists(paths.history.path)
     let hasClipboard = fileExists(paths.clipboard.path)
     if hasHistory || hasClipboard {
-      return "Handy 数据：" + paths.root.path
+      return "旧版语音服务数据：" + paths.root.path
     }
-    return "未找到 Handy 数据：" + paths.root.path
+    return "未找到旧版语音服务数据：" + paths.root.path
   }
 
   private static func syncHistory(

@@ -172,7 +172,7 @@
     },
     "permissions": {
       "title": "Необходими разрешения",
-      "description": "Handy се нуждае от няколко разрешения, за да работи правилно.",
+      "description": "Inputia се нуждае от няколко разрешения, за да работи правилно.",
       "microphone": {
         "title": "Достъп до микрофон",
         "description": "Необходим е, за да чуе гласа ви при транскрипция."
@@ -233,7 +233,7 @@
     "general": {
       "title": "Общи",
       "shortcut": {
-        "title": "Бързи клавиши на Handy",
+        "title": "Бързи клавиши на Inputia",
         "description": "Настройте клавишни комбинации за стартиране на запис за реч към текст",
         "loading": "Зареждане на бързите клавиши...",
         "none": "Няма настроени бързи клавиши",
@@ -298,7 +298,7 @@
       "searchPlaceholder": "Търсене на модели по име…",
       "rescan": {
         "label": "Сканиране отново",
-        "tooltip": "Сканиране отново за модели, добавени в папката с модели или кеша на Hugging Face извън Handy"
+        "tooltip": "Сканиране отново за модели, добавени в папката с модели или кеша на Hugging Face извън Inputia"
       }
     },
     "sound": {
@@ -365,11 +365,11 @@
       },
       "autostart": {
         "label": "Стартиране със системата",
-        "description": "Автоматично стартиране на Handy при влизане в профила ви."
+        "description": "Автоматично стартиране на Inputia при влизане в профила ви."
       },
       "showTrayIcon": {
         "label": "Икона в системната област",
-        "description": "Показване на иконата на Handy в системната област."
+        "description": "Показване на иконата на Inputia в системната област."
       },
       "overlay": {
         "style": {
@@ -513,12 +513,12 @@
           "selectError": "Failed to select local post-processing model.",
           "model": {
             "title": "Local Model",
-            "description": "Handy uses this self-managed Qwen GGUF model to correct custom words after transcription.",
+            "description": "Inputia uses this self-managed Qwen GGUF model to correct custom words after transcription.",
             "loading": "Loading local models...",
             "noModels": "No local models found",
             "rescan": "Rescan local models",
             "active": "Active",
-            "missing": "Local Qwen model not found. Make sure Handy's custom-word post-processing model is installed."
+            "missing": "Local Qwen model not found. Make sure Inputia's custom-word post-processing model is installed."
           }
         }
       },
@@ -582,7 +582,7 @@
       },
       "updateChecks": {
         "label": "Проверка за актуализации",
-        "description": "Автоматична проверка за нови версии на Handy",
+        "description": "Автоматична проверка за нови версии на Inputia",
         "lockedDescription": "Деактивирано от системната конфигурация (HANDY_DISABLE_UPDATER)"
       },
       "soundTheme": {
@@ -660,7 +660,7 @@
       },
       "keyboardDiagnostic": {
         "title": "Диагностика на клавиатурата",
-        "description": "Проверява дали клавиатурните събития достигат до Handy. Записва се само броят на събитията — никога кои клавиши натискате.",
+        "description": "Проверява дали клавиатурните събития достигат до Inputia. Записва се само броят на събитията — никога кои клавиши натискате.",
         "run": "Стартиране на 10-секундна диагностика",
         "running": "Слушане… натиснете бързия си клавиш няколко пъти (напр. Option+Space)",
         "secureInputLabel": "Secure Input",
@@ -674,7 +674,7 @@
         "mouse": "Мишка",
         "verdictBlocked": "Secure Input блокира клавишните събития — бързите клавиши с обикновен клавиш не могат да работят, докато това не бъде решено.",
         "verdictSuspicious": "Пристигнаха събития от модификатори, но нито едно клавишно събитие — нещо потиска клавишите, въпреки че Secure Input се отчита като изключен. Моля, съобщете за това в GitHub.",
-        "verdictOk": "Клавишните събития достигат до Handy нормално.",
+        "verdictOk": "Клавишните събития достигат до Inputia нормално.",
         "verdictNoEvents": "Не са уловени събития — натиснахте ли някакви клавиши по време на теста?",
         "failed": "Диагностиката е неуспешна: {{error}}"
       },
@@ -690,11 +690,11 @@
       "title": "За приложението",
       "version": {
         "title": "Версия",
-        "description": "Текуща версия на Handy"
+        "description": "Текуща версия на Inputia"
       },
       "appDataDirectory": {
         "title": "Папка с данни на приложението",
-        "description": "Мястото, където Handy съхранява данните си"
+        "description": "Мястото, където Inputia съхранява данните си"
       },
       "sourceCode": {
         "title": "Изходен код",
@@ -703,7 +703,7 @@
       },
       "supportDevelopment": {
         "title": "Подкрепете разработката",
-        "description": "Помогнете ни да продължим да развиваме Handy",
+        "description": "Помогнете ни да продължим да развиваме Inputia",
         "button": "Дарение"
       },
       "acknowledgments": {
@@ -711,12 +711,18 @@
         "ggml": {
           "title": "ggml",
           "description": "Високопроизводително изпълнение на автоматичния модел за разпознаване на реч Whisper на OpenAI",
-          "details": "Handy използва ggml за бързо локално реч-към-текст. Благодарности на Georgi Gerganov и сътрудниците за отличната работа."
+          "details": "Inputia използва ggml за бързо локално реч-към-текст. Благодарности на Georgi Gerganov и сътрудниците за отличната работа."
         }
       },
       "whatsNewUpdates": {
         "label": "Показвай новостите",
-        "description": "Показвай бележки към изданието след актуализации на Handy"
+        "description": "Показвай бележки към изданието след актуализации на Inputia"
+      },
+      "upstream": {
+        "title": "Open-source attribution",
+        "description": "Inputia builds on the open-source Handy project and retains its copyright and license notices.",
+        "source": "View upstream Handy source",
+        "license": "View original license"
       }
     },
     "clipboard": {
@@ -779,7 +785,7 @@
         "helpFavorite": "Favorite selected item",
         "helpDelete": "Delete selected item",
         "helpEscape": "Clear search or leave panel",
-        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "aboutCopy": "Inputia clipboard manager, styled after Ropy and connected to Inputia's local clipboard history.",
         "editTitle": "Edit title",
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
@@ -811,7 +817,8 @@
     "portableUpdateMessage": "Преносимите инсталации не могат да бъдат актуализирани автоматично. Изтеглете инсталатора за вашата система от бутона по-долу, стартирайте го и инсталирайте в същата папка — папката Data/ (настройки, модели, записи) остава на мястото си.",
     "portableUpdateButton": "Изтегляне на инсталатора",
     "portableUpdateBrowseMessage": "Преносимите инсталации не могат да бъдат актуализирани автоматично. Изтеглете най-новата версия за вашата система от GitHub Releases и я инсталирайте в същата папка — папката Data/ (настройки, модели, записи) остава на мястото си.",
-    "portableUpdateBrowseButton": "Отвори GitHub Releases"
+    "portableUpdateBrowseButton": "Отвори GitHub Releases",
+    "updateSourceUnavailable": "This candidate has no Inputia update source yet; use the paired candidate installer."
   },
   "common": {
     "loading": "Зареждане...",
@@ -823,7 +830,7 @@
     "noOptionsFound": "Няма намерени опции"
   },
   "accessibility": {
-    "permissionsDescription": "Handy се нуждае от разрешения за достъпност, за да въвежда транскрибирания текст.",
+    "permissionsDescription": "Inputia се нуждае от разрешения за достъпност, за да въвежда транскрибирания текст.",
     "openSettings": "Отваряне на системните настройки"
   },
   "errors": {
@@ -846,11 +853,11 @@
   },
   "appLanguage": {
     "title": "Език на приложението",
-    "description": "Промяна на езика на интерфейса на Handy"
+    "description": "Промяна на езика на интерфейса на Inputia"
   },
   "theme": {
     "title": "Тема на приложението",
-    "description": "Изберете дали Handy да следва системната тема, или да остане светла или тъмна",
+    "description": "Изберете дали Inputia да следва системната тема, или да остане светла или тъмна",
     "options": {
       "system": "Системна",
       "light": "Светла",
@@ -862,7 +869,7 @@
     "processing": "Обработка..."
   },
   "whatsNew": {
-    "title": "Ново в Handy v{{version}}"
+    "title": "Ново в Inputia v{{version}}"
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} може да блокира 1 бърз клавиш",

@@ -96,6 +96,8 @@ final class InputiaInputController: IMKInputController {
   private let voiceControllerID = UUID().uuidString
   private var voiceActivationGeneration: UInt64 = 0
   private var voiceStatus = ""
+  private var unifiedMenuSnapshot: InputiaMenuReply?
+  private var unifiedMenuRefreshing = false
   private var voiceTargetCaptureNotice: String?
   private var voiceTargetSnapshots: [String: InputiaVoiceTargetSnapshot.Snapshot] = [:]
   private var attemptedVoiceOutputOperations = Set<String>()
@@ -157,6 +159,9 @@ final class InputiaInputController: IMKInputController {
   }
 
   override func menu() -> NSMenu! {
+    #if INPUTIA_PAIRED_BUILD
+    return unifiedProductMenu()
+    #else
     let voiceInput = NSMenuItem(title: "语音输入", action: #selector(toggleVoiceInput), keyEquivalent: "")
     voiceInput.target = self
     #if INPUTIA_PAIRED_BUILD
@@ -189,14 +194,86 @@ final class InputiaInputController: IMKInputController {
     menu.addItem(.separator())
     menu.addItem(settings)
     return menu
+    #endif
   }
+
+  #if INPUTIA_PAIRED_BUILD
+  private func unifiedProductMenu() -> NSMenu {
+    let menu = NSMenu(title: "Inputia")
+    menu.autoenablesItems = false
+    let voice = NSMenuItem(title: "开始 / 停止语音", action: #selector(toggleVoiceInput), keyEquivalent: "")
+    voice.target = self
+    menu.addItem(voice)
+    if !voiceStatus.isEmpty {
+      let status = NSMenuItem(title: String(voiceStatus.prefix(32)), action: nil, keyEquivalent: "")
+      status.isEnabled = false
+      menu.addItem(status)
+    }
+    func add(_ title: String, _ kind: String, modelID: String? = nil, to targetMenu: NSMenu? = nil) -> NSMenuItem {
+      let item = NSMenuItem(title: title, action: #selector(unifiedMenuAction(_:)), keyEquivalent: "")
+      item.target = self
+      item.representedObject = ["kind": kind, "model_id": modelID ?? ""]
+      (targetMenu ?? menu).addItem(item)
+      return item
+    }
+    _ = add("复制最新转写", "copy_latest")
+    _ = add("统一历史…", "history")
+    menu.addItem(.separator())
+    let models = NSMenu(title: "语音模型")
+    models.autoenablesItems = false
+    let modelRoot = NSMenuItem(title: "语音模型", action: nil, keyEquivalent: "")
+    modelRoot.submenu = models
+    menu.addItem(modelRoot)
+    func renderModels(_ snapshot: InputiaMenuReply?) {
+      models.removeAllItems()
+      for model in snapshot?.models ?? [] {
+        let item = add(model.name, "select_model", modelID: model.id, to: models)
+        item.state = model.id == snapshot?.selected_model ? .on : .off
+        item.isEnabled = model.available && snapshot?.busy == false
+      }
+      if models.items.isEmpty {
+        let status = NSMenuItem(title: "在控制中心查看模型", action: nil, keyEquivalent: "")
+        status.isEnabled = false
+        models.addItem(status)
+      }
+    }
+    renderModels(unifiedMenuSnapshot)
+    let unload = add("卸载当前模型", "unload_model")
+    unload.isEnabled = unifiedMenuSnapshot?.busy == false
+    menu.addItem(.separator())
+    _ = add("Inputia 设置…", "settings")
+    _ = add("检查更新…", "check_updates")
+    menu.addItem(.separator())
+    _ = add("退出语音服务（保留基础输入）", "quit_service")
+    if !unifiedMenuRefreshing {
+      unifiedMenuRefreshing = true
+      InputiaVoiceInputLauncher.menuAction(kind: "status") { [weak self] snapshot in
+        guard let self else { return }
+        self.unifiedMenuRefreshing = false
+        self.unifiedMenuSnapshot = snapshot
+        renderModels(snapshot)
+        unload.isEnabled = snapshot?.busy == false
+      }
+    }
+    return menu
+  }
+
+  @objc private func unifiedMenuAction(_ sender: NSMenuItem) {
+    guard let values = sender.representedObject as? [String: String], let kind = values["kind"] else { return }
+    let modelID = values["model_id"].flatMap { $0.isEmpty ? nil : $0 }
+    InputiaVoiceInputLauncher.menuAction(kind: kind, modelID: modelID) { [weak self] reply in
+      self?.unifiedMenuSnapshot = reply
+      self?.voiceStatus = reply == nil ? "操作未确认；未自动重试" : ""
+    }
+  }
+  #endif
 
   @objc private func toggleVoiceInput() {
     #if INPUTIA_PAIRED_BUILD
     startUnifiedVoice(client: client())
     return
     #elseif INPUTIA_UNIFIED_CANDIDATE
-    showHostAlert(title: "候选语音尚未配对", message: "此候选没有配对构建材料，不会启动或切换日常 Handy。")
+    showHostAlert(title: "候选语音尚未配对", message: "此候选没有配对构建材料，不会启动或切换日常 Inputia。")
     #else
     switch InputiaVoiceInputLauncher.triggerVoiceInput() {
     case .started:
@@ -204,7 +281,7 @@ final class InputiaInputController: IMKInputController {
     case .missing:
       showHostAlert(
         title: "无法启动语音输入",
-        message: "没有找到 Handy.app。请先安装或启动 Handy，再从 Inputia 菜单触发语音输入。"
+        message: "没有找到 Inputia 语音服务。请先安装或启动 Inputia，再从菜单触发语音输入。"
       )
     case .failed(let message):
       showHostAlert(title: "无法启动语音输入", message: message)
@@ -450,28 +527,6 @@ final class InputiaInputController: IMKInputController {
 
   private func handleKeyDown(_ event: NSEvent, client: IMKTextInput) -> Bool {
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-    #if INPUTIA_PAIRED_BUILD
-    if InputiaShortcutClassifier.isVoiceInput(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers ?? event.characters, modifiers: modifiers) {
-      if !event.isARepeat {
-        NSLog("inputia_unified_voice_shortcut_invoked")
-        let activationGeneration = voiceActivationGeneration
-        let originalClient = client as AnyObject
-        DispatchQueue.main.async { [weak self, weak originalClient] in
-          guard let self else { return }
-          guard let originalClient,
-                self.voiceActivationGeneration == activationGeneration,
-                let currentClient = self.client(),
-                ObjectIdentifier(currentClient as AnyObject) == ObjectIdentifier(originalClient)
-          else {
-            self.startUnifiedVoice(client: nil)
-            return
-          }
-          self.startUnifiedVoice(client: currentClient)
-        }
-      }
-      return true
-    }
-    #endif
     inputiaDebugLog(
       "keyDown keyCode=\(event.keyCode) modifiers=\(modifiers.rawValue) chars=\(event.characters ?? "") charsIgnoring=\(event.charactersIgnoringModifiers ?? "")"
     )

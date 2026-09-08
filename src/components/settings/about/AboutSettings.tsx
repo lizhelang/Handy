@@ -2,9 +2,10 @@ import React, { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import upstreamLicense from "../../../../LICENSE?raw";
+import { Button } from "../../ui/Button";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
-import { Button } from "../../ui/Button";
 import { AppDataDirectory } from "../AppDataDirectory";
 import { AppLanguageSelector } from "../AppLanguageSelector";
 import { ShowWhatsNewOnUpdate } from "../ShowWhatsNewOnUpdate";
@@ -29,14 +30,6 @@ export const AboutSettings: React.FC = () => {
     fetchVersion();
   }, []);
 
-  const handleDonateClick = async () => {
-    try {
-      await openUrl("https://handy.computer/donate");
-    } catch (error) {
-      console.error("Failed to open donate link:", error);
-    }
-  };
-
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
       <SettingsGroup title={t("settings.about.title")}>
@@ -53,35 +46,33 @@ export const AboutSettings: React.FC = () => {
 
         <ShowWhatsNewOnUpdate descriptionMode="tooltip" grouped={true} />
 
-        <SettingContainer
-          title={t("settings.about.supportDevelopment.title")}
-          description={t("settings.about.supportDevelopment.description")}
-          grouped={true}
-        >
-          <Button variant="primary" size="md" onClick={handleDonateClick}>
-            {t("settings.about.supportDevelopment.button")}
-          </Button>
-        </SettingContainer>
+        <AppDataDirectory descriptionMode="tooltip" grouped={true} />
+        <LogDirectory grouped={true} />
+      </SettingsGroup>
 
+      <SettingsGroup title={t("settings.about.acknowledgments.title")}>
         <SettingContainer
-          title={t("settings.about.sourceCode.title")}
-          description={t("settings.about.sourceCode.description")}
+          title={t("settings.about.upstream.title")}
+          description={t("settings.about.upstream.description")}
           grouped={true}
+          layout="stacked"
         >
           <Button
             variant="secondary"
             size="md"
             onClick={() => openUrl("https://github.com/cjpais/Handy")}
           >
-            {t("settings.about.sourceCode.button")}
+            {t("settings.about.upstream.source")}
           </Button>
+          <details className="mt-3 text-sm">
+            <summary className="cursor-pointer">
+              {t("settings.about.upstream.license")}
+            </summary>
+            <pre className="mt-2 whitespace-pre-wrap text-xs">
+              {upstreamLicense}
+            </pre>
+          </details>
         </SettingContainer>
-
-        <AppDataDirectory descriptionMode="tooltip" grouped={true} />
-        <LogDirectory grouped={true} />
-      </SettingsGroup>
-
-      <SettingsGroup title={t("settings.about.acknowledgments.title")}>
         <SettingContainer
           title={t("settings.about.acknowledgments.ggml.title")}
           description={t("settings.about.acknowledgments.ggml.description")}

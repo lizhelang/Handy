@@ -2,7 +2,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone, Default)]
-#[command(name = "handy", about = "Handy - Speech to Text")]
+#[command(name = "inputia", about = "Inputia - Unified Input and Voice")]
 pub struct CliArgs {
     /// Validate signed candidate profile routing and exit before Tauri or user databases start.
     #[arg(long, hide = true)]

@@ -671,7 +671,7 @@ fn default_app_language() -> String {
 }
 
 fn default_show_tray_icon() -> bool {
-    true
+    false
 }
 
 fn default_post_process_provider_id() -> String {

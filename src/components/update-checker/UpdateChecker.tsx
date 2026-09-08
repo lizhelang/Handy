@@ -25,6 +25,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   const [isInstalling, setIsInstalling] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [showUpToDate, setShowUpToDate] = useState(false);
+  const [updateSourceUnavailable, setUpdateSourceUnavailable] = useState(false);
   const [showPortableUpdateDialog, setShowPortableUpdateDialog] =
     useState(false);
   const [portableInstallerUrl, setPortableInstallerUrl] = useState<string>(
@@ -58,6 +59,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
       setIsChecking(false);
       setUpdateAvailable(false);
       setShowUpToDate(false);
+      setUpdateSourceUnavailable(false);
       return;
     }
 
@@ -107,6 +109,18 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
       }
     } catch (error) {
       console.error("Failed to check for updates:", error);
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.toLowerCase().includes("endpoint")) {
+        setUpdateAvailable(false);
+        setShowUpToDate(false);
+        setUpdateSourceUnavailable(true);
+        if (upToDateTimeoutRef.current) {
+          clearTimeout(upToDateTimeoutRef.current);
+        }
+        upToDateTimeoutRef.current = setTimeout(() => {
+          setUpdateSourceUnavailable(false);
+        }, 5000);
+      }
     } finally {
       setIsChecking(false);
       isManualCheckRef.current = false;
@@ -185,6 +199,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
           : t("footer.preparing");
     }
     if (isChecking) return t("footer.checkingUpdates");
+    if (updateSourceUnavailable) return t("footer.updateSourceUnavailable");
     if (showUpToDate) return t("footer.upToDate");
     if (updateAvailable) return t("footer.updateAvailableShort");
     return t("footer.checkForUpdates");
@@ -193,14 +208,21 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   const getUpdateStatusAction = () => {
     if (!updateChecksEnabled) return undefined;
     if (updateAvailable && !isInstalling) return installUpdate;
-    if (!isChecking && !isInstalling && !updateAvailable)
+    if (
+      !isChecking &&
+      !isInstalling &&
+      !updateAvailable &&
+      !updateSourceUnavailable
+    )
       return handleManualUpdateCheck;
     return undefined;
   };
 
   const isUpdateDisabled = !updateChecksEnabled || isChecking || isInstalling;
   const isUpdateClickable =
-    !isUpdateDisabled && (updateAvailable || (!isChecking && !showUpToDate));
+    !isUpdateDisabled &&
+    (updateAvailable ||
+      (!isChecking && !showUpToDate && !updateSourceUnavailable));
 
   // When no installer could be resolved for this target the button falls back to
   // the releases index, so the dialog has to say "browse" rather than "download".

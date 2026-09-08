@@ -108,6 +108,15 @@ impl VoiceConnection {
         history: &HistoryService,
         coordinator: &impl VoiceCoordinatorPort,
     ) -> Result<(), ConnectionError> {
+        self.process_one_with_app(history, coordinator, None)
+    }
+
+    pub fn process_one_with_app(
+        &mut self,
+        history: &HistoryService,
+        coordinator: &impl VoiceCoordinatorPort,
+        app: Option<&tauri::AppHandle>,
+    ) -> Result<(), ConnectionError> {
         use inputia_handy_runtime::voice_protocol::{
             VoiceOutputCommand, VoiceOutputReply, VoiceReply, VoiceReplyError, VoiceWireRequest,
         };
@@ -115,6 +124,21 @@ impl VoiceConnection {
             let request: VoiceWireRequest = transport::read_frame(&mut self.stream)
                 .map_err(|_| ConnectionError::ControlFrame)?;
             match request {
+                VoiceWireRequest::Menu(request) => {
+                    use inputia_handy_runtime::voice_protocol::MenuReply;
+                    let request_id = request.request_id.clone();
+                    let result = self
+                        .context
+                        .authorize_menu(&request, history)
+                        .and_then(|()| app.ok_or(DispatchError::Unauthorized))
+                        .and_then(|app| menu_action(app, &request));
+                    let reply = result.unwrap_or_else(|error| MenuReply::Rejected {
+                        request_id,
+                        code: reply_error(error),
+                    });
+                    transport::write_frame(&mut self.stream, &reply)
+                        .map_err(|_| ConnectionError::ControlFrame)
+                }
                 VoiceWireRequest::Control(request) => {
                     if request.request_id.is_empty()
                         || request.request_id.len() > 256
@@ -218,6 +242,145 @@ impl VoiceConnection {
         }
         result
     }
+}
+
+/// 已认证后台菜单入口；请求先占用去重槽，失败/回执未知均不可自动重放。
+fn menu_action(
+    app: &tauri::AppHandle,
+    request: &inputia_handy_runtime::voice_protocol::MenuRequest,
+) -> Result<inputia_handy_runtime::voice_protocol::MenuReply, DispatchError> {
+    use inputia_handy_runtime::voice_protocol::{MenuCommand, MenuModel, MenuReply};
+    use std::sync::{Arc, Mutex, OnceLock};
+    use tauri::{Emitter, Manager};
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+
+    static CLAIMS: OnceLock<Mutex<std::collections::HashSet<(String, String)>>> = OnceLock::new();
+    let busy = crate::tray::service_is_busy(app);
+    if request.menu != MenuCommand::Status {
+        if busy && !request.menu.allowed_while_busy() {
+            return Err(DispatchError::CoordinatorRejected);
+        }
+        let mut claims = CLAIMS
+            .get_or_init(Mutex::default)
+            .lock()
+            .map_err(|_| DispatchError::Unknown)?;
+        // 不淘汰旧请求，否则失去同一服务实例的禁止重放保证。
+        if claims.len() >= 16384
+            || !claims.insert((request.client_instance.clone(), request.request_id.clone()))
+        {
+            return Err(DispatchError::Unknown);
+        }
+    }
+    match &request.menu {
+        MenuCommand::Status => {}
+        MenuCommand::CopyLatest => {
+            let entry = app
+                .state::<Arc<crate::managers::history::HistoryManager>>()
+                .get_latest_completed_entry()
+                .map_err(|_| DispatchError::Unknown)?
+                .ok_or(DispatchError::CoordinatorRejected)?;
+            let text = entry
+                .post_processed_text
+                .as_deref()
+                .unwrap_or(&entry.transcription_text);
+            if text.trim().is_empty() {
+                return Err(DispatchError::CoordinatorRejected);
+            }
+            app.clipboard()
+                .write_text(text)
+                .map_err(|_| DispatchError::Unknown)?;
+        }
+        MenuCommand::SelectModel { model_id } => {
+            // 管理器执行已下载目录验证和唯一加载槽，不接受路径或远程下载指令。
+            crate::commands::models::switch_active_model(app, model_id)
+                .map_err(|_| DispatchError::CoordinatorRejected)?;
+        }
+        MenuCommand::UnloadModel => {
+            app.state::<Arc<crate::managers::transcription::TranscriptionManager>>()
+                .unload_model()
+                .map_err(|_| DispatchError::CoordinatorRejected)?;
+        }
+        command => {
+            if *command == MenuCommand::CheckUpdates
+                && !crate::settings::update_checks_effectively_enabled(
+                    &crate::settings::get_settings(app),
+                )
+            {
+                return Err(DispatchError::CoordinatorRejected);
+            }
+            let command = command.clone();
+            let handle = app.clone();
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            let claim = Arc::new(std::sync::atomic::AtomicU8::new(0));
+            let scheduled = claim.clone();
+            app.run_on_main_thread(move || {
+                use std::sync::atomic::Ordering;
+                if scheduled
+                    .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                    .is_err()
+                {
+                    return;
+                }
+                let result = match command {
+                    MenuCommand::History | MenuCommand::Settings => {
+                        crate::show_main_window(&handle);
+                        handle
+                            .emit(
+                                "navigate-to",
+                                if command == MenuCommand::History {
+                                    "history"
+                                } else {
+                                    "general"
+                                },
+                            )
+                            .map_err(|_| DispatchError::Unknown)
+                    }
+                    MenuCommand::CheckUpdates => {
+                        crate::show_main_window(&handle);
+                        handle
+                            .emit("check-for-updates", ())
+                            .map_err(|_| DispatchError::Unknown)
+                    }
+                    MenuCommand::QuitService => {
+                        handle.exit(0);
+                        Ok(())
+                    }
+                    _ => Err(DispatchError::Unauthorized),
+                };
+                let _ = tx.send(result);
+            })
+            .map_err(|_| DispatchError::Unknown)?;
+            match rx.recv_timeout(std::time::Duration::from_secs(1)) {
+                Ok(result) => result?,
+                Err(_) => {
+                    let _ = claim.compare_exchange(
+                        0,
+                        2,
+                        std::sync::atomic::Ordering::AcqRel,
+                        std::sync::atomic::Ordering::Acquire,
+                    );
+                    return Err(DispatchError::Unknown);
+                }
+            }
+        }
+    }
+    let mut models: Vec<MenuModel> = app
+        .state::<Arc<crate::managers::model::ModelManager>>()
+        .get_available_models()
+        .into_iter()
+        .map(|model| MenuModel {
+            id: model.id,
+            name: model.name,
+            available: model.is_downloaded,
+        })
+        .collect();
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(MenuReply::Menu {
+        request_id: request.request_id.clone(),
+        selected_model: crate::settings::get_settings(app).selected_model,
+        models,
+        busy: crate::tray::service_is_busy(app),
+    })
 }
 
 fn reply_error(error: DispatchError) -> inputia_handy_runtime::voice_protocol::VoiceReplyError {
@@ -360,7 +523,10 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
                 }
                 let coordinator = app.state::<crate::TranscriptionCoordinator>();
                 while !stop.load(Ordering::Acquire) {
-                    if connection.process_one(&service, &*coordinator).is_err() {
+                    if connection
+                        .process_one_with_app(&service, &*coordinator, Some(&app))
+                        .is_err()
+                    {
                         break;
                     }
                 }

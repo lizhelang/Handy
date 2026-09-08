@@ -11,6 +11,31 @@ struct InputiaVoiceHello: Codable, Equatable {
   let policy_epoch: UInt64
   let capabilities: [String]
 }
+
+struct InputiaMenuModel: Decodable {
+  let id: String
+  let name: String
+  let available: Bool
+}
+struct InputiaMenuReply: Decodable {
+  let status: String
+  let request_id: String
+  let selected_model: String?
+  let models: [InputiaMenuModel]?
+  let busy: Bool?
+  let code: String?
+}
+private struct InputiaMenuCommand: Encodable {
+  let kind: String
+  let model_id: String?
+}
+private struct InputiaMenuRequest: Encodable {
+  let request_id: String
+  let client_instance: String
+  let server_instance: String
+  let policy_epoch: UInt64
+  let menu: InputiaMenuCommand
+}
 private struct InputiaVoiceHelloReply: Decodable {
   let status: String
   let server: InputiaVoiceHello?
@@ -128,7 +153,7 @@ struct InputiaVoiceRequest: Encodable {
   let policy_epoch: UInt64
   let command: InputiaVoiceCommand
 }
-struct InputiaVoiceSessionView: Decodable {
+struct InputiaVoiceSessionView: Codable {
   let session_id: String
   let generation: UInt64
   let phase: String
@@ -246,6 +271,32 @@ final class InputiaVoiceServiceConnection {
   }
 
   func close() { locallyAppliedVersion = nil; connection.close() }
+
+  func menuRequest(kind: String, modelID: String? = nil) throws -> InputiaMenuReply {
+    do {
+      guard !Thread.isMainThread, let version = locallyAppliedVersion,
+        ["status", "copy_latest", "history", "settings", "check_updates", "unload_model", "select_model", "quit_service"].contains(kind)
+      else { throw InputiaVoiceServiceError.policy }
+      let requestID = UUID().uuidString
+      try connection.write(InputiaMenuRequest(request_id: requestID, client_instance: Self.processInstance,
+        server_instance: server.instance_id, policy_epoch: version.policy_epoch,
+        menu: InputiaMenuCommand(kind: kind, model_id: modelID)))
+      let reply = try connection.read(InputiaMenuReply.self)
+      guard reply.request_id == requestID else { throw InputiaVoiceServiceError.handshake }
+      if reply.status == "rejected" {
+        guard let code = reply.code, ["unauthorized", "missing_session", "unknown", "coordinator_rejected"].contains(code) else {
+          throw InputiaVoiceServiceError.handshake
+        }
+        // 已完整收到的业务拒绝不会破坏正在使用同一连接的语音会话。
+        return reply
+      }
+      guard reply.status == "menu", reply.selected_model != nil,
+        let models = reply.models, models.count <= 1024, reply.busy != nil,
+        models.allSatisfy({ !$0.id.isEmpty && $0.id.utf8.count <= 256 && $0.name.utf8.count <= 1024 })
+      else { throw InputiaVoiceServiceError.handshake }
+      return reply
+    } catch { close(); throw error }
+  }
 
   /// 服务端在返回正文前持久claim；此方法绝不重试fetch，也不跨连接恢复正文。
   func fetchDelivery(view: InputiaVoiceSessionView, target: InputiaVoiceTarget) throws -> InputiaVoiceDelivery? {

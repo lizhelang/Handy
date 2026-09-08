@@ -57,6 +57,20 @@ function App() {
   }, [currentSection, settings]);
 
   useEffect(() => {
+    const unlisten = listen<SidebarSection>("navigate-to", (event) => {
+      const nextSection = event.payload;
+      const sectionConfig = SECTIONS_CONFIG[nextSection];
+      if (sectionConfig?.enabled(settings)) {
+        setCurrentSection(nextSection);
+      }
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [settings]);
+
+  useEffect(() => {
     checkOnboardingStatus();
   }, []);
 

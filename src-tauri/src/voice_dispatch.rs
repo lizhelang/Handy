@@ -35,6 +35,23 @@ pub struct AuthenticatedVoiceConnection {
 }
 
 impl AuthenticatedVoiceConnection {
+    pub(crate) fn authorize_menu(
+        &self,
+        request: &inputia_handy_runtime::voice_protocol::MenuRequest,
+        history: &HistoryService,
+    ) -> Result<(), DispatchError> {
+        let version = history
+            .voice_terms_version()
+            .map_err(|_| DispatchError::Unknown)?;
+        request
+            .validate_for(&VoicePeer {
+                client_instance: &self.client,
+                server_instance: &self.server,
+                policy_epoch: version.policy_epoch,
+                policy_applied: self.applied_version.as_ref() == Some(&version),
+            })
+            .map_err(|_| DispatchError::Unauthorized)
+    }
     /// 发出新屏障或同步失败时立即关闭新Start授权；Stop/Cancel仍能关闭本人会话。
     pub fn invalidate_policy(&mut self) {
         self.applied_version = None;

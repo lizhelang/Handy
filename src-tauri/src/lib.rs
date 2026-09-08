@@ -177,7 +177,7 @@ fn apply_startup_activation_policy(app: &mut tauri::App, headless_mode: bool) {
     let settings = settings::get_settings(app.handle());
 
     let should_hide = settings.start_hidden || cli_args.start_hidden;
-    let tray_available = settings.show_tray_icon && !cli_args.no_tray;
+    let tray_available = tray::independent_tray_enabled(settings.show_tray_icon, cli_args.no_tray);
 
     if should_hide && tray_available {
         log::info!("Starting hidden with tray available: launching as Accessory (no Dock icon)");
@@ -276,113 +276,119 @@ fn initialize_core_logic(app_handle: &AppHandle) -> tauri::Result<()> {
     // by the time `setup` runs the app has already launched as a Regular
     // (Dock) app, and demoting it at runtime is unreliable (#1787).
 
-    // Get the current theme to set the appropriate initial icon
-    let initial_theme = tray::get_current_theme(app_handle);
-
-    // Choose the appropriate initial icon based on theme
-    let initial_icon_path = tray::get_icon_path(initial_theme, tray::TrayIconState::Idle, false);
-
-    let initial_icon = tray::load_tray_icon_resource(app_handle, initial_icon_path)?;
-
-    let mut tray_builder = TrayIconBuilder::new()
-        .icon(initial_icon)
-        .tooltip(tray::tray_tooltip())
-        .icon_as_template(true);
-
-    // Windows notification-area convention: left click opens the app, right click
-    // shows the menu. Elsewhere (macOS menu bar, Linux) the menu stays on left click.
-    #[cfg(target_os = "windows")]
+    // 仅保留旧菜单动作实现供兼容与统一菜单复用；Inputia产品不创建此独立图标。
+    let saved_tray_preference = settings::get_settings(app_handle).show_tray_icon;
+    if tray::independent_tray_enabled(saved_tray_preference, app_handle.state::<CliArgs>().no_tray)
     {
-        tray_builder = tray_builder
-            .show_menu_on_left_click(false)
-            .on_tray_icon_event(|tray, event| {
-                use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
-                let opens_window = matches!(
-                    event,
-                    TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } | TrayIconEvent::DoubleClick {
-                        button: MouseButton::Left,
-                        ..
-                    }
-                );
-                if opens_window {
-                    show_main_window(tray.app_handle());
-                }
-            });
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        tray_builder = tray_builder.show_menu_on_left_click(true);
-    }
+        // Get the current theme to set the appropriate initial icon
+        let initial_theme = tray::get_current_theme(app_handle);
 
-    let tray = tray_builder
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "settings" => {
-                show_main_window(app);
-            }
-            "secure_input_warning" => {
-                // Full explanation lives in the settings-window banner
-                show_main_window(app);
-            }
-            "check_updates" => {
-                let settings = settings::get_settings(app);
-                if settings::update_checks_effectively_enabled(&settings) {
-                    show_main_window(app);
-                    let _ = app.emit("check-for-updates", ());
-                }
-            }
-            "copy_last_transcript" => {
-                tray::copy_last_transcript(app);
-            }
-            "clipboard_history" => {
-                overlay::toggle_clipboard_overlay(app);
-            }
-            "unload_model" => {
-                let transcription_manager = app.state::<Arc<TranscriptionManager>>();
-                if !transcription_manager.is_model_loaded() {
-                    log::warn!("No model is currently loaded.");
-                    return;
-                }
-                match transcription_manager.unload_model() {
-                    Ok(()) => log::info!("Model unloaded via tray."),
-                    Err(e) => log::error!("Failed to unload model via tray: {}", e),
-                }
-            }
-            "cancel" => {
-                use crate::utils::cancel_current_operation;
+        // Choose the appropriate initial icon based on theme
+        let initial_icon_path =
+            tray::get_icon_path(initial_theme, tray::TrayIconState::Idle, false);
 
-                // Use centralized cancellation that handles all operations
-                cancel_current_operation(app);
-            }
-            "quit" => {
-                app.exit(0);
-            }
-            id if id.starts_with("model_select:") => {
-                let model_id = id.strip_prefix("model_select:").unwrap().to_string();
-                let current_model = settings::get_settings(app).selected_model;
-                if model_id == current_model {
-                    return;
-                }
-                let app_clone = app.clone();
-                std::thread::spawn(move || {
-                    match commands::models::switch_active_model(&app_clone, &model_id) {
-                        Ok(()) => {
-                            log::info!("Model switched to {} via tray.", model_id);
+        let initial_icon = tray::load_tray_icon_resource(app_handle, initial_icon_path)?;
+
+        let mut tray_builder = TrayIconBuilder::new()
+            .icon(initial_icon)
+            .tooltip(tray::tray_tooltip())
+            .icon_as_template(true);
+
+        // Windows notification-area convention: left click opens the app, right click
+        // shows the menu. Elsewhere (macOS menu bar, Linux) the menu stays on left click.
+        #[cfg(target_os = "windows")]
+        {
+            tray_builder = tray_builder
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+                    let opens_window = matches!(
+                        event,
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } | TrayIconEvent::DoubleClick {
+                            button: MouseButton::Left,
+                            ..
                         }
-                        Err(e) => {
-                            log::error!("Failed to switch model via tray: {}", e);
-                        }
+                    );
+                    if opens_window {
+                        show_main_window(tray.app_handle());
                     }
-                    tray::update_tray_menu(&app_clone);
                 });
-            }
-            _ => {}
-        })
-        .build(app_handle)?;
-    app_handle.manage(tray);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            tray_builder = tray_builder.show_menu_on_left_click(true);
+        }
+
+        let tray = tray_builder
+            .on_menu_event(|app, event| match event.id.as_ref() {
+                "settings" => {
+                    show_main_window(app);
+                }
+                "secure_input_warning" => {
+                    // Full explanation lives in the settings-window banner
+                    show_main_window(app);
+                }
+                "check_updates" => {
+                    let settings = settings::get_settings(app);
+                    if settings::update_checks_effectively_enabled(&settings) {
+                        show_main_window(app);
+                        let _ = app.emit("check-for-updates", ());
+                    }
+                }
+                "copy_last_transcript" => {
+                    tray::copy_last_transcript(app);
+                }
+                "clipboard_history" => {
+                    overlay::toggle_clipboard_overlay(app);
+                }
+                "unload_model" => {
+                    let transcription_manager = app.state::<Arc<TranscriptionManager>>();
+                    if !transcription_manager.is_model_loaded() {
+                        log::warn!("No model is currently loaded.");
+                        return;
+                    }
+                    match transcription_manager.unload_model() {
+                        Ok(()) => log::info!("Model unloaded via tray."),
+                        Err(e) => log::error!("Failed to unload model via tray: {}", e),
+                    }
+                }
+                "cancel" => {
+                    use crate::utils::cancel_current_operation;
+
+                    // Use centralized cancellation that handles all operations
+                    cancel_current_operation(app);
+                }
+                "quit" => {
+                    app.exit(0);
+                }
+                id if id.starts_with("model_select:") => {
+                    let model_id = id.strip_prefix("model_select:").unwrap().to_string();
+                    let current_model = settings::get_settings(app).selected_model;
+                    if model_id == current_model {
+                        return;
+                    }
+                    let app_clone = app.clone();
+                    std::thread::spawn(move || {
+                        match commands::models::switch_active_model(&app_clone, &model_id) {
+                            Ok(()) => {
+                                log::info!("Model switched to {} via tray.", model_id);
+                            }
+                            Err(e) => {
+                                log::error!("Failed to switch model via tray: {}", e);
+                            }
+                        }
+                        tray::update_tray_menu(&app_clone);
+                    });
+                }
+                _ => {}
+            })
+            .build(app_handle)?;
+        app_handle.manage(tray);
+    }
 
     // Initialize tray menu with idle state
     tray::update_tray_menu(app_handle);
@@ -998,8 +1004,6 @@ pub fn run(cli_args: CliArgs) {
                 // it arrives as RunEvent::Reopen below — but treat this the
                 // same way: raise the window and recreate a possibly vanished
                 // tray icon (#1948).
-                #[cfg(target_os = "macos")]
-                tray::recreate_tray_icon(app);
                 show_main_window(app);
             }
         }));
@@ -1083,7 +1087,7 @@ pub fn run(cli_args: CliArgs) {
             // for portable mode (redirects WebView2 cache to portable Data dir)
             let mut win_builder =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
-                    .title("Handy")
+                    .title("Inputia")
                     .inner_size(680.0, 570.0)
                     .min_inner_size(680.0, 570.0)
                     .resizable(true)
@@ -1163,11 +1167,8 @@ pub fn run(cli_args: CliArgs) {
             let should_hide = settings.start_hidden || cli_args.start_hidden;
             let should_force_show = should_force_show_permissions_window(&app_handle);
 
-            // If start_hidden but tray is disabled, we must show the window
-            // anyway. Without a tray icon, the dock is the only way back in.
-            // Keep in sync with `apply_startup_activation_policy` (macOS).
-            let tray_available = settings.show_tray_icon && !cli_args.no_tray;
-            if should_force_show || !should_hide || !tray_available {
+            // Inputia保留Dock/应用启动入口；后台唤起不为不存在的托盘强制抢焦点。
+            if should_force_show || !should_hide {
                 show_main_window(&app_handle);
             }
 
@@ -1177,28 +1178,9 @@ pub fn run(cli_args: CliArgs) {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _res = window.hide();
-
-                #[cfg(target_os = "macos")]
-                {
-                    let settings = get_settings(window.app_handle());
-                    let tray_visible =
-                        settings.show_tray_icon && !window.app_handle().state::<CliArgs>().no_tray;
-                    if tray_visible {
-                        // Tray is available: hide the dock icon, app lives in the tray
-                        let res = window
-                            .app_handle()
-                            .set_activation_policy(tauri::ActivationPolicy::Accessory);
-                        if let Err(e) = res {
-                            log::error!("Failed to set activation policy: {}", e);
-                        }
-                    }
-                    // No tray: keep the dock icon visible so the user can reopen
-                }
             }
             tauri::WindowEvent::ThemeChanged(theme) => {
                 log::info!("Theme changed to: {:?}", theme);
-                // Re-apply the current tray state with the new theme's icon set
-                utils::refresh_tray_icon(window.app_handle());
             }
             #[cfg(not(target_os = "macos"))]
             tauri::WindowEvent::Focused(false) if window.label() == "clipboard_overlay" => {
@@ -1225,19 +1207,6 @@ pub fn run(cli_args: CliArgs) {
     app.run(|app, event| match &event {
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => {
-            // Fired when the already-running bundle is launched again from
-            // Spotlight/Finder or the Dock icon is clicked. If the settings
-            // window is hidden, the user is likely looking for a tray icon
-            // that vanished (#1948): recreate it. When the window is
-            // already visible this is just a focus request and the tray is
-            // left alone.
-            let window_visible = app
-                .get_webview_window("main")
-                .and_then(|w| w.is_visible().ok())
-                .unwrap_or(false);
-            if !window_visible {
-                tray::recreate_tray_icon(app);
-            }
             show_main_window(app);
         }
         // Teardown transcribe.cpp before exit

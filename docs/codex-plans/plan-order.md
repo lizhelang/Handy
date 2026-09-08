@@ -5,3 +5,4 @@
 | 1    | P20260902-073628 | 2026-09-02 07:36:28 +0800 | [20260902-073628-handy-upstream-first-reintegration.md](./20260902-073628-handy-upstream-first-reintegration.md) |
 | 2    | P20260902-174539 | 2026-09-02 17:45:39 +0800 | [20260902-174539-handy--ropy.md](./20260902-174539-handy--ropy.md)                                               |
 | 3    | P20260905-080906 | 2026-09-05 08:09:06 +0800 | [20260905-080906-unified-input-system.md](./20260905-080906-unified-input-system.md)                             |
+| 4    | P20260908-162729 | 2026-09-08 16:27:29 +0800 | [20260908-162729-inputia-only-product.md](./20260908-162729-inputia-only-product.md)                             |

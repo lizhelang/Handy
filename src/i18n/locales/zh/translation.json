@@ -172,7 +172,7 @@
     },
     "permissions": {
       "title": "需要权限",
-      "description": "Handy 需要一些权限才能正常工作。",
+      "description": "Inputia 需要一些权限才能正常工作。",
       "microphone": {
         "title": "麦克风访问",
         "description": "需要听取您的语音进行转录。"
@@ -247,13 +247,13 @@
       "searchPlaceholder": "按名称搜索模型…",
       "rescan": {
         "label": "重新扫描",
-        "tooltip": "重新扫描在 Handy 之外添加到模型文件夹或 Hugging Face 缓存中的模型"
+        "tooltip": "重新扫描在 Inputia 之外添加到模型文件夹或 Hugging Face 缓存中的模型"
       }
     },
     "general": {
       "title": "通用",
       "shortcut": {
-        "title": "Handy 快捷键",
+        "title": "Inputia 快捷键",
         "description": "配置启动语音转文字录制的键盘快捷键",
         "loading": "加载快捷键中...",
         "none": "未配置快捷键",
@@ -365,11 +365,11 @@
       },
       "autostart": {
         "label": "开机启动",
-        "description": "登录计算机时自动启动 Handy。"
+        "description": "登录计算机时自动启动 Inputia。"
       },
       "showTrayIcon": {
         "label": "显示托盘图标",
-        "description": "在系统托盘中显示 Handy 图标。"
+        "description": "在系统托盘中显示旧宿主图标。"
       },
       "overlay": {
         "style": {
@@ -513,12 +513,12 @@
           "selectError": "选择本地后处理模型失败。",
           "model": {
             "title": "本地模型",
-            "description": "Handy 使用这个自管理的 Qwen GGUF 模型，在转录后修正自定义词汇。",
+            "description": "Inputia 使用这个自管理的 Qwen GGUF 模型，在转录后修正自定义词汇。",
             "loading": "正在加载本地模型…",
             "noModels": "未找到本地模型",
             "rescan": "重新扫描本地模型",
             "active": "活跃",
-            "missing": "未找到本地 Qwen 模型。请确认 Handy 的自定义词后处理模型已安装。"
+            "missing": "未找到本地 Qwen 模型。请确认 Inputia 的自定义词后处理模型已安装。"
           }
         }
       },
@@ -582,7 +582,7 @@
       },
       "updateChecks": {
         "label": "检查更新",
-        "description": "自动检查 Handy 的新版本",
+        "description": "自动检查 Inputia 的新版本",
         "lockedDescription": "已被系统配置禁用 (HANDY_DISABLE_UPDATER)"
       },
       "soundTheme": {
@@ -660,7 +660,7 @@
       },
       "keyboardDiagnostic": {
         "title": "键盘诊断",
-        "description": "检查键盘事件是否能到达 Handy。仅记录事件数量，绝不记录您按了哪些键。",
+        "description": "检查键盘事件是否能到达 Inputia。仅记录事件数量，绝不记录您按了哪些键。",
         "run": "运行 10 秒诊断",
         "running": "正在监听… 请按几次您的快捷键（例如 Option+Space）",
         "secureInputLabel": "Secure Input",
@@ -674,7 +674,7 @@
         "mouse": "鼠标",
         "verdictBlocked": "Secure Input 正在阻止按键事件——在问题解决前，包含普通按键的快捷键无法工作。",
         "verdictSuspicious": "收到了修饰键事件，但没有按键事件——尽管 Secure Input 报告为已禁用，仍有程序在抑制按键。请在 GitHub 上反馈此问题。",
-        "verdictOk": "按键事件正常到达 Handy。",
+        "verdictOk": "按键事件正常到达 Inputia。",
         "verdictNoEvents": "未捕获到任何事件——测试期间您按过键吗？",
         "failed": "诊断失败：{{error}}"
       },
@@ -690,11 +690,11 @@
       "title": "关于",
       "version": {
         "title": "版本",
-        "description": "Handy 的当前版本"
+        "description": "Inputia 的当前版本"
       },
       "appDataDirectory": {
         "title": "应用数据目录",
-        "description": "Handy 存储数据的位置"
+        "description": "Inputia 存储数据的位置"
       },
       "sourceCode": {
         "title": "源代码",
@@ -703,7 +703,7 @@
       },
       "supportDevelopment": {
         "title": "支持开发",
-        "description": "帮助我们继续开发 Handy",
+        "description": "帮助我们继续开发 Inputia",
         "button": "捐赠"
       },
       "acknowledgments": {
@@ -711,12 +711,18 @@
         "ggml": {
           "title": "ggml",
           "description": "OpenAI Whisper 自动语音识别模型的高性能推理",
-          "details": "Handy 使用 ggml 进行快速的本地语音转文字处理。感谢 Georgi Gerganov 和贡献者们的出色工作。"
+          "details": "Inputia 使用 ggml 进行快速的本地语音转文字处理。感谢 Georgi Gerganov 和贡献者们的出色工作。"
         }
       },
       "whatsNewUpdates": {
         "label": "显示新功能",
-        "description": "Handy 更新后显示发行说明"
+        "description": "Inputia 更新后显示发行说明"
+      },
+      "upstream": {
+        "title": "开源来源与许可",
+        "description": "Inputia 复用开源 Handy 的技术底座，保留上游版权与许可。",
+        "source": "查看上游 Handy 源码",
+        "license": "查看原始许可证"
       }
     },
     "clipboard": {
@@ -779,7 +785,7 @@
         "helpFavorite": "收藏所选项目",
         "helpDelete": "删除所选项目",
         "helpEscape": "清空搜索或离开面板",
-        "aboutCopy": "Handy 剪贴板管理器，采用类似 Ropy 的交互风格，并连接到 Handy 本地剪贴板历史。",
+        "aboutCopy": "Inputia 历史面板，采用类似 Ropy 的交互风格，并连接到 Inputia 本地剪贴板历史。",
         "editTitle": "编辑标题",
         "titlePlaceholder": "添加标题",
         "pinToTop": "置顶窗口",
@@ -811,7 +817,8 @@
     "portableUpdateMessage": "便携版无法自动更新。请通过下方按钮下载适用于你的系统的安装程序，运行后安装到同一文件夹，你的 Data/ 文件夹（设置、模型、录音）会保留在原处。",
     "portableUpdateButton": "下载安装程序",
     "portableUpdateBrowseMessage": "便携版无法自动更新。请从 GitHub Releases 下载适用于你的系统的最新版本，并安装到同一文件夹，你的 Data/ 文件夹（设置、模型、录音）会保留在原处。",
-    "portableUpdateBrowseButton": "打开 GitHub Releases"
+    "portableUpdateBrowseButton": "打开 GitHub Releases",
+    "updateSourceUnavailable": "此候选尚未配置 Inputia 更新源，请使用配套候选安装包"
   },
   "common": {
     "loading": "加载中...",
@@ -823,7 +830,7 @@
     "noOptionsFound": "未找到选项"
   },
   "accessibility": {
-    "permissionsDescription": "Handy 需要辅助功能权限才能输入转录的文字。",
+    "permissionsDescription": "Inputia 需要辅助功能权限才能输入转录的文字。",
     "openSettings": "打开系统设置"
   },
   "errors": {
@@ -846,11 +853,11 @@
   },
   "appLanguage": {
     "title": "应用语言",
-    "description": "更改 Handy 界面的语言"
+    "description": "更改 Inputia 界面的语言"
   },
   "theme": {
     "title": "应用主题",
-    "description": "选择 Handy 跟随系统主题，还是保持浅色或深色",
+    "description": "选择 Inputia 跟随系统主题，还是保持浅色或深色",
     "options": {
       "system": "跟随系统",
       "light": "浅色",
@@ -862,7 +869,7 @@
     "processing": "处理中..."
   },
   "whatsNew": {
-    "title": "Handy v{{version}} 新功能"
+    "title": "Inputia v{{version}} 新功能"
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} 可能正在阻止 1 个快捷键",

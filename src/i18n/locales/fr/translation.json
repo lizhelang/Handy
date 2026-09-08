@@ -172,7 +172,7 @@
     },
     "permissions": {
       "title": "Autorisations requises",
-      "description": "Handy a besoin de quelques autorisations pour fonctionner correctement.",
+      "description": "Inputia a besoin de quelques autorisations pour fonctionner correctement.",
       "microphone": {
         "title": "Accès au microphone",
         "description": "Nécessaire pour entendre votre voix pour la transcription."
@@ -247,13 +247,13 @@
       "searchPlaceholder": "Rechercher des modèles par nom…",
       "rescan": {
         "label": "Réanalyser",
-        "tooltip": "Réanalyser pour détecter les modèles ajoutés au dossier des modèles ou au cache Hugging Face en dehors de Handy"
+        "tooltip": "Réanalyser pour détecter les modèles ajoutés au dossier des modèles ou au cache Hugging Face en dehors de Inputia"
       }
     },
     "general": {
       "title": "Général",
       "shortcut": {
-        "title": "Raccourcis Handy",
+        "title": "Raccourcis Inputia",
         "description": "Configurer les raccourcis clavier pour déclencher l'enregistrement de la reconnaissance vocale",
         "loading": "Chargement des raccourcis...",
         "none": "Aucun raccourci configuré",
@@ -365,11 +365,11 @@
       },
       "autostart": {
         "label": "Lancer au démarrage",
-        "description": "Démarrer automatiquement Handy lorsque vous vous connectez à votre ordinateur."
+        "description": "Démarrer automatiquement Inputia lorsque vous vous connectez à votre ordinateur."
       },
       "showTrayIcon": {
         "label": "Afficher l'icône de la barre",
-        "description": "Afficher l'icône de Handy dans la barre système."
+        "description": "Afficher l'icône de Inputia dans la barre système."
       },
       "overlay": {
         "style": {
@@ -513,12 +513,12 @@
           "selectError": "Failed to select local post-processing model.",
           "model": {
             "title": "Local Model",
-            "description": "Handy uses this self-managed Qwen GGUF model to correct custom words after transcription.",
+            "description": "Inputia uses this self-managed Qwen GGUF model to correct custom words after transcription.",
             "loading": "Loading local models...",
             "noModels": "No local models found",
             "rescan": "Rescan local models",
             "active": "Active",
-            "missing": "Local Qwen model not found. Make sure Handy's custom-word post-processing model is installed."
+            "missing": "Local Qwen model not found. Make sure Inputia's custom-word post-processing model is installed."
           }
         }
       },
@@ -582,7 +582,7 @@
       },
       "updateChecks": {
         "label": "Vérifier les mises à jour",
-        "description": "Vérifier automatiquement les nouvelles versions de Handy",
+        "description": "Vérifier automatiquement les nouvelles versions de Inputia",
         "lockedDescription": "Désactivé par la configuration système (HANDY_DISABLE_UPDATER)"
       },
       "soundTheme": {
@@ -660,7 +660,7 @@
       },
       "keyboardDiagnostic": {
         "title": "Diagnostic du clavier",
-        "description": "Vérifie si les événements clavier atteignent Handy. Seul le nombre d'événements est enregistré, jamais les touches sur lesquelles vous appuyez.",
+        "description": "Vérifie si les événements clavier atteignent Inputia. Seul le nombre d'événements est enregistré, jamais les touches sur lesquelles vous appuyez.",
         "run": "Lancer un diagnostic de 10 s",
         "running": "Écoute en cours… appuyez plusieurs fois sur votre raccourci (par ex. Option+Space)",
         "secureInputLabel": "Secure Input",
@@ -674,7 +674,7 @@
         "mouse": "Souris",
         "verdictBlocked": "Secure Input bloque les événements clavier : les raccourcis contenant une touche normale ne peuvent pas fonctionner tant que ce n'est pas résolu.",
         "verdictSuspicious": "Des événements de modificateurs sont arrivés, mais aucun événement de touche : quelque chose supprime les touches alors que Secure Input est signalé comme désactivé. Merci de le signaler sur GitHub.",
-        "verdictOk": "Les événements clavier atteignent Handy normalement.",
+        "verdictOk": "Les événements clavier atteignent Inputia normalement.",
         "verdictNoEvents": "Aucun événement capturé : avez-vous appuyé sur des touches pendant le test ?",
         "failed": "Échec du diagnostic : {{error}}"
       },
@@ -690,11 +690,11 @@
       "title": "À propos",
       "version": {
         "title": "Version",
-        "description": "Version actuelle de Handy"
+        "description": "Version actuelle de Inputia"
       },
       "appDataDirectory": {
         "title": "Emplacement des données de l'application",
-        "description": "Emplacement où Handy stocke ses données"
+        "description": "Emplacement où Inputia stocke ses données"
       },
       "sourceCode": {
         "title": "Code source",
@@ -703,7 +703,7 @@
       },
       "supportDevelopment": {
         "title": "Soutenir le développement",
-        "description": "Aidez-nous à continuer à construire Handy",
+        "description": "Aidez-nous à continuer à construire Inputia",
         "button": "Faire un don"
       },
       "acknowledgments": {
@@ -711,12 +711,18 @@
         "ggml": {
           "title": "ggml",
           "description": "Inférence haute performance du modèle de reconnaissance vocale automatique Whisper d'OpenAI",
-          "details": "Handy utilise ggml pour un traitement rapide et local de la parole en texte. Merci au travail incroyable de Georgi Gerganov et des contributeurs."
+          "details": "Inputia utilise ggml pour un traitement rapide et local de la parole en texte. Merci au travail incroyable de Georgi Gerganov et des contributeurs."
         }
       },
       "whatsNewUpdates": {
         "label": "Afficher les nouveautés",
-        "description": "Afficher les notes de version après les mises à jour de Handy"
+        "description": "Afficher les notes de version après les mises à jour de Inputia"
+      },
+      "upstream": {
+        "title": "Open-source attribution",
+        "description": "Inputia builds on the open-source Handy project and retains its copyright and license notices.",
+        "source": "View upstream Handy source",
+        "license": "View original license"
       }
     },
     "clipboard": {
@@ -779,7 +785,7 @@
         "helpFavorite": "Favorite selected item",
         "helpDelete": "Delete selected item",
         "helpEscape": "Clear search or leave panel",
-        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "aboutCopy": "Inputia clipboard manager, styled after Ropy and connected to Inputia's local clipboard history.",
         "editTitle": "Edit title",
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
@@ -811,7 +817,8 @@
     "portableUpdateMessage": "Les installations portables ne peuvent pas être mises à jour automatiquement. Téléchargez ci-dessous l’installateur correspondant à votre système, exécutez-le et installez-le dans le même dossier : votre dossier Data/ (paramètres, modèles, enregistrements) est conservé.",
     "portableUpdateButton": "Télécharger l’installateur",
     "portableUpdateBrowseMessage": "Les installations portables ne peuvent pas être mises à jour automatiquement. Téléchargez la dernière version correspondant à votre système depuis GitHub Releases et installez-la dans le même dossier : votre dossier Data/ (paramètres, modèles, enregistrements) est conservé.",
-    "portableUpdateBrowseButton": "Ouvrir GitHub Releases"
+    "portableUpdateBrowseButton": "Ouvrir GitHub Releases",
+    "updateSourceUnavailable": "This candidate has no Inputia update source yet; use the paired candidate installer."
   },
   "common": {
     "loading": "Chargement...",
@@ -823,7 +830,7 @@
     "noOptionsFound": "Aucune option trouvée"
   },
   "accessibility": {
-    "permissionsDescription": "Handy a besoin des autorisations d'accessibilité pour taper le texte transcrit.",
+    "permissionsDescription": "Inputia a besoin des autorisations d'accessibilité pour taper le texte transcrit.",
     "openSettings": "Ouvrir les Préférences Système"
   },
   "errors": {
@@ -846,11 +853,11 @@
   },
   "appLanguage": {
     "title": "Langue de l'application",
-    "description": "Changer la langue de l'interface de Handy"
+    "description": "Changer la langue de l'interface de Inputia"
   },
   "theme": {
     "title": "Thème de l'application",
-    "description": "Choisissez si Handy suit le thème du système ou reste clair ou sombre",
+    "description": "Choisissez si Inputia suit le thème du système ou reste clair ou sombre",
     "options": {
       "system": "Système",
       "light": "Clair",
@@ -862,7 +869,7 @@
     "processing": "Traitement..."
   },
   "whatsNew": {
-    "title": "Nouveautés de Handy v{{version}}"
+    "title": "Nouveautés de Inputia v{{version}}"
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} bloque peut-être 1 raccourci",

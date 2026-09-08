@@ -4,7 +4,9 @@ import Darwin
 private struct OutputRequestFixture: Decodable {
   struct Command: Decodable { let kind: String; let operation_id: String?; let receipt: String? }
   let request_id: String
-  let output: Command
+  let output: Command?
+  let menu: Command?
+  let command: Command?
 }
 private struct OutputReplyFixture: Encodable {
   let status: String
@@ -12,6 +14,8 @@ private struct OutputReplyFixture: Encodable {
   var delivery: InputiaVoiceDelivery? = nil
   var operation_id: String? = nil
   var state: String? = nil
+  var code: String? = nil
+  var view: InputiaVoiceSessionView? = nil
 }
 
 private final class SyntheticState: InputiaSharedStateBarrierApplying {
@@ -102,11 +106,17 @@ struct InputiaVoiceServiceSelfCheck {
           do {
             let peer = try InputiaFramedConnection.fixture(descriptor: peerFD, timeout: 2)
             let fetch = try peer.read(OutputRequestFixture.self)
-            precondition(fetch.output.kind == "fetch")
+            precondition(fetch.output?.kind == "fetch")
             try peer.write(OutputReplyFixture(status: "delivery", request_id: fetch.request_id, delivery: delivery))
             let receipt = try peer.read(OutputRequestFixture.self)
-            precondition(receipt.output.kind == "receipt" && receipt.output.operation_id == "op" && receipt.output.receipt == "dispatched")
+            precondition(receipt.output?.kind == "receipt" && receipt.output?.operation_id == "op" && receipt.output?.receipt == "dispatched")
             try peer.write(OutputReplyFixture(status: "output", request_id: receipt.request_id, operation_id: "op", state: "dispatched_only"))
+            let navigation = try peer.read(OutputRequestFixture.self)
+            precondition(navigation.menu?.kind == "history")
+            try peer.write(OutputReplyFixture(status: "rejected", request_id: navigation.request_id, code: "coordinator_rejected"))
+            let query = try peer.read(OutputRequestFixture.self)
+            precondition(query.command?.kind == "status")
+            try peer.write(OutputReplyFixture(status: "session", request_id: query.request_id, view: deliveryView))
             peer.close()
           } catch { fatalError("synthetic delivery peer failed: \(error)") }
           peerFinished.signal()
@@ -114,6 +124,10 @@ struct InputiaVoiceServiceSelfCheck {
         guard let received = try client.fetchDelivery(view: deliveryView, target: deliveryTarget) else { fatalError("delivery missing") }
         precondition(received.dispatchDeadline > ProcessInfo.processInfo.systemUptime)
         try client.acknowledgeDelivery(received, receipt: "dispatched")
+        let declinedMenu = try client.menuRequest(kind: "history")
+        precondition(declinedMenu.status == "rejected")
+        let stillConnected = try client.request(sessionID: "session", requestID: "status-after-menu", command: .status)
+        precondition(stillConnected.view?.session_id == "session")
         client.close()
         precondition(peerFinished.wait(timeout: .now() + 3) == .success)
         print("inputia_voice_output_wire=pass fetch_and_receipt=true synthetic_peer=true native_insertion_tested=false")

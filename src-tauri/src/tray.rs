@@ -13,12 +13,8 @@
 //! recording cycle rebuilt the full menu 3-6 times from several threads, and
 //! concurrent rebuilds could interleave and leave a stale menu behind.
 //!
-//! Exception: [`set_tray_visibility`] and [`recreate_tray_icon`] call the tray
-//! directly. Visibility is a separate attribute that never participates in the
-//! icon/menu diff, both are rare and user-initiated, and Tauri marshals them
-//! onto the main thread so they serialize with the applier anyway. Re-showing
-//! a hidden tray relies on tray-icon recreating it from the last applied
-//! icon/menu/tooltip, so those must only ever be set through the applier.
+//! Inputia产品不创建独立托盘，旧状态容器仍给统一系统菜单提供忙闲事实。
+//! [`set_tray_visibility`]只允许隐藏遗留对象，不支持恢复独立图标。
 
 use crate::managers::history::{HistoryEntry, HistoryManager};
 use crate::managers::model::ModelManager;
@@ -43,6 +39,18 @@ pub enum TrayIconState {
     Idle,
     Recording,
     Transcribing,
+}
+
+/// Inputia只保留系统输入法菜单；旧配置和重启都不能恢复独立托盘。
+pub fn independent_tray_enabled(_saved_preference: bool, _cli_no_tray: bool) -> bool {
+    false
+}
+
+/// 统一菜单读取原录音状态，不再依赖是否创建独立图标。
+pub fn service_is_busy(app: &AppHandle) -> bool {
+    app.try_state::<TrayState>()
+        .map(|state| state.lock().icon_state.is_busy())
+        .unwrap_or(true)
 }
 
 impl TrayIconState {
@@ -509,9 +517,9 @@ pub fn tray_tooltip() -> String {
 
 fn version_label() -> String {
     if cfg!(debug_assertions) {
-        format!("Handy v{} (Dev)", env!("CARGO_PKG_VERSION"))
+        format!("Inputia v{} (Dev)", env!("CARGO_PKG_VERSION"))
     } else {
-        format!("Handy v{}", env!("CARGO_PKG_VERSION"))
+        format!("Inputia v{}", env!("CARGO_PKG_VERSION"))
     }
 }
 
@@ -675,36 +683,14 @@ fn last_transcript_text(entry: &HistoryEntry) -> &str {
 }
 
 pub fn set_tray_visibility(app: &AppHandle, visible: bool) {
-    let tray = app.state::<TrayIcon>();
+    let Some(tray) = app.try_state::<TrayIcon>() else {
+        return;
+    };
+    let visible = visible && independent_tray_enabled(true, false);
     if let Err(e) = tray.set_visible(visible) {
         error!("Failed to set tray visibility: {}", e);
     } else {
         info!("Tray visibility set to: {}", visible);
-    }
-}
-
-/// Recovery for the macOS tray-disappearance bug (#1948, tauri-apps/tauri#12060):
-/// the `NSStatusItem` can silently vanish with no error surfaced to the app.
-/// Hiding and re-showing the tray recreates it with its current icon, menu and
-/// tooltip. Called when the user "relaunches" Handy while it is already running
-/// (`RunEvent::Reopen` for Spotlight/Finder/Dock, the single-instance callback
-/// for a second process) — the natural "where did my icon go?" moment — so a
-/// relaunch brings the icon back without a full quit.
-#[cfg(target_os = "macos")]
-pub fn recreate_tray_icon(app: &AppHandle) {
-    let no_tray = app
-        .try_state::<crate::cli::CliArgs>()
-        .map(|args| args.no_tray)
-        .unwrap_or(false);
-    if no_tray || !settings::get_settings(app).show_tray_icon {
-        return;
-    }
-    let Some(tray) = app.try_state::<TrayIcon>() else {
-        return;
-    };
-    info!("Recreating tray icon on relaunch");
-    if let Err(e) = tray.set_visible(false).and_then(|_| tray.set_visible(true)) {
-        error!("Failed to recreate tray icon: {}", e);
     }
 }
 
@@ -741,6 +727,14 @@ pub fn copy_last_transcript(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn independent_tray_cannot_be_enabled_by_legacy_settings_or_cli() {
+        for saved in [false, true] {
+            for no_tray in [false, true] {
+                assert!(!super::independent_tray_enabled(saved, no_tray));
+            }
+        }
+    }
     #[cfg(target_os = "macos")]
     use super::macos_bundle_resource_from_executable;
     use super::{last_transcript_text, load_tray_icon, MenuInputs, TrayDesired, TrayIconState};

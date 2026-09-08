@@ -172,7 +172,7 @@
     },
     "permissions": {
       "title": "Tilladelser påkrævet",
-      "description": "Handy har brug for et par tilladelser for at fungere korrekt.",
+      "description": "Inputia har brug for et par tilladelser for at fungere korrekt.",
       "microphone": {
         "title": "Mikrofonadgang",
         "description": "Påkrævet for at høre din stemme til transskription."
@@ -233,7 +233,7 @@
     "general": {
       "title": "Generelt",
       "shortcut": {
-        "title": "Handy-genveje",
+        "title": "Inputia-genveje",
         "description": "Konfigurer tastaturgenveje til at udløse tale-til-tekst-optagelse",
         "loading": "Indlæser genveje...",
         "none": "Ingen genveje konfigureret",
@@ -297,7 +297,7 @@
       },
       "rescan": {
         "label": "Søg igen",
-        "tooltip": "Søg igen efter modeller, der er tilføjet til modelmappen eller Hugging Face-cachen uden for Handy"
+        "tooltip": "Søg igen efter modeller, der er tilføjet til modelmappen eller Hugging Face-cachen uden for Inputia"
       },
       "noModelsMatch": "Ingen modeller matcher dette filter."
     },
@@ -365,11 +365,11 @@
       },
       "autostart": {
         "label": "Start ved opstart",
-        "description": "Start Handy automatisk, når du logger ind på din computer."
+        "description": "Start Inputia automatisk, når du logger ind på din computer."
       },
       "showTrayIcon": {
         "label": "Vis proceslinjeikon",
-        "description": "Vis Handy-ikonet i meddelelsesområdet."
+        "description": "Vis Inputia-ikonet i meddelelsesområdet."
       },
       "overlay": {
         "style": {
@@ -513,12 +513,12 @@
           "selectError": "Failed to select local post-processing model.",
           "model": {
             "title": "Local Model",
-            "description": "Handy uses this self-managed Qwen GGUF model to correct custom words after transcription.",
+            "description": "Inputia uses this self-managed Qwen GGUF model to correct custom words after transcription.",
             "loading": "Loading local models...",
             "noModels": "No local models found",
             "rescan": "Rescan local models",
             "active": "Active",
-            "missing": "Local Qwen model not found. Make sure Handy's custom-word post-processing model is installed."
+            "missing": "Local Qwen model not found. Make sure Inputia's custom-word post-processing model is installed."
           }
         }
       },
@@ -582,7 +582,7 @@
       },
       "updateChecks": {
         "label": "Tjek for opdateringer",
-        "description": "Tjek automatisk for nye versioner af Handy",
+        "description": "Tjek automatisk for nye versioner af Inputia",
         "lockedDescription": "Deaktiveret af systemkonfiguration (HANDY_DISABLE_UPDATER)"
       },
       "whatsNewPreview": {
@@ -667,7 +667,7 @@
       },
       "keyboardDiagnostic": {
         "title": "Tastaturdiagnostik",
-        "description": "Kontrollerer, om tastaturhændelser når frem til Handy. Kun antallet af hændelser registreres — aldrig hvilke taster du trykker på.",
+        "description": "Kontrollerer, om tastaturhændelser når frem til Inputia. Kun antallet af hændelser registreres — aldrig hvilke taster du trykker på.",
         "run": "Kør 10 s diagnostik",
         "running": "Lytter… tryk på din genvej et par gange (f.eks. Option+Space)",
         "secureInputLabel": "Secure Input",
@@ -681,7 +681,7 @@
         "mouse": "Mus",
         "verdictBlocked": "Secure Input blokerer tastehændelser — genveje med en almindelig tast kan ikke fungere, før det er løst.",
         "verdictSuspicious": "Der kom modifikatorhændelser, men ingen tastehændelser — noget undertrykker taster, selvom Secure Input rapporteres som deaktiveret. Rapportér det gerne på GitHub.",
-        "verdictOk": "Tastehændelser når frem til Handy som normalt.",
+        "verdictOk": "Tastehændelser når frem til Inputia som normalt.",
         "verdictNoEvents": "Ingen hændelser registreret — trykkede du på nogen taster under testen?",
         "failed": "Diagnostik mislykkedes: {{error}}"
       }
@@ -690,15 +690,15 @@
       "title": "Om",
       "version": {
         "title": "Version",
-        "description": "Nuværende version af Handy"
+        "description": "Nuværende version af Inputia"
       },
       "whatsNewUpdates": {
         "label": "Vis nyheder",
-        "description": "Vis udgivelsesnoter, efter Handy opdateres"
+        "description": "Vis udgivelsesnoter, efter Inputia opdateres"
       },
       "appDataDirectory": {
         "title": "Appdatamappe",
-        "description": "Placering, hvor Handy gemmer sine data"
+        "description": "Placering, hvor Inputia gemmer sine data"
       },
       "sourceCode": {
         "title": "Kildekode",
@@ -707,7 +707,7 @@
       },
       "supportDevelopment": {
         "title": "Støt udviklingen",
-        "description": "Hjælp os med at fortsætte udviklingen af Handy",
+        "description": "Hjælp os med at fortsætte udviklingen af Inputia",
         "button": "Donér"
       },
       "acknowledgments": {
@@ -715,8 +715,14 @@
         "ggml": {
           "title": "ggml",
           "description": "Højtydende tensor-bibliotek til maskinlæringsinferens på enheden",
-          "details": "Handys lokale tale-til-tekst funktionalitet er bygget på transcribe.cpp og ggml. Tak for det fantastiske arbejde af Georgi Gerganov og bidragyderne."
+          "details": "Inputias lokale tale-til-tekst funktionalitet er bygget på transcribe.cpp og ggml. Tak for det fantastiske arbejde af Georgi Gerganov og bidragyderne."
         }
+      },
+      "upstream": {
+        "title": "Open-source attribution",
+        "description": "Inputia builds on the open-source Handy project and retains its copyright and license notices.",
+        "source": "View upstream Handy source",
+        "license": "View original license"
       }
     },
     "clipboard": {
@@ -779,7 +785,7 @@
         "helpFavorite": "Favorite selected item",
         "helpDelete": "Delete selected item",
         "helpEscape": "Clear search or leave panel",
-        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "aboutCopy": "Inputia clipboard manager, styled after Ropy and connected to Inputia's local clipboard history.",
         "editTitle": "Edit title",
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
@@ -811,10 +817,11 @@
     "portableUpdateMessage": "Flytbare installationer kan ikke opdateres automatisk. Download installeren til dit system nedenfor, kør den, og installer i den samme mappe — din Data/-mappe (indstillinger, modeller, optagelser) bliver bevaret.",
     "portableUpdateButton": "Download installer",
     "portableUpdateBrowseMessage": "Flytbare installationer kan ikke opdateres automatisk. Download den nyeste version til dit system fra GitHub Releases, og installer den i den samme mappe — din Data/-mappe (indstillinger, modeller, optagelser) bliver bevaret.",
-    "portableUpdateBrowseButton": "Åbn GitHub Releases"
+    "portableUpdateBrowseButton": "Åbn GitHub Releases",
+    "updateSourceUnavailable": "This candidate has no Inputia update source yet; use the paired candidate installer."
   },
   "whatsNew": {
-    "title": "Nyt i Handy v{{version}}"
+    "title": "Nyt i Inputia v{{version}}"
   },
   "common": {
     "loading": "Indlæser...",
@@ -826,7 +833,7 @@
     "noOptionsFound": "Ingen muligheder fundet"
   },
   "accessibility": {
-    "permissionsDescription": "Handy har brug for tilgængelighedstilladelser for at skrive den transskriberede tekst.",
+    "permissionsDescription": "Inputia har brug for tilgængelighedstilladelser for at skrive den transskriberede tekst.",
     "openSettings": "Åbn systemindstillinger"
   },
   "errors": {
@@ -849,11 +856,11 @@
   },
   "appLanguage": {
     "title": "Applikationssprog",
-    "description": "Skift sproget for Handy-grænsefladen"
+    "description": "Skift sproget for Inputia-grænsefladen"
   },
   "theme": {
     "title": "Applikationstema",
-    "description": "Vælg om Handy skal følge dit systemtema eller forblive lyst eller mørkt",
+    "description": "Vælg om Inputia skal følge dit systemtema eller forblive lyst eller mørkt",
     "options": {
       "system": "System",
       "light": "Lys",

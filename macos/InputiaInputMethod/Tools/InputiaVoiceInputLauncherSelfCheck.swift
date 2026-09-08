@@ -4,17 +4,28 @@ import Foundation
 @main
 struct InputiaVoiceInputLauncherSelfCheck {
   static func main() {
-    let fakeApp = "/tmp/InputiaVoiceInputLauncherSelfCheck/Handy.app"
-    let fakeExecutable = "\(fakeApp)/Contents/MacOS/Handy"
+    let fakeApp = "/tmp/InputiaVoiceInputLauncherSelfCheck/Inputia.app"
+    let fakeExecutable = "\(fakeApp)/Contents/MacOS/handy"
+    try? FileManager.default.removeItem(atPath: "/tmp/InputiaVoiceInputLauncherSelfCheck")
+    try? FileManager.default.createDirectory(
+      atPath: "\(fakeApp)/Contents/MacOS",
+      withIntermediateDirectories: true
+    )
+    FileManager.default.createFile(atPath: fakeExecutable, contents: Data())
+    defer { try? FileManager.default.removeItem(atPath: "/tmp/InputiaVoiceInputLauncherSelfCheck") }
+
     let environment = ["INPUTIA_HANDY_APP": fakeApp]
     let expectedCandidates = InputiaVoiceInputLauncher.candidateAppPaths(
       environment: environment,
       homeDirectory: "/Users/example",
-      workspaceAppPath: "/Applications/Handy.app"
+      workspaceAppPath: "/Applications/Inputia.app",
+      legacyWorkspaceAppPath: "/Applications/Handy.app"
     )
-    let candidatesAreOrdered = expectedCandidates.prefix(3) == [
+    let candidatesAreOrdered = expectedCandidates.prefix(5) == [
       fakeApp,
+      "/Applications/Inputia.app",
       "/Applications/Handy.app",
+      "/Users/example/Applications/Inputia.app",
       "/Users/example/Applications/Handy.app",
     ]
 

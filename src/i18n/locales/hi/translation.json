@@ -172,7 +172,7 @@
     },
     "permissions": {
       "title": "अनुमतियों की ज़रूरत है",
-      "description": "Handy को ठीक से काम करने के लिए कुछ अनुमतियों की ज़रूरत है.",
+      "description": "Inputia को ठीक से काम करने के लिए कुछ अनुमतियों की ज़रूरत है.",
       "microphone": {
         "title": "माइक्रोफ़ोन ऐक्सेस",
         "description": "आपकी आवाज़ सुनकर ट्रांसक्रिप्शन करने के लिए ज़रूरी."
@@ -233,7 +233,7 @@
     "general": {
       "title": "सामान्य",
       "shortcut": {
-        "title": "Handy शॉर्टकट",
+        "title": "Inputia शॉर्टकट",
         "description": "स्पीच-टू-टेक्स्ट रिकॉर्डिंग शुरू करने के लिए कीबोर्ड शॉर्टकट सेट करें",
         "loading": "शॉर्टकट लोड हो रहे हैं...",
         "none": "कोई शॉर्टकट सेट नहीं है",
@@ -297,7 +297,7 @@
       },
       "rescan": {
         "label": "फिर से स्कैन करें",
-        "tooltip": "Handy के बाहर, मॉडल फ़ोल्डर या Hugging Face कैश में जोड़े गए मॉडल के लिए फिर से स्कैन करें"
+        "tooltip": "Inputia के बाहर, मॉडल फ़ोल्डर या Hugging Face कैश में जोड़े गए मॉडल के लिए फिर से स्कैन करें"
       },
       "noModelsMatch": "इस फ़िल्टर से मेल खाने वाला कोई मॉडल नहीं है."
     },
@@ -365,11 +365,11 @@
       },
       "autostart": {
         "label": "स्टार्टअप पर लॉन्च करें",
-        "description": "कंप्यूटर में लॉग इन करने पर Handy अपने आप शुरू हो जाए."
+        "description": "कंप्यूटर में लॉग इन करने पर Inputia अपने आप शुरू हो जाए."
       },
       "showTrayIcon": {
         "label": "ट्रे आइकन दिखाएं",
-        "description": "सिस्टम ट्रे में Handy का आइकन दिखाएं."
+        "description": "सिस्टम ट्रे में Inputia का आइकन दिखाएं."
       },
       "overlay": {
         "style": {
@@ -513,12 +513,12 @@
           "selectError": "Failed to select local post-processing model.",
           "model": {
             "title": "Local Model",
-            "description": "Handy uses this self-managed Qwen GGUF model to correct custom words after transcription.",
+            "description": "Inputia uses this self-managed Qwen GGUF model to correct custom words after transcription.",
             "loading": "Loading local models...",
             "noModels": "No local models found",
             "rescan": "Rescan local models",
             "active": "Active",
-            "missing": "Local Qwen model not found. Make sure Handy's custom-word post-processing model is installed."
+            "missing": "Local Qwen model not found. Make sure Inputia's custom-word post-processing model is installed."
           }
         }
       },
@@ -582,7 +582,7 @@
       },
       "updateChecks": {
         "label": "अपडेट जांचें",
-        "description": "Handy के नए वर्शन की अपने आप जांच करें",
+        "description": "Inputia के नए वर्शन की अपने आप जांच करें",
         "lockedDescription": "सिस्टम कॉन्फ़िगरेशन द्वारा अक्षम (HANDY_DISABLE_UPDATER)"
       },
       "whatsNewPreview": {
@@ -667,7 +667,7 @@
       },
       "keyboardDiagnostic": {
         "title": "कीबोर्ड डायग्नोस्टिक",
-        "description": "जाँचता है कि कीबोर्ड इवेंट Handy तक पहुँच रहे हैं या नहीं. सिर्फ़ इवेंट की गिनती रिकॉर्ड होती है — कभी नहीं कि आपने कौन-सी कुंजियाँ दबाईं.",
+        "description": "जाँचता है कि कीबोर्ड इवेंट Inputia तक पहुँच रहे हैं या नहीं. सिर्फ़ इवेंट की गिनती रिकॉर्ड होती है — कभी नहीं कि आपने कौन-सी कुंजियाँ दबाईं.",
         "run": "10 सेकंड का डायग्नोस्टिक चलाएँ",
         "running": "सुन रहे हैं… अपना शॉर्टकट कुछ बार दबाएँ (जैसे Option+Space)",
         "secureInputLabel": "Secure Input",
@@ -681,7 +681,7 @@
         "mouse": "माउस",
         "verdictBlocked": "Secure Input कुंजी इवेंट ब्लॉक कर रहा है — जब तक यह हल नहीं होता, सामान्य कुंजी वाले शॉर्टकट काम नहीं कर सकते.",
         "verdictSuspicious": "मॉडिफ़ायर इवेंट आए, लेकिन कोई कुंजी इवेंट नहीं — Secure Input के बंद दिखने के बावजूद कुछ कुंजियों को दबा रहा है. कृपया इसकी रिपोर्ट GitHub पर करें.",
-        "verdictOk": "कुंजी इवेंट Handy तक सामान्य रूप से पहुँच रहे हैं.",
+        "verdictOk": "कुंजी इवेंट Inputia तक सामान्य रूप से पहुँच रहे हैं.",
         "verdictNoEvents": "कोई इवेंट कैप्चर नहीं हुआ — क्या आपने टेस्ट के दौरान कोई कुंजी दबाई थी?",
         "failed": "डायग्नोस्टिक विफल: {{error}}"
       }
@@ -690,15 +690,15 @@
       "title": "के बारे में",
       "version": {
         "title": "वर्शन",
-        "description": "Handy का मौजूदा वर्शन"
+        "description": "Inputia का मौजूदा वर्शन"
       },
       "whatsNewUpdates": {
         "label": "'नया क्या है' दिखाएं",
-        "description": "Handy अपडेट होने के बाद रिलीज़ नोट दिखाएं"
+        "description": "Inputia अपडेट होने के बाद रिलीज़ नोट दिखाएं"
       },
       "appDataDirectory": {
         "title": "ऐप डेटा फ़ोल्डर",
-        "description": "वह जगह जहां Handy अपना डेटा सेव करता है"
+        "description": "वह जगह जहां Inputia अपना डेटा सेव करता है"
       },
       "sourceCode": {
         "title": "सोर्स कोड",
@@ -707,7 +707,7 @@
       },
       "supportDevelopment": {
         "title": "डेवलपमेंट में सहयोग करें",
-        "description": "Handy को आगे बढ़ाने में हमारी मदद करें",
+        "description": "Inputia को आगे बढ़ाने में हमारी मदद करें",
         "button": "दान करें"
       },
       "acknowledgments": {
@@ -715,8 +715,14 @@
         "ggml": {
           "title": "ggml",
           "description": "डिवाइस पर ही मशीन लर्निंग इन्फ़रेंस के लिए हाई-परफ़ॉर्मेंस टेंसर लाइब्रेरी",
-          "details": "Handy का लोकल स्पीच-टू-टेक्स्ट transcribe.cpp और ggml पर आधारित है. Georgi Gerganov और योगदान देने वालों के शानदार काम के लिए धन्यवाद."
+          "details": "Inputia का लोकल स्पीच-टू-टेक्स्ट transcribe.cpp और ggml पर आधारित है. Georgi Gerganov और योगदान देने वालों के शानदार काम के लिए धन्यवाद."
         }
+      },
+      "upstream": {
+        "title": "Open-source attribution",
+        "description": "Inputia builds on the open-source Handy project and retains its copyright and license notices.",
+        "source": "View upstream Handy source",
+        "license": "View original license"
       }
     },
     "clipboard": {
@@ -779,7 +785,7 @@
         "helpFavorite": "Favorite selected item",
         "helpDelete": "Delete selected item",
         "helpEscape": "Clear search or leave panel",
-        "aboutCopy": "Handy clipboard manager, styled after Ropy and connected to Handy's local clipboard history.",
+        "aboutCopy": "Inputia clipboard manager, styled after Ropy and connected to Inputia's local clipboard history.",
         "editTitle": "Edit title",
         "titlePlaceholder": "Add a title",
         "pinToTop": "Pin to top",
@@ -811,10 +817,11 @@
     "portableUpdateMessage": "पोर्टेबल इंस्टॉल अपने आप अपडेट नहीं हो सकते. नीचे से अपने सिस्टम के लिए इंस्टॉलर डाउनलोड करें, उसे चलाएँ और उसी फ़ोल्डर में इंस्टॉल करें — आपका Data/ फ़ोल्डर (सेटिंग, मॉडल, रिकॉर्डिंग) जहाँ है वहीं बना रहता है.",
     "portableUpdateButton": "इंस्टॉलर डाउनलोड करें",
     "portableUpdateBrowseMessage": "पोर्टेबल इंस्टॉल अपने आप अपडेट नहीं हो सकते. GitHub Releases से अपने सिस्टम के लिए नया वर्शन डाउनलोड करें और उसे उसी फ़ोल्डर में इंस्टॉल करें — आपका Data/ फ़ोल्डर (सेटिंग, मॉडल, रिकॉर्डिंग) जहाँ है वहीं बना रहता है.",
-    "portableUpdateBrowseButton": "GitHub Releases खोलें"
+    "portableUpdateBrowseButton": "GitHub Releases खोलें",
+    "updateSourceUnavailable": "This candidate has no Inputia update source yet; use the paired candidate installer."
   },
   "whatsNew": {
-    "title": "Handy v{{version}} में नया क्या है"
+    "title": "Inputia v{{version}} में नया क्या है"
   },
   "common": {
     "loading": "लोड हो रहा है...",
@@ -826,7 +833,7 @@
     "noOptionsFound": "कोई विकल्प नहीं मिला"
   },
   "accessibility": {
-    "permissionsDescription": "ट्रांसक्राइब किया गया टेक्स्ट टाइप करने के लिए, Handy को ऐक्सेसिबिलिटी अनुमतियों की ज़रूरत है.",
+    "permissionsDescription": "ट्रांसक्राइब किया गया टेक्स्ट टाइप करने के लिए, Inputia को ऐक्सेसिबिलिटी अनुमतियों की ज़रूरत है.",
     "openSettings": "सिस्टम सेटिंग खोलें"
   },
   "errors": {
@@ -849,11 +856,11 @@
   },
   "appLanguage": {
     "title": "ऐप्लिकेशन की भाषा",
-    "description": "Handy इंटरफ़ेस की भाषा बदलें"
+    "description": "Inputia इंटरफ़ेस की भाषा बदलें"
   },
   "theme": {
     "title": "ऐप्लिकेशन थीम",
-    "description": "चुनें कि Handy आपकी सिस्टम थीम के हिसाब से चले या हमेशा लाइट या डार्क रहे",
+    "description": "चुनें कि Inputia आपकी सिस्टम थीम के हिसाब से चले या हमेशा लाइट या डार्क रहे",
     "options": {
       "system": "सिस्टम",
       "light": "लाइट",

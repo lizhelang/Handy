@@ -118,3 +118,9 @@
 用户再次实际录音后：新增会话3/4/5为零样本后interrupted，会话6取得29280样本，本地ASR耗时0.18秒（1.83秒音频），已准备历史结果，但field_id仍空，输出账本prepared，未claim或调用IMK。问题收敛到capture拒绝，不是结果插入后丢回执。
 读取最新NSLog谓词仍无Inputia事件；确切Inputia进程stdout/stderr都指向/dev/null。仅补failCapture的候选后台诊断（16条reason/time/pid、无正文/窗口标题/按键、atomic文件及600权限），完整构建通过并更新候选Inputia，保留旧包Inputia-before-target-diagnostic.app及pair-before-target-diagnostic.json，新配对清单pair-target-diagnostic.json。Handy只重启加载清单，不替换二进制。
 两次焦点固定/实际输入源对照未能让CUA进入新的语音会话；字符已撤销，会话数仍6，诊断文件未生成。停止继续微调自动化组合键；下一次实体入口仅需开始/结束即可采集具体capture错误码，不需要重复说测试句。诊断接线不是根因修复，正常插入仍未通过。
+
+用户“已按”后取得首次明确诊断：候选PID46623在本次启停均返回accessibility_permission_required，会话7仍field_id空/pending_target。系统设置同时显示InputiaUnifiedCandidate开关on，说明列表on不能证明当前进程AX信任生效。只读codesign -d -r-核验：原候选designated requirement绑定cdhash dc2cabb811191391aade8f1e72c2e3839dcff9e8，新诊断候选绑定baa2aeb419dbfae191aa5d8b6b451b8912df48c9，身份确已改变；授权与签名失配是有证据支持的当前假设，不能说控件通知不受支持。已将Inputia开关滚动到可见区域（Ice下、iPhone镜像上），未代用户更改权限。下一步用户刷新该候选授权后，只重启同一二进制，不再次重建改变身份。
+
+用户刷新授权后仅重启Inputia，PID68509，前后cdhash均baa2aeb419dbfae191aa5d8b6b451b8912df48c9。新会话8/两条本地诊断变成field_unobservable，说明AX信任检查已通过。进一步只读Start目标元数据发现会话7/8实际source_app都是com.openai.codex，会话6才是com.apple.TextEdit且在授权修复之前；因此不能用本次Codex字段失败冒充授权后TextEdit仍失败。专用native-output-check.rtf实际仍为空。下一实验要由用户把光标点到该TextEdit文稿，固定输入框类型；Codex/Electron字段观测保留为待验证边界，不改签名或盲目放宽焦点门禁。
+
+品牌方向暂停核验：用户先明确批准唯一Inputia品牌/永久取消独立Handy托盘，随后自行改写的goal又使用Handy唯一控制中心表述，主代理已提出一次明确的归属确认，未替用户修改goal。暂停的菜单桥半成品仅涉及voice_protocol/voice_connection/voice_dispatch三份文件，已保存在git stash对象ffceb667af6b715ca3aeaa67c92d9f8bed37659f（名称paused-inputia-menu-bridge-awaiting-product-direction-20260908），没有丢弃代码。其余未提交文档保留；恢复原可编译代码后cargo check --lib通过，证据paused-menu-baseline-check.log。已安装候选未更换，没有新增原生插入通过证据；恢复菜单分支时先检查该stash，不重复重写。

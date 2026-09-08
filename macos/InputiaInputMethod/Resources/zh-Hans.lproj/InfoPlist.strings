@@ -2,4 +2,6 @@
 "CFBundleName" = "Inputia";
 "com.inputia.inputmethod.Inputia" = "Inputia";
 "com.inputia.inputmethod.Inputia.Hans" = "Inputia";
+"com.inputia.inputmethod.Inputia.UnifiedCandidate" = "Inputia 输入法（候选）";
+"com.inputia.inputmethod.Inputia.UnifiedCandidate.Hans" = "Inputia 输入法（候选）";
 "NSHumanReadableCopyright" = "Copyright 2026 Inputia contributors.";
