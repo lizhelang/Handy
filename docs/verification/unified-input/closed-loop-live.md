@@ -50,3 +50,19 @@
 4. 新配对key要求Handy同步重建，当前构建日志`handy-menu-pair-build.log`。下一步只进行配套清单签名、包校验与用户级候选安装确认，然后从实际菜单运行；不继续扩未消费接口。
 
 本批尚未新增菜单→录音的运行证据。当前唯一关键阻塞：候选Inputia尚未并存安装/选中；安装前先完成配套Handy构建和签名清单。原框正常插入及焦点变化演示均未完成。
+
+配套材料现已齐备：持久目录`loop-20260908.r0xugn/package`含两份候选app和签名清单（SHA256 `00227c9ca7b5a1af15462569171b9b3b76ec3e475b78b4f03406de24ceb18009`）。候选Handy退出后，数据备份到同目录`profile-before`；旧已安装测试app为`Handy-before.app`。`INSTALL-AND-RESTORE.md`明确只并存安装候选、切回微信输入源、保留新测试数据，不调用会覆盖日常Inputia的安装脚本。等待一次性确认并存安装/临时切换及配套测试Handy更新；未声称真实菜单闭环通过。
+
+## 明确授权后的真实安装与切换
+
+用户明确允许并存安装候选Inputia、临时切换测试和更新测试Handy后，已执行：
+
+- 旧测试Handy移到持久构建目录`Handy-replaced-at-install.app`，新包安装到`/Applications/Handy Unified Candidate.app`。Inputia新安装到`/Users/lzl/Library/Input Methods/InputiaUnifiedCandidate.app`。原日常两种输入法及`/Applications/Handy.app`未替换。
+- 旧配对清单另存`pair-before-install.json`，候选profile使用新清单。两份已安装包严格签名验证通过。新Handy实际进程64379，listener就绪，原生UI完成权限检测后显示正常通用设置页和Qwen3-ASR 0.6B。
+- 原TIS工具把图标路径写成inputia.pdf，与实际inputia-menu.pdf不符，导致父/主项匹配失败。修正后注册、启用返回0，但选择返回-50；重新检查发现候选尚未加入系统设置的用户输入法列表。没有反复注销日常输入法或要求重启。
+- 在系统设置“键盘→文字输入→编辑→添加”中按完整候选ID筛选并添加。再次选择返回0，`selectCurrentMatchesTarget=true`；候选ID为`com.inputia.inputmethod.Inputia.UnifiedCandidate.Hans`，路径已匹配用户级候选包。当前候选实际进程65183。
+- TextEdit新建空白文稿“未命名7”，未打开/改写真实文件。切换到该窗口后再次TIS确认仍选中候选。
+
+当前运行位置停在实际菜单入口前：CUA无法取得TextInputMenuAgent/SystemUIServer这类无普通窗口进程的点击目标，两次查询超时；系统Ctrl+F8后未得到可操作的菜单状态。没有绕过限制直接调用toggleVoiceInput或其他底层接口，也没有注入最终文字。最近原生日志无inputia_unified_voice事件。
+
+下一步需要用户在当前空白文稿从实际输入法菜单选择“语音输入”、说测试句并再次点击停止；主代理随后核对实际记录和历史。尚无菜单录音、正常插入或焦点变化演示，里程碑未通过。测试结束应切回已记录的微信输入源。

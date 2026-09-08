@@ -9,7 +9,7 @@ private let primaryModeIdentifier = ProcessInfo.processInfo.environment["INPUTIA
   ?? "com.inputia.inputmethod.Inputia.Hans"
 private let requiresAppMatch = ProcessInfo.processInfo.environment["INPUTIA_TIS_REQUIRE_APP_MATCH"] == "1"
 private let expectedIconPath = URL(fileURLWithPath: defaultAppPath)
-  .appendingPathComponent("Contents/Resources/inputia.pdf")
+  .appendingPathComponent("Contents/Resources/inputia-menu.pdf")
   .standardizedFileURL
   .path
 
