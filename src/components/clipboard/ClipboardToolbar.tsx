@@ -85,7 +85,7 @@ export const ClipboardToolbar: React.FC = () => {
             onClick={() => setViewMode("list")}
             className={`p-1.5 transition-colors cursor-pointer ${
               viewMode === "list"
-                ? "bg-logo-primary/20 text-logo-primary"
+                ? "bg-logo-primary/20 text-accent-text"
                 : "text-text/40 hover:text-text/70"
             }`}
             title={t("settings.clipboard.viewList")}
@@ -96,7 +96,7 @@ export const ClipboardToolbar: React.FC = () => {
             onClick={() => setViewMode("grid")}
             className={`p-1.5 transition-colors cursor-pointer ${
               viewMode === "grid"
-                ? "bg-logo-primary/20 text-logo-primary"
+                ? "bg-logo-primary/20 text-accent-text"
                 : "text-text/40 hover:text-text/70"
             }`}
             title={t("settings.clipboard.viewGrid")}

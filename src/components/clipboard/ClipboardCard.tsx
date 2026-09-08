@@ -178,10 +178,10 @@ const IconButton: React.FC<{
     onClick={onClick}
     className={`p-1 rounded-md flex items-center justify-center transition-colors cursor-pointer ${
       active
-        ? "text-logo-primary"
+        ? "text-accent-text"
         : danger
           ? "text-text/40 hover:text-red-400"
-          : "text-text/40 hover:text-logo-primary"
+          : "text-text/40 hover:text-accent-text"
     }`}
     title={title}
   >

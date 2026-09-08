@@ -383,7 +383,7 @@ export function UnifiedHistory({
         </select>
         <button
           aria-pressed={state.starredOnly}
-          className={`${buttonClass} inline-flex items-center gap-1.5 ${state.starredOnly ? "text-logo-primary" : ""}`}
+          className={`${buttonClass} inline-flex items-center gap-1.5 ${state.starredOnly ? "text-accent-text" : ""}`}
           onClick={() => state.setFilters({ starredOnly: !state.starredOnly })}
         >
           <Star size={14} aria-hidden="true" />
@@ -466,7 +466,7 @@ export function UnifiedHistory({
                       event.stopPropagation();
                       void update(item, { starred: !item.starred });
                     }}
-                    className="rounded p-1 text-text/50 hover:text-logo-primary"
+                    className="rounded p-1 text-text/50 hover:text-accent-text"
                   >
                     <Star
                       size={15}

@@ -126,7 +126,7 @@ const LocalPostProcessingModelSelector: React.FC = () => {
 
         {selectedModel && (
           <div className="flex flex-wrap items-center gap-3 text-sm text-text/60">
-            <span className="inline-flex items-center gap-1.5 text-logo-primary">
+            <span className="inline-flex items-center gap-1.5 text-accent-text">
               <Check className="w-4 h-4" />
               {t("settings.postProcessing.api.local.model.active")}
             </span>

@@ -15,24 +15,27 @@ const InputiaWordmark = ({
 
   return (
     <div
-      className={`flex items-center justify-center gap-3 ${className}`}
+      className={`flex shrink-0 items-center justify-center ${isHero ? "gap-4" : "gap-2"} ${className}`}
       aria-label={PRODUCT_NAME}
     >
-      <div
-        className={`rounded-2xl border border-logo-primary/40 bg-logo-primary/15 shadow-sm shadow-logo-primary/20 ${
-          isHero ? "p-3.5" : "p-2"
-        }`}
-      >
-        <img
-          src={inputiaLogoUrl}
-          alt=""
-          aria-hidden="true"
-          className={isHero ? "h-10 w-10" : "h-7 w-7"}
-        />
-      </div>
       <span
-        className={`font-semibold tracking-normal text-text ${
-          isHero ? "text-5xl" : "text-2xl"
+        data-inputia-mark=""
+        aria-hidden="true"
+        className={`block shrink-0 bg-accent-text ${isHero ? "h-16 w-16" : "h-9 w-9"}`}
+        style={{
+          maskImage: `url(${JSON.stringify(inputiaLogoUrl)})`,
+          WebkitMaskImage: `url(${JSON.stringify(inputiaLogoUrl)})`,
+          maskSize: "contain",
+          WebkitMaskSize: "contain",
+          maskPosition: "center",
+          WebkitMaskPosition: "center",
+          maskRepeat: "no-repeat",
+          WebkitMaskRepeat: "no-repeat",
+        }}
+      />
+      <span
+        className={`whitespace-nowrap font-semibold tracking-normal text-text ${
+          isHero ? "text-5xl" : "text-xl"
         }`}
       >
         {PRODUCT_NAME}

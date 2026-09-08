@@ -1,18 +1,24 @@
-/* Handy Colors */
+/* Inputia色板：与原生候选框InputiaCandidatePalette保持一致。 */
 
 :root {
+  --inputia-accent: #2f6f73;
+  --inputia-accent-hover: #3a8588;
+  --inputia-accent-active: #24575a;
+  --inputia-on-accent: #f5ffff;
   /* Palette source of truth. Each themed color is defined once as a
      light/dark pair; the active tokens below and the `data-theme` overrides
      in App.css reference these, so a hex value lives in exactly one place. */
   --light-color-text: #0f0f0f;
   --light-color-background: #fbfbfb;
-  --light-color-logo-primary: #faa2ca;
-  --light-color-logo-stroke: #382731;
+  --light-color-logo-primary: var(--inputia-accent);
+  --light-color-logo-stroke: var(--inputia-accent-active);
+  --light-color-accent-text: var(--inputia-accent-active);
 
   --dark-color-text: #fbfbfb;
   --dark-color-background: #2c2b29;
-  --dark-color-logo-primary: #f28cbb;
-  --dark-color-logo-stroke: #fad1ed;
+  --dark-color-logo-primary: var(--inputia-accent);
+  --dark-color-logo-stroke: #ddeeef;
+  --dark-color-accent-text: #9dccce;
 
   /* Semantic status colors. First used by SecureInputWarning; intended to
      replace the ad-hoc yellow-500/red-500 usages (e.g. ui/Alert.tsx) over
@@ -23,7 +29,7 @@
   --dark-color-error: #f87171;
 
   /* Tokens that do not change between light and dark */
-  --color-background-ui: #da5893;
+  --color-background-ui: var(--inputia-accent);
   --color-text-stroke: #f6f6f6;
   --color-mid-gray: #808080;
 
@@ -32,6 +38,7 @@
   --color-text: var(--light-color-text);
   --color-background: var(--light-color-background);
   --color-logo-primary: var(--light-color-logo-primary);
+  --color-accent-text: var(--light-color-accent-text);
   --color-logo-stroke: var(--light-color-logo-stroke);
   --color-warning: var(--light-color-warning);
   --color-error: var(--light-color-error);
@@ -42,6 +49,7 @@
     --color-text: var(--dark-color-text);
     --color-background: var(--dark-color-background);
     --color-logo-primary: var(--dark-color-logo-primary);
+    --color-accent-text: var(--dark-color-accent-text);
     --color-logo-stroke: var(--dark-color-logo-stroke);
     --color-warning: var(--dark-color-warning);
     --color-error: var(--dark-color-error);
@@ -52,7 +60,7 @@
  * Explicit theme override, driven by the `theme` setting via
  * `document.documentElement.dataset.theme`. When set, the higher-specificity
  * attribute selectors win over the `prefers-color-scheme` media query above,
- * so a user can keep Handy light or dark regardless of the OS setting.
+ * so a user can keep Inputia light or dark regardless of the OS setting.
  * `system` (or no attribute) leaves the OS in charge.
  *
  * Lives here (not in App.css) so every window that imports the shared palette —
@@ -62,6 +70,7 @@
   --color-text: var(--light-color-text);
   --color-background: var(--light-color-background);
   --color-logo-primary: var(--light-color-logo-primary);
+  --color-accent-text: var(--light-color-accent-text);
   --color-logo-stroke: var(--light-color-logo-stroke);
   --color-warning: var(--light-color-warning);
   --color-error: var(--light-color-error);
@@ -71,6 +80,7 @@
   --color-text: var(--dark-color-text);
   --color-background: var(--dark-color-background);
   --color-logo-primary: var(--dark-color-logo-primary);
+  --color-accent-text: var(--dark-color-accent-text);
   --color-logo-stroke: var(--dark-color-logo-stroke);
   --color-warning: var(--dark-color-warning);
   --color-error: var(--dark-color-error);

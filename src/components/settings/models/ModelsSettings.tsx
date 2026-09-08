@@ -290,7 +290,7 @@ export const ModelsSettings: React.FC = () => {
                 aria-pressed={filterStreaming}
                 className={`flex items-center justify-center w-8 h-8 text-sm font-medium rounded-lg transition-colors ${
                   filterStreaming
-                    ? "bg-logo-primary/20 text-logo-primary hover:bg-logo-primary/30"
+                    ? "bg-logo-primary/20 text-accent-text hover:bg-logo-primary/30"
                     : "bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20"
                 }`}
               >
@@ -304,7 +304,7 @@ export const ModelsSettings: React.FC = () => {
                 aria-pressed={filterTranslation}
                 className={`flex items-center justify-center w-8 h-8 text-sm font-medium rounded-lg transition-colors ${
                   filterTranslation
-                    ? "bg-logo-primary/20 text-logo-primary hover:bg-logo-primary/30"
+                    ? "bg-logo-primary/20 text-accent-text hover:bg-logo-primary/30"
                     : "bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20"
                 }`}
               >
@@ -317,7 +317,7 @@ export const ModelsSettings: React.FC = () => {
                   onClick={() => setLanguageDropdownOpen(!languageDropdownOpen)}
                   className={`flex items-center gap-1.5 h-8 px-3 text-sm font-medium rounded-lg transition-colors ${
                     languageFilter !== "all"
-                      ? "bg-logo-primary/20 text-logo-primary"
+                      ? "bg-logo-primary/20 text-accent-text"
                       : "bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20"
                   }`}
                 >
@@ -369,7 +369,7 @@ export const ModelsSettings: React.FC = () => {
                         }}
                         className={`w-full px-3 py-1.5 text-sm text-left transition-colors ${
                           languageFilter === "all"
-                            ? "bg-logo-primary/20 text-logo-primary font-semibold"
+                            ? "bg-logo-primary/20 text-accent-text font-semibold"
                             : "hover:bg-mid-gray/10"
                         }`}
                       >
@@ -386,7 +386,7 @@ export const ModelsSettings: React.FC = () => {
                           }}
                           className={`w-full px-3 py-1.5 text-sm text-left transition-colors ${
                             languageFilter === lang.value
-                              ? "bg-logo-primary/20 text-logo-primary font-semibold"
+                              ? "bg-logo-primary/20 text-accent-text font-semibold"
                               : "hover:bg-mid-gray/10"
                           }`}
                         >
