@@ -103,3 +103,10 @@
 - 独立审查提出并已修复：Swift选区局部变量遮蔽导致编译失败；output账本claim未收到Host回执时必须映射uncertain，不展示已派发。修复后定向编译/测试通过。明确Host派发回执仍仅dispatched_only，不冒充应用级confirmed。
 - 构建/测试证据位于前述持久根：inputia-delivery-build.log、inputia-delivery-final-build.log、handy-delivery-build.log、voice-output-server-tests.log。Handy构建本节记录时仍运行。专用空白文稿为该目录native-output-check.rtf（本地，不是iCloud）。
 - 正常原框插入及转写期间焦点变化仍未运行，不能标记A04/A05或完整闭环通过；待配套候选安装和必要权限后继续。
+
+### 配套候选已安装，停在权限确认
+
+实现提交`0d1f83ca`，两端构建均成功；主代理lib clippy -D warnings通过（上游block未来兼容警告另存日志，不是全测试门禁全绿）。独立审查复核未知回执映射及新增断言后，确认可进入原生验证。
+已停止确切候选进程，备份完整profile到持久根`profile-before-delivery`（历史quick_check=ok、记录1/2/3保留），旧包保留`Handy-before-delivery.app`与`Inputia-before-delivery.app`。仅更新两份候选并安装新签名清单`pair-delivery.json`，配套持久包为`package-delivery/`。Handy签名hash `141922fa74a1ad2082b9ae95b2b7ef4311eaa074`、Inputia `dc2cabb811191391aade8f1e72c2e3839dcff9e8`。恢复与重建步骤见持久根`DELIVERY-INSTALL-RESTORE.md`。
+新Handy实际启动05:22:21 UTC监听ready，但界面仍在权限引导（麦克风/辅助功能按钮），未冒称录音已恢复。系统权限列表无Inputia候选；添加文件窗口已选中`/Users/lzl/Library/Input Methods/InputiaUnifiedCandidate.app`，最终“打开”/授权留给用户。没有修改TCC或开启任何权限。
+权限窗口中Command+Shift+G在候选输入源下无响应；切回已记录微信输入源后同一工具按键打开“前往文件夹”。这是一条新增原生对照线索，需后续复核候选对系统组合键的处理，不归为已经修复，也不以更多按键尝试掩盖。等待权限期间保持微信输入源，不继续让候选影响日常输入。
