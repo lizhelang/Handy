@@ -110,3 +110,11 @@
 已停止确切候选进程，备份完整profile到持久根`profile-before-delivery`（历史quick_check=ok、记录1/2/3保留），旧包保留`Handy-before-delivery.app`与`Inputia-before-delivery.app`。仅更新两份候选并安装新签名清单`pair-delivery.json`，配套持久包为`package-delivery/`。Handy签名hash `141922fa74a1ad2082b9ae95b2b7ef4311eaa074`、Inputia `dc2cabb811191391aade8f1e72c2e3839dcff9e8`。恢复与重建步骤见持久根`DELIVERY-INSTALL-RESTORE.md`。
 新Handy实际启动05:22:21 UTC监听ready，但界面仍在权限引导（麦克风/辅助功能按钮），未冒称录音已恢复。系统权限列表无Inputia候选；添加文件窗口已选中`/Users/lzl/Library/Input Methods/InputiaUnifiedCandidate.app`，最终“打开”/授权留给用户。没有修改TCC或开启任何权限。
 权限窗口中Command+Shift+G在候选输入源下无响应；切回已记录微信输入源后同一工具按键打开“前往文件夹”。这是一条新增原生对照线索，需后续复核候选对系统组合键的处理，不归为已经修复，也不以更多按键尝试掩盖。等待权限期间保持微信输入源，不继续让候选影响日常输入。
+
+续轮现场核验：系统列表中两个Handy均显示开启，但Inputia候选仍无条目，不能认为它已授权。已重新选中确切Inputia候选App，最终打开/授权仍由用户完成。本轮微信输入源下，紧接“添加”批量发送Command+Shift+G也未打开路径面板；在确认文件窗口显示后单独发送则成功。因此此前键盘对照不足以归因Inputia吞键，也可能是窗口就绪时序；不据此前线索盲改输入法。
+
+用户表示授权完成后的实际核验：系统列表出现InputiaUnifiedCandidate且开关on；Handy回到通用设置页。通过TextEdit打开本地native-output-check.rtf，TIS确认候选selected=true。CUA发送ctrl+alt+shift+v仍在专用文稿产生Control-V字符，未新增会话（计数仍2）；已用Undo撤销并确认文稿为空。此证据只说明本次自动化组合键没有走到语音会话，不能替代用户此前实体键盘成功的证据，也不能声称这版插入失败或通过。下一实验需实体键盘从同一专用窗口启动，核对新会话field_id及最终output receipt。
+
+用户再次实际录音后：新增会话3/4/5为零样本后interrupted，会话6取得29280样本，本地ASR耗时0.18秒（1.83秒音频），已准备历史结果，但field_id仍空，输出账本prepared，未claim或调用IMK。问题收敛到capture拒绝，不是结果插入后丢回执。
+读取最新NSLog谓词仍无Inputia事件；确切Inputia进程stdout/stderr都指向/dev/null。仅补failCapture的候选后台诊断（16条reason/time/pid、无正文/窗口标题/按键、atomic文件及600权限），完整构建通过并更新候选Inputia，保留旧包Inputia-before-target-diagnostic.app及pair-before-target-diagnostic.json，新配对清单pair-target-diagnostic.json。Handy只重启加载清单，不替换二进制。
+两次焦点固定/实际输入源对照未能让CUA进入新的语音会话；字符已撤销，会话数仍6，诊断文件未生成。停止继续微调自动化组合键；下一次实体入口仅需开始/结束即可采集具体capture错误码，不需要重复说测试句。诊断接线不是根因修复，正常插入仍未通过。

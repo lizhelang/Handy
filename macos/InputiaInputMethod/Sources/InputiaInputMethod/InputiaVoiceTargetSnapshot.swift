@@ -4,6 +4,8 @@ import InputMethodKit
 
 #if INPUTIA_PAIRED_BUILD
 enum InputiaVoiceTargetSnapshot {
+  private static let diagnosticQueue = DispatchQueue(label: "Inputia.voice-target-diagnostics")
+  private static var diagnosticEvents: [[String: Any]] = []
   static func allowsHistoryOnlyCapture(reason: String) -> Bool {
     ["accessibility_permission_required", "field_unobservable", "selection_unobservable",
      "field_observer_unavailable", "unsupported_focused_role"].contains(reason)
@@ -161,6 +163,22 @@ enum InputiaVoiceTargetSnapshot {
   private static func failCapture(_ reason: String) -> Snapshot? {
     lastCaptureFailureReason = reason
     NSLog("inputia_unified_voice_target_capture_failed reason=%@", reason)
+    // IMK进程的stderr可能指向/dev/null；只保留有界错误码，不记录文本或窗口标题。
+    diagnosticQueue.async {
+      let profile = InputiaProfile.current
+      guard profile.isCandidate else { return }
+      do {
+        try profile.validateCandidatePaths()
+        diagnosticEvents.append(["reason": reason, "time": Date().timeIntervalSince1970,
+          "pid": ProcessInfo.processInfo.processIdentifier])
+        diagnosticEvents = Array(diagnosticEvents.suffix(16))
+        let url = profile.root.appendingPathComponent("voice-target-diagnostics.json")
+        try JSONSerialization.data(withJSONObject: diagnosticEvents, options: [.sortedKeys]).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+      } catch {
+        NSLog("inputia_unified_voice_target_diagnostic_write_failed")
+      }
+    }
     return nil
   }
 
