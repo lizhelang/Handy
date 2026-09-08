@@ -124,3 +124,13 @@
 用户刷新授权后仅重启Inputia，PID68509，前后cdhash均baa2aeb419dbfae191aa5d8b6b451b8912df48c9。新会话8/两条本地诊断变成field_unobservable，说明AX信任检查已通过。进一步只读Start目标元数据发现会话7/8实际source_app都是com.openai.codex，会话6才是com.apple.TextEdit且在授权修复之前；因此不能用本次Codex字段失败冒充授权后TextEdit仍失败。专用native-output-check.rtf实际仍为空。下一实验要由用户把光标点到该TextEdit文稿，固定输入框类型；Codex/Electron字段观测保留为待验证边界，不改签名或盲目放宽焦点门禁。
 
 品牌方向暂停核验：用户先明确批准唯一Inputia品牌/永久取消独立Handy托盘，随后自行改写的goal又使用Handy唯一控制中心表述，主代理已提出一次明确的归属确认，未替用户修改goal。暂停的菜单桥半成品仅涉及voice_protocol/voice_connection/voice_dispatch三份文件，已保存在git stash对象ffceb667af6b715ca3aeaa67c92d9f8bed37659f（名称paused-inputia-menu-bridge-awaiting-product-direction-20260908），没有丢弃代码。其余未提交文档保留；恢复原可编译代码后cargo check --lib通过，证据paused-menu-baseline-check.log。已安装候选未更换，没有新增原生插入通过证据；恢复菜单分支时先检查该stash，不重复重写。
+
+## 2026-09-08 19:20 北京时间：唯一Inputia产品化候选收口
+
+- 用户确认最新方向为“Handy只作为内部底座，用户只看到Inputia”。提交`9193dc0b`已将控制中心标题、侧栏、引导、图标、更新提示和系统输入法菜单统一到Inputia；删除旧Handy手势/文字Logo组件和用户可见托盘开关。独立托盘路径保持不可启用，旧bundle/data/API命名仅作兼容与上游许可用途。
+- 系统输入法菜单已成为日常入口：菜单项覆盖语音输入、同步语音/剪贴板记忆、召回剪贴板、模型、设置、检查更新、退出语音服务；菜单动作走已认证socket `menu` 帧，不新增未认证CLI旁路。前端新增`navigate-to`事件接线，使Inputia菜单可打开统一历史与设置页。
+- 最新主候选包已重建并签名验证：`src-tauri/target/release/bundle/macos/Inputia Candidate.app`，`CFBundleDisplayName=Inputia Candidate`，`CFBundleExecutable=handy`，`codesign --verify --deep --strict`通过。可执行文件名仍为内部兼容名，Inputia启动器已按实际产物优先识别`handy`，同时兼容未来`Inputia`。
+- 最新输入法候选已重建并签名验证：`macos/InputiaInputMethod/candidate-builds/trial-20260905/InputiaUnifiedCandidate.app`与`Inputia 候选设置.app`，build脚本输出签名、最低系统版本和Rime数据检查通过。
+- 本轮验证通过：`bun run build`、`bun run lint`、`bun run check:translations`、`bun run format:check`、`macos/InputiaInputMethod/validation-policy-self-check.sh`、`InputiaVoiceInputLauncherSelfCheck`、`cargo +1.96.0 test independent_tray_cannot_be_enabled_by_legacy_settings_or_cli --manifest-path src-tauri/Cargo.toml`。额外手动单编译`InputiaHandyMemorySyncSelfCheck`因未链接Rust C API失败，属调用方式无效，未作为产品失败证据。
+- 独立复核结果：未发现`handle_inputia_menu_cli`、`recreate_tray_icon`、`Handy v`、旧Logo组件或用户可见托盘设置入口残留。剩余`Handy`字符串集中在兼容路径、内部函数名、旧数据导入、测试路径、上游许可致谢和历史数据根；不作为独立产品入口。
+- 尚未完成：最新唯一Inputia候选尚未安装到并存测试位置并从真实系统输入法菜单重跑“录音→本地转写→统一历史→原框插入/焦点变化待插入”。因此A04/A05和端到端闭环仍未通过，完整goal保持进行中。
