@@ -187,8 +187,11 @@
       "allGranted": "كل شيء جاهز!",
       "errors": {
         "checkFailed": "فشل التحقق من الأذونات. يرجير المحاولة مرة أخرى.",
-        "requestFailed": "فشل طلب الإذن. يرجى المحاولة مرة أخرى."
-      }
+        "requestFailed": "فشل طلب الإذن. يرجى المحاولة مرة أخرى.",
+        "initializeFailed": "Permissions are confirmed, but input services could not initialize. Check again."
+      },
+      "recheck": "Check Again",
+      "currentApp": "Current app: {{appName}}. Match this name in System Settings."
     }
   },
   "modelSelector": {

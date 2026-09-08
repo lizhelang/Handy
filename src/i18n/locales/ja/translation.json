@@ -187,8 +187,11 @@
       "allGranted": "準備完了!",
       "errors": {
         "checkFailed": "権限の確認に失敗しました。もう一度お試しください。",
-        "requestFailed": "権限のリクエストに失敗しました。もう一度お試しください。"
-      }
+        "requestFailed": "権限のリクエストに失敗しました。もう一度お試しください。",
+        "initializeFailed": "Permissions are confirmed, but input services could not initialize. Check again."
+      },
+      "recheck": "Check Again",
+      "currentApp": "Current app: {{appName}}. Match this name in System Settings."
     }
   },
   "modelSelector": {

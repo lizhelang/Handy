@@ -187,8 +187,11 @@
       "allGranted": "Allt klart!",
       "errors": {
         "checkFailed": "Misslyckades med att kontrollera behörigheter. Försök igen.",
-        "requestFailed": "Misslyckades med att begära behörighet. Försök igen."
-      }
+        "requestFailed": "Misslyckades med att begära behörighet. Försök igen.",
+        "initializeFailed": "Permissions are confirmed, but input services could not initialize. Check again."
+      },
+      "recheck": "Check Again",
+      "currentApp": "Current app: {{appName}}. Match this name in System Settings."
     }
   },
   "modelSelector": {

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { getName } from "@tauri-apps/api/app";
 import { platform } from "@tauri-apps/plugin-os";
 import {
   checkAccessibilityPermission,
@@ -11,13 +12,20 @@ import { toast } from "sonner";
 import { commands } from "@/bindings";
 import { useSettingsStore } from "@/stores/settingsStore";
 import InputiaWordmark from "../icons/InputiaWordmark";
-import { Keyboard, Mic, Check, Loader2 } from "lucide-react";
+import {
+  Keyboard,
+  Mic,
+  Check,
+  Loader2,
+  RefreshCw,
+  AlertCircle,
+} from "lucide-react";
 
 interface AccessibilityOnboardingProps {
   onComplete: () => void;
 }
 
-type PermissionStatus = "checking" | "needed" | "waiting" | "granted";
+type PermissionStatus = "checking" | "needed" | "waiting" | "granted" | "error";
 type PermissionPlatform = "macos" | "windows" | "other";
 
 interface PermissionsState {
@@ -41,6 +49,10 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     accessibility: "checking",
     microphone: "checking",
   });
+  const [currentAppName, setCurrentAppName] = useState<string | null>(null);
+  const [isRechecking, setIsRechecking] = useState(false);
+  const [initializationFailed, setInitializationFailed] = useState(false);
+  const [inputReady, setInputReady] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const errorCountRef = useRef<number>(0);
@@ -53,7 +65,9 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
 
   const allGranted = isMacOS
     ? permissions.accessibility === "granted" &&
-      permissions.microphone === "granted"
+      permissions.microphone === "granted" &&
+      inputReady &&
+      !initializationFailed
     : isWindows
       ? permissions.microphone === "granted"
       : true;
@@ -62,6 +76,110 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     await Promise.all([refreshAudioDevices(), refreshOutputDevices()]);
     timeoutRef.current = setTimeout(() => onComplete(), 300);
   }, [onComplete, refreshAudioDevices, refreshOutputDevices]);
+
+  const initializeMacOSInput = useCallback(async () => {
+    try {
+      const [enigoResult, shortcutsResult] = await Promise.all([
+        commands.initializeEnigo(),
+        commands.initializeShortcuts(),
+      ]);
+      return enigoResult.status === "ok" && shortcutsResult.status === "ok";
+    } catch (e) {
+      console.warn("Failed to initialize after permission grant:", e);
+      return false;
+    }
+  }, []);
+
+  const checkMacOSPermissions = useCallback(
+    async ({ notifyOnCheckError = true } = {}) => {
+      setInputReady(false);
+      const [accessibilityResult, microphoneResult] = await Promise.allSettled([
+        checkAccessibilityPermission(),
+        checkMicrophonePermission(),
+      ]);
+
+      const accessibilityGranted =
+        accessibilityResult.status === "fulfilled" && accessibilityResult.value;
+      const microphoneGranted =
+        microphoneResult.status === "fulfilled" && microphoneResult.value;
+      const hasCheckError =
+        accessibilityResult.status === "rejected" ||
+        microphoneResult.status === "rejected";
+
+      const newState: PermissionsState = {
+        accessibility:
+          accessibilityResult.status === "rejected"
+            ? "error"
+            : accessibilityGranted
+              ? "granted"
+              : "needed",
+        microphone:
+          microphoneResult.status === "rejected"
+            ? "error"
+            : microphoneGranted
+              ? "granted"
+              : "needed",
+      };
+
+      setPermissions(newState);
+
+      if (hasCheckError) {
+        setInitializationFailed(false);
+        console.error("Failed to check macOS permissions:", {
+          accessibility:
+            accessibilityResult.status === "rejected"
+              ? accessibilityResult.reason
+              : null,
+          microphone:
+            microphoneResult.status === "rejected"
+              ? microphoneResult.reason
+              : null,
+        });
+        if (notifyOnCheckError) {
+          toast.error(t("onboarding.permissions.errors.checkFailed"));
+        }
+        return {
+          accessibilityGranted,
+          microphoneGranted,
+          hasCheckError,
+        };
+      }
+
+      if (!(accessibilityGranted && microphoneGranted)) {
+        setInitializationFailed(false);
+        return {
+          accessibilityGranted,
+          microphoneGranted,
+          hasCheckError,
+        };
+      }
+
+      const initialized = await initializeMacOSInput();
+      setInitializationFailed(!initialized);
+      if (!initialized) {
+        return {
+          accessibilityGranted,
+          microphoneGranted,
+          hasCheckError,
+        };
+      }
+
+      try {
+        await completeOnboarding();
+        setInputReady(true);
+      } catch (error) {
+        setInitializationFailed(true);
+        console.error("Failed to complete permissions onboarding:", error);
+      }
+
+      return {
+        accessibilityGranted,
+        microphoneGranted,
+        hasCheckError,
+      };
+    },
+    [completeOnboarding, initializeMacOSInput, t],
+  );
 
   const hasWindowsMicrophoneAccess = useCallback(async (): Promise<boolean> => {
     const microphoneStatus =
@@ -92,45 +210,17 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
       return;
     }
 
+    if (nextPlatform === "macos") {
+      getName()
+        .then((name) => setCurrentAppName(name))
+        .catch((error) => {
+          console.warn("Failed to read current app name:", error);
+        });
+    }
+
     const checkInitial = async () => {
       if (nextPlatform === "macos") {
-        try {
-          const [accessibilityGranted, microphoneGranted] = await Promise.all([
-            checkAccessibilityPermission(),
-            checkMicrophonePermission(),
-          ]);
-
-          // If accessibility is granted, initialize Enigo and shortcuts
-          if (accessibilityGranted) {
-            try {
-              await Promise.all([
-                commands.initializeEnigo(),
-                commands.initializeShortcuts(),
-              ]);
-            } catch (e) {
-              console.warn("Failed to initialize after permission grant:", e);
-            }
-          }
-
-          const newState: PermissionsState = {
-            accessibility: accessibilityGranted ? "granted" : "needed",
-            microphone: microphoneGranted ? "granted" : "needed",
-          };
-
-          setPermissions(newState);
-
-          if (accessibilityGranted && microphoneGranted) {
-            await completeOnboarding();
-          }
-        } catch (error) {
-          console.error("Failed to check macOS permissions:", error);
-          toast.error(t("onboarding.permissions.errors.checkFailed"));
-          setPermissions({
-            accessibility: "needed",
-            microphone: "needed",
-          });
-        }
-
+        await checkMacOSPermissions();
         return;
       }
 
@@ -156,7 +246,12 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     };
 
     checkInitial();
-  }, [completeOnboarding, hasWindowsMicrophoneAccess, onComplete, t]);
+  }, [
+    checkMacOSPermissions,
+    completeOnboarding,
+    hasWindowsMicrophoneAccess,
+    onComplete,
+  ]);
 
   // Polling for permissions after user clicks a button
   const startPolling = useCallback(() => {
@@ -182,43 +277,31 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
           return;
         }
 
-        const [accessibilityGranted, microphoneGranted] = await Promise.all([
-          checkAccessibilityPermission(),
-          checkMicrophonePermission(),
-        ]);
-
-        setPermissions((prev) => {
-          const newState = { ...prev };
-
-          if (accessibilityGranted && prev.accessibility !== "granted") {
-            newState.accessibility = "granted";
-            // Initialize Enigo and shortcuts when accessibility is granted
-            Promise.all([
-              commands.initializeEnigo(),
-              commands.initializeShortcuts(),
-            ]).catch((e) => {
-              console.warn("Failed to initialize after permission grant:", e);
-            });
-          }
-
-          if (microphoneGranted && prev.microphone !== "granted") {
-            newState.microphone = "granted";
-          }
-
-          return newState;
+        const result = await checkMacOSPermissions({
+          notifyOnCheckError: false,
         });
 
         // If both granted, stop polling, refresh audio devices, and proceed
-        if (accessibilityGranted && microphoneGranted) {
+        if (result.accessibilityGranted && result.microphoneGranted) {
           if (pollingRef.current) {
             clearInterval(pollingRef.current);
             pollingRef.current = null;
           }
-          await completeOnboarding();
         }
 
-        // Reset error count on success
-        errorCountRef.current = 0;
+        if (result.hasCheckError) {
+          errorCountRef.current += 1;
+
+          if (errorCountRef.current >= MAX_POLLING_ERRORS) {
+            if (pollingRef.current) {
+              clearInterval(pollingRef.current);
+              pollingRef.current = null;
+            }
+            toast.error(t("onboarding.permissions.errors.checkFailed"));
+          }
+        } else {
+          errorCountRef.current = 0;
+        }
       } catch (error) {
         console.error("Error checking permissions:", error);
         errorCountRef.current += 1;
@@ -233,7 +316,13 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
         }
       }
     }, 1000);
-  }, [completeOnboarding, hasWindowsMicrophoneAccess, permissionPlatform, t]);
+  }, [
+    completeOnboarding,
+    checkMacOSPermissions,
+    hasWindowsMicrophoneAccess,
+    permissionPlatform,
+    t,
+  ]);
 
   // Cleanup polling and timeouts on unmount
   useEffect(() => {
@@ -271,6 +360,17 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     } catch (error) {
       console.error("Failed to request microphone permission:", error);
       toast.error(t("onboarding.permissions.errors.requestFailed"));
+    }
+  };
+
+  const handleRecheckPermissions = async () => {
+    if (!isMacOS) return;
+
+    try {
+      setIsRechecking(true);
+      await checkMacOSPermissions();
+    } finally {
+      setIsRechecking(false);
     }
   };
 
@@ -319,6 +419,18 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
           <p className="text-text/70">
             {t("onboarding.permissions.description")}
           </p>
+          {currentAppName && (
+            <p className="text-text/60 text-sm mt-2">
+              {t("onboarding.permissions.currentApp", {
+                appName: currentAppName,
+              })}
+            </p>
+          )}
+          {initializationFailed && (
+            <p className="text-amber-400 text-sm mt-3">
+              {t("onboarding.permissions.errors.initializeFailed")}
+            </p>
+          )}
         </div>
 
         {/* Microphone Permission Card */}
@@ -344,6 +456,11 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                   <div className="flex items-center gap-2 text-text/50 text-sm">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     {t("onboarding.permissions.waiting")}
+                  </div>
+                ) : permissions.microphone === "error" ? (
+                  <div className="flex items-center gap-2 text-amber-400 text-sm">
+                    <AlertCircle className="w-4 h-4" />
+                    {t("onboarding.permissions.errors.checkFailed")}
                   </div>
                 ) : (
                   <button
@@ -384,6 +501,11 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                     <Loader2 className="w-4 h-4 animate-spin" />
                     {t("onboarding.permissions.waiting")}
                   </div>
+                ) : permissions.accessibility === "error" ? (
+                  <div className="flex items-center gap-2 text-amber-400 text-sm">
+                    <AlertCircle className="w-4 h-4" />
+                    {t("onboarding.permissions.errors.checkFailed")}
+                  </div>
                 ) : (
                   <button
                     onClick={handleGrantAccessibility}
@@ -395,6 +517,19 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
               </div>
             </div>
           </div>
+        )}
+
+        {isMacOS && (
+          <button
+            onClick={handleRecheckPermissions}
+            disabled={isRechecking}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-mid-gray/30 text-text/80 hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+          >
+            <RefreshCw
+              className={`w-4 h-4 ${isRechecking ? "animate-spin" : ""}`}
+            />
+            {t("onboarding.permissions.recheck")}
+          </button>
         )}
       </div>
     </div>

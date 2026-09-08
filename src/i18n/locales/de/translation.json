@@ -187,8 +187,11 @@
       "allGranted": "Alles bereit!",
       "errors": {
         "checkFailed": "Berechtigungsprüfung fehlgeschlagen. Bitte erneut versuchen.",
-        "requestFailed": "Berechtigungsanfrage fehlgeschlagen. Bitte erneut versuchen."
-      }
+        "requestFailed": "Berechtigungsanfrage fehlgeschlagen. Bitte erneut versuchen.",
+        "initializeFailed": "Permissions are confirmed, but input services could not initialize. Check again."
+      },
+      "recheck": "Check Again",
+      "currentApp": "Current app: {{appName}}. Match this name in System Settings."
     }
   },
   "modelSelector": {

@@ -187,8 +187,11 @@
       "allGranted": "Всё готово!",
       "errors": {
         "checkFailed": "Не удалось проверить разрешения. Пожалуйста, попробуйте снова.",
-        "requestFailed": "Не удалось запросить разрешение. Пожалуйста, попробуйте снова."
-      }
+        "requestFailed": "Не удалось запросить разрешение. Пожалуйста, попробуйте снова.",
+        "initializeFailed": "Permissions are confirmed, but input services could not initialize. Check again."
+      },
+      "recheck": "Check Again",
+      "currentApp": "Current app: {{appName}}. Match this name in System Settings."
     }
   },
   "modelSelector": {

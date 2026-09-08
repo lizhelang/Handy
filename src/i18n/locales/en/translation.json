@@ -187,8 +187,11 @@
       "allGranted": "All set!",
       "errors": {
         "checkFailed": "Failed to check permissions. Please try again.",
-        "requestFailed": "Failed to request permission. Please try again."
-      }
+        "requestFailed": "Failed to request permission. Please try again.",
+        "initializeFailed": "Permissions are confirmed, but input services could not initialize. Check again."
+      },
+      "recheck": "Check Again",
+      "currentApp": "Current app: {{appName}}. Match this name in System Settings."
     }
   },
   "modelSelector": {

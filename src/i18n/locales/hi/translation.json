@@ -187,8 +187,11 @@
       "allGranted": "सब तैयार!",
       "errors": {
         "checkFailed": "अनुमतियां जांची नहीं जा सकीं. कृपया फिर से कोशिश करें.",
-        "requestFailed": "अनुमति मांगी नहीं जा सकी. कृपया फिर से कोशिश करें."
-      }
+        "requestFailed": "अनुमति मांगी नहीं जा सकी. कृपया फिर से कोशिश करें.",
+        "initializeFailed": "Permissions are confirmed, but input services could not initialize. Check again."
+      },
+      "recheck": "Check Again",
+      "currentApp": "Current app: {{appName}}. Match this name in System Settings."
     }
   },
   "modelSelector": {

@@ -187,8 +187,11 @@
       "allGranted": "Wszystko gotowe!",
       "errors": {
         "checkFailed": "Nie udało się sprawdzić uprawnień. Spróbuj ponownie.",
-        "requestFailed": "Nie udało się poprosić o uprawnienie. Spróbuj ponownie."
-      }
+        "requestFailed": "Nie udało się poprosić o uprawnienie. Spróbuj ponownie.",
+        "initializeFailed": "Permissions are confirmed, but input services could not initialize. Check again."
+      },
+      "recheck": "Check Again",
+      "currentApp": "Current app: {{appName}}. Match this name in System Settings."
     }
   },
   "modelSelector": {

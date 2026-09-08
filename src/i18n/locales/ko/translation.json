@@ -187,8 +187,11 @@
       "allGranted": "모두 설정 완료!",
       "errors": {
         "checkFailed": "권한 확인에 실패했습니다. 다시 시도해주세요.",
-        "requestFailed": "권한 요청에 실패했습니다. 다시 시도해주세요."
-      }
+        "requestFailed": "권한 요청에 실패했습니다. 다시 시도해주세요.",
+        "initializeFailed": "Permissions are confirmed, but input services could not initialize. Check again."
+      },
+      "recheck": "Check Again",
+      "currentApp": "Current app: {{appName}}. Match this name in System Settings."
     }
   },
   "modelSelector": {

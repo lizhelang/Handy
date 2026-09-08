@@ -187,8 +187,11 @@
       "allGranted": "全部完成！",
       "errors": {
         "checkFailed": "檢查權限失敗，請重試",
-        "requestFailed": "請求權限失敗，請重試"
-      }
+        "requestFailed": "請求權限失敗，請重試",
+        "initializeFailed": "權限已確認，但輸入服務初始化失敗，請重新檢查。"
+      },
+      "recheck": "重新檢查",
+      "currentApp": "目前應用程式：{{appName}}。請在系統設定中核對此名稱。"
     }
   },
   "modelSelector": {

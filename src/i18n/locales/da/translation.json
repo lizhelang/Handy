@@ -187,8 +187,11 @@
       "allGranted": "Alt er klar!",
       "errors": {
         "checkFailed": "Kunne ikke tjekke tilladelser. Prøv igen.",
-        "requestFailed": "Kunne ikke anmode om tilladelse. Prøv igen."
-      }
+        "requestFailed": "Kunne ikke anmode om tilladelse. Prøv igen.",
+        "initializeFailed": "Permissions are confirmed, but input services could not initialize. Check again."
+      },
+      "recheck": "Check Again",
+      "currentApp": "Current app: {{appName}}. Match this name in System Settings."
     }
   },
   "modelSelector": {

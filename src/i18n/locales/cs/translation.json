@@ -187,8 +187,11 @@
       "allGranted": "Vše připraveno!",
       "errors": {
         "checkFailed": "Nepodařilo se zkontrolovat oprávnění. Zkuste to prosím znovu.",
-        "requestFailed": "Nepodařilo se požádat o oprávnění. Zkuste to prosím znovu."
-      }
+        "requestFailed": "Nepodařilo se požádat o oprávnění. Zkuste to prosím znovu.",
+        "initializeFailed": "Permissions are confirmed, but input services could not initialize. Check again."
+      },
+      "recheck": "Check Again",
+      "currentApp": "Current app: {{appName}}. Match this name in System Settings."
     }
   },
   "modelSelector": {

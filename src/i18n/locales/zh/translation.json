@@ -187,8 +187,11 @@
       "allGranted": "全部完成！",
       "errors": {
         "checkFailed": "检查权限失败。请重试。",
-        "requestFailed": "请求权限失败。请重试。"
-      }
+        "requestFailed": "请求权限失败。请重试。",
+        "initializeFailed": "权限已确认，但输入服务初始化失败，请重新检查。"
+      },
+      "recheck": "重新检查",
+      "currentApp": "当前应用：{{appName}}。请在系统设置中核对这个名称。"
     }
   },
   "modelSelector": {

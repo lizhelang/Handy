@@ -187,8 +187,11 @@
       "allGranted": "Все готово!",
       "errors": {
         "checkFailed": "Не вдалося перевірити дозволи. Будь ласка, спробуйте ще раз.",
-        "requestFailed": "Не вдалося запросити дозвіл. Будь ласка, спробуйте ще раз."
-      }
+        "requestFailed": "Не вдалося запросити дозвіл. Будь ласка, спробуйте ще раз.",
+        "initializeFailed": "Permissions are confirmed, but input services could not initialize. Check again."
+      },
+      "recheck": "Check Again",
+      "currentApp": "Current app: {{appName}}. Match this name in System Settings."
     }
   },
   "modelSelector": {

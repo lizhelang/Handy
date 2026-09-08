@@ -187,8 +187,11 @@
       "allGranted": "Готово!",
       "errors": {
         "checkFailed": "Проверката на разрешенията не бе успешна. Опитайте отново.",
-        "requestFailed": "Заявката за разрешение не бе успешна. Опитайте отново."
-      }
+        "requestFailed": "Заявката за разрешение не бе успешна. Опитайте отново.",
+        "initializeFailed": "Permissions are confirmed, but input services could not initialize. Check again."
+      },
+      "recheck": "Check Again",
+      "currentApp": "Current app: {{appName}}. Match this name in System Settings."
     }
   },
   "modelSelector": {

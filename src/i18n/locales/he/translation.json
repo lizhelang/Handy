@@ -187,8 +187,11 @@
       "allGranted": "הכול מוכן!",
       "errors": {
         "checkFailed": "בדיקת ההרשאות נכשלה. נסה שוב.",
-        "requestFailed": "בקשת ההרשאה נכשלה. נסה שוב."
-      }
+        "requestFailed": "בקשת ההרשאה נכשלה. נסה שוב.",
+        "initializeFailed": "Permissions are confirmed, but input services could not initialize. Check again."
+      },
+      "recheck": "Check Again",
+      "currentApp": "Current app: {{appName}}. Match this name in System Settings."
     }
   },
   "modelSelector": {
