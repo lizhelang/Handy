@@ -159,7 +159,7 @@ impl HostShortcutBroker {
         is_pressed: bool,
         mode: ShortcutActivation,
         hold_threshold: Duration,
-        policy_epoch: u64,
+        policy_epoch: Option<u64>,
         current_source: CurrentInputSource,
     ) -> ShortcutRouting {
         self.route_shortcut_event_with_source(
@@ -180,7 +180,7 @@ impl HostShortcutBroker {
         is_pressed: bool,
         mode: ShortcutActivation,
         hold_threshold: Duration,
-        policy_epoch: u64,
+        policy_epoch: Option<u64>,
         current_source: CurrentInputSource,
     ) -> ShortcutRouting {
         let mut state = self.state.lock().expect("host shortcut broker poisoned");
@@ -204,9 +204,9 @@ impl HostShortcutBroker {
         let Some(lease) = active
             .as_ref()
             .map(|(_, active)| active.lease.clone())
-            .or_else(|| Self::ready_lease_for(&state, policy_epoch))
+            .or_else(|| policy_epoch.and_then(|epoch| Self::ready_lease_for(&state, epoch)))
         else {
-            if current_source != CurrentInputSource::Other {
+            if policy_epoch.is_none() || current_source != CurrentInputSource::Other {
                 debug!("Input source is Inputia or unknown and no ready host target lease exists");
                 return ShortcutRouting::HostPending;
             }
@@ -658,7 +658,7 @@ mod tests {
             is_pressed,
             mode,
             Duration::ZERO,
-            4,
+            Some(4),
             source,
         )
     }
@@ -742,6 +742,40 @@ mod tests {
     }
 
     #[test]
+    fn missing_policy_does_not_start_or_fall_back_but_can_stop_owned_session() {
+        let broker = HostShortcutBroker::default();
+        register_default_lease(&broker);
+        let without_policy = || {
+            broker.route_shortcut_event_with_source(
+                "transcribe",
+                "Option+Space",
+                true,
+                ShortcutActivation::Toggle,
+                Duration::ZERO,
+                None,
+                CurrentInputSource::Other,
+            )
+        };
+        assert_eq!(without_policy(), ShortcutRouting::HostPending);
+        assert!(broker.poll("host-one", 0).is_none());
+        assert_eq!(
+            route_with_source(
+                &broker,
+                true,
+                ShortcutActivation::Toggle,
+                CurrentInputSource::InputiaCandidate
+            ),
+            ShortcutRouting::Forwarded
+        );
+        let start = broker.poll("host-one", 0).unwrap();
+        assert_eq!(without_policy(), ShortcutRouting::Forwarded);
+        let stop = broker.poll("host-one", 0).unwrap();
+        assert_eq!(stop.session_id, start.session_id);
+        assert_eq!(stop.target, start.target);
+        assert!(!stop.starts_session);
+    }
+
+    #[test]
     fn valid_lease_receives_bound_trigger() {
         let broker = HostShortcutBroker::default();
         register_default_lease(&broker);
@@ -752,7 +786,7 @@ mod tests {
                 true,
                 ShortcutActivation::HoldOrToggle,
                 Duration::from_millis(400),
-                4,
+                Some(4),
                 CurrentInputSource::Other,
             ),
             ShortcutRouting::Forwarded

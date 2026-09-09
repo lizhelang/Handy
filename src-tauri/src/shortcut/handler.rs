@@ -87,13 +87,20 @@ fn handle_shortcut_event_on_dispatch_thread(
             }
         }
         #[cfg(target_os = "macos")]
-        if let Some(routing) =
-            route_inputia_host_shortcut(app, binding_id, hotkey_string, is_pressed, source)
-        {
-            match routing {
-                crate::host_shortcut_broker::ShortcutRouting::Legacy => {}
-                crate::host_shortcut_broker::ShortcutRouting::Forwarded => return,
-                crate::host_shortcut_broker::ShortcutRouting::HostPending => return,
+        match route_inputia_host_shortcut(app, binding_id, hotkey_string, is_pressed, source) {
+            crate::host_shortcut_broker::ShortcutRouting::Legacy => {}
+            crate::host_shortcut_broker::ShortcutRouting::Forwarded => return,
+            crate::host_shortcut_broker::ShortcutRouting::HostPending => {
+                if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
+                    coordinator.send_legacy_continuation(
+                        binding_id,
+                        hotkey_string,
+                        is_pressed,
+                        settings.shortcut_activation,
+                        std::time::Duration::from_millis(settings.hold_threshold_ms),
+                    );
+                }
+                return;
             }
         }
         if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
@@ -142,12 +149,15 @@ fn route_inputia_host_shortcut(
     hotkey_string: &str,
     is_pressed: bool,
     source: crate::host_shortcut_broker::CurrentInputSource,
-) -> Option<crate::host_shortcut_broker::ShortcutRouting> {
-    let broker = app.try_state::<crate::host_shortcut_broker::HostShortcutBroker>()?;
-    let manager = app.try_state::<Arc<crate::managers::integration::IntegrationManager>>()?;
-    let policy_epoch = manager.service.policy_epoch().ok()?;
+) -> crate::host_shortcut_broker::ShortcutRouting {
+    let Some(broker) = app.try_state::<crate::host_shortcut_broker::HostShortcutBroker>() else {
+        return crate::host_shortcut_broker::ShortcutRouting::HostPending;
+    };
+    let policy_epoch = app
+        .try_state::<Arc<crate::managers::integration::IntegrationManager>>()
+        .and_then(|manager| manager.service.policy_epoch().ok());
     let settings = get_settings(app);
-    Some(broker.route_shortcut_event(
+    broker.route_shortcut_event(
         binding_id,
         hotkey_string,
         is_pressed,
@@ -155,7 +165,7 @@ fn route_inputia_host_shortcut(
         std::time::Duration::from_millis(settings.hold_threshold_ms),
         policy_epoch,
         source,
-    ))
+    )
 }
 
 #[cfg(target_os = "macos")]

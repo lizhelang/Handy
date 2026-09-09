@@ -178,6 +178,7 @@ enum Effect {
 /// Commands processed sequentially by the coordinator thread.
 enum Command {
     Input(InputEvent),
+    LegacyContinuation(InputEvent),
     GlobalCancel,
     ProcessingFinished,
     Voice {
@@ -1280,6 +1281,26 @@ impl TranscriptionCoordinator {
         }
     }
 
+    /// 只允许继续已存在的普通录音，不能在策略不可用时创建新录音。
+    pub fn send_legacy_continuation(
+        &self,
+        binding_id: &str,
+        hotkey_string: &str,
+        is_pressed: bool,
+        mode: ShortcutActivation,
+        hold_threshold: Duration,
+    ) {
+        let _ = self.tx.send(Command::LegacyContinuation(InputEvent {
+            binding_id: binding_id.into(),
+            hotkey_string: hotkey_string.into(),
+            is_pressed,
+            mode,
+            hold_threshold,
+            external: false,
+            owned: false,
+        }));
+    }
+
     /// 全局用户取消按队列顺序处理当前生命周期和 pending press；不先清理再通知。
     /// false 表示通道确实已关闭，调用方无需等待，可执行无 worker 紧急清理。
     pub fn request_cancel(&self) -> bool {
@@ -1322,6 +1343,15 @@ fn dispatch_command(
         Command::Input(input) => {
             if let Some(effect) = state.on_input(input, now) {
                 execute(state, effect);
+            }
+        }
+        Command::LegacyContinuation(input) => {
+            if state.active_voice.is_none()
+                && matches!(&state.stage, Stage::Recording(id) if id == &input.binding_id)
+            {
+                if let Some(effect) = state.on_input(input, now) {
+                    execute(state, effect);
+                }
             }
         }
         Command::GlobalCancel => {
@@ -1442,6 +1472,49 @@ fn stop(app: &AppHandle, binding_id: &str, hotkey_string: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn policy_failure_continuation_cannot_start_but_stops_existing_legacy_recording() {
+        for mode in [ShortcutActivation::Toggle, ShortcutActivation::PushToTalk] {
+            let mut state = CoordinatorState::new();
+            let now = Instant::now();
+            let mut effects = Vec::new();
+            dispatch_command(
+                &mut state,
+                Command::LegacyContinuation(input(mode, true)),
+                now,
+                &mut |_, effect| effects.push(effect),
+            );
+            assert!(effects.is_empty());
+            assert_eq!(state.stage, Stage::Idle);
+            dispatch_command(
+                &mut state,
+                Command::Input(input(mode, true)),
+                now,
+                &mut |_, effect| effects.push(effect),
+            );
+            assert!(matches!(effects.pop(), Some(Effect::Start { .. })));
+            dispatch_command(
+                &mut state,
+                Command::LegacyContinuation(input(mode, mode == ShortcutActivation::Toggle)),
+                now + Duration::from_secs(1),
+                &mut |_, effect| effects.push(effect),
+            );
+            if mode == ShortcutActivation::PushToTalk {
+                assert!(effects.is_empty());
+                assert!(state.grace_deadline().is_some());
+                effects.extend(state.on_grace_expired());
+            }
+            assert!(matches!(effects.pop(), Some(Effect::Stop { .. })));
+            dispatch_command(
+                &mut state,
+                Command::LegacyContinuation(input(mode, true)),
+                now + Duration::from_secs(2),
+                &mut |_, effect| effects.push(effect),
+            );
+            assert!(effects.is_empty());
+        }
+    }
 
     fn voice_start(session_id: &str, request_id: &str) -> VoiceRequest {
         use inputia_handy_runtime::voice_protocol::{HostTargetToken, VoiceTermsVersion};
