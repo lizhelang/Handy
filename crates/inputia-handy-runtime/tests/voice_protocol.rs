@@ -1,6 +1,24 @@
 use inputia_handy_runtime::voice_protocol::*;
 
 #[test]
+fn shortcut_trigger_reply_keeps_existing_wire_shape() {
+    let value = serde_json::json!({
+        "status":"trigger", "request_id":"poll-1", "trigger": {
+            "trigger_id":"edge-1", "session_id":"session-1", "starts_session":true,
+            "lease_id":"lease-1", "lease_epoch":1,
+            "target": {"target_id":"field-token", "host_instance":"host-1", "controller_id":"controller-1",
+                "activation_generation":1,"field_id":"field-1","selection_generation":1,
+                "composition_generation":1,"source_app":"synthetic.editor"},
+            "binding_id":"transcribe","hotkey_string":"Option+Space", "is_pressed":true,
+            "activation":"toggle","pressed_at_unix_ms":1,"hold_threshold_ms":400,
+            "server_instance":"server-1","client_instance":"host-1","policy_epoch":1
+        }
+    });
+    let decoded: HostShortcutReply = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+}
+
+#[test]
 fn control_reply_is_bound_to_request_and_session_without_exposing_error_details() {
     let request = request();
     let view = VoiceSessionView {

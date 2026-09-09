@@ -440,7 +440,7 @@ pub enum HostShortcutReply {
     },
     Trigger {
         request_id: String,
-        trigger: HostShortcutTrigger,
+        trigger: Box<HostShortcutTrigger>,
     },
     Empty {
         request_id: String,

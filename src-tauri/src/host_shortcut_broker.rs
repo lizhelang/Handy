@@ -144,7 +144,7 @@ impl HostShortcutBroker {
                 match self.poll(&request.client_instance, max_wait_ms) {
                     Some(trigger) => HostShortcutReply::Trigger {
                         request_id,
-                        trigger,
+                        trigger: Box::new(trigger),
                     },
                     None => HostShortcutReply::Empty { request_id },
                 }
