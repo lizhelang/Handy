@@ -7,3 +7,9 @@
 `tests/inputia-permissions.spec.ts` 新增800×600场景：两项权限均false时点击定位和设置入口，导航命令调用两次，没有 request_accessibility_permission / request_microphone_permission，onComplete仍false，重新检查按钮可用。与现有权限及组件测试共7项通过；日志 `/tmp/inputia-onboarding-help-tests.log`。前端build与lint通过。
 
 这是组件接线与门槛回归证据，不是原生首次启动验收；没有关闭用户权限、重置TCC或迁移用户数据。当前安装候选仍为代码 `322df3b1`，本前端改动尚未打入候选。语音实测确认未收到，未启动麦克风；完整goal仍未完成。
+
+## 安装更新
+
+代码 `9fa26dd3` 的候选已构建并更新到 `/Applications/Inputia Candidate.app`，日志 `/tmp/inputia-onboarding-help-candidate.log`。固定证书 deep/strict 签名校验和重新配对通过，实际 PID 13984 匹配 CDHash `19a248fa712f2b0f7c1f865309bd98bce8d43fc8`；CUA 设置窗口正常，22:53:14 Sydney 的 listener ready 已记录。
+
+旧候选包与旧/新配对保留在 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/onboarding-help-20260909.NodHBR`。未替换日常安装或输入法包，未改变数据库/系统权限。由于用户权限已经开启，没有强制重置权限以显示首次授权页；本子项仍只有组件级首次授权交互证据，安装与原生首次授权验收严格分开。
