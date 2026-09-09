@@ -105,6 +105,7 @@ final class InputiaInputController: IMKInputController {
   private var unifiedMenuSnapshot: InputiaMenuReply?
   private var unifiedMenuRefreshing = false
   private var voiceTargetCaptureNotice: String?
+  private var voiceTargetPreparationFailure = "unknown"
   private var voiceTargetSnapshots: [String: InputiaVoiceTargetSnapshot.Snapshot] = [:]
   private var attemptedVoiceOutputOperations = Set<String>()
   private var shortcutPreparedSnapshot: InputiaVoiceTargetSnapshot.Snapshot?
@@ -831,7 +832,7 @@ final class InputiaInputController: IMKInputController {
       return snapshot.inputiaTarget
     }
     guard let target = prepareUnifiedVoiceTarget(client: client) else {
-      reportShortcutReadiness("target_not_eligible")
+      reportShortcutReadiness(voiceTargetPreparationFailure)
       shortcutPreparedSnapshot = nil
       return nil
     }
@@ -1045,11 +1046,14 @@ final class InputiaInputController: IMKInputController {
   private func prepareUnifiedVoiceTarget(client: IMKTextInput?) -> InputiaVoiceTarget? {
     var target: InputiaVoiceTarget?
     voiceTargetCaptureNotice = nil
+    voiceTargetPreparationFailure = "unknown"
     pruneVoiceTargetSnapshots()
-    if let client,
-       !IsSecureEventInputEnabled(),
-       let bundle = client.bundleIdentifier(),
-       !bridge.isSensitiveApp(bundleId: bundle, windowTitle: appContext(for: client, forceRefresh: true).windowTitle) {
+    guard let client else { voiceTargetPreparationFailure = "missing_imk_client"; return nil }
+    guard !IsSecureEventInputEnabled() else { voiceTargetPreparationFailure = "secure_input_enabled"; return nil }
+    guard let bundle = client.bundleIdentifier() else { voiceTargetPreparationFailure = "missing_client_bundle"; return nil }
+    guard !bridge.isSensitiveApp(bundleId: bundle, windowTitle: appContext(for: client, forceRefresh: true).windowTitle)
+    else { voiceTargetPreparationFailure = "sensitive_app"; return nil }
+    do {
       let targetID = UUID().uuidString
       if let snapshot = InputiaVoiceTargetSnapshot.capture(
         client: client,
@@ -1064,6 +1068,7 @@ final class InputiaInputController: IMKInputController {
         target = snapshot.inputiaTarget
       } else {
         let reason = InputiaVoiceTargetSnapshot.lastCaptureFailureReason
+        voiceTargetPreparationFailure = reason
         let notice = voiceTargetCaptureStatus(reason: reason)
         // 已知安全控件或App身份冲突不能降级为仅保存历史的录音。
         if InputiaVoiceTargetSnapshot.allowsHistoryOnlyCapture(reason: reason) {
