@@ -23,6 +23,15 @@ swiftc macos/InputiaInputMethod/Sources/InputiaInputMethod/InputiaShortcutClassi
 
 ### 最新批次：独立复核后候选 53
 
+安装与实际实验补记：
+
+- 实现提交 `9f4651ef` 已安装至用户级测试包，输入法实际 PID 26157 经 running-identity 校验为 `6f9f115aa6e93b40548cb40d9f67b5411784f33c`，不是旧进程。配对重签成功；测试控制中心由 PID 87379 正常退出后重启为 PID 26383，未替换控制中心二进制。
+- TIS 当前确认 `Inputia (Test)` / `.UnifiedCandidate.Hans`。日常输入法包和 Handy.app 未修改。
+- CUA 在 TextEdit 新建空白文稿进行测试：`shift+slash` 输出 `?`，随后 `n`、空格得到 `?n `，没有足够证据证明中文候选状态。因此本轮原生验收为**未通过验证**，不能以问号已出现声称组合键修复完成。
+- 下一区分实验尝试通过 CUA 独立 `shift`，工具拒绝：`keyPressIncludedNoNonModifierKeys`，没有发出该键。现有接口不能完成独立修饰键与任意松开顺序对照，必须取得实体键盘证据；不使用另一种事件注入工具绕过限制。
+- 新建测试文稿由 TextEdit 自动命名 `未命名7.rtf`；只写入上述合成按键，没有操作原有文稿。未启用包含正文的事件日志、未录音。
+- 下一最小人工实验：在该测试文稿中独立按一次 Shift，再输入 n 和空格，观察候选是否出现；之后才比较 Shift+/。当前不判断是模式切换失败还是自动送键路径差异。
+
 - 独立审查发现两项阻塞：焦点断开漏收 keyUp 后状态不能恢复；全局待领取切换缺少事件归属。已修复并经同一独立审查者复核：原两项消除，限定范围内无新增阻止安装验证的问题。
 - 删除 deferred 切换。全局 flagsChanged 仅否决组合参与，本地事件独占手势起止和切换；`shiftGestureDelayedGlobalCannotCreateSecondToggle` 先失败后通过。
 - 新增会话 reset，与同一手势 invalidate 分开。会话切换清普通键记录，保留系统当前修饰键作为基线，不让已按住 Shift 获得新资格。缺 keyUp 后恢复序列先失败后通过；跨会话已按住 Shift 不切换。
