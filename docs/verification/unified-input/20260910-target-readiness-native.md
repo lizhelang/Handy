@@ -22,4 +22,6 @@
 
 审查另提出acceptStart漏completion可能令busy不释放，但本轮未触发语音，也未证实当前调用存在可达漏回调。保留风险，不把它当根因，不直接增加超时重试造成回执未知时并行输出。
 
+后续只读核查：acceptUnifiedShortcut拒绝分支显式completion(false)，sendUnifiedShortcutTrigger正常/终态/异常分支均completion，帧读写有2秒monotonic截止。没有发现已发生的漏回调证据；这些检查也不能证明整条队列所有调度永不延迟。未触发录音来强行验证，未新增自动重放。
+
 恢复62到61：切离测试源、核对并停止候选进程，保留当前包到新目录，恢复此备份的ime-before.app与profile-before/pair-manifest.json，重启未改变的控制中心；不覆盖整份旧profile，防止丢失新增数据。尚未执行此次恢复，不能标为回滚验收。
