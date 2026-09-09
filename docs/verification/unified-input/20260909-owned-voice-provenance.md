@@ -24,3 +24,11 @@ SourceOutbox schema4为语音表添加inputia_source_app/trust，旧行默认unk
 schema4需要相应兼容构建，旧schema3代码不能被假定可以直接回滚启动。安装前必须保留数据副本并验证兼容路径，不能仅恢复旧数据库来抹去新增记录或遗忘屏障。
 
 独立复审 `review_socket_path`：Approve，无阻塞发现。另跑source_outbox14项、history6项、认证/策略/断线定向测试、cargo check与双crate格式检查通过。确认信任由已接纳认证会话派生，而不是仅有一个目标字符串就授权；未据此宣称实际新录音已原生验证。
+
+## 候选历史真实副本的双升级
+
+通过SQLite只读backup取得 `/private/tmp/inputia-source-upgrade-20260909.Eub8Qy/history-copy.db`，随后仅对副本运行仓库 `source_upgrade_probe`。输出：schema4、rows=5、repetitions=2；原9字段摘要、store ID、outbox事件数、业务user_version不变，旧来源全unknown；quick_check=ok。原候选history.db复查仍为schema3，未修改。
+
+命令：`cargo run --manifest-path crates/inputia-handy-runtime/Cargo.toml --example source_upgrade_probe -- /private/tmp/inputia-source-upgrade-20260909.Eub8Qy/history-copy.db`。结果日志同目录 result.log，输出不含正文。首次传入/tmp别名被canonical路径保护拒绝，随后使用真实/private/tmp路径，未放宽检查。
+
+这是实际候选历史副本的结构兼容证据，不涵盖新增记录后兼容回滚、录音附件、旧Host重新导入或完整A12；不能从5条记录推断大数据性能。
