@@ -12,14 +12,9 @@ pub use crate::clipboard::*;
 pub use crate::overlay::*;
 pub use crate::tray::*;
 
-/// Preserve diagnostic text in development builds, but redact it in releases.
-/// Do not use for secrets such as API keys, which must always be redacted.
-pub fn redact_text(text: &str) -> &str {
-    if cfg!(debug_assertions) {
-        text
-    } else {
-        "[REDACTED]"
-    }
+/// 诊断不因构建模式而暴露正文；调用方仍持有独立的原文用于实际功能。
+pub fn redact_text(_text: &str) -> &str {
+    "[REDACTED]"
 }
 
 #[cfg(any(test, all(target_os = "windows", target_arch = "x86_64")))]
@@ -180,6 +175,13 @@ pub fn env_flag_enabled(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn diagnostic_redaction_never_returns_transcript_even_in_debug_builds() {
+        for text in ["synthetic-private-transcript", "", "中文夹具\n第二行"] {
+            assert_eq!(super::redact_text(text), "[REDACTED]");
+        }
+    }
+
     use super::*;
 
     #[test]
