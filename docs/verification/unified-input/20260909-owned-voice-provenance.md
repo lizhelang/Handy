@@ -42,3 +42,15 @@ schema4需要相应兼容构建，旧schema3代码不能被假定可以直接回
 兼容准备已转入 `/Users/lzl/FILE/github/Handy-unified-input-compat`，分支 `codex/unified-input-compat`，底座9fa26dd3，提交 `a330f123` 仅回移schema4/备份门槛与对应fixture列名。source14与app473通过2忽略，前端build/lint通过，签名构建日志 `/tmp/inputia-compat-candidate.log`。主分支没有被重置或换底座。该构建仍须独立审查及数据副本对账，不能当完整A12通过；旧Host导入重复学习仍待修。
 
 兼容分支已获独立Approve，并完成新→兼容→新两个runtime进程的合成库实验：2条历史和确认，其中1词被忘记；兼容连续打开后回执及遗忘保留，再切新代码重试均仅Replay，剩余词仍只有1份贡献。主分支生成/核验入口为examples/confirmation_compat_fixture.rs，兼容分支核验入口为examples/verify_confirmation_compat.rs。证据在 `/private/tmp/inputia-cross-version-20260909.IAKPzi/{new.log,compat.log,new-after.log}`；未执行旧Host导入或原生app换包，不代表完整A12。
+
+## 原生启动升级与切换完成（未录音）
+
+兼容包代码a330f123构建/签名通过，独立保存在 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/compat-candidate-20260909.RIAHNq/Inputia Candidate.app`，CDHash `4c623aae002d704d09fd8200140907bdaceb1975`，该目录包含对应签名pair-manifest.json。
+
+在专用TextEdit切离测试输入源后，验证并停止原候选控制中心13984/IME88734；完整候选profile备份到上述目录profile-before，history/clipboard/integration三库quick_check通过，原候选包保留installed-before.app。确认always_on_microphone和audio_feedback均false，未启动录音。
+
+先实际启动兼容包（PID37363，运行签名匹配），由app执行备份升级到schema4；5条旧历史的原9字段对照备份无缺失/变化，5条仍unknown，quick_check通过。再仅替换应用包及配对，保留升级后数据，切换到来源保存候选代码8870df79（PID37587，CDHash `a6ba91411d5f94e164ef1b054ae032919de4d5e0`）。设置窗口和listener正常启动。
+
+测试输入法恢复为Inputia(Test)，实际PID37732签名匹配原IME59；CUA获取输入法窗口曾超时，但进程与listener_started证明启动成功，没有重复启动。日常Handy/Inputia进程未更换，真实聊天/文档未插入测试内容。
+
+这是兼容包→新包的原生启动/升级证据，仍非“新数据产生后回滚兼容包并旧Host导入”的完整A12。需要恢复应用时使用上述schema4兼容包及其对应配对并保留最新profile；不要用installed-before.app直接打开schema4，更不要自动覆盖profile-before抹除新增数据。新录音来源、原生术语确认和共同消费仍未验证。
