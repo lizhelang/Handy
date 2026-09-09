@@ -20,3 +20,9 @@
 严格clippy仍报告原有 voice_protocol.rs 的 HostShortcutReply large_enum_variant，未用allow抑制，也未将质量门禁标为全通过。它与本批回执修复分开处理。
 
 独立复审 `review_socket_path` 已完成：Approve，无阻塞发现；复核了原子事务、异参冲突、删忘后Replay不复活和当前有效性文案。复审另跑runtime/app编译、store_learning及confirmation测试、前端build/lint/翻译与确认交互通过。最终完整runtime回归通过，app库474通过2忽略，历史/确认交互19通过，格式检查通过。未据此宣称原生确认或共同消费通过。
+
+## 安装前发现的真实来源接线阻塞
+
+候选构建已启动，日志 `/tmp/inputia-term-entry-candidate.log`，但暂停安装决定：`source.rs` 的 History/Clipboard JSON投影均硬编码 source_trust=unknown；History同时将source_app固定为NULL。真实应用调用 `actions.rs → hm.save_entry` 没有保存 owned_voice 的来源信息。因此真实历史不能通过确认入口的Verified闸门；不能用合成SQLite的Verified成功推定实际应用可用。
+
+下一最短接线是从认证owned voice会话提取已验证的来源上下文，在保存新历史的同一事务持久化，并由源投影带入规范索引。已有记录和无法验证的来源必须继续Unknown；不能批量提升旧数据trust，不改成允许Unknown学习。剪贴板的可信来源需另按真实采集证据接入。当前安装仍为代码 `9fa26dd3`，本批词库UI尚未安装。
