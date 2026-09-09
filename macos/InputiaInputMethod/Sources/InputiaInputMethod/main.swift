@@ -258,8 +258,14 @@ final class InputiaInputController: IMKInputController {
     return menu
   }
 
-  @objc private func unifiedMenuAction(_ sender: NSMenuItem) {
-    guard let values = sender.representedObject as? [String: String], let kind = values["kind"] else { return }
+  @objc private func unifiedMenuAction(_ sender: Any?) {
+    guard let values = InputiaHostTextPolicy.serviceMenuPayload(from: sender), let kind = values["kind"] else {
+      NSLog("inputia_menu_command_rejected reason=invalid_sender")
+      return
+    }
+    guard ["copy_latest", "history", "settings", "check_updates", "unload_model", "select_model", "quit_service"].contains(kind) else { return }
+    // 只记录固定动作名，绝不记录剪贴正文、模型路径或客户端字典。
+    NSLog("inputia_menu_command_queued action=\(kind)")
     let modelID = values["model_id"].flatMap { $0.isEmpty ? nil : $0 }
     InputiaVoiceInputLauncher.menuAction(kind: kind, modelID: modelID) { [weak self] reply in
       self?.unifiedMenuSnapshot = reply

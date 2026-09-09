@@ -175,6 +175,80 @@ print(f"macOSDeploymentCheck=true expected={expected} observed={observed} entrie
 ' "$MIN_MACOS_VERSION" "$exact" "$artifact"
 }
 
+localize_candidate_resources() {
+  local resources="$1" candidate_id="$2" localization strings_file candidate_name key
+  for localization in en zh-Hans zh-Hant; do
+    strings_file="$resources/$localization.lproj/InfoPlist.strings"
+    [[ -f "$strings_file" ]] || return 1
+    case "$localization" in
+      en) candidate_name="Inputia (Test)" ;;
+      zh-Hans) candidate_name="Inputia（测试版）" ;;
+      zh-Hant) candidate_name="Inputia（測試版）" ;;
+    esac
+    for key in CFBundleDisplayName CFBundleName "$candidate_id" "$candidate_id.Hans"; do
+      /usr/libexec/PlistBuddy -c "Delete :$key" "$strings_file" >/dev/null 2>&1 || true
+      /usr/libexec/PlistBuddy -c "Add :$key string $candidate_name" "$strings_file"
+    done
+    /usr/bin/plutil -lint "$strings_file" >/dev/null
+  done
+}
+
+if [[ "${INPUTIA_BUILD_CANDIDATE_LOCALIZATION_SELF_CHECK:-0}" == "1" ]]; then
+  candidate_host_id="com.inputia.inputmethod.Inputia.UnifiedCandidate"
+  tmp_root="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/inputia-candidate-localization.XXXXXX")"
+  trap '/bin/rm -rf "$tmp_root"' EXIT
+  self_check_plist="$tmp_root/Info.plist"
+  self_check_resources="$tmp_root/Resources"
+  /bin/cp "$ROOT_DIR/Info.plist" "$self_check_plist"
+  /bin/mkdir -p "$self_check_resources/en.lproj" "$self_check_resources/zh-Hans.lproj" "$self_check_resources/zh-Hant.lproj"
+  for localization in en zh-Hans zh-Hant; do
+    /bin/cp "$ROOT_DIR/Resources/$localization.lproj/InfoPlist.strings" "$self_check_resources/$localization.lproj/InfoPlist.strings"
+  done
+  /usr/libexec/PlistBuddy -c "Copy :ComponentInputModeDict:tsInputModeListKey:com.inputia.inputmethod.Inputia.Hans :ComponentInputModeDict:tsInputModeListKey:$candidate_host_id.Hans" "$self_check_plist"
+  /usr/libexec/PlistBuddy -c "Delete :ComponentInputModeDict:tsInputModeListKey:com.inputia.inputmethod.Inputia.Hans" "$self_check_plist"
+  /usr/libexec/PlistBuddy -c "Set :ComponentInputModeDict:tsInputModeListKey:$candidate_host_id.Hans:TISInputSourceID $candidate_host_id.Hans" "$self_check_plist"
+  /usr/libexec/PlistBuddy -c "Set :ComponentInputModeDict:tsVisibleInputModeOrderedArrayKey:0 $candidate_host_id.Hans" "$self_check_plist"
+  observed_modes="$(/usr/libexec/PlistBuddy -c "Print :ComponentInputModeDict:tsVisibleInputModeOrderedArrayKey:0" "$self_check_plist")"
+  expected_modes="$candidate_host_id.Hans"
+  if [[ "$observed_modes" != "$expected_modes" ]]; then
+    echo "candidateLocalizationSelfCheck=false reason=mode-mismatch expectedModes=$expected_modes observedModes=$observed_modes" >&2
+    exit 1
+  fi
+  if /usr/libexec/PlistBuddy -c "Print :ComponentInputModeDict:tsInputModeListKey:$candidate_host_id.Hant" "$self_check_plist" >/dev/null 2>&1; then
+    echo "candidateLocalizationSelfCheck=false reason=unexpected-hant-mode" >&2
+    exit 1
+  fi
+  localize_candidate_resources "$self_check_resources" "$candidate_host_id"
+  for localization in en zh-Hans zh-Hant; do
+    strings_file="$self_check_resources/$localization.lproj/InfoPlist.strings"
+    case "$localization" in
+      en) expected_name="Inputia (Test)" ;;
+      zh-Hans) expected_name="Inputia（测试版）" ;;
+      zh-Hant) expected_name="Inputia（測試版）" ;;
+    esac
+    for suffix in "" ".Hans"; do
+      observed_name="$(/usr/libexec/PlistBuddy -c "Print :$candidate_host_id$suffix" "$strings_file")"
+      if [[ "$observed_name" != "$expected_name" ]]; then
+        echo "candidateLocalizationSelfCheck=false localization=$localization key=$candidate_host_id$suffix expected=$expected_name observed=$observed_name" >&2
+        exit 1
+      fi
+    done
+    for key in CFBundleDisplayName CFBundleName; do
+      observed_name="$(/usr/libexec/PlistBuddy -c "Print :$key" "$strings_file")"
+      if [[ "$observed_name" != "$expected_name" ]]; then
+        echo "candidateLocalizationSelfCheck=false localization=$localization key=$key expected=$expected_name observed=$observed_name" >&2
+        exit 1
+      fi
+    done
+    if /usr/libexec/PlistBuddy -c "Print :$candidate_host_id.Hant" "$strings_file" >/dev/null 2>&1; then
+      echo "candidateLocalizationSelfCheck=false localization=$localization reason=unexpected-hant-localization" >&2
+      exit 1
+    fi
+  done
+  echo "candidateLocalizationSelfCheck=true modes=$observed_modes"
+  exit 0
+fi
+
 detect_verification_processes() {
   local process_list
   if [[ -n "${INPUTIA_BUILD_PROCESS_LIST_FOR_TEST:-}" ]]; then
@@ -312,7 +386,7 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $candidate_host_id" "$host_plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia候选" "$host_plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia候选" "$host_plist"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 51" "$host_plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 52" "$host_plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.0" "$host_plist"
   /usr/libexec/PlistBuddy -c "Set :InputMethodConnectionName ${candidate_host_id}_Connection" "$host_plist"
   /usr/libexec/PlistBuddy -c "Set :TISInputSourceID $candidate_host_id" "$host_plist"
@@ -324,6 +398,9 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   /usr/libexec/PlistBuddy -c "Add :InputiaProfileRunID string $RUN_ID" "$host_plist"
 fi
 cp -R "$ROOT_DIR/Resources/." "$RESOURCES_DIR/"
+if [[ "$IS_CANDIDATE" == "1" ]]; then
+  localize_candidate_resources "$RESOURCES_DIR" "$candidate_host_id"
+fi
 /usr/bin/python3 "$ROOT_DIR/Tools/generate_inputia_icons.py" --resources-dir "$RESOURCES_DIR"
 /bin/rm -rf "$RESOURCES_DIR/RimeData"
 if [[ "$IS_CANDIDATE" == "1" ]]; then
@@ -453,7 +530,7 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.inputia.settings.UnifiedCandidate" "$settings_plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia候选设置" "$settings_plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia候选设置" "$settings_plist"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 51" "$settings_plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 52" "$settings_plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.0" "$settings_plist"
   /usr/libexec/PlistBuddy -c "Add :InputiaDevelopmentCandidate bool true" "$settings_plist"
   /usr/libexec/PlistBuddy -c "Add :InputiaProfileRunID string $RUN_ID" "$settings_plist"

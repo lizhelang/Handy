@@ -1,6 +1,21 @@
 import Foundation
+import AppKit
+import InputMethodKit
 
 enum InputiaHostTextPolicy {
+  /// IMK 的菜单动作参数是命令字典，不是 AppKit 的直接 NSMenuItem sender。
+  static func serviceMenuPayload(from sender: Any?) -> [String: String]? {
+    let item: NSMenuItem?
+    if let direct = sender as? NSMenuItem {
+      item = direct
+    } else if let command = sender as? NSDictionary {
+      item = command[kIMKCommandMenuItemName] as? NSMenuItem
+    } else {
+      return nil
+    }
+    return item?.representedObject as? [String: String]
+  }
+
   static let replacementRange = NSRange(location: NSNotFound, length: NSNotFound)
   static let recallClipboardMenuKeyEquivalent = ""
   static let settingsMenuKeyEquivalent = ""

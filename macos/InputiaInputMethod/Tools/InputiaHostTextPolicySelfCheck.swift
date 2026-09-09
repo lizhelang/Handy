@@ -1,9 +1,14 @@
 import Darwin
 import Foundation
+import AppKit
+import InputMethodKit
 
 @main
 struct InputiaHostTextPolicySelfCheck {
   static func main() {
+    let historyItem = NSMenuItem(title: "history", action: nil, keyEquivalent: "")
+    historyItem.representedObject = ["kind": "history", "model_id": ""]
+    let commandInfo: NSDictionary = [kIMKCommandMenuItemName: historyItem]
     let range = InputiaHostTextPolicy.replacementRange
     let appCommandPassThroughChecks = [
       "copy:",
@@ -50,6 +55,10 @@ struct InputiaHostTextPolicySelfCheck {
       )
     }
     let checks: [(String, Bool)] = [
+      ("imkCommandDictionaryUnwrapped", InputiaHostTextPolicy.serviceMenuPayload(from: commandInfo)?["kind"] == "history"),
+      ("directMenuItemSupported", InputiaHostTextPolicy.serviceMenuPayload(from: historyItem)?["kind"] == "history"),
+      ("invalidMenuSenderRejected", InputiaHostTextPolicy.serviceMenuPayload(from: NSDictionary()) == nil),
+      ("nilMenuSenderRejected", InputiaHostTextPolicy.serviceMenuPayload(from: nil) == nil),
       ("replacementRangeLocationIsNSNotFound", range.location == NSNotFound),
       ("replacementRangeLengthIsNSNotFound", range.length == NSNotFound),
       (
