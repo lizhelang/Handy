@@ -555,7 +555,7 @@ final class InputiaInputController: IMKInputController {
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     shiftInputModeGesture.observeLocalKeyDown(keyCode: event.keyCode, modifiers: modifiers)
     inputiaDebugLog(
-      "keyDown keyCode=\(event.keyCode) modifiers=\(modifiers.rawValue) chars=\(event.characters ?? "") charsIgnoring=\(event.charactersIgnoringModifiers ?? "")"
+      "keyDown modifiers=\(modifiers.rawValue)"
     )
     if isScriptToggleShortcut(event, modifiers: modifiers) {
       cancelShiftInputModeGesture(reason: "scriptToggle")
@@ -678,7 +678,7 @@ final class InputiaInputController: IMKInputController {
     clearClipboardRecall()
     let previousComposing = latestComposing
     inputiaDebugLog(
-      "apply ok=\(outcome.ok) consumed=\(outcome.consumed) mode=\(outcome.mode) composing=\(outcome.composing) commit=\(outcome.commit ?? "") candidates=\(outcome.candidates.prefix(3).joined(separator: ","))"
+      "apply ok=\(outcome.ok) consumed=\(outcome.consumed) mode=\(outcome.mode) composing_count=\(outcome.composing.count) has_commit=\(outcome.commit != nil) candidate_count=\(outcome.candidates.count)"
     )
     guard outcome.ok else {
       NSLog("Inputia bridge outcome error")
@@ -1256,7 +1256,7 @@ final class InputiaInputController: IMKInputController {
   private func showClipboardRecall(client: IMKTextInput) -> Bool {
     let context = appContext(for: client)
     guard bridge.shouldReadClipboard(bundleId: context.bundleId, windowTitle: context.windowTitle) else {
-      inputiaDebugLog("clipboardRecallSkipped bundle=\(context.bundleId) window=\(context.windowTitle ?? "")")
+      inputiaDebugLog("clipboardRecallSkipped reason=privacy")
       clearClipboardRecall()
       return false
     }
@@ -1324,7 +1324,7 @@ final class InputiaInputController: IMKInputController {
     }
     let text = recallCandidates[index]
     client.insertText(text, replacementRange: emptyReplacementRange)
-    inputiaDebugLog("clipboardRecallCommit index=\(index) text=\(text)")
+    inputiaDebugLog("clipboardRecallCommit index=\(index)")
     clearClipboardRecall()
     return true
   }
@@ -1399,7 +1399,7 @@ final class InputiaInputController: IMKInputController {
     var inputRect = NSRect.zero
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
     InputiaHost.candidatePanel?.show(candidates: candidates, near: inputRect)
-    inputiaDebugLog("englishCompletionShown prefix=\(englishCompletionPrefix) count=\(candidates.count)")
+    inputiaDebugLog("englishCompletionShown count=\(candidates.count)")
   }
 
   private func commitFirstEnglishCompletion(client: IMKTextInput) -> Bool {
@@ -1417,7 +1417,7 @@ final class InputiaInputController: IMKInputController {
     client.insertText(suffix, replacementRange: emptyReplacementRange)
     let context = appContext(for: client)
     _ = bridge.learnTyped(text: candidate, bundleId: context.bundleId, windowTitle: context.windowTitle)
-    inputiaDebugLog("englishCompletionCommit prefix=\(englishCompletionPrefix) candidate=\(candidate)")
+    inputiaDebugLog("englishCompletionCommit")
     clearEnglishCompletion()
     return true
   }
@@ -1442,7 +1442,7 @@ final class InputiaInputController: IMKInputController {
     if isLearnableEnglishWord(word) {
       let context = appContext(for: client)
       _ = bridge.learnTyped(text: word, bundleId: context.bundleId, windowTitle: context.windowTitle)
-      inputiaDebugLog("englishWordLearned word=\(word)")
+      inputiaDebugLog("englishWordLearned")
     }
     clearEnglishCompletion()
   }
@@ -1527,7 +1527,7 @@ final class InputiaInputController: IMKInputController {
   private func updateAppContext(client: IMKTextInput, forceRefresh: Bool = false) {
     reloadSettingsIfDue(client: client, force: forceRefresh)
     let context = appContext(for: client, forceRefresh: forceRefresh)
-    inputiaDebugLog("context bundle=\(context.bundleId) window=\(context.windowTitle ?? "")")
+    inputiaDebugLog("contextRefreshed")
     if let pushedAppContext, pushedAppContext != context {
       resetShiftInputModeSession(reason: "contextChanged")
     }
@@ -1545,7 +1545,7 @@ final class InputiaInputController: IMKInputController {
       return false
     }
     clearInputState(client: client)
-    inputiaDebugLog("secureDirectPassthrough bundle=\(context.bundleId) window=\(context.windowTitle ?? "")")
+    inputiaDebugLog("secureDirectPassthrough")
     if pushedAppContext != context {
       _ = bridge.setAppContext(bundleId: context.bundleId, windowTitle: context.windowTitle)
       pushedAppContext = context
