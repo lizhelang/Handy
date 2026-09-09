@@ -38,3 +38,5 @@ schema4需要相应兼容构建，旧schema3代码不能被假定可以直接回
 代码 `8870df79` 的候选构建完成，日志 `/tmp/inputia-provenance-candidate.log`，固定本地证书签名deep/strict校验通过，CDHash `a6ba91411d5f94e164ef1b054ae032919de4d5e0`。独立保留产物 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/provenance-candidate-20260909.ZfTOxZ/Inputia Candidate.app`，未notarize。
 
 安装暂缓：实际旧代码 `9fa26dd3` 的 SourceOutbox::install只接受schema1–3，不能把旧包直接作为schema4恢复构建。需先准备相应兼容恢复构建/验证，不用覆盖旧数据库代替。当前已安装候选历史库复查仍schema3；未更换安装、未重新配对、未启动录音。
+
+兼容准备已转入 `/Users/lzl/FILE/github/Handy-unified-input-compat`，分支 `codex/unified-input-compat`，底座9fa26dd3，提交 `a330f123` 仅回移schema4/备份门槛与对应fixture列名。source14与app473通过2忽略，前端build/lint通过，签名构建日志 `/tmp/inputia-compat-candidate.log`。主分支没有被重置或换底座。该构建仍须独立审查及数据副本对账，不能当完整A12通过；旧Host导入重复学习仍待修。
