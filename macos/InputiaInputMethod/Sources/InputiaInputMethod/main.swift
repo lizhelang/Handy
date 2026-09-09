@@ -114,6 +114,8 @@ final class InputiaInputController: IMKInputController {
   private var sharedPreparedClientIdentity: ObjectIdentifier?
   private var sharedEnglishRefreshQueued = false
   private var sharedEnglishSelection = InputiaSharedEnglishSelectionState()
+  private var sharedChineseSelection = InputiaSharedEnglishSelectionState()
+  private var sharedChineseOrder: (order: InputiaSharedCandidateOrder, candidates: [String], identity: String, target: InputiaVoiceTarget)?
   #endif
   private let bridge = InputiaRustBridge.makeDefault()
   private var latestCandidates: [String] = []
@@ -131,6 +133,7 @@ final class InputiaInputController: IMKInputController {
   }
   private var englishCompletionCandidates: [String] = []
   private var englishCompletionRect = NSRect.zero
+  private var chineseCandidateRect = NSRect.zero
   private var candidatePanelExpanded = false
   private var shiftInputModeGesture = InputiaShortcutClassifier.ShiftInputModeGestureState()
   private weak var gestureInputClient: AnyObject?
@@ -358,6 +361,13 @@ final class InputiaInputController: IMKInputController {
     guard let selected = candidateString?.string else {
       return
     }
+    #if INPUTIA_PAIRED_BUILD
+    if sharedChineseOrder != nil, !candidatePanelExpanded,
+      let index = latestCandidates.firstIndex(of: selected), let client = client() {
+      _ = enqueueSharedChineseSelection(displayed: index, client: client)
+      return
+    }
+    #endif
     if englishCompletionCandidates.contains(selected), let client = client() {
       _ = commitEnglishCompletion(selected, client: client)
       return
@@ -657,6 +667,11 @@ final class InputiaInputController: IMKInputController {
       if candidatePanelExpanded, expandedActiveRowIndex > 0 {
         return commitExpandedCandidate(columnIndex: 0, client: client)
       }
+      #if INPUTIA_PAIRED_BUILD
+      if sharedChineseOrder != nil, !candidatePanelExpanded {
+        return enqueueSharedChineseSelection(displayed: 0, client: client)
+      }
+      #endif
       let outcome = bridge.space()
       let handled = apply(outcome, client: client)
       if outcome.mode == "English" && !outcome.consumed {
@@ -680,6 +695,14 @@ final class InputiaInputController: IMKInputController {
     if let columnIndex = expandedCandidateDigitColumn(event, modifiers: modifiers) {
       return commitExpandedCandidate(columnIndex: columnIndex, client: client)
     }
+
+    #if INPUTIA_PAIRED_BUILD
+    if sharedChineseOrder != nil, !candidatePanelExpanded, !modifiers.contains(.shift),
+      text.count == 1, let digit = Int(text), (1...9).contains(digit),
+      sharedChineseOrder?.order.originalIndex(displayed: digit - 1) != nil {
+      return enqueueSharedChineseSelection(displayed: digit - 1, client: client)
+    }
+    #endif
 
     var handled = false
     for character in text {
@@ -750,10 +773,19 @@ final class InputiaInputController: IMKInputController {
       updateCandidateWindow(client: client)
     }
 
+    #if INPUTIA_PAIRED_BUILD
+    if outcome.mode == "Chinese", !outcome.composing.isEmpty {
+      scheduleSharedEnglishRefresh(client: client)
+    }
+    #endif
     return outcome.consumed
   }
 
   private func syncHostState(with outcome: InputiaBridgeOutcome) {
+    #if INPUTIA_PAIRED_BUILD
+    sharedChineseOrder = nil
+    sharedChineseSelection.cancel()
+    #endif
     let compositionChanged = latestComposing != outcome.composing
     latestComposing = outcome.composing
     latestCandidates = outcome.candidates
@@ -858,9 +890,13 @@ final class InputiaInputController: IMKInputController {
       self.sharedEnglishRefreshQueued = false
       guard InputiaHost.activeInputController === self,
         self.sharedPreparedClientIdentity == ObjectIdentifier(client as AnyObject),
-        self.bridge.latestOutcome.mode == "English", self.latestComposing.isEmpty,
-        self.englishCompletionPrefix.count >= 2 else { return }
-      self.refreshEnglishCompletions(client: client, includeShared: true)
+        !self.candidatePanelExpanded else { return }
+      if self.bridge.latestOutcome.mode == "English", self.latestComposing.isEmpty,
+        self.englishCompletionPrefix.count >= 2 {
+        self.refreshEnglishCompletions(client: client, includeShared: true)
+      } else if self.bridge.latestOutcome.mode == "Chinese", !self.latestComposing.isEmpty {
+        self.refreshSharedChineseCandidates(client: client)
+      }
     }
   }
 
@@ -901,6 +937,73 @@ final class InputiaInputController: IMKInputController {
     return true
   }
 
+  private func sharedChineseCoreMatches(_ value: (order: InputiaSharedCandidateOrder, candidates: [String], identity: String, target: InputiaVoiceTarget)) -> Bool {
+    let current = bridge.latestOutcome
+    return value.order.matches(mode: current.mode, composing: current.composing, page: current.page,
+      candidates: current.candidates, originalCandidates: value.candidates)
+      && latestComposing == value.order.composing && !candidatePanelExpanded
+  }
+
+  private func clearSharedChineseCandidates() {
+    sharedChineseSelection.cancel()
+    guard sharedChineseOrder != nil else { return }
+    sharedChineseOrder = nil
+    let current = bridge.latestOutcome
+    guard current.mode == "Chinese", !current.composing.isEmpty else { return }
+    latestCandidates = current.candidates
+    if !candidatePanelExpanded {
+      InputiaHost.candidatePanel?.show(candidates: current.candidates, near: chineseCandidateRect)
+    }
+  }
+
+  private func refreshSharedChineseCandidates(client: IMKTextInput) {
+    clearSharedChineseCandidates()
+    guard !candidatePanelExpanded, let shared = liveSharedTerms(client: client) else {
+      InputiaSharedTermsMemory.shared.clear(); return
+    }
+    let before = bridge.latestOutcome
+    guard before.mode == "Chinese", !before.composing.isEmpty,
+      let order = bridge.sharedCandidateOrder(terms: shared.terms),
+      currentSharedTerms(client: client)?.identity == shared.identity,
+      before.candidates == bridge.latestOutcome.candidates,
+      before.composing == bridge.latestOutcome.composing, before.page == bridge.latestOutcome.page,
+      order.indices != Array(before.candidates.indices) else { return }
+    sharedChineseOrder = (order, before.candidates, shared.identity, shared.target)
+    latestCandidates = order.indices.map { before.candidates[$0] }
+    // 不调用 apply/syncHostState，marked text 与 Rime 原页保持不变。
+    updateCandidateWindow(client: client)
+  }
+
+  private func enqueueSharedChineseSelection(displayed: Int, client: IMKTextInput) -> Bool {
+    guard !sharedChineseSelection.hasPending else { return true }
+    guard let mapping = sharedChineseOrder, sharedChineseCoreMatches(mapping),
+      let originalIndex = mapping.order.originalIndex(displayed: displayed),
+      let snapshot = shortcutPreparedSnapshot,
+      currentSharedTerms(client: client)?.identity == mapping.identity else {
+      clearSharedChineseCandidates(); return true
+    }
+    guard let intent = sharedChineseSelection.begin(.init(prefix: mapping.order.composing,
+      targetID: mapping.target.target_id, cacheIdentity: mapping.identity,
+      clientIdentity: ObjectIdentifier(client as AnyObject), activation: voiceActivationGeneration)) else { return true }
+    DispatchQueue.main.async { [weak self] in
+      guard let self, self.sharedChineseSelection.isPending(intent) else { return }
+      guard let liveClient = self.client(), ObjectIdentifier(liveClient as AnyObject) == ObjectIdentifier(client as AnyObject),
+        self.shortcutPreparedSnapshot === snapshot, self.sharedChineseCoreMatches(mapping),
+        self.sharedChineseOrder?.identity == mapping.identity,
+        self.sharedChineseOrder?.order.indices == mapping.order.indices,
+        let shared = self.liveSharedTerms(client: client), shared.identity == mapping.identity,
+        shared.target == mapping.target, self.sharedChineseCoreMatches(mapping),
+        !IsSecureEventInputEnabled(), self.currentSharedTerms(client: client)?.identity == mapping.identity,
+        self.sharedChineseSelection.consume(intent, context: .init(prefix: self.bridge.latestOutcome.composing,
+          targetID: shared.target.target_id, cacheIdentity: shared.identity,
+          clientIdentity: ObjectIdentifier(client as AnyObject), activation: self.voiceActivationGeneration), gateAllowed: true)
+      else { self.sharedChineseSelection.cancel(); InputiaSharedTermsMemory.shared.clear(); return }
+      // 原索引交回 Rime，自身不插字符串；保留部分消费、剩余组合及既有用户选择学习。
+      _ = self.apply(self.bridge.chooseCandidate(atZeroBasedIndex: originalIndex), client: client)
+    }
+    return true
+  }
+
   func acceptSharedTerms(_ terms: InputiaSharedTermsSnapshot, ticket: UInt64) {
     guard InputiaSharedTermsMemory.shared.ticket() == ticket else { return }
     guard Thread.isMainThread, sharedTargetReady, InputiaHost.activeInputController === self,
@@ -918,7 +1021,7 @@ final class InputiaInputController: IMKInputController {
       if InputiaSharedTermsMemory.shared.ticket() == ticket { InputiaSharedTermsMemory.shared.clear() }
       return
     }
-    if !englishCompletionPrefix.isEmpty, let client = client() {
+    if (!englishCompletionPrefix.isEmpty || !latestComposing.isEmpty), let client = client() {
       scheduleSharedEnglishRefresh(client: client)
     }
     DispatchQueue.main.asyncAfter(deadline: .now() + max(0, terms.expiresAt - ProcessInfo.processInfo.systemUptime)) {
@@ -928,6 +1031,7 @@ final class InputiaInputController: IMKInputController {
 
   func clearSharedEnglishCandidates() {
     sharedEnglishSelection.cancel()
+    clearSharedChineseCandidates()
     guard !sharedEnglishCandidates.isEmpty else { return }
     let removed = Set(sharedEnglishCandidates.keys)
     sharedEnglishCandidates = [:]
@@ -1066,6 +1170,9 @@ final class InputiaInputController: IMKInputController {
     _ navigation: InputiaCandidateNavigation,
     client: IMKTextInput
   ) -> Bool {
+    #if INPUTIA_PAIRED_BUILD
+    clearSharedChineseCandidates()
+    #endif
     guard !latestComposing.isEmpty else {
       return false
     }
@@ -1111,6 +1218,9 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func handleCandidatePageDown(client: IMKTextInput) -> Bool {
+    #if INPUTIA_PAIRED_BUILD
+    clearSharedChineseCandidates()
+    #endif
     guard !latestComposing.isEmpty else {
       return false
     }
@@ -1127,6 +1237,9 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func handleCandidatePageUp(client: IMKTextInput) -> Bool {
+    #if INPUTIA_PAIRED_BUILD
+    clearSharedChineseCandidates()
+    #endif
     guard !latestComposing.isEmpty else {
       return false
     }
@@ -1665,6 +1778,7 @@ final class InputiaInputController: IMKInputController {
 
     var inputRect = NSRect.zero
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
+    chineseCandidateRect = inputRect
     panel.show(
       candidates: panelCandidates,
       near: inputRect,

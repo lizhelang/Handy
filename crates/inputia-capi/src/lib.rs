@@ -329,6 +329,44 @@ pub unsafe extern "C" fn inputia_session_snapshot(session: *mut InputiaSession) 
     outcome_json(OutputEnvelope::ok(None, false, session.core.snapshot()))
 }
 
+/// 只读内存快照，返回渲染顺序；选择仍使用原候选索引。
+///
+/// # Safety
+/// session 必须存活且独占串行；terms_json 必须为有效 NUL 结尾 C 字符串。
+/// 返回值由 inputia_string_free 释放。
+#[no_mangle]
+pub unsafe extern "C" fn inputia_session_shared_candidate_order(
+    session: *mut InputiaSession,
+    terms_json: *const c_char,
+) -> *mut c_char {
+    if session.is_null() {
+        return error_json("session is null");
+    }
+    if terms_json.is_null() {
+        return error_json("invalid shared terms");
+    }
+    let bytes = unsafe { CStr::from_ptr(terms_json) }.to_bytes();
+    if bytes.is_empty() || bytes.len() > 16_384 {
+        return error_json("invalid shared terms");
+    }
+    let Ok(terms) = serde_json::from_slice::<Vec<String>>(bytes) else {
+        return error_json("invalid shared terms");
+    };
+    if terms.is_empty() || terms.len() > 256 {
+        return error_json("invalid shared terms");
+    }
+    let session = unsafe { &*session };
+    let snapshot = session.core.snapshot();
+    let indices = inputia_core::shared_candidate_order(
+        &snapshot.composing,
+        &snapshot.visible_candidates,
+        &terms,
+    );
+    string_json(
+        &serde_json::json!({"ok":true,"mode":mode_name(&snapshot.mode),"composing":snapshot.composing,"page":snapshot.page,"indices":indices}),
+    )
+}
+
 /// 显式设置中英文模式。
 ///
 /// # Safety
@@ -2290,6 +2328,100 @@ mod tests {
             handle_json(unsafe { inputia_session_handle_char(session, ',' as u32) });
         assert_eq!(chinese_punctuation["commit"], "，");
 
+        unsafe { inputia_session_free(session) };
+    }
+
+    #[test]
+    fn shared_candidate_order_ffi_is_read_only_and_rejects_invalid_input() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        let terms = CString::new("[\"你好\"]").unwrap();
+        assert_eq!(
+            handle_json(unsafe {
+                inputia_session_shared_candidate_order(null_mut(), terms.as_ptr())
+            })["ok"],
+            false
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let path = CString::new(temp.path().to_string_lossy().as_bytes()).unwrap();
+        let session = unsafe { inputia_session_new_luna_pinyin_simp(path.as_ptr(), 5) };
+        assert!(
+            !session.is_null(),
+            "共享排序验证需要真实 Rime 会话，不能跳过"
+        );
+        handle_json(unsafe { inputia_session_set_input_mode(session, INPUT_MODE_CHINESE) });
+        for ch in "nihao".chars() {
+            handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
+        }
+        let before = handle_json(unsafe { inputia_session_snapshot(session) });
+        assert_eq!(before["mode"], "Chinese");
+        assert_eq!(before["composing"], "nihao");
+        let visible = before["visible_candidates"].as_array().unwrap();
+        assert!(!visible.is_empty(), "真实 Rime Chinese 候选不能为空");
+        let identity = (0..visible.len())
+            .map(|i| serde_json::json!(i))
+            .collect::<Vec<_>>();
+        let promoted = visible.iter().enumerate().find_map(|(index, candidate)| {
+            let text = candidate["text"].as_str().unwrap();
+            inputia_core::integration::terms::validate_term(
+                text,
+                inputia_core::integration::terms::TermEvidence::ConfirmedCorrection,
+            )
+            .ok()?;
+            let terms = CString::new(serde_json::to_string(&[text]).unwrap()).unwrap();
+            let order = handle_json(unsafe {
+                inputia_session_shared_candidate_order(session, terms.as_ptr())
+            });
+            let indices = order["indices"].as_array().unwrap();
+            let display_index = indices
+                .iter()
+                .position(|value| value.as_u64() == Some(index as u64))
+                .unwrap();
+            (indices != &identity && display_index < index)
+                .then(|| (index, text.to_owned(), display_index, order))
+        });
+        let (original_index, expected_commit, display_index, order) = promoted
+            .unwrap_or_else(|| panic!("真实 Rime nihao 候选没有可合法提升的同组术语: {visible:?}"));
+        assert_eq!(order["ok"], true);
+        assert_ne!(order["indices"].as_array().unwrap(), &identity);
+        for field in ["mode", "composing", "page"] {
+            assert_eq!(order[field], before[field]);
+        }
+        let mut indices = order["indices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i.as_u64().unwrap() as usize)
+            .collect::<Vec<_>>();
+        indices.sort_unstable();
+        assert_eq!(
+            indices,
+            (0..before["visible_candidates"].as_array().unwrap().len()).collect::<Vec<_>>()
+        );
+        for invalid in ["", "null", "[]", "{}", "[1]", "not json"] {
+            let invalid = CString::new(invalid).unwrap();
+            assert_eq!(
+                handle_json(unsafe {
+                    inputia_session_shared_candidate_order(session, invalid.as_ptr())
+                })["error"],
+                "invalid shared terms"
+            );
+        }
+        assert_eq!(
+            handle_json(unsafe {
+                inputia_session_shared_candidate_order(session, std::ptr::null())
+            })["error"],
+            "invalid shared terms"
+        );
+        assert_eq!(
+            handle_json(unsafe { inputia_session_snapshot(session) }),
+            before
+        );
+        let returned_original_index = order["indices"][display_index].as_u64().unwrap() as usize;
+        assert_eq!(returned_original_index, original_index);
+        let chosen = handle_json(unsafe {
+            inputia_session_handle_digit(session, (returned_original_index + 1) as u8)
+        });
+        assert_eq!(chosen["commit"], expected_commit);
         unsafe { inputia_session_free(session) };
     }
 

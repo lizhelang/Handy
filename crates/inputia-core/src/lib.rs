@@ -1144,15 +1144,57 @@ fn strongest_candidate_source(term: &MemoryTerm) -> CandidateSource {
     source
 }
 
-fn sort_ranked_candidates(composing: &str, candidates: Vec<Candidate>) -> Vec<Candidate> {
-    let expected_chars = estimated_composing_chars(composing);
-    let phrase_guard = expected_chars
+fn candidate_phrase_guard(composing: &str, candidates: &[Candidate]) -> Option<usize> {
+    estimated_composing_chars(composing)
         .filter(|expected| *expected >= 2)
         .filter(|_| {
             candidates
                 .iter()
                 .any(|candidate| cjk_char_count(&candidate.text) >= 2)
+        })
+}
+
+/// 只返回已有候选的原索引置换；共享词只在相同输入意图的既有槽位中稳定优先。
+pub fn shared_candidate_order(
+    composing: &str,
+    candidates: &[Candidate],
+    terms: &[String],
+) -> Vec<usize> {
+    use integration::terms::{validate_term, TermEvidence};
+    // 服务端已经分配显式词与学习词预算，客户端只验证总量，不重新分配学习配额。
+    if terms.len() > 256
+        || terms
+            .iter()
+            .fold(0usize, |bytes, term| bytes.saturating_add(term.len()))
+            > 16 * 1024
+    {
+        return (0..candidates.len()).collect();
+    }
+    let allowed: std::collections::HashSet<String> = terms
+        .iter()
+        .filter_map(|term| validate_term(term, TermEvidence::ConfirmedCorrection).ok())
+        .collect();
+    let guard = candidate_phrase_guard(composing, candidates);
+    let mut groups = std::collections::BTreeMap::<i32, Vec<usize>>::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        let score = guard.map_or(0, |expected| {
+            composition_intent_score(expected, &candidate.text)
         });
+        groups.entry(score).or_default().push(index);
+    }
+    let mut order = (0..candidates.len()).collect::<Vec<_>>();
+    for slots in groups.values() {
+        let mut ranked = slots.clone();
+        ranked.sort_by_key(|index| !allowed.contains(candidates[*index].text.as_str()));
+        for (slot, index) in slots.iter().zip(ranked) {
+            order[*slot] = index;
+        }
+    }
+    order
+}
+
+fn sort_ranked_candidates(composing: &str, candidates: Vec<Candidate>) -> Vec<Candidate> {
+    let phrase_guard = candidate_phrase_guard(composing, &candidates);
 
     let mut indexed = candidates.into_iter().enumerate().collect::<Vec<_>>();
     indexed.sort_by(|(left_index, left), (right_index, right)| {
@@ -1245,6 +1287,79 @@ fn open_read_only(path: impl AsRef<Path>) -> rusqlite::Result<rusqlite::Connecti
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn shared_order_preserves_phrase_slots_and_unmatched_order() {
+        let candidates = ["你好", "你", "您好", "好", "你好吗", "你们好"]
+            .iter()
+            .enumerate()
+            .map(|(i, text)| Candidate::new(i.to_string(), *text))
+            .collect::<Vec<_>>();
+        let before = candidates.clone();
+        let order = shared_candidate_order(
+            "ni'hao",
+            &candidates,
+            &["您好".into(), "你们好".into(), "你".into()],
+        );
+        assert_eq!(order, vec![2, 1, 0, 3, 5, 4]);
+        let mut permutation = order.clone();
+        permutation.sort_unstable();
+        assert_eq!(permutation, (0..6).collect::<Vec<_>>());
+        assert_eq!(candidates, before);
+        assert_eq!(
+            shared_candidate_order("ni'hao", &candidates, &["不存在".into()]),
+            (0..6).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            shared_candidate_order("ni", &candidates, &["您好".into(), "你们好".into()]),
+            vec![2, 5, 0, 1, 3, 4]
+        );
+    }
+
+    #[test]
+    fn shared_order_uses_validated_budget_and_leaves_core_unchanged() {
+        let mut state = core();
+        state.handle_key(Key::ToggleInputMode);
+        feed(&mut state, "ni");
+        let before = state.snapshot();
+        assert!(!before.visible_candidates.is_empty());
+        shared_candidate_order(
+            &before.composing,
+            &before.visible_candidates,
+            &["你好".into()],
+        );
+        assert_eq!(state.snapshot(), before);
+        let candidates = vec![
+            Candidate::new("first", "普通"),
+            Candidate::new("late", "尾词"),
+            Candidate::new("secret", "password=bad"),
+        ];
+        let mut terms = (0..95).map(|i| format!("词条{i}")).collect::<Vec<_>>();
+        terms.push("尾词".into());
+        assert_eq!(terms.len(), 96);
+        assert_eq!(
+            shared_candidate_order("ni", &candidates, &terms),
+            vec![1, 0, 2]
+        );
+        terms.push("password=bad".into());
+        assert_eq!(
+            shared_candidate_order("ni", &candidates, &terms),
+            vec![1, 0, 2]
+        );
+        assert_eq!(
+            shared_candidate_order("ni", &candidates, &vec!["尾词".into(); 257]),
+            vec![0, 1, 2]
+        );
+        let oversized = vec!["尾词".into(), "中".repeat(5500)];
+        assert_eq!(
+            shared_candidate_order("ni", &candidates, &oversized),
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            shared_candidate_order("ni", &candidates, &[" 尾词 ".into()]),
+            vec![1, 0, 2]
+        );
+    }
 
     #[derive(Default)]
     struct StubEngine;

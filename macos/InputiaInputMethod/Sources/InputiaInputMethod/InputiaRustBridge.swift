@@ -115,6 +115,11 @@ private func inputia_session_set_app_context(
   _ bundleId: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
+#if INPUTIA_PAIRED_BUILD
+@_silgen_name("inputia_session_shared_candidate_order")
+private func inputia_session_shared_candidate_order(_ session: UnsafeMutableRawPointer?, _ terms: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+#endif
+
 @_silgen_name("inputia_session_set_app_context_with_window")
 private func inputia_session_set_app_context_with_window(
   _ session: UnsafeMutableRawPointer?,
@@ -252,6 +257,20 @@ final class InputiaRustBridge {
     }
     return consume(inputia_session_handle_digit(session, UInt8(index + 1)))
   }
+
+  #if INPUTIA_PAIRED_BUILD
+  func sharedCandidateOrder(terms: [String]) -> InputiaSharedCandidateOrder? {
+    let before = latestOutcome
+    guard let session, let data = try? JSONEncoder().encode(terms),
+      let json = String(data: data, encoding: .utf8) else { return nil }
+    guard let raw = json.withCString({ inputia_session_shared_candidate_order(session, $0) }) else { return nil }
+    defer { inputia_string_free(raw) }
+    guard latestOutcome.mode == before.mode, latestOutcome.composing == before.composing,
+      latestOutcome.page == before.page, latestOutcome.candidates == before.candidates else { return nil }
+    return InputiaSharedCandidateOrder.decode(Data(String(cString: raw).utf8), mode: before.mode,
+      composing: before.composing, page: before.page, count: before.candidates.count)
+  }
+  #endif
 
   func handleSpecial(_ specialKey: Int32) -> InputiaBridgeOutcome {
     consume(inputia_session_handle_special(session, specialKey))

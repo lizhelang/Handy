@@ -31,6 +31,22 @@ private final class ClearedState: InputiaSharedStateBarrierApplying {
       selection_generation: 1, composition_generation: 1, source_app: "synthetic.test")
   }
   static func main() {
+    let orderJSON = Data(#"{"ok":true,"mode":"Chinese","composing":"nihao","page":0,"indices":[1,0,2]}"#.utf8)
+    let order = InputiaSharedCandidateOrder.decode(orderJSON, mode: "Chinese", composing: "nihao", page: 0, count: 3)!
+    precondition(order.originalIndex(displayed: 0) == 1 && order.originalIndex(displayed: 1) == 0)
+    precondition(order.originalIndex(displayed: 3) == nil && order.originalIndex(displayed: -1) == nil)
+    for indices in ["[1,1,2]", "[0,1]", "[-1,0,1]", "[0,1,3]", "[true,0,2]"] {
+      let json = Data("{\"ok\":true,\"mode\":\"Chinese\",\"composing\":\"nihao\",\"page\":0,\"indices\":\(indices)}".utf8)
+      precondition(InputiaSharedCandidateOrder.decode(json, mode: "Chinese", composing: "nihao", page: 0, count: 3) == nil)
+    }
+    precondition(InputiaSharedCandidateOrder.decode(orderJSON, mode: "English", composing: "nihao", page: 0, count: 3) == nil)
+    precondition(InputiaSharedCandidateOrder.decode(orderJSON, mode: "Chinese", composing: "ni", page: 0, count: 3) == nil)
+    precondition(InputiaSharedCandidateOrder.decode(orderJSON, mode: "Chinese", composing: "nihao", page: 1, count: 3) == nil)
+    let originalCandidates = ["甲", "乙", "丙"]
+    precondition(order.matches(mode: "Chinese", composing: "nihao", page: 0, candidates: originalCandidates, originalCandidates: originalCandidates))
+    precondition(!order.matches(mode: "Chinese", composing: "nihao", page: 0, candidates: ["新", "乙", "丙"], originalCandidates: originalCandidates))
+    precondition(!order.matches(mode: "Chinese", composing: "ni", page: 0, candidates: originalCandidates, originalCandidates: originalCandidates))
+    precondition(!order.matches(mode: "Chinese", composing: "nihao", page: 1, candidates: originalCandidates, originalCandidates: originalCandidates))
     let client = NSObject()
     let otherClient = NSObject()
     typealias IntentContext = InputiaSharedEnglishSelectionState.Context
@@ -129,6 +145,6 @@ private final class ClearedState: InputiaSharedStateBarrierApplying {
       done.signal()
     }
     precondition(done.wait(timeout: .now() + 8) == .success)
-    print("shared_terms_memory_and_wire=pass cases=18 selection_intent_checks=10 synthetic=true native_candidate_insertion_tested=false")
+    print("shared_terms_memory_and_wire=pass cases=18 selection_intent_checks=10 chinese_mapping_checks=14 synthetic=true native_candidate_insertion_tested=false")
   }
 }

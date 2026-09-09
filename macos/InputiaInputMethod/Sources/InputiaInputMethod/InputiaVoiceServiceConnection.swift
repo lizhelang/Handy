@@ -90,6 +90,29 @@ struct InputiaSharedEnglishSelectionState {
   }
 }
 
+/// 仅描述原候选索引的完整置换，不拥有候选正文或 Rime 状态。
+struct InputiaSharedCandidateOrder: Decodable {
+  let ok: Bool
+  let mode: String
+  let composing: String
+  let page: Int
+  let indices: [Int]
+  static func decode(_ data: Data, mode: String, composing: String, page: Int, count: Int) -> Self? {
+    guard count > 0, count <= 9,
+      let value = try? JSONDecoder().decode(Self.self, from: data), value.ok,
+      value.mode == mode, mode == "Chinese", value.composing == composing, !composing.isEmpty,
+      value.page == page, value.indices.count == count,
+      value.indices.sorted() == Array(0..<count) else { return nil }
+    return value
+  }
+  func originalIndex(displayed: Int) -> Int? {
+    indices.indices.contains(displayed) ? indices[displayed] : nil
+  }
+  func matches(mode: String, composing: String, page: Int, candidates: [String], originalCandidates: [String]) -> Bool {
+    self.mode == mode && self.composing == composing && self.page == page && candidates == originalCandidates
+  }
+}
+
 /// 只存本进程短租约；所有键盘候选检查只读取此内存与已准备的目标快照。
 final class InputiaSharedTermsMemory {
   static let shared = InputiaSharedTermsMemory()
