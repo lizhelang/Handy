@@ -6,6 +6,7 @@ use crate::protocol::ProtocolError;
 use serde::{Deserialize, Serialize};
 
 pub const VOICE_CAPABILITY: &str = "voice_sessions_v1";
+pub const SHARED_TERMS_CAPABILITY: &str = "shared_terms_v1";
 pub const MAX_DELIVERY_TEXT_BYTES: usize = 192 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -323,6 +324,59 @@ pub enum VoiceWireRequest {
     Output(VoiceOutputRequest),
     Menu(MenuRequest),
     HostShortcut(HostShortcutRequest),
+    SharedTerms(SharedTermsRequest),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SharedTermsLease {
+    pub lease_id: String,
+    pub lease_epoch: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SharedTermsRequest {
+    pub request_id: String,
+    pub client_instance: String,
+    pub server_instance: String,
+    pub policy_epoch: u64,
+    pub shared_terms: SharedTermsLease,
+}
+
+impl SharedTermsRequest {
+    pub fn validate_for(&self, peer: &VoicePeer<'_>) -> Result<(), ProtocolError> {
+        if !id(&self.request_id)
+            || !id(&self.client_instance)
+            || !id(&self.server_instance)
+            || self.client_instance != peer.client_instance
+            || self.server_instance != peer.server_instance
+            || self.policy_epoch != peer.policy_epoch
+            || !peer.policy_applied
+            || !id(&self.shared_terms.lease_id)
+            || self.shared_terms.lease_epoch == 0
+        {
+            return Err(ProtocolError::InvalidEnvelope);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SharedTermsReply {
+    SharedTerms {
+        request_id: String,
+        lease_id: String,
+        lease_epoch: u64,
+        version: VoiceTermsVersion,
+        terms: Vec<String>,
+        max_age_ms: u64,
+    },
+    Rejected {
+        request_id: String,
+        code: VoiceReplyError,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

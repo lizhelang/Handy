@@ -487,6 +487,20 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   -framework Security \
   -o "$BUILD_DIR/inputia-voice-target-snapshot-self-check"
 
+# 配对协议/短词缓存使用合成socket自检；不启动GUI、麦克风或读取用户词库。
+for check in InputiaVoiceServiceSelfCheck InputiaSharedTermsSelfCheck; do
+  /usr/bin/swiftc \
+    -parse-as-library -D INPUTIA_PAIRED_BUILD -D INPUTIA_CONNECTION_SELF_CHECK \
+    -target "$TARGET_TRIPLE" \
+    "$ROOT_DIR/Tools/$check.swift" \
+    "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
+    "$ROOT_DIR/Sources/InputiaInputMethod/InputiaFramedConnection.swift" \
+    "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
+    "$ROOT_DIR/../../native/unified-pair-auth/UnifiedPairAuth.swift" \
+    -framework Security -o "$BUILD_DIR/$check"
+  "$BUILD_DIR/$check"
+done
+
 /usr/bin/swiftc \
   "$ROOT_DIR/Tools/InputiaCandidatePanelLayoutSelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaCandidatePanel.swift" \

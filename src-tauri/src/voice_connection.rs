@@ -125,6 +125,82 @@ impl VoiceConnection {
             let request: VoiceWireRequest = transport::read_frame(&mut self.stream)
                 .map_err(|_| ConnectionError::ControlFrame)?;
             match request {
+                VoiceWireRequest::SharedTerms(request) => {
+                    use inputia_core::integration::{
+                        privacy::{HistoryMode, PrivacyContext, PrivacyPolicy, SourceTrust},
+                        terms::HotwordBudget,
+                    };
+                    use inputia_handy_runtime::voice_protocol::{
+                        SharedTermsReply, VoiceTermsVersion,
+                    };
+                    let request_id = request.request_id.clone();
+                    let result = (|| {
+                        let epoch = history
+                            .policy_epoch()
+                            .map_err(|_| VoiceReplyError::Unknown)?;
+                        request
+                            .validate_for(&self.context.voice_peer(epoch))
+                            .map_err(|_| VoiceReplyError::Unauthorized)?;
+                        let app = app.ok_or(VoiceReplyError::Unauthorized)?;
+                        let broker = app
+                            .try_state::<crate::host_shortcut_broker::HostShortcutBroker>()
+                            .ok_or(VoiceReplyError::Unauthorized)?;
+                        let (lease, expires_at) = broker.shared_terms_lease(&request)?;
+                        let snapshot = history
+                            .session_hotwords(
+                                PrivacyPolicy {
+                                    epoch,
+                                    history_enabled: false,
+                                    history_mode: HistoryMode::Strict,
+                                    learning_enabled: false,
+                                    remote_learning_terms_enabled: false,
+                                },
+                                PrivacyContext {
+                                    source_trust: SourceTrust::Unknown,
+                                    source_sensitive: false,
+                                    target_known: true,
+                                    target_sensitive: false,
+                                    secure_input: false,
+                                    transient_or_concealed: false,
+                                },
+                                vec![],
+                                HotwordBudget::default(),
+                            )
+                            .map_err(|_| VoiceReplyError::Unknown)?;
+                        if !history
+                            .term_snapshot_is_current(snapshot.clone())
+                            .map_err(|_| VoiceReplyError::Unknown)?
+                        {
+                            return Err(VoiceReplyError::Unauthorized);
+                        }
+                        let (current, current_expiry) = broker.shared_terms_lease(&request)?;
+                        if current != lease || current_expiry != expires_at {
+                            return Err(VoiceReplyError::Unauthorized);
+                        }
+                        let max_age_ms = expires_at
+                            .saturating_duration_since(std::time::Instant::now())
+                            .as_millis()
+                            .min(1000) as u64;
+                        if max_age_ms == 0 {
+                            return Err(VoiceReplyError::Unauthorized);
+                        }
+                        Ok(SharedTermsReply::SharedTerms {
+                            request_id: request.request_id,
+                            lease_id: lease.lease_id,
+                            lease_epoch: lease.lease_epoch,
+                            version: VoiceTermsVersion {
+                                policy_epoch: snapshot.policy_epoch,
+                                learning_generation: snapshot.learning_generation,
+                            },
+                            terms: snapshot.terms,
+                            max_age_ms,
+                        })
+                    })();
+                    let reply = result
+                        .unwrap_or_else(|code| SharedTermsReply::Rejected { request_id, code });
+                    transport::write_frame(&mut self.stream, &reply)
+                        .map_err(|_| ConnectionError::ControlFrame)
+                }
                 VoiceWireRequest::Menu(request) => {
                     use inputia_handy_runtime::voice_protocol::MenuReply;
                     let request_id = request.request_id.clone();
@@ -567,7 +643,10 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
                 instance_id: instance,
                 profile_id: profile.profile_id.clone(),
                 policy_epoch: service.policy_epoch()?,
-                capabilities: vec![inputia_handy_runtime::voice_protocol::VOICE_CAPABILITY.into()],
+                capabilities: vec![
+                    inputia_handy_runtime::voice_protocol::VOICE_CAPABILITY.into(),
+                    inputia_handy_runtime::voice_protocol::SHARED_TERMS_CAPABILITY.into(),
+                ],
             };
             drop(manifest);
             // Swift 认证 handle 有线程归属；只共享已验证的字节和静态构建信任。

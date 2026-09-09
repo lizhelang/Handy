@@ -39,11 +39,16 @@ enum InputiaVoiceInputLauncher {
   private static var shortcutRetryAfter: TimeInterval = 0
   private static var shortcutHasActiveOwner = false
   private static var shortcutProviderHadTarget: Bool?
+  private static var sharedTermsRequestedAt: TimeInterval = 0
+  private static var sharedTermsBusy = false
+  private static let sharedTermsQueue = DispatchQueue(label: "Inputia.shared-terms")
+  private static var sharedTermsConnection: InputiaVoiceServiceConnection?
   private struct Endpoint: Decodable { let profile_id: String; let protocol_major: Int; let server_instance: String; let socket_path: String }
 
   /// provider 和新会话复核在主线程；定时器、认证、数据库和 socket 均在后台。
   static func startShortcutListening(
     targetProvider: @escaping () -> InputiaVoiceTarget?,
+    sharedTermsReceiver: @escaping (InputiaSharedTermsSnapshot, UInt64) -> Void,
     acceptStart: @escaping (InputiaHostShortcutTrigger, @escaping (Bool) -> Void) -> Void
   ) {
     shortcutQueue.async {
@@ -55,6 +60,7 @@ enum InputiaVoiceInputLauncher {
         shortcutCycleBusy = true
         DispatchQueue.main.async {
           let target = targetProvider()
+          if target == nil { InputiaSharedTermsMemory.shared.clear() }
           shortcutQueue.async {
             do {
               if shortcutProviderHadTarget != (target != nil) {
@@ -77,6 +83,7 @@ enum InputiaVoiceInputLauncher {
               if let target {
                 let newTarget = shortcutLease?.target != target
                 if shortcutLease?.target != target {
+                  InputiaSharedTermsMemory.shared.clear()
                   guard shortcutLeaseEpoch < UInt64.max else { throw InputiaVoiceServiceError.policy }
                   shortcutLeaseEpoch += 1
                   let now = UInt64(max(0, Date().timeIntervalSince1970 * 1000))
@@ -85,13 +92,46 @@ enum InputiaVoiceInputLauncher {
                     issued_at_unix_ms: now, expires_at_unix_ms: now + 1000)
                 }
                 if let previous = shortcutLease {
+                  let leaseStartedAt = ProcessInfo.processInfo.systemUptime
                   let now = UInt64(max(0, Date().timeIntervalSince1970 * 1000))
                   let renewed = InputiaHostShortcutLease(lease_id: previous.lease_id,
                     lease_epoch: previous.lease_epoch, target: previous.target,
                     issued_at_unix_ms: now, expires_at_unix_ms: now + 1000)
+                  let leaseDeadline = leaseStartedAt + 1
                   try connection.registerShortcutLease(renewed)
                   if newTarget { shortcutDiagnostic.notice("target_registered field_observable=\(target.field_id != nil)") }
                   shortcutLease = renewed
+                  let clock = ProcessInfo.processInfo.systemUptime
+                  if !sharedTermsBusy, clock - sharedTermsRequestedAt >= 0.5,
+                    connection.server.capabilities.contains("shared_terms_v1") {
+                    sharedTermsRequestedAt = clock
+                    sharedTermsBusy = true
+                    let server = connection.server.instance_id
+                    let version = connection.locallyAppliedVersion
+                    let ticket = InputiaSharedTermsMemory.shared.ticket()
+                    sharedTermsQueue.async {
+                      defer { shortcutQueue.async { sharedTermsBusy = false } }
+                      do {
+                        if sharedTermsConnection == nil {
+                          // 新连接先执行真实 barrier；下轮从屏障后的 generation 发起请求。
+                          sharedTermsConnection = try openAuthenticatedConnection()
+                          return
+                        }
+                        guard InputiaSharedTermsMemory.shared.ticket() == ticket else { return }
+                        guard let termsConnection = sharedTermsConnection,
+                          InputiaVoiceServiceConnection.sharedTermsConnectionMatches(
+                            server: termsConnection.server.instance_id, primaryServer: server,
+                            version: termsConnection.locallyAppliedVersion, primaryVersion: version)
+                        else { throw InputiaVoiceServiceError.policy }
+                        if let snapshot = try termsConnection.fetchSharedTerms(lease: renewed, leaseDeadline: leaseDeadline) {
+                          DispatchQueue.main.async { sharedTermsReceiver(snapshot, ticket) }
+                        }
+                      } catch {
+                        sharedTermsConnection?.close()
+                        sharedTermsConnection = nil
+                      }
+                    }
+                  }
                 }
               }
               guard let trigger = try connection.pollShortcut(maxWaitMs: 50) else {

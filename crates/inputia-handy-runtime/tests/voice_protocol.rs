@@ -1,6 +1,56 @@
 use inputia_handy_runtime::voice_protocol::*;
 
 #[test]
+fn shared_terms_wire_binds_authenticated_peer_and_only_accepts_lease_identity() {
+    let value = serde_json::json!({"request_id":"terms-1","client_instance":"host-1","server_instance":"server-1","policy_epoch":7,"shared_terms":{"lease_id":"lease-1","lease_epoch":2}});
+    let VoiceWireRequest::SharedTerms(request) = serde_json::from_value(value.clone()).unwrap()
+    else {
+        panic!("wrong wire variant");
+    };
+    request.validate_for(&peer()).unwrap();
+    assert_eq!(serde_json::to_value(&request).unwrap(), value);
+    for altered in [
+        VoicePeer {
+            client_instance: "other",
+            ..peer()
+        },
+        VoicePeer {
+            server_instance: "other",
+            ..peer()
+        },
+        VoicePeer {
+            policy_epoch: 8,
+            ..peer()
+        },
+        VoicePeer {
+            policy_applied: false,
+            ..peer()
+        },
+    ] {
+        assert!(request.validate_for(&altered).is_err());
+    }
+    let mut bad = value;
+    bad["shared_terms"]["target"] = serde_json::json!({"source_app":"fake"});
+    assert!(serde_json::from_value::<VoiceWireRequest>(bad).is_err());
+    let mut bad = request;
+    bad.shared_terms.lease_epoch = 0;
+    assert!(bad.validate_for(&peer()).is_err());
+    let reply = serde_json::json!({"status":"shared_terms","request_id":"terms-1","lease_id":"lease-1","lease_epoch":2,"version":{"policy_epoch":7,"learning_generation":3},"terms":["Inputia"],"max_age_ms":500});
+    assert_eq!(
+        serde_json::to_value(serde_json::from_value::<SharedTermsReply>(reply.clone()).unwrap())
+            .unwrap(),
+        reply
+    );
+    let rejected =
+        serde_json::json!({"status":"rejected","request_id":"terms-1","code":"unauthorized"});
+    assert_eq!(
+        serde_json::to_value(serde_json::from_value::<SharedTermsReply>(rejected.clone()).unwrap())
+            .unwrap(),
+        rejected
+    );
+}
+
+#[test]
 fn shortcut_trigger_reply_keeps_existing_wire_shape() {
     let value = serde_json::json!({
         "status":"trigger", "request_id":"poll-1", "trigger": {

@@ -46,6 +46,100 @@ struct InputiaVoiceTermsVersion: Codable, Equatable {
   let policy_epoch: UInt64
   let learning_generation: UInt64
 }
+
+struct InputiaSharedTermsSnapshot {
+  let identity: String
+  let target: InputiaVoiceTarget
+  let version: InputiaVoiceTermsVersion
+  let terms: [String]
+  let expiresAt: TimeInterval
+  func englishCandidates(prefix: String) -> [String] {
+    guard prefix.count >= 2 else { return [] }
+    return terms.filter { term in
+      term.count > prefix.count && term.count <= 32 && term.lowercased().hasPrefix(prefix.lowercased())
+        && term.unicodeScalars.allSatisfy { scalar in
+          (48...57).contains(scalar.value) || (65...90).contains(scalar.value)
+            || (97...122).contains(scalar.value) || scalar.value == 95 || scalar.value == 45
+        }
+        && term.unicodeScalars.contains { (65...90).contains($0.value) || (97...122).contains($0.value) }
+    }
+  }
+}
+
+/// 本地 UI 选择意图，不是 wire DTO；没有 I/O 或持久化，每个意图最多消费一次。
+struct InputiaSharedEnglishSelectionState {
+  struct Context: Equatable {
+    let prefix: String
+    let targetID: String
+    let cacheIdentity: String
+    let clientIdentity: ObjectIdentifier
+    let activation: UInt64
+  }
+  private var pending: (UUID, Context)?
+  var hasPending: Bool { pending != nil }
+  mutating func begin(_ context: Context) -> UUID? {
+    guard pending == nil else { return nil }
+    let id = UUID(); pending = (id, context); return id
+  }
+  func isPending(_ id: UUID) -> Bool { pending?.0 == id }
+  mutating func cancel() { pending = nil }
+  mutating func consume(_ id: UUID, context: Context, gateAllowed: Bool) -> Bool {
+    guard let previous = pending, previous.0 == id else { return false }
+    pending = nil
+    return gateAllowed && previous.1 == context
+  }
+}
+
+/// 只存本进程短租约；所有键盘候选检查只读取此内存与已准备的目标快照。
+final class InputiaSharedTermsMemory {
+  static let shared = InputiaSharedTermsMemory()
+  private let lock = NSLock()
+  private var generation: UInt64 = 0
+  private var snapshot: InputiaSharedTermsSnapshot?
+  var didClear: (() -> Void)?
+  func ticket() -> UInt64 { lock.lock(); defer { lock.unlock() }; return generation }
+  func clear() {
+    lock.lock(); generation &+= 1; snapshot = nil; lock.unlock()
+    guard let notify = didClear else { return }
+    if Thread.isMainThread { notify() } else { DispatchQueue.main.sync(execute: notify) }
+  }
+  func install(_ value: InputiaSharedTermsSnapshot, ticket: UInt64, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+    lock.lock(); defer { lock.unlock() }
+    guard generation == ticket, now < value.expiresAt else { return false }
+    snapshot = value
+    return true
+  }
+  func current(target: InputiaVoiceTarget, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> InputiaSharedTermsSnapshot? {
+    lock.lock(); defer { lock.unlock() }
+    guard let snapshot, snapshot.target == target, now < snapshot.expiresAt else { return nil }
+    return snapshot
+  }
+  func expire(identity: String) {
+    lock.lock()
+    let expired = snapshot.map { $0.identity == identity && ProcessInfo.processInfo.systemUptime >= $0.expiresAt } ?? false
+    lock.unlock()
+    if expired { clear() }
+  }
+}
+
+private struct InputiaSharedTermsCommand: Encodable { let lease_id: String; let lease_epoch: UInt64 }
+private struct InputiaSharedTermsRequest: Encodable {
+  let request_id: String
+  let client_instance: String
+  let server_instance: String
+  let policy_epoch: UInt64
+  let shared_terms: InputiaSharedTermsCommand
+}
+private struct InputiaSharedTermsReply: Decodable {
+  let status: String
+  let request_id: String
+  let lease_id: String?
+  let lease_epoch: UInt64?
+  let version: InputiaVoiceTermsVersion?
+  let terms: [String]?
+  let max_age_ms: UInt64?
+  let code: String?
+}
 struct InputiaVoicePolicyBarrier: Codable, Equatable {
   let barrier_id: String
   let version: InputiaVoiceTermsVersion
@@ -293,6 +387,12 @@ final class InputiaVoiceServiceConnection {
   private let connection: InputiaFramedConnection
   let server: InputiaVoiceHello
   private(set) var locallyAppliedVersion: InputiaVoiceTermsVersion?
+  static func sharedTermsConnectionMatches(server: String, primaryServer: String,
+                                          version: InputiaVoiceTermsVersion?, primaryVersion: InputiaVoiceTermsVersion?) -> Bool {
+    guard let version, let primaryVersion else { return false }
+    // 词库代际以取词连接已 ACK 的真实 barrier 为准，热键连接只拥有策略 epoch。
+    return server == primaryServer && version.policy_epoch == primaryVersion.policy_epoch
+  }
 
   private init(connection: InputiaFramedConnection, server: InputiaVoiceHello) {
     self.connection = connection
@@ -312,7 +412,7 @@ final class InputiaVoiceServiceConnection {
         try PeerAuthenticator.authenticate(socketFD: descriptor, manifest: manifest, expectedRole: .handy)
       }
       let hello = InputiaVoiceHello(protocol_major: 1, protocol_minor: 0, instance_id: processInstance,
-        profile_id: trust.profileID, policy_epoch: previousEpoch, capabilities: ["voice_sessions_v1"])
+        profile_id: trust.profileID, policy_epoch: previousEpoch, capabilities: ["voice_sessions_v1", "shared_terms_v1"])
       try transport.write(hello)
       let reply = try transport.read(InputiaVoiceHelloReply.self)
       guard reply.status == "accepted", let server = reply.server,
@@ -328,6 +428,7 @@ final class InputiaVoiceServiceConnection {
   }
 
   func synchronizePolicy(using state: InputiaSharedStateBarrierApplying) throws {
+    InputiaSharedTermsMemory.shared.clear()
     locallyAppliedVersion = nil
     do {
       let barrier = try connection.read(InputiaVoicePolicyBarrier.self)
@@ -347,12 +448,49 @@ final class InputiaVoiceServiceConnection {
           barrier.barrier_id.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
       throw InputiaVoiceServiceError.policy
     }
+    InputiaSharedTermsMemory.shared.clear()
     try state.applySharedStateBarrier(barrier)
     try send(InputiaVoicePolicyAck(barrier_id: barrier.barrier_id, version: barrier.version,
       shared_cache_cleared: true, offline_queue_revalidated: true))
   }
 
-  func close() { locallyAppliedVersion = nil; connection.close() }
+  func close() {
+    locallyAppliedVersion = nil; connection.close()
+    InputiaSharedTermsMemory.shared.clear()
+  }
+
+  func fetchSharedTerms(lease: InputiaHostShortcutLease, leaseDeadline: TimeInterval) throws -> InputiaSharedTermsSnapshot? {
+    guard server.capabilities.contains("shared_terms_v1") else { return nil }
+    do {
+      guard !Thread.isMainThread, let applied = locallyAppliedVersion,
+        lease.target.host_instance == Self.processInstance else { throw InputiaVoiceServiceError.policy }
+      let sentAt = ProcessInfo.processInfo.systemUptime
+      let requestID = UUID().uuidString
+      try connection.write(InputiaSharedTermsRequest(request_id: requestID,
+        client_instance: Self.processInstance, server_instance: server.instance_id,
+        policy_epoch: applied.policy_epoch,
+        shared_terms: InputiaSharedTermsCommand(lease_id: lease.lease_id, lease_epoch: lease.lease_epoch)))
+      let reply = try connection.read(InputiaSharedTermsReply.self)
+      guard reply.request_id == requestID else { throw InputiaVoiceServiceError.handshake }
+      if reply.status == "rejected", reply.code != nil {
+        InputiaSharedTermsMemory.shared.clear(); return nil
+      }
+      guard reply.status == "shared_terms", reply.code == nil,
+        reply.lease_id == lease.lease_id, reply.lease_epoch == lease.lease_epoch,
+        let version = reply.version, version == applied,
+        let terms = reply.terms, terms.count <= 256,
+        terms.reduce(0, { $0 + $1.utf8.count }) <= 16 * 1024,
+        terms.allSatisfy({ !$0.isEmpty && $0.count <= 32 && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) }),
+        let maxAge = reply.max_age_ms, maxAge > 0, maxAge <= 1000
+      else { throw InputiaVoiceServiceError.handshake }
+      let deadline = min(sentAt + Double(maxAge) / 1000, leaseDeadline)
+      guard ProcessInfo.processInfo.systemUptime < deadline else {
+        InputiaSharedTermsMemory.shared.clear(); return nil
+      }
+      return InputiaSharedTermsSnapshot(identity: "\(server.instance_id):\(requestID):\(lease.lease_id):\(lease.lease_epoch)",
+        target: lease.target, version: version, terms: terms, expiresAt: deadline)
+    } catch { close(); throw error }
+  }
 
   func registerShortcutLease(_ lease: InputiaHostShortcutLease) throws {
     guard lease.target.host_instance == Self.processInstance else { throw InputiaVoiceServiceError.handshake }

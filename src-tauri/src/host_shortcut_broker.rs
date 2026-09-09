@@ -65,6 +65,42 @@ pub struct HostShortcutBroker {
 }
 
 impl HostShortcutBroker {
+    /// 复制当前已注册的精确目标，不跨服务 IPC 持锁；再次读取用于提交前比较。
+    pub(crate) fn shared_terms_lease(
+        &self,
+        request: &inputia_handy_runtime::voice_protocol::SharedTermsRequest,
+    ) -> Result<(HostShortcutLease, Instant), VoiceReplyError> {
+        let state = self.state.lock().map_err(|_| VoiceReplyError::Unknown)?;
+        let record = state
+            .leases
+            .get(&request.client_instance)
+            .ok_or(VoiceReplyError::Unauthorized)?;
+        if !state.connected.contains_key(&request.client_instance)
+            || record.client_instance != request.client_instance
+            || record.server_instance != request.server_instance
+            || record.policy_epoch != request.policy_epoch
+            || record.lease.lease_id != request.shared_terms.lease_id
+            || record.lease.lease_epoch != request.shared_terms.lease_epoch
+            || record.expires_at <= Instant::now()
+            || record.lease.expires_at_unix_ms <= unix_ms()
+            || record.lease.target.host_instance != request.client_instance
+            || record
+                .lease
+                .target
+                .field_id
+                .as_ref()
+                .is_none_or(|field| field.trim().is_empty())
+            || record.lease.target.source_app.as_ref().is_none_or(|app| {
+                app.trim().is_empty()
+                    || inputia_core::AppPolicy::default()
+                        .excludes(&inputia_core::AppContext::new(app))
+            })
+        {
+            return Err(VoiceReplyError::Unauthorized);
+        }
+        Ok((record.lease.clone(), record.expires_at))
+    }
+
     pub fn note_connected(&self, client_instance: &str) {
         let mut state = self.state.lock().expect("host shortcut broker poisoned");
         let count = state
@@ -599,6 +635,81 @@ fn unix_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_terms_require_live_exact_private_target_lease() {
+        use inputia_handy_runtime::voice_protocol::{SharedTermsLease, SharedTermsRequest};
+        let broker = HostShortcutBroker::default();
+        register_default_lease(&broker);
+        let request = SharedTermsRequest {
+            request_id: "terms".into(),
+            client_instance: "host-one".into(),
+            server_instance: "server-one".into(),
+            policy_epoch: 4,
+            shared_terms: SharedTermsLease {
+                lease_id: "lease-one".into(),
+                lease_epoch: 1,
+            },
+        };
+        let (_, expiry) = broker.shared_terms_lease(&request).unwrap();
+        assert!(expiry > Instant::now());
+        for bad in [
+            SharedTermsRequest {
+                client_instance: "other".into(),
+                ..request.clone()
+            },
+            SharedTermsRequest {
+                server_instance: "other".into(),
+                ..request.clone()
+            },
+            SharedTermsRequest {
+                policy_epoch: 5,
+                ..request.clone()
+            },
+            SharedTermsRequest {
+                shared_terms: SharedTermsLease {
+                    lease_id: "other".into(),
+                    lease_epoch: 1,
+                },
+                ..request.clone()
+            },
+            SharedTermsRequest {
+                shared_terms: SharedTermsLease {
+                    lease_id: "lease-one".into(),
+                    lease_epoch: 2,
+                },
+                ..request.clone()
+            },
+        ] {
+            assert!(broker.shared_terms_lease(&bad).is_err());
+        }
+        let original = broker.state.lock().unwrap().leases["host-one"].clone();
+        for variant in 0..5 {
+            let mut modified = original.clone();
+            match variant {
+                0 => modified.lease.target.field_id = None,
+                1 => modified.lease.target.source_app = None,
+                2 => modified.lease.target.source_app = Some("com.1password.1password".into()),
+                3 => modified.expires_at = Instant::now(),
+                _ => modified.lease.expires_at_unix_ms = unix_ms().saturating_sub(1),
+            }
+            broker
+                .state
+                .lock()
+                .unwrap()
+                .leases
+                .insert("host-one".into(), modified);
+            assert!(broker.shared_terms_lease(&request).is_err());
+        }
+        broker
+            .state
+            .lock()
+            .unwrap()
+            .leases
+            .insert("host-one".into(), original);
+        broker.retire("host-one", "lease-one", 1);
+        assert!(broker.shared_terms_lease(&request).is_err());
+    }
 
     #[test]
     fn only_last_connection_marks_the_inputia_process_disconnected() {

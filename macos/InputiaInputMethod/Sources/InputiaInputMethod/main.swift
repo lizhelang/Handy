@@ -109,6 +109,11 @@ final class InputiaInputController: IMKInputController {
   private var attemptedVoiceOutputOperations = Set<String>()
   private var shortcutPreparedSnapshot: InputiaVoiceTargetSnapshot.Snapshot?
   private var shortcutReadinessReason = ""
+  private var sharedEnglishCandidates: [String: String] = [:]
+  private var sharedTargetReady = false
+  private var sharedPreparedClientIdentity: ObjectIdentifier?
+  private var sharedEnglishRefreshQueued = false
+  private var sharedEnglishSelection = InputiaSharedEnglishSelectionState()
   #endif
   private let bridge = InputiaRustBridge.makeDefault()
   private var latestCandidates: [String] = []
@@ -117,8 +122,15 @@ final class InputiaInputController: IMKInputController {
   private var expandedCandidateEntries: [InputiaExpandedCandidateEntry] = []
   private var expandedActiveRowIndex = 0
   private var recallCandidates: [String] = []
-  private var englishCompletionPrefix = ""
+  private var englishCompletionPrefix = "" {
+    didSet {
+      #if INPUTIA_PAIRED_BUILD
+      if oldValue != englishCompletionPrefix { sharedEnglishSelection.cancel() }
+      #endif
+    }
+  }
   private var englishCompletionCandidates: [String] = []
+  private var englishCompletionRect = NSRect.zero
   private var candidatePanelExpanded = false
   private var shiftInputModeGesture = InputiaShortcutClassifier.ShiftInputModeGestureState()
   private weak var gestureInputClient: AnyObject?
@@ -414,6 +426,8 @@ final class InputiaInputController: IMKInputController {
 
   override func activateServer(_ sender: Any!) {
     #if INPUTIA_PAIRED_BUILD
+    sharedTargetReady = false
+    InputiaSharedTermsMemory.shared.clear()
     voiceActivationGeneration &+= 1
     #endif
     resetShiftInputModeSession(reason: "activate")
@@ -429,6 +443,8 @@ final class InputiaInputController: IMKInputController {
 
   override func deactivateServer(_ sender: Any!) {
     #if INPUTIA_PAIRED_BUILD
+    sharedTargetReady = false
+    InputiaSharedTermsMemory.shared.clear()
     voiceActivationGeneration &+= 1
     #endif
     resetShiftInputModeSession(reason: "deactivate")
@@ -768,6 +784,7 @@ final class InputiaInputController: IMKInputController {
   }
 
   func shortcutRegistrationTarget() -> InputiaVoiceTarget? {
+    sharedTargetReady = false
     guard InputiaHost.activeInputController === self, isCurrentInputiaSourceSelected() else {
       reportShortcutReadiness("inactive_source"); return nil
     }
@@ -775,8 +792,10 @@ final class InputiaInputController: IMKInputController {
     guard !IsSecureEventInputEnabled() else { reportShortcutReadiness("secure_input_enabled"); return nil }
     guard let client = client() else { reportShortcutReadiness("missing_imk_client"); return nil }
     if let snapshot = shortcutPreparedSnapshot, snapshot.activationGeneration == voiceActivationGeneration,
+      sharedPreparedClientIdentity == ObjectIdentifier(client as AnyObject),
       snapshot.reusableForShortcut {
       reportShortcutReadiness("ready")
+      sharedTargetReady = true
       return snapshot.inputiaTarget
     }
     guard let target = prepareUnifiedVoiceTarget(client: client) else {
@@ -790,7 +809,9 @@ final class InputiaInputController: IMKInputController {
       return nil
     }
     shortcutPreparedSnapshot = snapshot
+    sharedPreparedClientIdentity = ObjectIdentifier(client as AnyObject)
     reportShortcutReadiness("ready")
+    sharedTargetReady = true
     return target
   }
 
@@ -808,6 +829,113 @@ final class InputiaInputController: IMKInputController {
       guard let self else { ack("pending_target"); return }
       self.deliverUnifiedVoice(delivery, acknowledge: ack)
     }, status: { [weak self] message in self?.voiceStatus = message }, completion: completion)
+  }
+
+  private func currentSharedTerms(client: IMKTextInput) -> InputiaSharedTermsSnapshot? {
+    guard sharedTargetReady, InputiaHost.activeInputController === self,
+      sharedPreparedClientIdentity == ObjectIdentifier(client as AnyObject),
+      let snapshot = shortcutPreparedSnapshot, snapshot.reusableForShortcut,
+      snapshot.controllerID == voiceControllerID,
+      snapshot.activationGeneration == voiceActivationGeneration else { return nil }
+    return InputiaSharedTermsMemory.shared.current(target: snapshot.inputiaTarget)
+  }
+
+  /// 只在异步主线程任务调用；键盘回调不得等待实时 AX/窗口隐私检查。
+  private func liveSharedTerms(client: IMKTextInput) -> InputiaSharedTermsSnapshot? {
+    guard !IsSecureEventInputEnabled(), let snapshot = shortcutPreparedSnapshot,
+      snapshot.isCurrentForShortcut(client: client, controllerID: voiceControllerID,
+        activationGeneration: voiceActivationGeneration,
+        isSensitiveApp: { self.bridge.isSensitiveApp(bundleId: $0, windowTitle: $1) },
+        windowTitle: { self.activeWindowTitle(forBundleId: $0) }) else { return nil }
+    return currentSharedTerms(client: client)
+  }
+
+  private func scheduleSharedEnglishRefresh(client: IMKTextInput) {
+    guard !sharedEnglishRefreshQueued else { return }
+    sharedEnglishRefreshQueued = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.sharedEnglishRefreshQueued = false
+      guard InputiaHost.activeInputController === self,
+        self.sharedPreparedClientIdentity == ObjectIdentifier(client as AnyObject),
+        self.bridge.latestOutcome.mode == "English", self.latestComposing.isEmpty,
+        self.englishCompletionPrefix.count >= 2 else { return }
+      self.refreshEnglishCompletions(client: client, includeShared: true)
+    }
+  }
+
+  private func enqueueSharedEnglishSelection(_ candidate: String, identity: String, client: IMKTextInput) -> Bool {
+    guard !sharedEnglishSelection.hasPending else { return true }
+    guard let snapshot = shortcutPreparedSnapshot,
+      let shared = currentSharedTerms(client: client), shared.identity == identity,
+      shared.terms.contains(candidate) else {
+      clearSharedEnglishCandidates()
+      return true
+    }
+    let prefix = englishCompletionPrefix
+    guard let intent = sharedEnglishSelection.begin(.init(prefix: prefix, targetID: snapshot.targetID,
+      cacheIdentity: identity, clientIdentity: ObjectIdentifier(client as AnyObject), activation: voiceActivationGeneration)) else { return true }
+    DispatchQueue.main.async { [weak self] in
+      guard let self, self.sharedEnglishSelection.isPending(intent) else { return }
+      guard let liveClient = self.client(), ObjectIdentifier(liveClient as AnyObject) == ObjectIdentifier(client as AnyObject),
+        self.englishCompletionPrefix == prefix, self.bridge.latestOutcome.mode == "English",
+        self.latestComposing.isEmpty, self.shortcutPreparedSnapshot === snapshot,
+        let current = self.liveSharedTerms(client: client), current.identity == identity,
+        current.terms.contains(candidate), let suffix = self.completionSuffix(for: candidate), !suffix.isEmpty,
+        self.sharedEnglishSelection.isPending(intent),
+        self.bridge.latestOutcome.mode == "English", self.latestComposing.isEmpty,
+        !IsSecureEventInputEnabled(),
+        self.currentSharedTerms(client: client)?.identity == identity else {
+        self.sharedEnglishSelection.cancel()
+        InputiaSharedTermsMemory.shared.clear()
+        return
+      }
+      // 先消耗唯一选择意图，再提交一次；不进入旧学习库，也不自动重放。
+      guard self.sharedEnglishSelection.consume(intent, context: .init(prefix: self.englishCompletionPrefix,
+        targetID: current.target.target_id, cacheIdentity: current.identity,
+        clientIdentity: ObjectIdentifier(client as AnyObject), activation: self.voiceActivationGeneration),
+        gateAllowed: true) else { InputiaSharedTermsMemory.shared.clear(); return }
+      client.insertText(suffix, replacementRange: emptyReplacementRange)
+      self.clearEnglishCompletion()
+    }
+    return true
+  }
+
+  func acceptSharedTerms(_ terms: InputiaSharedTermsSnapshot, ticket: UInt64) {
+    guard InputiaSharedTermsMemory.shared.ticket() == ticket else { return }
+    guard Thread.isMainThread, sharedTargetReady, InputiaHost.activeInputController === self,
+      let currentClient = client(), sharedPreparedClientIdentity == ObjectIdentifier(currentClient as AnyObject),
+      let snapshot = shortcutPreparedSnapshot, snapshot.reusableForShortcut,
+      snapshot.controllerID == voiceControllerID,
+      snapshot.activationGeneration == voiceActivationGeneration,
+      snapshot.inputiaTarget == terms.target,
+      !IsSecureEventInputEnabled(),
+      snapshot.isCurrentForShortcut(client: currentClient, controllerID: voiceControllerID,
+        activationGeneration: voiceActivationGeneration,
+        isSensitiveApp: { self.bridge.isSensitiveApp(bundleId: $0, windowTitle: $1) },
+        windowTitle: { self.activeWindowTitle(forBundleId: $0) }),
+      InputiaSharedTermsMemory.shared.install(terms, ticket: ticket) else {
+      if InputiaSharedTermsMemory.shared.ticket() == ticket { InputiaSharedTermsMemory.shared.clear() }
+      return
+    }
+    if !englishCompletionPrefix.isEmpty, let client = client() {
+      scheduleSharedEnglishRefresh(client: client)
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + max(0, terms.expiresAt - ProcessInfo.processInfo.systemUptime)) {
+      InputiaSharedTermsMemory.shared.expire(identity: terms.identity)
+    }
+  }
+
+  func clearSharedEnglishCandidates() {
+    sharedEnglishSelection.cancel()
+    guard !sharedEnglishCandidates.isEmpty else { return }
+    let removed = Set(sharedEnglishCandidates.keys)
+    sharedEnglishCandidates = [:]
+    englishCompletionCandidates.removeAll { removed.contains($0) }
+    guard latestComposing.isEmpty, recallCandidates.isEmpty else { return }
+    latestCandidates = englishCompletionCandidates
+    if englishCompletionCandidates.isEmpty { InputiaHost.candidatePanel?.hide() }
+    else { InputiaHost.candidatePanel?.show(candidates: englishCompletionCandidates, near: englishCompletionRect) }
   }
 
   private func prepareUnifiedVoiceTarget(client: IMKTextInput?) -> InputiaVoiceTarget? {
@@ -1377,13 +1505,26 @@ final class InputiaInputController: IMKInputController {
     refreshEnglishCompletions(client: client)
   }
 
-  private func refreshEnglishCompletions(client: IMKTextInput) {
+  private func refreshEnglishCompletions(client: IMKTextInput, includeShared: Bool = false) {
     guard englishCompletionPrefix.count >= 2 else {
       hideEnglishCompletionCandidates()
       return
     }
-    let candidates = bridge.completionCandidates(prefix: englishCompletionPrefix, limit: 5)
+    var candidates = bridge.completionCandidates(prefix: englishCompletionPrefix, limit: 5)
       .filter { completionSuffix(for: $0) != nil }
+    #if INPUTIA_PAIRED_BUILD
+    sharedEnglishCandidates = [:]
+    if includeShared, let shared = liveSharedTerms(client: client) {
+      let words = shared.englishCandidates(prefix: englishCompletionPrefix).filter { completionSuffix(for: $0) != nil }
+      var seen = Set<String>()
+      candidates = Array((words + candidates).filter { seen.insert($0).inserted }.prefix(5))
+      for word in words where candidates.contains(word) { sharedEnglishCandidates[word] = shared.identity }
+    } else if includeShared {
+      InputiaSharedTermsMemory.shared.clear()
+    } else {
+      scheduleSharedEnglishRefresh(client: client)
+    }
+    #endif
     guard !candidates.isEmpty else {
       hideEnglishCompletionCandidates()
       return
@@ -1398,6 +1539,7 @@ final class InputiaInputController: IMKInputController {
 
     var inputRect = NSRect.zero
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
+    englishCompletionRect = inputRect
     InputiaHost.candidatePanel?.show(candidates: candidates, near: inputRect)
     inputiaDebugLog("englishCompletionShown count=\(candidates.count)")
   }
@@ -1410,6 +1552,11 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func commitEnglishCompletion(_ candidate: String, client: IMKTextInput) -> Bool {
+    #if INPUTIA_PAIRED_BUILD
+    if let identity = sharedEnglishCandidates[candidate] {
+      return enqueueSharedEnglishSelection(candidate, identity: identity, client: client)
+    }
+    #endif
     guard let suffix = completionSuffix(for: candidate), !suffix.isEmpty else {
       clearEnglishCompletion()
       return false
@@ -1448,6 +1595,9 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func hideEnglishCompletionCandidates() {
+    #if INPUTIA_PAIRED_BUILD
+    sharedEnglishCandidates = [:]
+    #endif
     englishCompletionCandidates = []
     if latestComposing.isEmpty && recallCandidates.isEmpty {
       latestCandidates = []
@@ -1667,8 +1817,13 @@ struct InputiaInputMethodApp {
       server = IMKServer(name: resolvedConnectionName, bundleIdentifier: resolvedBundleIdentifier)
       InputiaHost.candidatePanel = InputiaCandidatePanel()
       #if INPUTIA_PAIRED_BUILD
+      InputiaSharedTermsMemory.shared.didClear = {
+        InputiaHost.activeInputController?.clearSharedEnglishCandidates()
+      }
       InputiaVoiceInputLauncher.startShortcutListening(targetProvider: {
         InputiaHost.activeInputController?.shortcutRegistrationTarget()
+      }, sharedTermsReceiver: { terms, ticket in
+        InputiaHost.activeInputController?.acceptSharedTerms(terms, ticket: ticket)
       }, acceptStart: { trigger, completion in
         guard let controller = InputiaHost.activeInputController else { completion(false); return }
         controller.acceptUnifiedShortcut(trigger, completion: completion)
