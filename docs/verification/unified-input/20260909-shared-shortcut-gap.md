@@ -46,3 +46,11 @@
 59 已构建、安装并校验实际 PID 88734/CDHash `dd5c51b4de49dc6047287fec7eb963446af8fa76`，控制中心仍为57代码（重启PID 88905），仅更新配对。旧58包、pair-58/59 与 `target-diagnostic-59.log` 保留在同一候选备份根。
 
 实际看到 `listener_started` 与 `provider has_target=false`，未看到进入目标捕获的reason或注册成功。CUA 在专用TextEdit执行抬升/聚焦后仍未得到目标，未输入内容/录音。下一实验应使用真实前台聚焦区分自动化焦点与IMK生命周期，不能据此移除active/client/field校验或重新归因授权。
+
+## 59 原生目标注册通过（录音仍未验证）
+
+随后同一实际进程出现：19:44:57（悉尼时间）`shortcut_target reason=ready`、`provider has_target=true`、`target_registered field_observable=true`；19:45:43 再次注册成功，19:46:43 成功更新目标。离开可编辑控件时出现 unsupported_focused_role/has_target=false。完整脱敏日志保存在候选备份根 `target-registration-59.log`。
+
+此回执由真实客户端在认证、策略同步后校验服务器返回的lease ID/epoch，因此证明权限在实际进程生效、可编辑目标捕获与认证注册已运行，不仅是界面开关或静态代码。日志刻意不记录应用名/正文，不能把这份证据自动归属为全部指定应用的逐项验收。
+
+尚未执行统一快捷键的实际录音/转写/原框插入或焦点变化试验。用户此前在图书馆，本轮未启动麦克风或播放音频，需确认方便录音后继续；不再重复要求点击窗口或开启权限。
