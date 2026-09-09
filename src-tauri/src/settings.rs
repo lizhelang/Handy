@@ -360,7 +360,7 @@ impl std::ops::DerefMut for SecretMap {
 /// its `get_default_settings()` value when missing from a stored settings
 /// object, so a partial store can never fail the whole load (#1619).
 /// Field-level defaults below take precedence where present.
-#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+#[derive(Serialize, Deserialize, Clone, Type)]
 #[serde(default)]
 pub struct AppSettings {
     /// Internal settings schema marker for one-time migrations. Fresh installs
@@ -525,6 +525,18 @@ pub struct AppSettings {
     /// `overlay_position` (position `none` → style `None`).
     #[serde(default = "default_overlay_style")]
     pub overlay_style: OverlayStyle,
+}
+
+// Debug 可进入日志；只保留结构版本，不输出词库、提示词、设备名或路径。
+// Serialize/Deserialize 独立保留真实配置，不能为脱敏破坏用户设置。
+impl fmt::Debug for AppSettings {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AppSettings")
+            .field("settings_schema_version", &self.settings_schema_version)
+            .field("private_fields", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
 }
 
 fn default_model() -> String {
@@ -1080,7 +1092,7 @@ impl AppSettings {
 
 /// Startup entry point. Same load-or-create/salvage/migrate behavior as
 /// `get_settings`; kept as a named alias for call-site clarity, plus a
-/// one-time debug dump of the loaded settings.
+/// one-time privacy-safe diagnostic summary of the loaded settings.
 pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
     let settings = get_settings(app);
     debug!("Loaded settings: {:?}", settings);
@@ -1099,7 +1111,11 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
             match serde_json::from_value::<AppSettings>(settings_value.clone()) {
                 Ok(settings) => (settings, false),
                 Err(e) => {
-                    warn!("Failed to parse stored settings ({e}); salvaging valid fields");
+                    // Serde 的错误正文可能带入非法字段值，不写入诊断日志。
+                    warn!(
+                        "Failed to parse stored settings (category={:?}); salvaging valid fields",
+                        e.classify()
+                    );
                     (salvage_settings(&settings_value), true)
                 }
             };
@@ -1211,7 +1227,10 @@ fn salvage_settings(stored: &serde_json::Value) -> AppSettings {
     }
 
     serde_json::from_value(merged).unwrap_or_else(|e| {
-        warn!("Failed to reassemble salvaged settings ({e}); falling back to defaults");
+        warn!(
+            "Failed to reassemble salvaged settings (category={:?}); falling back to defaults",
+            e.classify()
+        );
         get_default_settings()
     })
 }
@@ -1855,6 +1874,28 @@ mod tests {
             settings.transcribe_gpu_device.as_deref(),
             Some("[\"vulkan\",\"id\",\"0000:01:00.0\"]")
         );
+    }
+
+    #[test]
+    fn debug_output_redacts_private_configuration_without_changing_storage() {
+        let mut settings = get_default_settings();
+        let private_word = "private-word-fixture-3917";
+        let private_prompt = "private-prompt-fixture-8204";
+        settings.custom_words = vec![private_word.into()];
+        settings.selected_microphone = Some("private-device-fixture".into());
+        settings.post_process_prompts = vec![LLMPrompt {
+            id: "fixture".into(),
+            name: "fixture".into(),
+            prompt: private_prompt.into(),
+        }];
+        let output = format!("{settings:?}");
+        assert!(!output.contains(private_word));
+        assert!(!output.contains(private_prompt));
+        assert!(!output.contains("private-device-fixture"));
+        let stored = serde_json::to_value(&settings).expect("serialize fixture");
+        assert_eq!(stored["custom_words"][0], private_word);
+        assert_eq!(stored["post_process_prompts"][0]["prompt"], private_prompt);
+        assert_eq!(stored["selected_microphone"], "private-device-fixture");
     }
 
     #[test]
