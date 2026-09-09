@@ -40,3 +40,5 @@ schema4需要相应兼容构建，旧schema3代码不能被假定可以直接回
 安装暂缓：实际旧代码 `9fa26dd3` 的 SourceOutbox::install只接受schema1–3，不能把旧包直接作为schema4恢复构建。需先准备相应兼容恢复构建/验证，不用覆盖旧数据库代替。当前已安装候选历史库复查仍schema3；未更换安装、未重新配对、未启动录音。
 
 兼容准备已转入 `/Users/lzl/FILE/github/Handy-unified-input-compat`，分支 `codex/unified-input-compat`，底座9fa26dd3，提交 `a330f123` 仅回移schema4/备份门槛与对应fixture列名。source14与app473通过2忽略，前端build/lint通过，签名构建日志 `/tmp/inputia-compat-candidate.log`。主分支没有被重置或换底座。该构建仍须独立审查及数据副本对账，不能当完整A12通过；旧Host导入重复学习仍待修。
+
+兼容分支已获独立Approve，并完成新→兼容→新两个runtime进程的合成库实验：2条历史和确认，其中1词被忘记；兼容连续打开后回执及遗忘保留，再切新代码重试均仅Replay，剩余词仍只有1份贡献。主分支生成/核验入口为examples/confirmation_compat_fixture.rs，兼容分支核验入口为examples/verify_confirmation_compat.rs。证据在 `/private/tmp/inputia-cross-version-20260909.IAKPzi/{new.log,compat.log,new-after.log}`；未执行旧Host导入或原生app换包，不代表完整A12。
