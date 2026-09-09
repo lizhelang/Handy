@@ -62,8 +62,8 @@ fn prepare_source(path: &Path, source: SourceTable) -> Result<()> {
         let exists=conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='unified_source_meta')",[],|row|row.get::<_,bool>(0))?;
         exists
             && conn.query_row(
-                "SELECT schema_version>=3 FROM unified_source_meta",
-                [],
+                "SELECT schema_version>=?1 FROM unified_source_meta",
+                [inputia_handy_runtime::source::SOURCE_SCHEMA_VERSION],
                 |row| row.get::<_, bool>(0),
             )?
     };

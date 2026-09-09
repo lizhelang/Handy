@@ -13,6 +13,169 @@ fn insert(conn: &Connection, text: &str) {
     conn.execute("INSERT INTO transcription_history(file_name,timestamp,title,transcription_text) VALUES('fixture.wav',1,'fixture',?1)", [text]).unwrap();
 }
 
+fn schema_three_fixture(conn: &mut Connection) -> SourceOutbox {
+    history(conn);
+    insert(conn, "legacy");
+    let outbox = SourceOutbox::install(conn, SourceTable::History).unwrap();
+    conn.execute_batch("DROP TRIGGER unified_transcription_history_insert;
+        DROP TRIGGER unified_transcription_history_update;
+        DROP TRIGGER unified_transcription_history_delete;
+        ALTER TABLE transcription_history DROP COLUMN inputia_source_app;
+        ALTER TABLE transcription_history DROP COLUMN inputia_source_trust;
+        UPDATE unified_source_meta SET schema_version=3;
+        INSERT INTO unified_source_annotations VALUES('1',1,'legacy');
+        INSERT INTO unified_source_operations VALUES('legacy-op','digest','response');
+        PRAGMA user_version=17;
+        CREATE TRIGGER unified_transcription_history_insert AFTER INSERT ON transcription_history BEGIN SELECT 1; END;").unwrap();
+    outbox
+}
+
+#[test]
+fn schema_three_upgrade_preserves_identity_receipts_and_unknown_history() {
+    use inputia_handy_runtime::source::SOURCE_SCHEMA_VERSION;
+    let mut conn = Connection::open_in_memory().unwrap();
+    let old = schema_three_fixture(&mut conn);
+    let events = old.read_batch(&conn, 0, 100).unwrap();
+    for _ in 0..2 {
+        let current = SourceOutbox::install(&mut conn, SourceTable::History).unwrap();
+        assert_eq!(current.store_id(), old.store_id());
+        assert_eq!(current.read_batch(&conn, 0, 100).unwrap(), events);
+        assert_eq!(
+            conn.query_row("SELECT schema_version FROM unified_source_meta", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap(),
+            SOURCE_SCHEMA_VERSION
+        );
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            17
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT inputia_source_trust FROM transcription_history WHERE id=1",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "unknown"
+        );
+        for table in [
+            "unified_source_versions",
+            "unified_source_operations",
+            "unified_source_annotations",
+        ] {
+            assert_eq!(
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
+        }
+    }
+    conn.execute("INSERT INTO transcription_history(file_name,timestamp,title,transcription_text,inputia_source_app,inputia_source_trust) VALUES('',2,'verified','Inputia','com.example.Editor','verified')", []).unwrap();
+    let current = old.read_batch(&conn, 0, 100).unwrap();
+    assert_eq!(current.len(), 2);
+    assert_eq!(
+        current[0].payload.as_ref().unwrap().source_trust,
+        SourceTrust::Unknown
+    );
+    assert_eq!(
+        current[1].payload.as_ref().unwrap().source_trust,
+        SourceTrust::Verified
+    );
+    assert_eq!(
+        current[1].payload.as_ref().unwrap().source_app.as_deref(),
+        Some("com.example.Editor")
+    );
+    old.with_snapshot(&mut conn, SourceTable::History, |view| {
+        let records = view.read_page(None, 100)?;
+        assert_eq!(
+            records[0].payload.as_ref().unwrap().source_trust,
+            SourceTrust::Unknown
+        );
+        assert_eq!(
+            records[1].payload.as_ref().unwrap().source_trust,
+            SourceTrust::Verified
+        );
+        Ok(())
+    })
+    .unwrap();
+    assert!(conn
+        .execute(
+            "UPDATE transcription_history SET inputia_source_trust='observed' WHERE id=2",
+            []
+        )
+        .is_err());
+}
+
+#[test]
+fn earlier_source_schemas_upgrade_without_replaying_existing_rows() {
+    for schema in [1, 2] {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let original = schema_three_fixture(&mut conn);
+        conn.execute("UPDATE unified_source_meta SET schema_version=?1", [schema])
+            .unwrap();
+        conn.execute_batch("ALTER TABLE unified_source_annotations DROP COLUMN text_override;")
+            .unwrap();
+        let events = original.read_batch(&conn, 0, 100).unwrap();
+        let upgraded = SourceOutbox::install(&mut conn, SourceTable::History).unwrap();
+        assert_eq!(upgraded.store_id(), original.store_id());
+        assert_eq!(upgraded.read_batch(&conn, 0, 100).unwrap(), events);
+        assert_eq!(
+            conn.query_row(
+                "SELECT inputia_source_trust FROM transcription_history",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+            "unknown"
+        );
+    }
+}
+
+#[test]
+fn schema_four_upgrade_rolls_back_columns_triggers_and_metadata_on_failure() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    let outbox = schema_three_fixture(&mut conn);
+    let events = outbox.read_batch(&conn, 0, 100).unwrap();
+    let original: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name='unified_transcription_history_insert'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    conn.execute_batch("CREATE TRIGGER reject_upgrade BEFORE UPDATE OF schema_version ON unified_source_meta BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+    assert!(SourceOutbox::install(&mut conn, SourceTable::History).is_err());
+    assert_eq!(
+        conn.query_row("SELECT schema_version FROM unified_source_meta", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap(),
+        3
+    );
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM pragma_table_info('transcription_history') WHERE name IN ('inputia_source_app','inputia_source_trust')", [], |r| r.get::<_,i64>(0)).unwrap(), 0);
+    assert_eq!(
+        conn.query_row(
+            "SELECT sql FROM sqlite_master WHERE name='unified_transcription_history_insert'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        original
+    );
+    assert_eq!(outbox.read_batch(&conn, 0, 100).unwrap(), events);
+    conn.execute_batch("DROP TRIGGER reject_upgrade;").unwrap();
+    assert_eq!(
+        SourceOutbox::install(&mut conn, SourceTable::History)
+            .unwrap()
+            .store_id(),
+        outbox.store_id()
+    );
+}
+
 #[test]
 fn successful_voice_without_wav_is_retained_and_replayed_without_fake_attachment() {
     let temp = tempfile::tempdir().unwrap();

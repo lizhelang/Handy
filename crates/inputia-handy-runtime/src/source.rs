@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fmt, time::Duration};
 
+/// 独立于业务库 user_version 的事务 outbox 版本。
+pub const SOURCE_SCHEMA_VERSION: i64 = 4;
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct HistoryPatch {
     pub starred: Option<bool>,
@@ -45,7 +48,7 @@ impl SourceTable {
                  'text',COALESCE((SELECT text_override FROM unified_source_annotations WHERE record_id=CAST({row}.id AS TEXT)),NULLIF({row}.post_processed_text,''),{row}.transcription_text),
                  'title',{row}.title,'starred',json(CASE WHEN {row}.saved THEN 'true' ELSE 'false' END),
                  'pinned',json(CASE WHEN COALESCE((SELECT pinned FROM unified_source_annotations WHERE record_id=CAST({row}.id AS TEXT)),0) THEN 'true' ELSE 'false' END),'created_at_ms',{row}.timestamp * 1000,
-                 'asset_ref',NULLIF({row}.file_name,''),'source_app',NULL,'source_trust','unknown')"
+                 'asset_ref',NULLIF({row}.file_name,''),'source_app',{row}.inputia_source_app,'source_trust',{row}.inputia_source_trust)"
             ),
             Self::Clipboard => format!(
                 "json_object('source_kind','clipboard',
@@ -210,7 +213,7 @@ impl SourceOutbox {
         ).optional()?;
         let fresh = existing.is_none();
         if let Some((schema, _, name)) = &existing {
-            if ![1, 2, 3].contains(schema) {
+            if !(1..=SOURCE_SCHEMA_VERSION).contains(schema) {
                 return Err(SourceError::IncompatibleSchema);
             }
             if name != source.logical_name() {
@@ -219,7 +222,7 @@ impl SourceOutbox {
         } else {
             tx.execute(
                 "INSERT INTO unified_source_meta(singleton,schema_version,store_id,logical_name,policy_epoch)
-                 VALUES(1,3,lower(hex(randomblob(16))),?1,1)", [source.logical_name()],
+                 VALUES(1,?1,lower(hex(randomblob(16))),?2,1)", params![SOURCE_SCHEMA_VERSION, source.logical_name()],
             )?;
         }
         let has_override:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('unified_source_annotations') WHERE name='text_override')",[],|row|row.get(0))?;
@@ -228,6 +231,21 @@ impl SourceOutbox {
                 "ALTER TABLE unified_source_annotations ADD COLUMN text_override TEXT",
                 [],
             )?;
+        }
+        if source == SourceTable::History {
+            // 只迁移列结构；旧记录默认 unknown，不能通过安装推断为可信来源。
+            for (column, definition) in [
+                ("inputia_source_app", "TEXT"),
+                ("inputia_source_trust", "TEXT NOT NULL DEFAULT 'unknown' CHECK(inputia_source_trust IN ('unknown','verified'))"),
+            ] {
+                let exists: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('transcription_history') WHERE name=?1)",
+                    [column], |row| row.get(0),
+                )?;
+                if !exists {
+                    tx.execute(&format!("ALTER TABLE transcription_history ADD COLUMN {column} {definition}"), [])?;
+                }
+            }
         }
         let table = source.table();
         for (suffix, event, row, operation) in [
@@ -283,8 +301,8 @@ impl SourceOutbox {
             |r| r.get(0),
         )?;
         tx.execute(
-            "UPDATE unified_source_meta SET schema_version=3 WHERE singleton=1",
-            [],
+            "UPDATE unified_source_meta SET schema_version=?1 WHERE singleton=1",
+            [SOURCE_SCHEMA_VERSION],
         )?;
         tx.commit()?;
         Ok(Self { store_id })
