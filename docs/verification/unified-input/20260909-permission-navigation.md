@@ -28,3 +28,19 @@
 新入口尚未在已安装候选中真实点击；构建日志 `/tmp/inputia-permission-help-candidate.log`。下一步检查构建签名，按现有候选备份/重新配对流程更新控制中心，原生点击两个入口。浏览器 mock 测试不证明系统导航成功。
 
 本批没有推进录音→转写→原输入框闭环。仍不得把权限 on 当作该闭环通过；未经用户确认方便，不启动麦克风。
+
+## 后续原生验证：通过两个导航入口
+
+基于 `c52fdc51` 的签名候选构建完成，产物 `src-tauri/target/release/bundle/macos/Inputia Candidate.app`。固定本地测试证书签名及 deep/strict 校验通过；未 notarize，不是正式发布版本。
+
+已更新 `/Applications/Inputia Candidate.app`，实际运行 PID 668 经 `install-check.sh --running-identity` 验证匹配 CDHash `c445ac89b924bc710e639b4f3e9dc9cf2a5aeedd`。配对清单重新签署并替换。候选输入法 PID 88734 未替换；日常 Handy PID 836、日常输入法 PID 1022 保持运行。
+
+真实 CUA 操作路径及结果（本任务工具记录可回查）：
+
+1. 打开已安装候选「通用」，原生 AX 显示 Inputia 权限区及两个按钮。
+2. 点击「定位输入法组件」：Finder 的 Input Methods 窗口选中 `file:///Users/lzl/Library/Input%20Methods/InputiaUnifiedCandidate.app/`，没有启动组件或选中日常版。
+3. 点击「打开权限设置」：系统设置显示「设备控制和数据访问」，Inputia Candidate.app 与 InputiaUnifiedCandidate.app 均为 on；没有操作开关。
+
+备份目录：`/Users/lzl/Library/Application Support/HandyUnifiedBuilds/permission-navigation-20260909.07N3U4`，保留旧控制中心（Inputia-control-before.app / Inputia-installed-before.app）及 pair-before.json、新 pair-new.json。恢复时停止且验证候选进程，恢复旧候选包与旧配对再启动；保留最新 profile 数据，不覆盖回旧数据快照。此次未迁移数据库。
+
+仅权限导航子项原生通过；统一语音正常插入、转写中焦点变化，以及整体安装/恢复验收仍未因此完成。
