@@ -65,6 +65,57 @@ pub struct HistoryEntry {
     pub post_process_requested: bool,
 }
 
+/// 仅供录音管线从协调器已接纳的认证会话构造；不是前端可提交的信任标记。
+pub(crate) struct VerifiedVoiceSource {
+    app: String,
+}
+
+impl VerifiedVoiceSource {
+    pub(crate) fn from_owned_request(
+        request: &inputia_handy_runtime::voice_protocol::VoiceRequest,
+    ) -> Option<Self> {
+        use inputia_handy_runtime::voice_protocol::VoiceCommand;
+        let target = match &request.command {
+            VoiceCommand::Start { target, .. } => target,
+            VoiceCommand::HostShortcut { target, edge, .. } if edge.starts_session => target,
+            _ => return None,
+        };
+        let app = target.source_app.as_deref()?;
+        if target.field_id.as_deref().is_none_or(str::is_empty)
+            || app.is_empty()
+            || app.len() > 256
+            || app.chars().any(char::is_control)
+            || inputia_core::AppPolicy::default().excludes(&inputia_core::AppContext::new(app))
+        {
+            return None;
+        }
+        Some(Self {
+            app: app.to_owned(),
+        })
+    }
+}
+
+fn insert_entry_with_voice_source(
+    conn: &Connection,
+    entry: HistoryEntry,
+    source: Option<&VerifiedVoiceSource>,
+) -> Result<HistoryEntry> {
+    let Some(source) = source else {
+        return insert_entry_with_conn(conn, entry);
+    };
+    // 同一INSERT同时写正文及来源，outbox触发器只产生一个完整事件。
+    let mut entry = entry;
+    conn.execute(
+        "INSERT INTO transcription_history (file_name,timestamp,saved,title,transcription_text,
+         post_processed_text,post_process_prompt,post_process_requested,inputia_source_app,inputia_source_trust)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'verified')",
+        params![entry.file_name,entry.timestamp,entry.saved,entry.title,entry.transcription_text,
+                entry.post_processed_text,entry.post_process_prompt,entry.post_process_requested,source.app],
+    )?;
+    entry.id = conn.last_insert_rowid();
+    Ok(entry)
+}
+
 /// 生产与故障回归共用的 SQLite 插入边界；不依赖窗口或录音文件写入成功。
 pub(crate) fn insert_entry_with_conn(
     conn: &Connection,
@@ -266,12 +317,31 @@ impl HistoryManager {
         post_processed_text: Option<String>,
         post_process_prompt: Option<String>,
     ) -> Result<HistoryEntry> {
+        self.save_entry_with_voice_source(
+            file_name,
+            transcription_text,
+            post_process_requested,
+            post_processed_text,
+            post_process_prompt,
+            None,
+        )
+    }
+
+    pub(crate) fn save_entry_with_voice_source(
+        &self,
+        file_name: String,
+        transcription_text: String,
+        post_process_requested: bool,
+        post_processed_text: Option<String>,
+        post_process_prompt: Option<String>,
+        source: Option<&VerifiedVoiceSource>,
+    ) -> Result<HistoryEntry> {
         let _source_write = super::integration::begin_source_write(&self.app_handle);
         let timestamp = Utc::now().timestamp();
         let title = self.format_timestamp_title(timestamp);
 
         let conn = self.get_connection()?;
-        let entry = insert_entry_with_conn(
+        let entry = insert_entry_with_voice_source(
             &conn,
             HistoryEntry {
                 id: 0,
@@ -284,6 +354,7 @@ impl HistoryManager {
                 post_process_prompt,
                 post_process_requested,
             },
+            source,
         )?;
 
         debug!("Saved history entry with id {}", entry.id);
@@ -697,6 +768,118 @@ impl HistoryManager {
 mod tests {
     use super::*;
     use rusqlite::{params, Connection};
+
+    fn owned_request() -> inputia_handy_runtime::voice_protocol::VoiceRequest {
+        use inputia_handy_runtime::voice_protocol::*;
+        VoiceRequest {
+            request_id: "request".into(),
+            session_id: "session".into(),
+            server_instance: "server".into(),
+            client_instance: "host".into(),
+            policy_epoch: 1,
+            command: VoiceCommand::Start {
+                target: HostTargetToken {
+                    target_id: "target".into(),
+                    host_instance: "host".into(),
+                    controller_id: "controller".into(),
+                    activation_generation: 1,
+                    field_id: Some("field".into()),
+                    selection_generation: 1,
+                    composition_generation: 1,
+                    source_app: Some("synthetic.editor".into()),
+                },
+                post_process: false,
+                terms: VoiceTermsVersion {
+                    policy_epoch: 1,
+                    learning_generation: 1,
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn voice_source_requires_known_field_and_app_from_owned_start() {
+        use inputia_handy_runtime::voice_protocol::VoiceCommand;
+        let mut request = owned_request();
+        assert!(VerifiedVoiceSource::from_owned_request(&request).is_some());
+        if let VoiceCommand::Start { target, .. } = &mut request.command {
+            target.field_id = None;
+        }
+        assert!(VerifiedVoiceSource::from_owned_request(&request).is_none());
+        if let VoiceCommand::Start { target, .. } = &mut request.command {
+            target.field_id = Some("field".into());
+            target.source_app = Some("com.1password.1password".into());
+        }
+        assert!(VerifiedVoiceSource::from_owned_request(&request).is_none());
+        request.command = VoiceCommand::Status;
+        assert!(VerifiedVoiceSource::from_owned_request(&request).is_none());
+    }
+
+    #[test]
+    fn voice_source_and_history_are_one_outbox_event_and_rollback_together() {
+        use inputia_handy_runtime::{
+            source::{SourceOutbox, SourceTable},
+            store::SourceTrust,
+        };
+        let mut conn = setup_conn();
+        let outbox = SourceOutbox::install(&mut conn, SourceTable::History).unwrap();
+        let entry = HistoryEntry {
+            id: 0,
+            file_name: String::new(),
+            timestamp: 1,
+            saved: false,
+            title: "synthetic".into(),
+            transcription_text: "Inputia".into(),
+            post_processed_text: None,
+            post_process_prompt: None,
+            post_process_requested: false,
+        };
+        let source = VerifiedVoiceSource::from_owned_request(&owned_request()).unwrap();
+        {
+            let tx = conn.unchecked_transaction().unwrap();
+            insert_entry_with_voice_source(&tx, entry.clone(), Some(&source)).unwrap();
+            tx.rollback().unwrap();
+        }
+        assert!(outbox.read_batch(&conn, 0, 10).unwrap().is_empty());
+        insert_entry_with_voice_source(&conn, entry.clone(), Some(&source)).unwrap();
+        let events = outbox.read_batch(&conn, 0, 10).unwrap();
+        assert_eq!(events.len(), 1);
+        let payload = events[0].payload.as_ref().unwrap();
+        assert_eq!(payload.source_trust, SourceTrust::Verified);
+        assert_eq!(payload.source_app.as_deref(), Some("synthetic.editor"));
+        // 验证实际写入器产生的事件可进入规范确认链，不手工给索引伪造 Verified。
+        let directory = tempfile::tempdir().unwrap();
+        let mut index = inputia_handy_runtime::store::IntegrationStore::open(
+            directory.path().join("integration.db"),
+            "source-confirmation",
+        )
+        .unwrap();
+        let key = [83; 32];
+        index.register_source("history", outbox.store_id()).unwrap();
+        index.enable_learning(&key).unwrap();
+        index.apply_change(&events[0]).unwrap();
+        let request = inputia_handy_runtime::learning::HistoryTermConfirmation {
+            operation_id: inputia_core::integration::events::Identifier::parse("confirm-new-voice")
+                .unwrap(),
+            item_id: inputia_handy_runtime::store::item_id(outbox.store_id(), &events[0].record_id),
+            expected_revision: events[0].revision,
+            term: "Inputia".into(),
+        };
+        assert_eq!(
+            index.confirm_history_term(&key, &request, || true).unwrap(),
+            inputia_handy_runtime::learning::ApplyContribution::Applied
+        );
+        assert_eq!(index.list_terms(10, 0).unwrap()[0].contributions, 1);
+        insert_entry_with_voice_source(&conn, entry, None).unwrap();
+        assert_eq!(
+            outbox.read_batch(&conn, 0, 10).unwrap()[1]
+                .payload
+                .as_ref()
+                .unwrap()
+                .source_trust,
+            SourceTrust::Unknown
+        );
+    }
 
     #[test]
     fn no_attachment_never_calls_remove_on_recordings_directory() {

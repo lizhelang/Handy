@@ -729,7 +729,7 @@ mod tests {
         Connection::open(root.join("history.db"))
             .unwrap()
             .execute(
-                "INSERT INTO transcription_history VALUES(1,'',1,0,'fixture',?1,NULL)",
+                "INSERT INTO transcription_history(id,file_name,timestamp,saved,title,transcription_text,post_processed_text) VALUES(1,'',1,0,'fixture',?1,NULL)",
                 [text],
             )
             .unwrap();
@@ -1035,7 +1035,7 @@ mod tests {
             Connection::open(root.path().join("history.db"))
                 .unwrap()
                 .execute(
-                    "INSERT INTO transcription_history VALUES(1,'',1,0,'fixture','result',NULL)",
+                    "INSERT INTO transcription_history(id,file_name,timestamp,saved,title,transcription_text,post_processed_text) VALUES(1,'',1,0,'fixture','result',NULL)",
                     [],
                 )
                 .unwrap();

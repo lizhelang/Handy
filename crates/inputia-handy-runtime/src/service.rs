@@ -1053,7 +1053,7 @@ mod output_permit_tests {
             .unwrap();
         history
             .execute_batch(
-                "INSERT INTO transcription_history VALUES(1,NULL,1,0,NULL,'synthetic',NULL);",
+                "INSERT INTO transcription_history(id,file_name,timestamp,saved,title,transcription_text,post_processed_text) VALUES(1,NULL,1,0,NULL,'synthetic',NULL);",
             )
             .unwrap();
         entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();

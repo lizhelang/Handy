@@ -930,6 +930,9 @@ impl ShortcutAction for TranscribeAction {
                             }
 
                             // 文字是主体，音频只是可选附件；音频写盘/验证失败不能丢掉成功文字。
+                            let voice_source = owned_voice.as_ref().and_then(
+                                crate::managers::history::VerifiedVoiceSource::from_owned_request,
+                            );
                             let saved_entry = persist_completed_transcription(
                                 wav_saved,
                                 file_name,
@@ -937,7 +940,14 @@ impl ShortcutAction for TranscribeAction {
                                 post_process,
                                 &processed,
                                 |file, text, requested, processed_text, prompt| {
-                                    hm.save_entry(file, text, requested, processed_text, prompt)
+                                    hm.save_entry_with_voice_source(
+                                        file,
+                                        text,
+                                        requested,
+                                        processed_text,
+                                        prompt,
+                                        voice_source.as_ref(),
+                                    )
                                 },
                             );
                             if let Err(err) = &saved_entry {
