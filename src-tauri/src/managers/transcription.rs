@@ -50,6 +50,27 @@ const STREAM_PERF_LOG_INTERVAL: Duration = Duration::from_secs(5);
 const STREAM_FINALIZE_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 
 const SHARED_NATIVE_PROMPT_TTL: Duration = Duration::from_secs(2);
+const SHARED_STREAM_RECHECK: Duration = Duration::from_millis(500);
+
+fn validate_stream_prompt_lease(
+    acquired_at: &mut Instant,
+    verify: impl FnOnce() -> bool,
+    secure_input: impl Fn() -> bool,
+) -> bool {
+    if secure_input() {
+        return false;
+    }
+    if acquired_at.elapsed() >= SHARED_STREAM_RECHECK {
+        let check_started = Instant::now();
+        let current = verify();
+        if !shared_prompt_lease_valid(check_started.elapsed(), secure_input(), current) {
+            return false;
+        }
+        // 仅同一快照成功在线验证才能续租，IPC 花费也计入租约。
+        *acquired_at = check_started;
+    }
+    shared_prompt_lease_valid(acquired_at.elapsed(), secure_input(), true)
+}
 
 fn shared_prompt_privacy(
     request: &VoiceRequest,
@@ -116,6 +137,18 @@ impl SharedNativePrompt {
         let secure_input = crate::secure_input::is_enabled_now();
         shared_prompt_lease_valid(self.acquired_at.elapsed(), secure_input, current)
     }
+
+    fn stream_current(&mut self) -> bool {
+        validate_stream_prompt_lease(
+            &mut self.acquired_at,
+            || {
+                self.service
+                    .term_snapshot_is_current(self.snapshot.clone())
+                    .unwrap_or(false)
+            },
+            crate::secure_input::is_enabled_now,
+        )
+    }
 }
 
 fn native_prompt_extension(
@@ -131,6 +164,17 @@ fn native_prompt_extension(
     } else {
         qwen_context.and_then(|plan| qwen_context_run_extension(plan, true))
     }
+}
+
+fn stream_preview_without_context(
+    committed: String,
+    tentative: String,
+    plan: Option<&QwenContextPlan>,
+) -> (String, String) {
+    // 回显可能跨越 committed/tentative 边界，先按完整预览清理再保持原提交边界。
+    let full = strip_qwen_context_echo(format!("{committed}{tentative}"), plan);
+    let boundary = committed.len().min(full.len());
+    (full[..boundary].to_owned(), full[boundary..].to_owned())
 }
 
 fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
@@ -896,6 +940,10 @@ impl TranscriptionManager {
     /// `None` so the caller falls back to batch transcription. Frames sent
     /// before the stream begins queue on the channel and are not lost.
     pub fn start_stream(&self) {
+        self.start_stream_with_voice_context(None);
+    }
+
+    pub(crate) fn start_stream_with_voice_context(&self, voice_context: Option<VoiceRequest>) {
         if self.router.is_open() || self.active_stream_worker.load(Ordering::Acquire) != 0 {
             warn!("start_stream called while a stream worker is already active");
             return;
@@ -913,10 +961,15 @@ impl TranscriptionManager {
         self.stream_active.store(false, Ordering::Release);
 
         let manager = self.clone();
-        thread::spawn(move || manager.run_stream_worker(rx, worker_id));
+        thread::spawn(move || manager.run_stream_worker(rx, worker_id, voice_context));
     }
 
-    fn run_stream_worker(&self, rx: mpsc::Receiver<StreamCmd>, worker_id: u64) {
+    fn run_stream_worker(
+        &self,
+        rx: mpsc::Receiver<StreamCmd>,
+        worker_id: u64,
+        voice_context: Option<VoiceRequest>,
+    ) {
         let _worker = StreamWorkerGuard {
             worker_id,
             active_stream_worker: Arc::clone(&self.active_stream_worker),
@@ -972,35 +1025,42 @@ impl TranscriptionManager {
         // Only transcribe-cpp models expose streaming; ONNX engines fall back to
         // batch. The loaded session (not the ModelManager copy) is the source of
         // truth for run-path capabilities.
-        let (supports_streaming, supports_translate, languages) = match &engine {
-            LoadedEngine::TranscribeCpp(session) => {
-                let model = session.model();
-                let caps = model.capabilities();
-                info!(
-                    "Live preview: model '{}' arch='{}' variant='{}' supports_streaming={} \
+        let (supports_streaming, supports_translate, languages, whisper_prompt, qwen_context) =
+            match &engine {
+                LoadedEngine::TranscribeCpp(session) => {
+                    let model = session.model();
+                    let caps = model.capabilities();
+                    info!(
+                        "Live preview: model '{}' arch='{}' variant='{}' supports_streaming={} \
                      supports_translate={} languages={:?}",
-                    model_id,
-                    model.arch(),
-                    model.variant(),
-                    caps.supports_streaming,
-                    caps.supports_translate,
-                    caps.languages,
-                );
-                (
-                    caps.supports_streaming,
-                    caps.supports_translate,
-                    caps.languages,
-                )
-            }
-            _ => {
-                info!(
-                    "Live preview: model '{}' is not a transcribe-cpp model; \
+                        model_id,
+                        model.arch(),
+                        model.variant(),
+                        caps.supports_streaming,
+                        caps.supports_translate,
+                        caps.languages,
+                    );
+                    (
+                        caps.supports_streaming,
+                        caps.supports_translate,
+                        caps.languages,
+                        model.arch() == "whisper" && model.supports(Feature::InitialPrompt),
+                        model.arch() == "qwen3_asr"
+                            && model.accepts_ext(
+                                ExtSlot::Run,
+                                transcribe_cpp::sys::TRANSCRIBE_EXT_KIND_QWEN3_ASR_RUN,
+                            ),
+                    )
+                }
+                _ => {
+                    info!(
+                        "Live preview: model '{}' is not a transcribe-cpp model; \
                      streaming is unavailable, using batch transcription",
-                    model_id
-                );
-                (false, false, Vec::new())
-            }
-        };
+                        model_id
+                    );
+                    (false, false, Vec::new(), false, false)
+                }
+            };
 
         if !supports_streaming {
             self.return_engine(engine, &model_id);
@@ -1026,12 +1086,31 @@ impl TranscriptionManager {
             &languages,
             run_plan.target_language.as_deref() == Some("en"),
         );
-        let run_options = RunOptions {
+        let mut shared_prompt = (whisper_prompt || qwen_context)
+            .then(|| self.shared_native_prompt(voice_context.as_ref(), &settings.custom_words))
+            .flatten();
+        let native_prompt_words = shared_prompt
+            .as_ref()
+            .map(|shared| shared.snapshot.terms.as_slice())
+            .unwrap_or(&settings.custom_words);
+        let mut qwen_plan = qwen_context
+            .then(|| QwenContextPlan::from_custom_words(native_prompt_words))
+            .filter(|plan| !plan.is_empty());
+        let mut run_options = RunOptions {
             task: run_plan.task,
             language: run_plan.language,
             target_language: run_plan.target_language,
+            family: native_prompt_extension(
+                native_prompt_words,
+                whisper_prompt,
+                qwen_plan.as_ref(),
+            ),
             ..Default::default()
         };
+
+        if run_options.family.is_none() {
+            shared_prompt = None;
+        }
 
         // Run the stream on the held session. The Stream borrows the session
         // (and thus the engine) for its lifetime, so the feed/finalize loop
@@ -1050,6 +1129,21 @@ impl TranscriptionManager {
             // call `session.model()` once it exists.
             let backend = session.model().backend();
 
+            if shared_prompt
+                .as_ref()
+                .is_some_and(|shared| !shared.current())
+            {
+                shared_prompt = None;
+                qwen_plan = qwen_context
+                    .then(|| QwenContextPlan::from_custom_words(&settings.custom_words))
+                    .filter(|plan| !plan.is_empty());
+                run_options.family = native_prompt_extension(
+                    &settings.custom_words,
+                    whisper_prompt,
+                    qwen_plan.as_ref(),
+                );
+            }
+
             // StreamOptions::default() uses CommitPolicy::Auto and lets the
             // family pick its own streaming strategy (no family-specific ext).
             let mut stream = match session.stream(&run_options, &StreamOptions::default()) {
@@ -1059,6 +1153,11 @@ impl TranscriptionManager {
                     break 'stream false;
                 }
             };
+
+            if let Some(shared) = shared_prompt.as_ref() {
+                info!("shared_stream_prompt_submitted=true prompt_terms={} policy_epoch={} learning_generation={}",
+                    shared.snapshot.terms.len(), shared.snapshot.policy_epoch, shared.snapshot.learning_generation);
+            }
 
             self.stream_active.store(true, Ordering::Release);
             self.touch_activity();
@@ -1073,9 +1172,27 @@ impl TranscriptionManager {
                     StreamCmd::Feed(pcm) => {
                         self.touch_activity();
                         perf.record_feed(pcm.len());
+                        if shared_prompt
+                            .as_mut()
+                            .is_some_and(|shared| !shared.stream_current())
+                        {
+                            stream.reset();
+                            self.emit_stream_text("", "");
+                            self.stream_active.store(false, Ordering::Release);
+                            break 'stream false;
+                        }
                         let feed_start = Instant::now();
                         match stream.feed(&pcm) {
                             Ok(update) => {
+                                if shared_prompt
+                                    .as_mut()
+                                    .is_some_and(|shared| !shared.stream_current())
+                                {
+                                    stream.reset();
+                                    self.emit_stream_text("", "");
+                                    self.stream_active.store(false, Ordering::Release);
+                                    break 'stream false;
+                                }
                                 perf.record_compute(feed_start.elapsed());
                                 perf.record_update(
                                     update.revision,
@@ -1086,7 +1203,12 @@ impl TranscriptionManager {
                                 if update.committed_changed || update.tentative_changed {
                                     let text = stream.text();
                                     perf.record_emit();
-                                    self.emit_stream_text(&text.committed, &text.tentative);
+                                    let (committed, tentative) = stream_preview_without_context(
+                                        text.committed,
+                                        text.tentative,
+                                        qwen_plan.as_ref(),
+                                    );
+                                    self.emit_stream_text(&committed, &tentative);
                                 }
                                 perf.maybe_log();
                             }
@@ -1097,11 +1219,31 @@ impl TranscriptionManager {
                         }
                     }
                     StreamCmd::Finalize(reply) => {
+                        // 已取走的 Finalize 回执必须由本分支完成，不能再 drain 等第二次。
+                        finalize_reply = Some(reply);
+                        if shared_prompt
+                            .as_mut()
+                            .is_some_and(|shared| !shared.stream_current())
+                        {
+                            stream.reset();
+                            self.emit_stream_text("", "");
+                            finalize_result = Some(None);
+                            break;
+                        }
                         let finalize_start = Instant::now();
                         let result = match stream.finalize() {
                             // After finalize the committed prefix holds the full
                             // text; display() = committed + tentative is the safe read.
                             Ok(update) => {
+                                if shared_prompt
+                                    .as_mut()
+                                    .is_some_and(|shared| !shared.stream_current())
+                                {
+                                    stream.reset();
+                                    self.emit_stream_text("", "");
+                                    finalize_result = Some(None);
+                                    break;
+                                }
                                 perf.record_compute(finalize_start.elapsed());
                                 perf.record_update(
                                     update.revision,
@@ -1122,7 +1264,10 @@ impl TranscriptionManager {
                                     resolved => resolved.clone(),
                                 };
                                 Some(FinalizedStreamText {
-                                    text: stream.text().full,
+                                    text: strip_qwen_context_echo(
+                                        stream.text().full,
+                                        qwen_plan.as_ref(),
+                                    ),
                                     output_language,
                                     supported_languages: languages.clone(),
                                 })
@@ -1140,13 +1285,16 @@ impl TranscriptionManager {
                             Some(finalized) => finalized.text.len(),
                             _ => 0,
                         };
+                        if result.is_none() {
+                            self.emit_stream_text("", "");
+                        }
                         perf.log_finalized(chars);
-                        finalize_reply = Some(reply);
                         finalize_result = Some(result);
                         break;
                     }
                     StreamCmd::Cancel => {
                         stream.reset();
+                        self.emit_stream_text("", "");
                         break;
                     }
                 }
@@ -1168,7 +1316,11 @@ impl TranscriptionManager {
 
         self.return_engine(engine, &model_id);
         if let (Some(reply), Some(result)) = (finalize_reply, finalize_result) {
-            let _ = reply.send(result);
+            if result.is_none() {
+                reply_or_drain_stream_fallback(rx, Some(reply));
+            } else {
+                let _ = reply.send(result);
+            }
         }
         // `_worker` drops here, clearing this worker's active/lease flags after
         // the engine has been returned to the pool.
@@ -2060,6 +2212,17 @@ fn cpp_translation_task(
 /// loaded / not streaming-capable) so the finalize handshake still completes
 /// and the caller falls back to batch transcription.
 fn drain_until_finalize(rx: mpsc::Receiver<StreamCmd>) {
+    reply_or_drain_stream_fallback(rx, None);
+}
+
+fn reply_or_drain_stream_fallback(
+    rx: mpsc::Receiver<StreamCmd>,
+    captured_reply: Option<mpsc::Sender<Option<FinalizedStreamText>>>,
+) {
+    if let Some(reply) = captured_reply {
+        let _ = reply.send(None);
+        return;
+    }
     while let Ok(cmd) = rx.recv() {
         match cmd {
             StreamCmd::Feed(_) => {}
@@ -2782,6 +2945,106 @@ mod tests {
         ));
         assert!(!shared_prompt_lease_valid(Duration::ZERO, true, true));
         assert!(!shared_prompt_lease_valid(Duration::ZERO, false, false));
+    }
+
+    #[test]
+    fn shared_stream_lease_only_renews_after_success_and_checks_secure_input_each_time() {
+        let mut acquired_at = Instant::now();
+        assert!(validate_stream_prompt_lease(
+            &mut acquired_at,
+            || panic!("lease still fresh"),
+            || false
+        ));
+        assert!(!validate_stream_prompt_lease(
+            &mut acquired_at,
+            || panic!("secure input blocks IPC"),
+            || true
+        ));
+        acquired_at = Instant::now() - Duration::from_secs(1);
+        let previous = acquired_at;
+        assert!(!validate_stream_prompt_lease(
+            &mut acquired_at,
+            || false,
+            || false
+        ));
+        assert_eq!(acquired_at, previous);
+        assert!(validate_stream_prompt_lease(
+            &mut acquired_at,
+            || true,
+            || false
+        ));
+        assert!(acquired_at > previous);
+    }
+
+    #[test]
+    fn shared_stream_lease_rejects_slow_validation_without_renewing() {
+        let mut acquired_at = Instant::now() - Duration::from_secs(1);
+        let previous = acquired_at;
+        assert!(!validate_stream_prompt_lease(
+            &mut acquired_at,
+            || {
+                std::thread::sleep(SHARED_NATIVE_PROMPT_TTL);
+                true
+            },
+            || false
+        ));
+        assert_eq!(acquired_at, previous);
+    }
+
+    #[test]
+    fn shared_stream_invalid_feed_drains_to_one_finalize_reply() {
+        let (tx, rx) = mpsc::channel();
+        let (reply, result) = mpsc::channel();
+        tx.send(StreamCmd::Feed(vec![0.0; 16])).unwrap();
+        tx.send(StreamCmd::Finalize(reply)).unwrap();
+        reply_or_drain_stream_fallback(rx, None);
+        assert!(result
+            .recv_timeout(Duration::from_millis(100))
+            .unwrap()
+            .is_none());
+        assert!(result.try_recv().is_err());
+    }
+
+    #[test]
+    fn shared_stream_invalid_finalize_replies_without_waiting_for_another_command() {
+        let (_tx, rx) = mpsc::channel();
+        let (reply, result) = mpsc::channel();
+        reply_or_drain_stream_fallback(rx, Some(reply));
+        assert!(result
+            .recv_timeout(Duration::from_millis(100))
+            .unwrap()
+            .is_none());
+        assert!(result.try_recv().is_err());
+    }
+
+    #[test]
+    fn shared_stream_cancel_stops_fallback_without_publishing_a_result() {
+        let (tx, rx) = mpsc::channel();
+        let (reply, result) = mpsc::channel();
+        tx.send(StreamCmd::Cancel).unwrap();
+        tx.send(StreamCmd::Finalize(reply)).unwrap();
+        reply_or_drain_stream_fallback(rx, None);
+        assert!(matches!(
+            result.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn shared_stream_qwen_echo_is_removed_across_preview_boundary() {
+        let plan = QwenContextPlan::from_custom_words(&["Inputia".into()]);
+        let context = plan.context().unwrap();
+        let boundary = context.char_indices().nth(6).unwrap().0;
+        let (committed, tentative) = stream_preview_without_context(
+            format!("正常文本{}", &context[..boundary]),
+            context[boundary..].into(),
+            Some(&plan),
+        );
+        assert_eq!(committed, "正常文本");
+        assert_eq!(tentative, "");
+        let (committed, tentative) =
+            stream_preview_without_context("正常".into(), "文本".into(), Some(&plan));
+        assert_eq!((committed, tentative), ("正常".into(), "文本".into()));
     }
 
     #[test]

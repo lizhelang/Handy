@@ -617,7 +617,14 @@ impl ShortcutAction for TranscribeAction {
             VadPolicy::Offline
         };
         if model_supports_streaming {
-            tm.start_stream();
+            let owned_voice = app
+                .try_state::<TranscriptionCoordinator>()
+                .and_then(|coordinator| coordinator.voice_output_context());
+            if owned_voice.is_some() {
+                tm.start_stream_with_voice_context(owned_voice);
+            } else {
+                tm.start_stream();
+            }
         }
         let plan_elapsed = plan_started.elapsed();
 
