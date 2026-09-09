@@ -2,6 +2,10 @@ import Cocoa
 import InputMethodKit
 import Carbon
 import ApplicationServices
+import OSLog
+
+// 只记录手势阶段和布尔状态，不记录普通键值、正文、应用名或窗口标题。
+private let shiftDiagnostic = Logger(subsystem: "com.inputia.shift", category: "gesture")
 
 private struct InputiaAppContext: Equatable {
   let bundleId: String
@@ -440,6 +444,7 @@ final class InputiaInputController: IMKInputController {
 
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     let shortcut = bridge.inputModeToggleShortcut()
+    shiftDiagnostic.notice("phase=global-flags shift=\(modifiers.contains(.shift)) armed=\(self.shiftInputModeGesture.isArmedForDebug)")
 
     inputiaDebugLog(
       "globalFlagsChanged keyCode=\(event.keyCode) current=\(modifiers.rawValue) shortcut=\(shortcut) armed=\(shiftInputModeGesture.isArmedForDebug)"
@@ -477,6 +482,7 @@ final class InputiaInputController: IMKInputController {
     reloadSettingsIfDue(client: client)
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     let shortcut = bridge.inputModeToggleShortcut()
+    shiftDiagnostic.notice("phase=local-flags shift=\(modifiers.contains(.shift)) armed=\(self.shiftInputModeGesture.isArmedForDebug)")
 
     inputiaDebugLog(
       "flagsChanged keyCode=\(event.keyCode) current=\(modifiers.rawValue) shortcut=\(shortcut) armed=\(shiftInputModeGesture.isArmedForDebug)"
@@ -499,6 +505,7 @@ final class InputiaInputController: IMKInputController {
       return true
     }
     clearEnglishCompletion()
+    shiftDiagnostic.notice("phase=toggle source=\(source, privacy: .public)")
     inputiaDebugLog("shiftToggle source=\(source)")
     return apply(bridge.toggleInputMode(), client: client)
   }
@@ -509,6 +516,7 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func resetShiftInputModeSession(reason: String) {
+    shiftDiagnostic.notice("phase=session-reset reason=\(reason, privacy: .public) shift=\(NSEvent.modifierFlags.contains(.shift))")
     // 事件连续性已断开：清理可能漏收 keyUp 的普通键，仍按住的 Shift 不获得切换资格。
     shiftInputModeGesture.resetSession(
       modifiers: NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)

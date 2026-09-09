@@ -25,6 +25,11 @@ swiftc macos/InputiaInputMethod/Sources/InputiaInputMethod/InputiaShortcutClassi
 
 安装与实际实验补记：
 
+- **后续回归**：用户通过侧聊报告单独 Shift 无法切换中英文，优先级高于先前单测。问号场景的确认不撤销，但整体 Shift 功能未通过。
+- 为区分本地事件缺失与会话取消，候选 54 仅增加 OSLog 手势阶段/布尔诊断，没有改变判定行为。已安装，实际 PID 42337/CDHash `aec88c03078c84dba09a8499e78ebf9bbe0cbe45` 校验通过；测试控制中心已重启加载新配对。备份及旧配对在 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/shift-diagnostic-20260909.1fENsU`。
+- 诊断子系统 `com.inputia.shift` 只记录 global/local flags、toggle 和 session-reset 原因，不记录普通按键、正文、窗口标题；未启用旧 INPUTIA_DEBUG_EVENTS 日志。
+- 初始原生记录显示 activate/deactivate 交替且 shift=false。尚未收到对应用户单独 Shift 的确认，不能据此判定回归原因。下一实验是实体单独 Shift 的 local/global/reset 顺序。
+
 - **最新用户实体键盘确认**：`Shift+/` 能输出 `?`，且中文模式保持。该组合键场景已通过用户原生确认，取代下方自动送键实验对该场景的未决结论。不据此推断任意松开顺序、独立 Shift、焦点变化或所有应用均通过；无需再次请求用户重复此项。
 
 - 实现提交 `9f4651ef` 已安装至用户级测试包，输入法实际 PID 26157 经 running-identity 校验为 `6f9f115aa6e93b40548cb40d9f67b5411784f33c`，不是旧进程。配对重签成功；测试控制中心由 PID 87379 正常退出后重启为 PID 26383，未替换控制中心二进制。
