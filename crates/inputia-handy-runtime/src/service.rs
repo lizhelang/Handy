@@ -1,6 +1,7 @@
 //! 单一后台写入线程；Tauri/Host 通过请求队列访问，不在按键线程等待。
 
 use crate::{
+    learning::{ApplyContribution, ContributionInput},
     source::SourceTable,
     store::{
         ContentRevision, HistoryQuery, IndexedItem, IntegrationStore, LearnedTermView, TermSnapshot,
@@ -363,6 +364,43 @@ impl HistoryService {
         })
     }
 
+    /// 已确认内容的贡献仍由规范库验证源修订、策略和重放；不接收普通输入全文。
+    pub fn contribute_term(
+        &self,
+        input: ContributionInput,
+        policy: PrivacyPolicy,
+        context: PrivacyContext,
+    ) -> ServiceResult<ApplyContribution> {
+        self.call(move |worker| {
+            worker.revoke_outputs();
+            worker.sync_once()?;
+            let result = worker
+                .store
+                .contribute_term(&worker.learning_key, &input, &policy, context)
+                .map_err(|error| error.to_string())?;
+            if result == ApplyContribution::Applied {
+                worker.generation = worker.generation.saturating_add(1);
+                (worker.changed)(worker.generation);
+            }
+            Ok(result)
+        })
+    }
+
+    /// 遗忘与策略推进复用同一事务；旧 epoch 的重试不能再次执行遗忘。
+    pub fn forget_term(&self, term: String, expected_epoch: u64) -> ServiceResult<u64> {
+        self.call(move |worker| {
+            worker.revoke_outputs();
+            worker.sync_once()?;
+            let epoch = worker
+                .store
+                .forget_term(&worker.learning_key, &term, expected_epoch)
+                .map_err(|error| error.to_string())?;
+            worker.generation = worker.generation.saturating_add(1);
+            (worker.changed)(worker.generation);
+            Ok(epoch)
+        })
+    }
+
     pub fn policy_epoch(&self) -> ServiceResult<u64> {
         self.call(|worker| worker.store.policy_epoch().map_err(|e| e.to_string()))
     }
@@ -697,6 +735,108 @@ impl Drop for HistoryService {
 #[cfg(test)]
 mod output_permit_tests {
     use super::*;
+
+    #[test]
+    fn confirmed_term_queue_replays_once_and_forget_revokes_snapshot() {
+        use crate::store::{
+            ContentType, ItemSnapshot, SourceChange, SourceKind, SourceOperation,
+            SourceTrust as ItemTrust,
+        };
+        use inputia_core::integration::{
+            events::{Identifier, SourceRecord},
+            privacy::{HistoryMode, SourceTrust},
+            terms::TermEvidence,
+        };
+        let root = tempfile::tempdir().unwrap();
+        Connection::open(root.path().join("history.db")).unwrap().execute_batch("CREATE TABLE transcription_history(id INTEGER PRIMARY KEY,file_name TEXT,timestamp INTEGER,saved INTEGER,title TEXT,transcription_text TEXT,post_processed_text TEXT);").unwrap();
+        Connection::open(root.path().join("clipboard.db")).unwrap().execute_batch("CREATE TABLE clipboard_history(id INTEGER PRIMARY KEY,content_type TEXT,full_text TEXT,title TEXT,is_favorite INTEGER,is_pinned INTEGER,created_at INTEGER,image_path TEXT,source_app TEXT);").unwrap();
+        let service = HistoryService::start(root.path().into(), "fixture".into(), |_| {}).unwrap();
+        service
+            .call(|worker| {
+                worker
+                    .store
+                    .register_source("fixture", "fixture")
+                    .map_err(|e| e.to_string())?;
+                worker
+                    .store
+                    .apply_change(&SourceChange {
+                        store_id: "fixture".into(),
+                        seq: 1,
+                        event_id: "fixture-1".into(),
+                        record_id: "1".into(),
+                        revision: 1,
+                        operation: SourceOperation::Upsert,
+                        policy_epoch: 1,
+                        payload: Some(ItemSnapshot {
+                            source_kind: SourceKind::Voice,
+                            content_type: ContentType::Text,
+                            text: Some("Inputia".into()),
+                            title: None,
+                            starred: false,
+                            pinned: false,
+                            created_at_ms: 1,
+                            asset_ref: None,
+                            source_app: None,
+                            source_trust: ItemTrust::Verified,
+                        }),
+                    })
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            })
+            .unwrap();
+        let policy = PrivacyPolicy {
+            epoch: 1,
+            history_enabled: true,
+            history_mode: HistoryMode::Normal,
+            learning_enabled: true,
+            remote_learning_terms_enabled: false,
+        };
+        let context = PrivacyContext {
+            source_trust: SourceTrust::Verified,
+            source_sensitive: false,
+            target_known: true,
+            target_sensitive: false,
+            secure_input: false,
+            transient_or_concealed: false,
+        };
+        let contribution = || ContributionInput {
+            contribution_id: Identifier::parse("confirmed-1").unwrap(),
+            source: SourceRecord {
+                store_id: Identifier::parse("fixture").unwrap(),
+                record_id: Identifier::parse("1").unwrap(),
+            },
+            source_revision: 1,
+            policy_epoch: 1,
+            term: "Inputia".into(),
+            evidence: TermEvidence::ConfirmedCorrection,
+            explicit_relearn: false,
+        };
+        assert_eq!(
+            service
+                .contribute_term(contribution(), policy.clone(), context)
+                .unwrap(),
+            ApplyContribution::Applied
+        );
+        assert_eq!(
+            service
+                .contribute_term(contribution(), policy.clone(), context)
+                .unwrap(),
+            ApplyContribution::Replay
+        );
+        assert_eq!(service.list_terms(10, 0).unwrap()[0].contributions, 1);
+        let snapshot = service
+            .session_hotwords(policy.clone(), context, vec![], HotwordBudget::default())
+            .unwrap();
+        assert!(service.term_snapshot_is_current(snapshot.clone()).unwrap());
+        assert_eq!(service.forget_term("Inputia".into(), 1).unwrap(), 2);
+        assert!(!service.term_snapshot_is_current(snapshot).unwrap());
+        assert!(service.list_terms(10, 0).unwrap().is_empty());
+        assert!(service.forget_term("Inputia".into(), 1).is_err());
+        assert!(service
+            .contribute_term(contribution(), policy, context)
+            .is_err());
+        assert_eq!(service.policy_epoch().unwrap(), 2);
+    }
 
     #[test]
     fn delayed_voice_claim_times_out_without_granting_caller_execution_or_reclaim() {
