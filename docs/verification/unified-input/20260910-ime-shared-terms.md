@@ -23,3 +23,13 @@
 - 未安装本批；原生英文候选展示、点击/Tab、焦点变化与延迟未验证，更未达到完整中文词库/语音/历史闭环验收。
 
 独立复审review_socket_path为Approve（限本轮接线/HIGH修复）。复审实际运行标准build.sh通过，包含18项短缓存/帧与10项选择意图检查；没有新的隐私/目标校验/重复插入阻塞。其构建不是原生插入验收，也不替代已知dev-fast其它失败。
+
+## 配套候选60已安装
+
+代码32c25484的控制中心和IME60构建成功，日志 `/tmp/inputia-shared-terms-control-build.log`、`/tmp/inputia-60-build.log`；后者标准构建实际执行18项短缓存/帧与10项意图检查。固定本地证书签名验证通过，未notarize。
+
+完整profile及旧两包备份到 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/shared-terms-60-20260910.wahzYP`；history/integration备份quick_check通过。只在专用TextEdit切离/恢复测试源，未启动录音或改日常安装。
+
+已安装并验证运行身份：控制中心PID58378/CDHash `dc6338cf32c1fdfaacf46377a58a43af6c2ebc31`；IME PID58419/版本60/CDHash `2aea6f2a4f16603b61a789eec898d60ca1ddcb03`。对应pair-new.json已签署并加载，listener ready；TIS确认Inputia(Test)被选中。CUA读IME窗口超时后核对实际PID已存在，未因此重复启动。
+
+安装前规范learning_contributions计数为0。没有创建假确认词以演示效果；本轮不宣称正向英文共享补全、中文排序或原生语音闭环已通过。上述备份内profile-before含旧配对；恢复两包需使用其匹配清单并保留最新数据，不能盲目覆盖旧profile。
