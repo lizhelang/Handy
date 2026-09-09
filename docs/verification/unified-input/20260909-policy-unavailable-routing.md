@@ -15,3 +15,11 @@
 当前已安装的代码仍为 `51935bea`；本修复尚未重建安装。真实录音、焦点变化、故障重连和旧数据回滚均仍未完成验收。
 
 最终 Tauri 库回归 473 通过、2 忽略，日志 `/tmp/inputia-policy-final-tests.log`。PTT 首次测试误把释放宽限期当成立即停止，已按既有 RELEASE_GRACE 模拟到期，不改产品宽限规则。独立复审确认执行逻辑阻塞解除，并要求修正该测试；现已通过。无原生故障注入通过声明。
+
+## 候选安装接续
+
+代码提交 `322df3b1` 已完成固定本地测试证书签名构建，日志 `/tmp/inputia-policy-fix-candidate.log`。产物 `src-tauri/target/release/bundle/macos/Inputia Candidate.app` 更新到 `/Applications/Inputia Candidate.app`，实际 PID 11454 的运行身份校验匹配 CDHash `151f13eb9ce70888602e582eba6f2dcd75a4d16e`。CUA 实际打开设置窗口正常，22:43:39 Sydney 日志显示 unified_voice_listener_ready。
+
+旧候选包与 pair-before.json、重新签署的 pair-new.json 保留在 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/policy-fix-20260909.txgqB1`。替换前核验旧 PID 10342 身份，停止并确认退出，再替换候选；未改日常安装、真实数据库或输入法包。未 notarize，非正式发布。
+
+上述只验证构建/安装/启动，不代表本故障条件已原生注入或录音闭环已通过。
