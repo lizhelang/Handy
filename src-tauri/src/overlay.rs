@@ -578,6 +578,14 @@ fn show_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
     create_clipboard_overlay_on_main_thread(app_handle);
 
     if let Some(overlay_window) = app_handle.get_webview_window("clipboard_overlay") {
+        // 快捷召回只展示浮窗；隐藏而非关闭控制中心，保留其页面状态。
+        // 必须位于 capture_before_ui 之后，不能把隐藏后的焦点当作原输入目标。
+        if let Some(main_window) = app_handle.get_webview_window("main") {
+            if let Err(error) = main_window.hide() {
+                debug!("Unable to hide control center before clipboard recall: {error}");
+                return;
+            }
+        }
         if let Some(mtm) = objc2::MainThreadMarker::new() {
             clipboard_mouse_monitor::install(mtm, app_handle);
         }
@@ -612,7 +620,10 @@ fn show_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
             debug!("Failed to focus clipboard overlay window: {err}");
         }
 
-        debug!("Clipboard overlay window shown");
+        let main_visible = app_handle
+            .get_webview_window("main")
+            .and_then(|window| window.is_visible().ok());
+        debug!("Clipboard overlay window shown; main_window_visible={main_visible:?}");
     } else {
         debug!("Failed to find clipboard overlay window");
     }

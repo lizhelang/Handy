@@ -328,6 +328,7 @@ fn menu_action(
                         Ok(())
                     }
                     MenuCommand::Settings => {
+                        crate::overlay::hide_clipboard_overlay(&handle);
                         crate::show_main_window(&handle);
                         handle
                             .emit("navigate-to", "general")
