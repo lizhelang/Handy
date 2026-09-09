@@ -23,3 +23,13 @@
 生产打包与本地化自检调用同一个资源函数，自检确认名称和模式未扩张。包内名称验证通过，真实系统菜单是否已刷新仍须单独观察。
 
 Inputia候选构建及签名通过，日志位于 inputia-signing-20260909.XYwaC8/menu-sender-build.log；实际安装、动态身份、注册结果和菜单点击证据后续追加。CUA读取TextInputMenuAgent仍返回timeoutReached，未通过其他技术绕过或用控制中心成功结果冒充。
+
+## 实际更新与尚待点击的边界
+
+实现提交112ab8c8已更新到用户级候选，日常版PID1022和安装包未修改。旧候选、原配对清单及候选数据保存在 /Users/lzl/Library/Application Support/HandyUnifiedBuilds/menu-20260909.wEdagq。候选复制数据库备份quick_check=ok。控制中心二进制未替换，仅重新启动以加载新配对清单；always_on_microphone=false，未触发录音。
+
+仅对候选路径执行LaunchServices注册刷新与TIS register/enable/select。注册返回0，候选父和Hans模式的name都返回Inputia (Test)，Hans可选择、父项不可选择，selectCurrentMatchesTarget=true。日常Hans仍返回Inputia且仍启用。这个TIS结果不代替系统菜单实际渲染截图，若菜单仍缓存原始ID不能称该项已通过。
+
+新输入法PID77513通过实际运行对象校验，cdhash=a9e0426fc539b546a0a439f239bcc5ff81d3d753；控制中心PID77687通过校验，cdhash仍为9cb6b8b689eb5f0731c20c4e741a0733883f966e。日志04:57:11 UTC出现本轮的unified_voice_listener_ready。
+
+已请用户仅从测试版系统输入法菜单点击“剪贴历史”，不录音、不说话。当前不使用控制中心的按钮作替代验证；等待新动作名日志与真正NSPanel出现的对应证据。独立只读审查无阻塞，但真实点击仍需完成。
