@@ -1585,6 +1585,32 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
+  /**
+   * 在控制中心明确确认一个短词；来源身份及策略版本只能从服务端读取。
+   */
+  async confirmUnifiedHistoryTerm(
+    itemId: string,
+    expectedRevision: number,
+    operationId: string,
+    term: string,
+    confirmed: boolean,
+  ): Promise<Result<string, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("confirm_unified_history_term", {
+          itemId,
+          expectedRevision,
+          operationId,
+          term,
+          confirmed,
+        }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
   async getUnifiedHistoryRevisions(
     itemId: string,
   ): Promise<Result<UnifiedHistoryRevision[], string>> {

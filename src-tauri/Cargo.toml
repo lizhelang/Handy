@@ -30,6 +30,7 @@ serde = { version = "1", features = ["derive"] }
 
 [dependencies]
 inputia-handy-runtime = { path = "../crates/inputia-handy-runtime" }
+inputia-core = { path = "../crates/inputia-core" }
 once_cell = "1"
 encoding_rs = "0.8.35"
 tauri = { version = "2.11.5", features = [

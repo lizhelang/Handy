@@ -899,5 +899,15 @@
     "note": "Under Privacy & Security, open Accessibility (or Device Control and Data Access). These buttons do not grant permission or verify that insertion is ready.",
     "missing": "The input method for this installation was not found. Install the matching Inputia component first; the daily installation will not be used as a fallback.",
     "failed": "Could not open the location. Open System Settings → Privacy & Security manually, or try again."
+  },
+  "confirmHistoryTerm": {
+    "title": "Confirm a term",
+    "description": "Enter one verified term (2–32 characters), not the full transcript. The source and revision must pass privacy checks.",
+    "term": "Term",
+    "consent": "I confirm this term and allow it to be saved to the local dictionary only.",
+    "save": "Confirm and save",
+    "saving": "Saving…",
+    "saved": "Saved to the local dictionary. Shared use by speech recognition and the input method is still being integrated in this candidate.",
+    "failed": "The result is not confirmed. Retrying uses the same operation. Changed, untrusted or sensitive sources cannot be learned."
   }
 }

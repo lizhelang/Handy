@@ -831,6 +831,7 @@ pub fn run(cli_args: CliArgs) {
             commands::integration::update_unified_history_item,
             commands::integration::get_unified_history_asset,
             commands::integration::get_unified_terms,
+            commands::integration::confirm_unified_history_term,
             commands::integration::get_unified_history_revisions,
             commands::integration::refresh_unified_history,
             commands::clipboard::get_favorite_clipboard_items,

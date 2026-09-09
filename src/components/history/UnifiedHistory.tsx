@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { ConfirmHistoryTerm } from "./ConfirmHistoryTerm";
 import { useUnifiedHistoryStore } from "@/stores/unifiedHistoryStore";
 import {
   getOutputAttempt,
@@ -679,6 +680,13 @@ export function UnifiedHistory({
                 )}
               </button>
             </div>
+            {selected.content_type === "text" && (
+              <ConfirmHistoryTerm
+                key={`${selected.item_id}:${selected.revision}`}
+                itemId={selected.item_id}
+                revision={selected.revision}
+              />
+            )}
             <details>
               <summary className="cursor-pointer text-sm font-medium">
                 {t("unifiedHistory.revisions")}
