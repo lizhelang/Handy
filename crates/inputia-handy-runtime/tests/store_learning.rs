@@ -12,6 +12,36 @@ use inputia_handy_runtime::{
 };
 use rusqlite::Connection;
 const KEY: [u8; 32] = [43; 32];
+
+#[test]
+fn forget_receipt_failure_rolls_back_the_entire_forget() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("index.db");
+    let mut store = open(&path);
+    let injector = Connection::open(&path).unwrap();
+    injector.execute_batch("CREATE TRIGGER reject_forget_receipt BEFORE INSERT ON learning_forget_receipts BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+    let operation = Identifier::parse("forget-atomic").unwrap();
+    assert!(store
+        .forget_term_with_receipt(&KEY, &operation, "Inputia", 1)
+        .is_err());
+    assert_eq!(words(&store, 1), vec!["Inputia"]);
+    injector
+        .execute_batch("DROP TRIGGER reject_forget_receipt;")
+        .unwrap();
+    assert_eq!(
+        store
+            .forget_term_with_receipt(&KEY, &operation, "Inputia", 1)
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        store
+            .forget_term_with_receipt(&KEY, &operation, "Inputia", 1)
+            .unwrap(),
+        2
+    );
+    assert!(words(&store, 2).is_empty());
+}
 fn policy(epoch: u64) -> PrivacyPolicy {
     PrivacyPolicy {
         epoch,

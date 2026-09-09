@@ -386,18 +386,37 @@ impl HistoryService {
         })
     }
 
-    /// 遗忘与策略推进复用同一事务；旧 epoch 的重试不能再次执行遗忘。
-    pub fn forget_term(&self, term: String, expected_epoch: u64) -> ServiceResult<u64> {
+    /// 回执返回本操作提交时的 epoch，而非当前策略；超时必须复用 operation_id。
+    pub fn forget_term(
+        &self,
+        operation_id: String,
+        term: String,
+        expected_epoch: u64,
+    ) -> ServiceResult<u64> {
+        let operation_id = inputia_core::integration::events::Identifier::parse(operation_id)
+            .map_err(str::to_owned)?;
         self.call(move |worker| {
             worker.revoke_outputs();
             worker.sync_once()?;
             let epoch = worker
                 .store
-                .forget_term(&worker.learning_key, &term, expected_epoch)
+                .forget_term_with_receipt(
+                    &worker.learning_key,
+                    &operation_id,
+                    &term,
+                    expected_epoch,
+                )
                 .map_err(|error| error.to_string())?;
             worker.generation = worker.generation.saturating_add(1);
             (worker.changed)(worker.generation);
             Ok(epoch)
+        })
+        .map_err(|error| {
+            if error == "history service request timed out" {
+                "forget outcome unknown; retry with the same operation_id and arguments".into()
+            } else {
+                error
+            }
         })
     }
 
@@ -737,6 +756,42 @@ mod output_permit_tests {
     use super::*;
 
     #[test]
+    fn timed_out_forget_retries_original_receipt_after_restart() {
+        let root = tempfile::tempdir().unwrap();
+        Connection::open(root.path().join("history.db")).unwrap().execute_batch("CREATE TABLE transcription_history(id INTEGER PRIMARY KEY,file_name TEXT,timestamp INTEGER,saved INTEGER,title TEXT,transcription_text TEXT,post_processed_text TEXT);").unwrap();
+        Connection::open(root.path().join("clipboard.db")).unwrap().execute_batch("CREATE TABLE clipboard_history(id INTEGER PRIMARY KEY,content_type TEXT,full_text TEXT,title TEXT,is_favorite INTEGER,is_pinned INTEGER,created_at INTEGER,image_path TEXT,source_app TEXT);").unwrap();
+        let (release_tx, release_rx) = mpsc::channel();
+        let once = AtomicBool::new(true);
+        let service = HistoryService::start(root.path().into(), "fixture".into(), move |_| {
+            if once.swap(false, Ordering::AcqRel) {
+                release_rx.recv().unwrap();
+            }
+        })
+        .unwrap();
+        assert_eq!(service.policy_epoch().unwrap(), 1);
+        let result = service.forget_term("forget-timeout".into(), "Inputia".into(), 1);
+        release_tx.send(()).unwrap();
+        assert!(result.unwrap_err().contains("outcome unknown"));
+        assert_eq!(
+            service
+                .forget_term("forget-timeout".into(), "Inputia".into(), 1)
+                .unwrap(),
+            2
+        );
+        assert_eq!(service.policy_epoch().unwrap(), 2);
+        drop(service);
+        let restarted =
+            HistoryService::start(root.path().into(), "fixture".into(), |_| {}).unwrap();
+        assert_eq!(
+            restarted
+                .forget_term("forget-timeout".into(), "Inputia".into(), 1)
+                .unwrap(),
+            2
+        );
+        assert_eq!(restarted.policy_epoch().unwrap(), 2);
+    }
+
+    #[test]
     fn confirmed_term_queue_replays_once_and_forget_revokes_snapshot() {
         use crate::store::{
             ContentType, ItemSnapshot, SourceChange, SourceKind, SourceOperation,
@@ -828,10 +883,26 @@ mod output_permit_tests {
             .session_hotwords(policy.clone(), context, vec![], HotwordBudget::default())
             .unwrap();
         assert!(service.term_snapshot_is_current(snapshot.clone()).unwrap());
-        assert_eq!(service.forget_term("Inputia".into(), 1).unwrap(), 2);
+        assert_eq!(
+            service
+                .forget_term("forget-1".into(), "Inputia".into(), 1)
+                .unwrap(),
+            2
+        );
         assert!(!service.term_snapshot_is_current(snapshot).unwrap());
         assert!(service.list_terms(10, 0).unwrap().is_empty());
-        assert!(service.forget_term("Inputia".into(), 1).is_err());
+        assert_eq!(
+            service
+                .forget_term("forget-1".into(), "Inputia".into(), 1)
+                .unwrap(),
+            2
+        );
+        assert!(service
+            .forget_term("forget-1".into(), "Other".into(), 1)
+            .is_err());
+        assert!(service
+            .forget_term("forget-2".into(), "Inputia".into(), 1)
+            .is_err());
         assert!(service
             .contribute_term(contribution(), policy, context)
             .is_err());

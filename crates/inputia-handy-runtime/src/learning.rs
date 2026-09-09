@@ -111,6 +111,10 @@ impl LearningLedger {
              CREATE TABLE IF NOT EXISTS learning_receipts (
                 contribution_id TEXT PRIMARY KEY, digest BLOB NOT NULL
              );
+             CREATE TABLE IF NOT EXISTS learning_forget_receipts (
+                operation_id TEXT PRIMARY KEY, digest BLOB NOT NULL,
+                result_epoch INTEGER NOT NULL CHECK(result_epoch>0)
+             );
              CREATE TABLE IF NOT EXISTS learning_contributions (
                 contribution_id TEXT PRIMARY KEY,
                 store_id TEXT NOT NULL, record_id TEXT NOT NULL,
@@ -441,6 +445,12 @@ impl LearningLedger {
 
     // 本地稳定词身份而非 HMAC、认证凭据或对外可验证 MAC。
     // 固定域和长度编码避免串接歧义；32+ 字节随机私钥防止对删除词的字典枚举。
+    pub(crate) fn forget_digest(&self, term: &str, expected_epoch: u64) -> Vec<u8> {
+        let mut payload = expected_epoch.to_be_bytes().to_vec();
+        payload.extend_from_slice(term.as_bytes());
+        self.keyed_identity(b"forget-receipt-v1", &payload)
+    }
+
     fn keyed_identity(&self, domain: &[u8], text: &[u8]) -> Vec<u8> {
         let mut hash = Sha256::new();
         hash.update(b"inputia-learning-private-identity-v1\0");

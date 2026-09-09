@@ -769,10 +769,44 @@ impl IntegrationStore {
 
     /// 词屏障、贡献移除和统一策略版本同一事务，失败时全量回滚。
     pub fn forget_term(&mut self, key: &[u8], term: &str, expected_epoch: u64) -> StoreResult<u64> {
+        self.forget_term_transaction(key, term, expected_epoch, None)
+    }
+
+    pub fn forget_term_with_receipt(
+        &mut self,
+        key: &[u8],
+        operation_id: &Identifier,
+        term: &str,
+        expected_epoch: u64,
+    ) -> StoreResult<u64> {
+        self.forget_term_transaction(key, term, expected_epoch, Some(operation_id))
+    }
+
+    fn forget_term_transaction(
+        &mut self,
+        key: &[u8],
+        term: &str,
+        expected_epoch: u64,
+        operation_id: Option<&Identifier>,
+    ) -> StoreResult<u64> {
         let ledger = LearningLedger::new(key)?;
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let digest = ledger.forget_digest(term, expected_epoch);
+        if let Some(operation_id) = operation_id {
+            let receipt: Option<(Vec<u8>, u64)> = tx.query_row(
+                "SELECT digest,result_epoch FROM learning_forget_receipts WHERE operation_id=?1",
+                [operation_id.as_str()], |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional()?;
+            if let Some((previous, result)) = receipt {
+                return if previous == digest {
+                    Ok(result)
+                } else {
+                    Err(StoreError::Learning(LearningError::ReplayConflict))
+                };
+            }
+        }
         let current = epoch(&tx)?;
         if current != expected_epoch {
             return Err(StoreError::EpochMismatch {
@@ -790,6 +824,9 @@ impl IntegrationStore {
             "UPDATE integration_meta SET value=?1 WHERE key='policy_epoch'",
             [next.to_string()],
         )?;
+        if let Some(operation_id) = operation_id {
+            tx.execute("INSERT INTO learning_forget_receipts(operation_id,digest,result_epoch) VALUES(?1,?2,?3)", params![operation_id.as_str(), digest, checked_number(next)?])?;
+        }
         tx.commit()?;
         Ok(next)
     }
