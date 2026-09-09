@@ -9,6 +9,7 @@ struct InputiaShortcutSelfCheck {
   private static let keyCodeUpArrow: UInt16 = 126
 
   static func main() {
+    let shiftGestureChecks = InputiaShortcutClassifier.shiftInputModeGestureSelfCheckResults()
     let checks: [(String, Bool)] = [
       (
         "ctrlPeriodPunctuation",
@@ -225,7 +226,7 @@ struct InputiaShortcutSelfCheck {
         "inputTextSpacePassesThroughWithoutComposing",
         !InputiaShortcutClassifier.shouldHandleInputTextSpace(" ", hasComposing: false)
       ),
-    ]
+    ] + shiftGestureChecks
 
     let ok = checks.allSatisfy { $0.1 }
     print("shortcutSelfCheck=\(ok)")

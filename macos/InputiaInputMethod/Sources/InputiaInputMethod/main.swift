@@ -88,6 +88,8 @@ enum InputiaHost {
   static var settingsWindowController: InputiaSettingsWindowController?
   static weak var activeInputController: InputiaInputController?
   static var modifierMonitor: Any?
+  static var keyMonitor: Any?
+  static var mouseMonitor: Any?
 }
 
 @objc(InputiaInputController)
@@ -112,11 +114,8 @@ final class InputiaInputController: IMKInputController {
   private var englishCompletionPrefix = ""
   private var englishCompletionCandidates: [String] = []
   private var candidatePanelExpanded = false
-  private var lastModifiers = NSEvent.ModifierFlags()
-  private var lastGlobalModifiers = NSEvent.ModifierFlags()
-  private var shiftKeyDownWithoutOtherKey = false
-  private var globalShiftKeyDownWithoutOtherKey = false
-  private var lastShiftToggleTime = Date.distantPast
+  private var shiftInputModeGesture = InputiaShortcutClassifier.ShiftInputModeGestureState()
+  private weak var gestureInputClient: AnyObject?
   private var cachedAppContext: InputiaAppContext?
   private var cachedAppContextTime = Date.distantPast
   private var pushedAppContext: InputiaAppContext?
@@ -135,6 +134,7 @@ final class InputiaInputController: IMKInputController {
     if shouldUseSecureDirectMode(client) {
       return false
     }
+    cancelShiftGestureIfClientChanged(client)
     updateAppContext(client: client)
 
     switch event.type {
@@ -142,13 +142,17 @@ final class InputiaInputController: IMKInputController {
       return handleFlagsChanged(event, client: client)
     case .keyDown:
       return handleKeyDown(event, client: client)
+    case .keyUp:
+      shiftInputModeGesture.observeLocalKeyUp(keyCode: event.keyCode)
+      // 仅更新手势状态，不消费宿主的按键松开，也不送入 Rime。
+      return false
     default:
       return false
     }
   }
 
   override func recognizedEvents(_ sender: Any!) -> Int {
-    Int(NSEvent.EventTypeMask(arrayLiteral: .keyDown, .flagsChanged).rawValue)
+    Int(NSEvent.EventTypeMask(arrayLiteral: .keyDown, .keyUp, .flagsChanged).rawValue)
   }
 
   override func candidates(_ sender: Any!) -> [Any]! {
@@ -406,6 +410,7 @@ final class InputiaInputController: IMKInputController {
     #if INPUTIA_PAIRED_BUILD
     voiceActivationGeneration &+= 1
     #endif
+    resetShiftInputModeSession(reason: "activate")
     InputiaHost.activeInputController = self
     if let client = sender as? IMKTextInput {
       if shouldUseSecureDirectMode(client) {
@@ -420,6 +425,7 @@ final class InputiaInputController: IMKInputController {
     #if INPUTIA_PAIRED_BUILD
     voiceActivationGeneration &+= 1
     #endif
+    resetShiftInputModeSession(reason: "deactivate")
     commitComposition(sender)
     if InputiaHost.activeInputController === self {
       InputiaHost.activeInputController = nil
@@ -428,97 +434,94 @@ final class InputiaInputController: IMKInputController {
 
   func handleGlobalFlagsChanged(_ event: NSEvent) {
     guard isCurrentInputiaSourceSelected() else {
-      globalShiftKeyDownWithoutOtherKey = false
-      lastGlobalModifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+      resetShiftInputModeSession(reason: "globalSourceChanged")
       return
     }
 
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-    let hadShift = lastGlobalModifiers.contains(.shift)
-    let hasShift = modifiers.contains(.shift)
-    let hasBlockingModifier = modifiers.contains(.command)
-      || modifiers.contains(.control)
-      || modifiers.contains(.option)
     let shortcut = bridge.inputModeToggleShortcut()
 
     inputiaDebugLog(
-      "globalFlagsChanged keyCode=\(event.keyCode) last=\(lastGlobalModifiers.rawValue) current=\(modifiers.rawValue) hadShift=\(hadShift) hasShift=\(hasShift) blocking=\(hasBlockingModifier) shortcut=\(shortcut) armed=\(globalShiftKeyDownWithoutOtherKey)"
+      "globalFlagsChanged keyCode=\(event.keyCode) current=\(modifiers.rawValue) shortcut=\(shortcut) armed=\(shiftInputModeGesture.isArmedForDebug)"
     )
 
-    if !hadShift && hasShift {
-      globalShiftKeyDownWithoutOtherKey = InputiaShortcutClassifier.shouldArmShiftInputModeToggle(
-        shortcut: shortcut,
-        modifiers: modifiers
-      )
-    } else if hadShift && !hasShift {
-      defer {
-        globalShiftKeyDownWithoutOtherKey = false
-        lastGlobalModifiers = modifiers
-      }
-      if InputiaShortcutClassifier.isShiftInputModeToggleRelease(
-        shortcut: shortcut,
-        hadShift: hadShift,
-        hasShift: hasShift,
-        hasBlockingModifier: hasBlockingModifier,
-        armed: globalShiftKeyDownWithoutOtherKey
-      ) {
-        _ = toggleInputModeFromShift(client: nil, source: "global")
-      }
+    _ = shiftInputModeGesture.observeFlagsChanged(
+      shortcut: shortcut,
+      modifiers: modifiers,
+      allowToggle: false
+    )
+  }
+
+  func handleGlobalKeyEvent(_ event: NSEvent) {
+    guard isCurrentInputiaSourceSelected() else {
+      resetShiftInputModeSession(reason: "globalKeySourceChanged")
       return
     }
+    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    switch event.type {
+    case .keyDown:
+      shiftInputModeGesture.observeGlobalKeyDown(keyCode: event.keyCode, modifiers: modifiers)
+    case .keyUp:
+      shiftInputModeGesture.observeGlobalKeyUp(keyCode: event.keyCode)
+    default:
+      break
+    }
+  }
 
-    lastGlobalModifiers = modifiers
+  func handleGlobalMouseEvent(_ event: NSEvent) {
+    _ = event
+    resetShiftInputModeSession(reason: "globalMouseEvent")
   }
 
   private func handleFlagsChanged(_ event: NSEvent, client: IMKTextInput) -> Bool {
     reloadSettingsIfDue(client: client)
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-    let hadShift = lastModifiers.contains(.shift)
-    let hasShift = modifiers.contains(.shift)
-    let hasBlockingModifier = modifiers.contains(.command)
-      || modifiers.contains(.control)
-      || modifiers.contains(.option)
     let shortcut = bridge.inputModeToggleShortcut()
 
     inputiaDebugLog(
-      "flagsChanged keyCode=\(event.keyCode) last=\(lastModifiers.rawValue) current=\(modifiers.rawValue) hadShift=\(hadShift) hasShift=\(hasShift) blocking=\(hasBlockingModifier) shortcut=\(shortcut) armed=\(shiftKeyDownWithoutOtherKey)"
+      "flagsChanged keyCode=\(event.keyCode) current=\(modifiers.rawValue) shortcut=\(shortcut) armed=\(shiftInputModeGesture.isArmedForDebug)"
     )
 
-    if !hadShift && hasShift {
-      shiftKeyDownWithoutOtherKey = InputiaShortcutClassifier.shouldArmShiftInputModeToggle(
-        shortcut: shortcut,
-        modifiers: modifiers
-      )
-    } else if hadShift && !hasShift {
-      defer {
-        shiftKeyDownWithoutOtherKey = false
-        lastModifiers = modifiers
-      }
-      if InputiaShortcutClassifier.isShiftInputModeToggleRelease(
-        shortcut: shortcut,
-        hadShift: hadShift,
-        hasShift: hasShift,
-        hasBlockingModifier: hasBlockingModifier,
-        armed: shiftKeyDownWithoutOtherKey
-      ) {
-        return toggleInputModeFromShift(client: client, source: "local")
-      }
+    if shiftInputModeGesture.observeFlagsChanged(
+      shortcut: shortcut,
+      modifiers: modifiers,
+      allowToggle: true
+    ) == .toggle {
+      return toggleInputModeFromShift(client: client, source: "local")
     }
 
-    lastModifiers = modifiers
     return false
   }
 
   private func toggleInputModeFromShift(client: IMKTextInput?, source: String) -> Bool {
-    let now = Date()
-    guard now.timeIntervalSince(lastShiftToggleTime) >= 0.18 else {
-      inputiaDebugLog("shiftToggleDeduped source=\(source)")
+    guard let client else {
+      inputiaDebugLog("shiftToggleRejected source=\(source) reason=missing-client")
       return true
     }
-    lastShiftToggleTime = now
     clearEnglishCompletion()
     inputiaDebugLog("shiftToggle source=\(source)")
     return apply(bridge.toggleInputMode(), client: client)
+  }
+
+  private func cancelShiftInputModeGesture(reason: String) {
+    shiftInputModeGesture.cancelPendingGesture()
+    inputiaDebugLog("shiftGestureCancelled reason=\(reason)")
+  }
+
+  private func resetShiftInputModeSession(reason: String) {
+    // 事件连续性已断开：清理可能漏收 keyUp 的普通键，仍按住的 Shift 不获得切换资格。
+    shiftInputModeGesture.resetSession(
+      modifiers: NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    )
+    inputiaDebugLog("shiftGestureSessionReset reason=\(reason)")
+  }
+
+  private func cancelShiftGestureIfClientChanged(_ client: IMKTextInput) {
+    let currentClient = client as AnyObject
+    if let gestureInputClient, gestureInputClient !== currentClient {
+      resetShiftInputModeSession(reason: "clientChanged")
+    }
+    gestureInputClient = currentClient
   }
 
   private func resetToChineseModeOnActivationIfNeeded(client: IMKTextInput) {
@@ -533,17 +536,18 @@ final class InputiaInputController: IMKInputController {
 
   private func handleKeyDown(_ event: NSEvent, client: IMKTextInput) -> Bool {
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    shiftInputModeGesture.observeLocalKeyDown(keyCode: event.keyCode, modifiers: modifiers)
     inputiaDebugLog(
       "keyDown keyCode=\(event.keyCode) modifiers=\(modifiers.rawValue) chars=\(event.characters ?? "") charsIgnoring=\(event.charactersIgnoringModifiers ?? "")"
     )
     if isScriptToggleShortcut(event, modifiers: modifiers) {
-      shiftKeyDownWithoutOtherKey = false
+      cancelShiftInputModeGesture(reason: "scriptToggle")
       clearEnglishCompletion()
       clearInputState(client: client)
       return bridge.toggleChineseScriptPreference()
     }
     if isClipboardRecallShortcut(event, modifiers: modifiers) {
-      shiftKeyDownWithoutOtherKey = false
+      cancelShiftInputModeGesture(reason: "clipboardRecall")
       return showClipboardRecall(client: client)
     }
     if !recallCandidates.isEmpty {
@@ -552,17 +556,17 @@ final class InputiaInputController: IMKInputController {
       }
     }
     if isPunctuationToggleShortcut(event, modifiers: modifiers) {
-      shiftKeyDownWithoutOtherKey = false
+      cancelShiftInputModeGesture(reason: "punctuationToggle")
       clearEnglishCompletion()
       return apply(bridge.togglePunctuationPreference(), client: client)
     }
     if isCharacterWidthToggleShortcut(event, modifiers: modifiers) {
-      shiftKeyDownWithoutOtherKey = false
+      cancelShiftInputModeGesture(reason: "characterWidthToggle")
       clearEnglishCompletion()
       return apply(bridge.toggleCharacterWidthPreference(), client: client)
     }
     if isInputModeToggleShortcut(event, modifiers: modifiers) {
-      shiftKeyDownWithoutOtherKey = false
+      cancelShiftInputModeGesture(reason: "controlSpaceToggle")
       clearEnglishCompletion()
       return apply(bridge.toggleInputMode(), client: client)
     }
@@ -574,11 +578,11 @@ final class InputiaInputController: IMKInputController {
       return handleCandidateNavigation(navigation, client: client)
     }
     if modifiers.contains(.command) || modifiers.contains(.control) || modifiers.contains(.option) {
-      shiftKeyDownWithoutOtherKey = false
+      cancelShiftInputModeGesture(reason: "blockingModifierKeyDown")
       return false
     }
     if modifiers.contains(.shift) {
-      shiftKeyDownWithoutOtherKey = false
+      cancelShiftInputModeGesture(reason: "shiftModifiedKeyDown")
     }
 
     switch event.keyCode {
@@ -866,7 +870,7 @@ final class InputiaInputController: IMKInputController {
     guard !latestComposing.isEmpty else {
       return false
     }
-    shiftKeyDownWithoutOtherKey = false
+    cancelShiftInputModeGesture(reason: "candidateNavigation")
     clearEnglishCompletion()
 
     switch navigation {
@@ -1453,6 +1457,9 @@ final class InputiaInputController: IMKInputController {
     reloadSettingsIfDue(client: client, force: forceRefresh)
     let context = appContext(for: client, forceRefresh: forceRefresh)
     inputiaDebugLog("context bundle=\(context.bundleId) window=\(context.windowTitle ?? "")")
+    if let pushedAppContext, pushedAppContext != context {
+      resetShiftInputModeSession(reason: "contextChanged")
+    }
     guard pushedAppContext != context else {
       return
     }
@@ -1590,6 +1597,14 @@ struct InputiaInputMethodApp {
       InputiaHost.candidatePanel = InputiaCandidatePanel()
       InputiaHost.modifierMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { event in
         InputiaHost.activeInputController?.handleGlobalFlagsChanged(event)
+      }
+      InputiaHost.keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
+        InputiaHost.activeInputController?.handleGlobalKeyEvent(event)
+      }
+      InputiaHost.mouseMonitor = NSEvent.addGlobalMonitorForEvents(
+        matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+      ) { event in
+        InputiaHost.activeInputController?.handleGlobalMouseEvent(event)
       }
       NSLog("Inputia baseline IMK server started: bundle=\(resolvedBundleIdentifier), connection=\(resolvedConnectionName)")
 
@@ -1912,6 +1927,8 @@ final class InputiaInputMethodDiagnostics {
     let regularAppDoesNotUseSecureDirect = !InputiaSecureDirectPolicy.shouldUseSecureDirectMode(
       context: InputiaAppContext(bundleId: "com.openai.chat", windowTitle: nil)
     )
+    let shiftGestureChecks = InputiaShortcutClassifier.shiftInputModeGestureSelfCheckResults()
+    let shiftGestureSelfCheck = shiftGestureChecks.allSatisfy { $0.1 }
 
     let ok = punctuationToggle
       && !punctuationWithShift
@@ -1942,6 +1959,7 @@ final class InputiaInputMethodDiagnostics {
       && securityAgentUsesSecureDirect
       && unknownDoesNotUseSecureDirect
       && regularAppDoesNotUseSecureDirect
+      && shiftGestureSelfCheck
 
     print("hostShortcutSelfCheck=\(ok)")
     print("ctrlPeriodPunctuation=\(punctuationToggle)")
@@ -1973,6 +1991,9 @@ final class InputiaInputMethodDiagnostics {
     print("securityAgentUsesSecureDirect=\(securityAgentUsesSecureDirect)")
     print("unknownDoesNotUseSecureDirect=\(unknownDoesNotUseSecureDirect)")
     print("regularAppDoesNotUseSecureDirect=\(regularAppDoesNotUseSecureDirect)")
+    for (name, result) in shiftGestureChecks {
+      print("\(name)=\(result)")
+    }
   }
 
   private func printBridgeSelfCheck(name: String, outcomes: [InputiaBridgeOutcome]) {
