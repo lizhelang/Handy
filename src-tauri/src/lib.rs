@@ -774,6 +774,7 @@ pub fn run(cli_args: CliArgs) {
             commands::get_log_dir_path,
             commands::set_log_level,
             commands::open_recordings_folder,
+            commands::permissions::open_inputia_permission_help,
             commands::open_log_dir,
             commands::open_app_data_dir,
             commands::check_apple_intelligence_available,

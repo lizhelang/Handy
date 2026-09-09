@@ -890,5 +890,14 @@
     "learnMore": "如何解决",
     "recorderBlocked": "当前无法录制快捷键——macOS 的 Secure Input 正在阻止按键事件。请先解决 Secure Input 警告。",
     "dismiss": "关闭"
+  },
+  "inputiaPermissionHelp": {
+    "title": "Inputia 权限",
+    "description": "macOS 会分别列出 Inputia 控制中心和输入法组件。如果删除过授权，可在下方定位输入法，再到系统设置中添加。",
+    "component": "定位输入法组件",
+    "settings": "打开权限设置",
+    "note": "在「隐私与安全」中打开「辅助功能」或「设备控制和数据访问」。这两个按钮不会自动授权，也不代表插入功能已经就绪。",
+    "missing": "没有找到与当前安装对应的输入法组件。请先安装配套组件；候选版不会回退到日常输入法。",
+    "failed": "无法打开，请重试，或手动打开「系统设置 → 隐私与安全」。"
   }
 }

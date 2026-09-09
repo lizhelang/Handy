@@ -890,5 +890,14 @@
     "learnMore": "Hoe je dit oplost",
     "recorderBlocked": "Sneltoetsen kunnen nu niet worden opgenomen — Secure Input van macOS blokkeert toetsgebeurtenissen. Los eerst de Secure Input-waarschuwing op.",
     "dismiss": "Sluiten"
+  },
+  "inputiaPermissionHelp": {
+    "title": "Inputia permissions",
+    "description": "macOS lists the Inputia control center and input method separately. If permission was removed, locate the input method below and add it in System Settings.",
+    "component": "Locate input method",
+    "settings": "Open permission settings",
+    "note": "Under Privacy & Security, open Accessibility (or Device Control and Data Access). These buttons do not grant permission or verify that insertion is ready.",
+    "missing": "The input method for this installation was not found. Install the matching Inputia component first; the daily installation will not be used as a fallback.",
+    "failed": "Could not open the location. Open System Settings → Privacy & Security manually, or try again."
   }
 }

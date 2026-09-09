@@ -913,6 +913,19 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
+  async openInputiaPermissionHelp(
+    action: string,
+  ): Promise<Result<null, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("open_inputia_permission_help", { action }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
   async openLogDir(): Promise<Result<null, string>> {
     try {
       return { status: "ok", data: await TAURI_INVOKE("open_log_dir") };
@@ -1482,6 +1495,44 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
+  async copyUnifiedHistoryItemAsText(
+    itemId: string,
+    expectedRevision: number,
+    operationId: string,
+  ): Promise<Result<UnifiedOutputResult, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("copy_unified_history_item_as_text", {
+          itemId,
+          expectedRevision,
+          operationId,
+        }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
+  async deleteUnifiedHistoryItem(
+    itemId: string,
+    expectedRevision: number,
+    operationId: string,
+  ): Promise<Result<boolean, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("delete_unified_history_item", {
+          itemId,
+          expectedRevision,
+          operationId,
+        }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
   async updateUnifiedHistoryItem(
     itemId: string,
     expectedRevision: number,
@@ -1701,6 +1752,20 @@ export const commands = {
       return {
         status: "ok",
         data: await TAURI_INVOKE("hide_clipboard_overlay"),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
+  /**
+   * 查看召回浮窗不等于开启采集；实际插入仍由既有目标校验保护。
+   */
+  async showClipboardOverlay(): Promise<Result<null, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("show_clipboard_overlay"),
       };
     } catch (e) {
       if (e instanceof Error) throw e;
