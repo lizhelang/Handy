@@ -32,6 +32,39 @@ pub fn handle_shortcut_event(
     hotkey_string: &str,
     is_pressed: bool,
 ) {
+    #[cfg(target_os = "macos")]
+    {
+        // 原生快捷键回调可能来自后台线程；Carbon 输入源查询只能在主线程执行。
+        // 主线程只探测输入源；服务查询和动作保持在同一后台队列中处理。
+        let dispatched_app = app.clone();
+        let binding_id = binding_id.to_owned();
+        let hotkey_string = hotkey_string.to_owned();
+        if app
+            .run_on_main_thread(move || {
+                enqueue_native_shortcut(NativeShortcutEvent {
+                    app: dispatched_app,
+                    binding_id,
+                    hotkey_string,
+                    is_pressed,
+                    source: crate::host_shortcut_broker::current_input_source(),
+                });
+            })
+            .is_err()
+        {
+            warn!("Shortcut main-thread dispatch unavailable; event not replayed");
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    handle_shortcut_event_on_dispatch_thread(app, binding_id, hotkey_string, is_pressed);
+}
+
+fn handle_shortcut_event_on_dispatch_thread(
+    app: &AppHandle,
+    binding_id: &str,
+    hotkey_string: &str,
+    is_pressed: bool,
+    #[cfg(target_os = "macos")] source: crate::host_shortcut_broker::CurrentInputSource,
+) {
     let settings = get_settings(app);
 
     // Transcribe bindings are handled by the coordinator.
@@ -55,7 +88,7 @@ pub fn handle_shortcut_event(
         }
         #[cfg(target_os = "macos")]
         if let Some(routing) =
-            route_inputia_host_shortcut(app, binding_id, hotkey_string, is_pressed)
+            route_inputia_host_shortcut(app, binding_id, hotkey_string, is_pressed, source)
         {
             match routing {
                 crate::host_shortcut_broker::ShortcutRouting::Legacy => {}
@@ -108,6 +141,7 @@ fn route_inputia_host_shortcut(
     binding_id: &str,
     hotkey_string: &str,
     is_pressed: bool,
+    source: crate::host_shortcut_broker::CurrentInputSource,
 ) -> Option<crate::host_shortcut_broker::ShortcutRouting> {
     let broker = app.try_state::<crate::host_shortcut_broker::HostShortcutBroker>()?;
     let manager = app.try_state::<Arc<crate::managers::integration::IntegrationManager>>()?;
@@ -120,5 +154,45 @@ fn route_inputia_host_shortcut(
         settings.shortcut_activation,
         std::time::Duration::from_millis(settings.hold_threshold_ms),
         policy_epoch,
+        source,
     ))
+}
+
+#[cfg(target_os = "macos")]
+struct NativeShortcutEvent {
+    app: AppHandle,
+    binding_id: String,
+    hotkey_string: String,
+    is_pressed: bool,
+    source: crate::host_shortcut_broker::CurrentInputSource,
+}
+
+#[cfg(target_os = "macos")]
+fn enqueue_native_shortcut(event: NativeShortcutEvent) {
+    use std::sync::{mpsc, OnceLock};
+    static QUEUE: OnceLock<Option<mpsc::Sender<NativeShortcutEvent>>> = OnceLock::new();
+    let queue = QUEUE.get_or_init(|| {
+        let (sender, receiver) = mpsc::channel::<NativeShortcutEvent>();
+        std::thread::Builder::new()
+            .name("inputia-shortcut-dispatch".into())
+            .spawn(move || {
+                for event in receiver {
+                    handle_shortcut_event_on_dispatch_thread(
+                        &event.app,
+                        &event.binding_id,
+                        &event.hotkey_string,
+                        event.is_pressed,
+                        event.source,
+                    );
+                }
+            })
+            .ok()
+            .map(|_| sender)
+    });
+    if queue
+        .as_ref()
+        .is_none_or(|queue| queue.send(event).is_err())
+    {
+        warn!("Shortcut worker unavailable; event not replayed");
+    }
 }

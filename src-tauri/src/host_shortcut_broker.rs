@@ -26,7 +26,7 @@ pub enum ShortcutRouting {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CurrentInputSource {
+pub(crate) enum CurrentInputSource {
     InputiaCandidate,
     Other,
     Unknown,
@@ -160,6 +160,7 @@ impl HostShortcutBroker {
         mode: ShortcutActivation,
         hold_threshold: Duration,
         policy_epoch: u64,
+        current_source: CurrentInputSource,
     ) -> ShortcutRouting {
         self.route_shortcut_event_with_source(
             binding_id,
@@ -168,7 +169,7 @@ impl HostShortcutBroker {
             mode,
             hold_threshold,
             policy_epoch,
-            current_input_source(),
+            current_source,
         )
     }
 
@@ -205,8 +206,8 @@ impl HostShortcutBroker {
             .map(|(_, active)| active.lease.clone())
             .or_else(|| Self::ready_lease_for(&state, policy_epoch))
         else {
-            if current_source == CurrentInputSource::InputiaCandidate {
-                debug!("Inputia is the current input source but no ready host target lease exists");
+            if current_source != CurrentInputSource::Other {
+                debug!("Input source is Inputia or unknown and no ready host target lease exists");
                 return ShortcutRouting::HostPending;
             }
             debug!("No ready Inputia host target lease for voice shortcut; using legacy path");
@@ -513,7 +514,11 @@ fn activation(value: ShortcutActivation) -> VoiceShortcutActivation {
 }
 
 #[cfg(target_os = "macos")]
-fn current_input_source() -> CurrentInputSource {
+pub(crate) fn current_input_source() -> CurrentInputSource {
+    if objc2::MainThreadMarker::new().is_none() {
+        // 防止未来调用者绕过主线程交接：未知不能降级到普通粘贴。
+        return CurrentInputSource::Unknown;
+    }
     use std::ffi::{c_char, c_void, CStr};
 
     type CFRef = *const c_void;
@@ -579,7 +584,7 @@ fn current_input_source() -> CurrentInputSource {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn current_input_source() -> CurrentInputSource {
+pub(crate) fn current_input_source() -> CurrentInputSource {
     CurrentInputSource::Unknown
 }
 
@@ -686,6 +691,29 @@ mod tests {
             ShortcutRouting::Legacy
         );
         assert!(broker.poll("host-one", 0).is_none());
+    }
+
+    #[test]
+    fn unknown_source_without_lease_does_not_fall_back_to_paste() {
+        let broker = HostShortcutBroker::default();
+        assert_eq!(
+            route_with_source(
+                &broker,
+                true,
+                ShortcutActivation::Toggle,
+                CurrentInputSource::Unknown
+            ),
+            ShortcutRouting::HostPending
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn background_input_source_probe_does_not_call_carbon() {
+        assert_eq!(
+            std::thread::spawn(current_input_source).join().unwrap(),
+            CurrentInputSource::Unknown
+        );
     }
 
     #[test]
