@@ -30,3 +30,5 @@
 后续构建必须显式传入固定身份：Inputia build.sh 使用 INPUTIA_CODESIGN_IDENTITY=9BFDA2AC249A18FA10FDD0E649AB854B6B536BE7；Tauri 候选配置追加 bundle.macOS.signingIdentity 同一值，并继续传入 HANDY_UNIFIED_PAIR_BUILD 的 public-build.json。不得把默认临时签名构建直接覆盖固定身份的已授权测试安装。密钥不进仓库，未来其他机器需自己的签名材料；这个指纹不是可跨机器共享的私钥。
 
 两份候选已实际更新，配对清单 pair-fixed.json 已对安装路径中的新签名重新签署。控制中心 cdhash=9cb6b8b689eb5f0731c20c4e741a0733883f966e，输入法 cdhash=8efedfc5ad3c830a78c8d0819798da5a12ccec72，Authority 都为 Inputia Local Test Signing 2026。新程序先显示权限页（包含当前应用名称和重检按钮），随后实际进入控制中心；工具未点击任何“授予权限”按钮或系统权限开关，不能据此推断以后更新也必定无需用户确认。21:03:29 UTC 的新日志证明 Enigo 初始化成功；第二次同身份安装更新后的授权保持仍未验收。
+
+后续运行身份补证：以上输入法hash是磁盘文件证据，不证明当时PID5738已运行新映像。真实菜单测试后发现它实际仍运行移至备份目录的旧ad-hoc文件；已精确重启为PID45507，并用动态identifier+cdhash校验确认新身份。详见 20260909-voice-result-and-stale-process.md。今后安装完成必须增加此动态门禁。
