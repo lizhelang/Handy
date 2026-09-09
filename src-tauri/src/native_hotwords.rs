@@ -1,4 +1,3 @@
-use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
 const QWEN_CONTEXT_PREFIX: &str = "术语参考（仅作转写提示，未说勿写）：";
@@ -28,7 +27,6 @@ where
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct QwenContextPlan {
     context: Option<String>,
-    version: String,
     word_count: usize,
 }
 
@@ -40,29 +38,17 @@ impl QwenContextPlan {
             word.contains("<|") || word.contains("|>")
         });
 
-        let mut hasher = Sha256::new();
-        hasher.update(b"handy-qwen-asr-context-v1\0");
-        for word in &words {
-            hasher.update((word.len() as u64).to_be_bytes());
-            hasher.update(word.as_bytes());
-        }
-
         let context =
             (!words.is_empty()).then(|| format!("{QWEN_CONTEXT_PREFIX}{}", words.join("、")));
 
         Self {
             context,
-            version: format!("{:x}", hasher.finalize()),
             word_count: words.len(),
         }
     }
 
     pub(crate) fn context(&self) -> Option<&str> {
         self.context.as_deref()
-    }
-
-    pub(crate) fn version(&self) -> &str {
-        &self.version
     }
 
     pub(crate) fn word_count(&self) -> usize {
@@ -102,7 +88,7 @@ mod tests {
     use super::QwenContextPlan;
 
     #[test]
-    fn qwen_context_uses_all_clean_words_without_exposing_them_in_its_version() {
+    fn qwen_context_uses_all_clean_words_without_a_fingerprint() {
         let plan = QwenContextPlan::from_custom_words(&[
             " Inputia ".to_string(),
             "罗泽群".to_string(),
@@ -116,9 +102,6 @@ mod tests {
             plan.context().as_deref(),
             Some("术语参考（仅作转写提示，未说勿写）：Inputia、罗泽群")
         );
-        assert_eq!(plan.version().len(), 64);
-        assert!(!plan.version().contains("Inputia"));
-        assert!(!plan.version().contains("罗泽群"));
     }
 
     #[test]

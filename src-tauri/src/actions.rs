@@ -860,7 +860,7 @@ impl ShortcutAction for TranscribeAction {
                         // surfaced instead — the worker may still hold the engine,
                         // so a batch fallback would contend with it.
                         Ok(Some(text)) if !text.trim().is_empty() => Ok(text),
-                        Ok(_) => tm.transcribe(samples),
+                        Ok(_) => tm.transcribe_with_voice_context(samples, owned_voice.as_ref()),
                         Err(err) => Err(err),
                     };
 

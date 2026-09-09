@@ -10,6 +10,15 @@ use crate::settings::{
     TranscribeAcceleratorSetting,
 };
 use anyhow::Result;
+use inputia_core::integration::{
+    privacy::{HistoryMode, PrivacyContext, PrivacyPolicy, SourceTrust},
+    terms::HotwordBudget,
+};
+use inputia_handy_runtime::{
+    service::HistoryService,
+    store::TermSnapshot,
+    voice_protocol::{VoiceRequest, VoiceTermsVersion},
+};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -39,6 +48,90 @@ use transcribe_rs::{
 
 const STREAM_PERF_LOG_INTERVAL: Duration = Duration::from_secs(5);
 const STREAM_FINALIZE_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
+
+const SHARED_NATIVE_PROMPT_TTL: Duration = Duration::from_secs(2);
+
+fn shared_prompt_privacy(
+    request: &VoiceRequest,
+    secure_input: bool,
+) -> Option<(PrivacyPolicy, PrivacyContext, &VoiceTermsVersion)> {
+    let (target, terms) = request.strict_start_identity()?;
+    let app = target
+        .source_app
+        .as_deref()
+        .filter(|app| !app.trim().is_empty())?;
+    target
+        .field_id
+        .as_deref()
+        .filter(|field| !field.trim().is_empty())?;
+    if secure_input
+        || request.policy_epoch != terms.policy_epoch
+        || inputia_core::AppPolicy::default().excludes(&inputia_core::AppContext::new(app))
+    {
+        return None;
+    }
+    Some((
+        PrivacyPolicy {
+            epoch: terms.policy_epoch,
+            history_enabled: false,
+            history_mode: HistoryMode::Strict,
+            learning_enabled: false,
+            remote_learning_terms_enabled: false,
+        },
+        PrivacyContext {
+            // 目标字段已认证不等于原内容来源已验证；这里只读取已有词。
+            source_trust: SourceTrust::Unknown,
+            source_sensitive: false,
+            target_known: true,
+            target_sensitive: false,
+            secure_input: false,
+            transient_or_concealed: false,
+        },
+        terms,
+    ))
+}
+
+fn shared_prompt_version_matches(snapshot: &TermSnapshot, terms: &VoiceTermsVersion) -> bool {
+    snapshot.policy_epoch == terms.policy_epoch
+        && snapshot.learning_generation == terms.learning_generation
+}
+
+fn shared_prompt_lease_valid(elapsed: Duration, secure_input: bool, current: bool) -> bool {
+    current && !secure_input && elapsed < SHARED_NATIVE_PROMPT_TTL
+}
+
+struct SharedNativePrompt {
+    service: Arc<HistoryService>,
+    snapshot: TermSnapshot,
+    acquired_at: Instant,
+}
+
+impl SharedNativePrompt {
+    fn current(&self) -> bool {
+        // IPC 返回后才检查时间，超时绝不将过期快照交给原生引擎。
+        let current = self
+            .service
+            .term_snapshot_is_current(self.snapshot.clone())
+            .unwrap_or(false);
+        let secure_input = crate::secure_input::is_enabled_now();
+        shared_prompt_lease_valid(self.acquired_at.elapsed(), secure_input, current)
+    }
+}
+
+fn native_prompt_extension(
+    words: &[String],
+    whisper: bool,
+    qwen_context: Option<&QwenContextPlan>,
+) -> Option<RunExtension> {
+    if whisper && !words.is_empty() {
+        Some(RunExtension::Whisper(WhisperRunOptions {
+            initial_prompt: Some(words.join(", ")),
+            ..Default::default()
+        }))
+    } else {
+        qwen_context.and_then(|plan| qwen_context_run_extension(plan, true))
+    }
+}
 
 fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
@@ -1165,6 +1258,43 @@ impl TranscriptionManager {
     }
 
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
+        self.transcribe_with_voice_context(audio, None)
+    }
+
+    fn shared_native_prompt(
+        &self,
+        request: Option<&VoiceRequest>,
+        explicit: &[String],
+    ) -> Option<SharedNativePrompt> {
+        let (policy, context, terms) =
+            shared_prompt_privacy(request?, crate::secure_input::is_enabled_now())?;
+        let service = self
+            .app_handle
+            .try_state::<Arc<crate::managers::integration::IntegrationManager>>()?
+            .service
+            .clone();
+        let acquired_at = Instant::now();
+        let snapshot = service
+            .session_hotwords(policy, context, explicit.to_vec(), HotwordBudget::default())
+            .ok()?;
+        if !shared_prompt_version_matches(&snapshot, terms)
+            || acquired_at.elapsed() >= SHARED_NATIVE_PROMPT_TTL
+        {
+            return None;
+        }
+        Some(SharedNativePrompt {
+            service,
+            snapshot,
+            acquired_at,
+        })
+    }
+
+    /// 仅接收调用方已捕获并认证的 owned voice；普通转写没有共享词上下文。
+    pub(crate) fn transcribe_with_voice_context(
+        &self,
+        audio: Vec<f32>,
+        voice_context: Option<&VoiceRequest>,
+    ) -> Result<String> {
         #[cfg(debug_assertions)]
         if std::env::var("HANDY_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
             return Err(anyhow::anyhow!(
@@ -1238,6 +1368,7 @@ impl TranscriptionManager {
         let mut model_is_whisper = false;
         let mut model_is_qwen3_asr = false;
         let mut model_accepts_qwen_context = false;
+        let mut model_takes_initial_prompt = false;
 
         // Perform transcription with the appropriate engine.
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
@@ -1277,7 +1408,7 @@ impl TranscriptionManager {
             if let LoadedEngine::TranscribeCpp(session) = &engine {
                 let model = session.model();
                 let caps = model.capabilities();
-                let model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
+                model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
                 model_is_whisper = model.arch() == "whisper";
                 model_is_qwen3_asr = model.arch() == "qwen3_asr";
                 model_accepts_qwen_context = model_is_qwen3_asr
@@ -1301,34 +1432,39 @@ impl TranscriptionManager {
             let transcribe_result = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
                 match &mut engine {
                     LoadedEngine::TranscribeCpp(session) => {
-                        let qwen_context_plan = model_is_qwen3_asr
-                            .then(|| QwenContextPlan::from_custom_words(&settings.custom_words))
+                        let shared_prompt = ((model_is_whisper && model_takes_initial_prompt)
+                            || model_accepts_qwen_context)
+                            .then(|| {
+                                self.shared_native_prompt(voice_context, &settings.custom_words)
+                            })
+                            .flatten();
+                        // 共享词仅进入原生提示；settings.custom_words 继续独占强制纠错词表。
+                        let native_prompt_words = shared_prompt
+                            .as_ref()
+                            .map(|shared| shared.snapshot.terms.as_slice())
+                            .unwrap_or(&settings.custom_words);
+                        let mut qwen_context_plan = model_is_qwen3_asr
+                            .then(|| QwenContextPlan::from_custom_words(native_prompt_words))
                             .filter(|plan| !plan.is_empty());
                         let active_qwen_context = qwen_context_plan
                             .as_ref()
                             .filter(|_| model_accepts_qwen_context);
 
-                        let family = if !settings.custom_words.is_empty() && model_is_whisper {
-                            Some(RunExtension::Whisper(WhisperRunOptions {
-                                initial_prompt: Some(settings.custom_words.join(", ")),
-                                ..Default::default()
-                            }))
-                        } else if let Some(plan) = active_qwen_context {
-                            info!(
-                                "Applied Qwen context: words={}, version={}",
-                                plan.word_count(),
-                                plan.version()
-                            );
-                            qwen_context_run_extension(plan, true)
+                        let family = if let Some(plan) = active_qwen_context {
+                            info!("Prepared Qwen context: words={}", plan.word_count(),);
+                            native_prompt_extension(
+                                native_prompt_words,
+                                model_is_whisper,
+                                Some(plan),
+                            )
                         } else if let Some(plan) = qwen_context_plan.as_ref() {
                             warn!(
-                                "Qwen context extension was rejected; using deterministic correction fallback: words={}, version={}",
+                                "Qwen context extension was rejected; using deterministic correction fallback: words={}",
                                 plan.word_count(),
-                                plan.version()
                             );
-                            None
+                            native_prompt_extension(native_prompt_words, model_is_whisper, None)
                         } else {
-                            None
+                            native_prompt_extension(native_prompt_words, model_is_whisper, None)
                         };
 
                         let run_plan = transcribe_cpp_run_plan(
@@ -1340,7 +1476,7 @@ impl TranscriptionManager {
                         output_was_translated = run_plan.target_language.as_deref() == Some("en");
                         applied_language_hint = run_plan.language.clone();
 
-                        let run_options = RunOptions {
+                        let mut run_options = RunOptions {
                             task: run_plan.task,
                             language: run_plan.language,
                             target_language: run_plan.target_language,
@@ -1355,17 +1491,41 @@ impl TranscriptionManager {
                             run_options.family.is_some()
                         );
 
-                        session
-                            .run(&audio, &run_options)
-                            .map(|t| {
-                                // Whisper's audio-based LID (auto mode only;
-                                // `None` when a language hint was passed).
-                                model_detected_language = t.language;
-                                strip_qwen_context_echo(t.text, active_qwen_context)
-                            })
-                            .map_err(|e| {
-                                anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
-                            })
+                        let shared_submitted = run_options.family.is_some()
+                            && shared_prompt
+                                .as_ref()
+                                .is_some_and(|shared| shared.current());
+                        if shared_prompt.is_some() && !shared_submitted {
+                            qwen_context_plan = model_is_qwen3_asr
+                                .then(|| QwenContextPlan::from_custom_words(&settings.custom_words))
+                                .filter(|plan| !plan.is_empty());
+                            run_options.family = native_prompt_extension(
+                                &settings.custom_words,
+                                model_is_whisper,
+                                qwen_context_plan
+                                    .as_ref()
+                                    .filter(|_| model_accepts_qwen_context),
+                            );
+                        }
+                        let active_qwen_context = qwen_context_plan
+                            .as_ref()
+                            .filter(|_| model_accepts_qwen_context);
+                        let result = session.run(&audio, &run_options).map(|t| {
+                            // Whisper's audio-based LID (auto mode only;
+                            // `None` when a language hint was passed).
+                            model_detected_language = t.language;
+                            strip_qwen_context_echo(t.text, active_qwen_context)
+                        });
+                        // 原生调用返回后记录元数据，不在租约复核与提交之间执行日志I/O。
+                        if shared_submitted {
+                            if let Some(shared) = shared_prompt.as_ref() {
+                                info!("shared_native_prompt_submitted=true prompt_terms={} policy_epoch={} learning_generation={}",
+                                    shared.snapshot.terms.len(), shared.snapshot.policy_epoch, shared.snapshot.learning_generation);
+                            }
+                        }
+                        result.map_err(|e| {
+                            anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
+                        })
                     }
                     LoadedEngine::Parakeet(parakeet_engine) => {
                         let params = ParakeetParams {
@@ -2533,6 +2693,121 @@ mod tests {
             strip_qwen_context_echo("我正在使用 Inputia。".to_string(), Some(&plan)),
             "我正在使用 Inputia。"
         );
+    }
+
+    fn shared_prompt_request() -> VoiceRequest {
+        use inputia_handy_runtime::voice_protocol::{HostTargetToken, VoiceCommand};
+        VoiceRequest {
+            request_id: "request".into(),
+            session_id: "session".into(),
+            server_instance: "server".into(),
+            client_instance: "client".into(),
+            policy_epoch: 7,
+            command: VoiceCommand::Start {
+                target: HostTargetToken {
+                    target_id: "target".into(),
+                    host_instance: "client".into(),
+                    controller_id: "controller".into(),
+                    activation_generation: 1,
+                    field_id: Some("field".into()),
+                    selection_generation: 1,
+                    composition_generation: 1,
+                    source_app: Some("com.apple.TextEdit".into()),
+                },
+                post_process: false,
+                terms: VoiceTermsVersion {
+                    policy_epoch: 7,
+                    learning_generation: 3,
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn shared_native_prompt_rejects_unknown_sensitive_secure_and_stale_contexts() {
+        use inputia_handy_runtime::voice_protocol::VoiceCommand;
+        let request = shared_prompt_request();
+        let (policy, context, _) = shared_prompt_privacy(&request, false).unwrap();
+        let decision = policy.decide(7, context);
+        assert!(decision.personalized_read);
+        assert!(!decision.learn && !decision.remote_use && !decision.capture);
+        assert!(shared_prompt_privacy(&request, true).is_none());
+        let mut stale = request.clone();
+        stale.policy_epoch = 8;
+        assert!(shared_prompt_privacy(&stale, false).is_none());
+        for (app, field) in [
+            (None, Some("field")),
+            (Some("com.apple.TextEdit"), None),
+            (Some("com.1password.1password"), Some("field")),
+        ] {
+            let mut denied = request.clone();
+            if let VoiceCommand::Start { target, .. } = &mut denied.command {
+                target.source_app = app.map(str::to_owned);
+                target.field_id = field.map(str::to_owned);
+            }
+            assert!(shared_prompt_privacy(&denied, false).is_none());
+        }
+        let mut stop = request;
+        stop.command = VoiceCommand::Stop;
+        assert!(shared_prompt_privacy(&stop, false).is_none());
+    }
+
+    #[test]
+    fn shared_native_prompt_requires_both_session_versions() {
+        let terms = VoiceTermsVersion {
+            policy_epoch: 7,
+            learning_generation: 3,
+        };
+        for (epoch, generation, expected) in [(7, 3, true), (8, 3, false), (7, 4, false)] {
+            let snapshot = TermSnapshot {
+                policy_epoch: epoch,
+                learning_generation: generation,
+                terms: vec![],
+            };
+            assert_eq!(shared_prompt_version_matches(&snapshot, &terms), expected);
+        }
+    }
+
+    #[test]
+    fn shared_native_prompt_expires_before_native_dispatch() {
+        assert!(shared_prompt_lease_valid(
+            Duration::from_millis(1999),
+            false,
+            true
+        ));
+        assert!(!shared_prompt_lease_valid(
+            Duration::from_secs(2),
+            false,
+            true
+        ));
+        assert!(!shared_prompt_lease_valid(Duration::ZERO, true, true));
+        assert!(!shared_prompt_lease_valid(Duration::ZERO, false, false));
+    }
+
+    #[test]
+    fn shared_native_prompt_is_not_a_forced_correction_dictionary() {
+        let settings = AppSettings {
+            custom_words: vec![],
+            ..Default::default()
+        };
+        let native_prompt_words = vec!["Inputia".to_owned()];
+        let family = native_prompt_extension(&native_prompt_words, true, None).unwrap();
+        let RunExtension::Whisper(options) = family else {
+            panic!("expected whisper prompt")
+        };
+        assert_eq!(options.initial_prompt.as_deref(), Some("Inputia"));
+        let corrected = post_process_transcription_text(
+            "Inputa".into(),
+            &settings,
+            false,
+            &OutputLanguageEvidence::ModelConstrained("en".into()),
+            &languages(&["en"]),
+        );
+        assert_eq!(corrected, "Inputa");
+        assert!(settings.custom_words.is_empty());
+        assert!(native_prompt_extension(&native_prompt_words, false, None).is_none());
+        let plan = QwenContextPlan::from_custom_words(&native_prompt_words);
+        assert!(native_prompt_extension(&native_prompt_words, false, Some(&plan)).is_some());
     }
 
     #[test]
