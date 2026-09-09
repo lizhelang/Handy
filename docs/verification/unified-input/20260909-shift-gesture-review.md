@@ -25,6 +25,8 @@ swiftc macos/InputiaInputMethod/Sources/InputiaInputMethod/InputiaShortcutClassi
 
 安装与实际实验补记：
 
+- **最新用户实体键盘确认**：`Shift+/` 能输出 `?`，且中文模式保持。该组合键场景已通过用户原生确认，取代下方自动送键实验对该场景的未决结论。不据此推断任意松开顺序、独立 Shift、焦点变化或所有应用均通过；无需再次请求用户重复此项。
+
 - 实现提交 `9f4651ef` 已安装至用户级测试包，输入法实际 PID 26157 经 running-identity 校验为 `6f9f115aa6e93b40548cb40d9f67b5411784f33c`，不是旧进程。配对重签成功；测试控制中心由 PID 87379 正常退出后重启为 PID 26383，未替换控制中心二进制。
 - TIS 当前确认 `Inputia (Test)` / `.UnifiedCandidate.Hans`。日常输入法包和 Handy.app 未修改。
 - CUA 在 TextEdit 新建空白文稿进行测试：`shift+slash` 输出 `?`，随后 `n`、空格得到 `?n `，没有足够证据证明中文候选状态。因此本轮原生验收为**未通过验证**，不能以问号已出现声称组合键修复完成。
