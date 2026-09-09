@@ -25,6 +25,12 @@ swiftc macos/InputiaInputMethod/Sources/InputiaInputMethod/InputiaShortcutClassi
 
 安装与实际实验补记：
 
+- **56 实际修复**：55 的 17:28:57（悉尼时间）记录显示首次独立 Shift `held=false` 并成功 local toggle；17:28:58 起多次 Shift `configured=true blocked=false held=true`，资格被残留普通键状态阻止。原始无正文阶段日志存于备份目录 `phase-events-55.log`。这比“收不到本地事件”的旧假设更具体。
+- 56 在新的本地 Shift 周期开始，仅对已经记录的普通键使用当前系统键状态剔除已松开的残留；不依赖时间阈值，不改变本周期组合参与的 sticky 否决。参考本机 CoreGraphics CGEventSource.h 123–128 和 [Apple keyState 文档](https://developer.apple.com/documentation/coregraphics/cgeventsource/keystate%28_%3Akey%3A%29)。不扫描用户文本/窗口或数据库。
+- 新增回归覆盖漏 keyUp 后恢复、真正按住的键仍拒绝切换；全部快捷键自检通过。独立审查批准限定56修复进入原生实验，未发现可证实的重复输出、焦点越界或组合松开顺序新问题。
+- 完整56构建签名成功并已安装。实际 PID 51881、CDHash `38aa6971277efd13203d5506eb549bd93f5e82ed` 校验通过；配对已更新，测试控制中心PID 51873。旧55包和配对保留在同一备份根。无日常安装/用户数据改动。
+- 正等待实体“正常输入后 Shift 双向切换”以及组合后的独立 Shift 验证；不能从状态机自检或安装成功断言用户回归已经消失。
+
 - **后续回归**：用户通过侧聊报告单独 Shift 无法切换中英文，优先级高于先前单测。问号场景的确认不撤销，但整体 Shift 功能未通过。
 - 为区分本地事件缺失与会话取消，候选 54 仅增加 OSLog 手势阶段/布尔诊断，没有改变判定行为。已安装，实际 PID 42337/CDHash `aec88c03078c84dba09a8499e78ebf9bbe0cbe45` 校验通过；测试控制中心已重启加载新配对。备份及旧配对在 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/shift-diagnostic-20260909.1fENsU`。
 - 诊断子系统 `com.inputia.shift` 只记录 global/local flags、toggle 和 session-reset 原因，不记录普通按键、正文、窗口标题；未启用旧 INPUTIA_DEBUG_EVENTS 日志。

@@ -482,6 +482,13 @@ final class InputiaInputController: IMKInputController {
     reloadSettingsIfDue(client: client)
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     let shortcut = bridge.inputModeToggleShortcut()
+    if modifiers.contains(.shift), !shiftInputModeGesture.hasShiftBaselineForDebug {
+      // IMK/全局监听可能漏收 keyUp。只在新 Shift 周期核对已记录键的当前状态，
+      // 不扫描文本/窗口、不使用时间阈值；本周期曾参与的组合仍保持否决。
+      shiftInputModeGesture.reconcileHeldKeys {
+        CGEventSource.keyState(.combinedSessionState, key: $0)
+      }
+    }
     shiftDiagnostic.notice("phase=local-flags shift=\(modifiers.contains(.shift)) armed=\(self.shiftInputModeGesture.isArmedForDebug) held=\(self.shiftInputModeGesture.hasHeldKeysForDebug) baseline=\(self.shiftInputModeGesture.hasShiftBaselineForDebug) configured=\(shortcut == "shift") blocked=\(!modifiers.intersection([.control, .option, .command]).isEmpty)")
 
     inputiaDebugLog(

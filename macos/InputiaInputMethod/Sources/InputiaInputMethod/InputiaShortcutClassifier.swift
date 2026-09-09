@@ -26,6 +26,10 @@ struct InputiaShortcutClassifier {
     var hasHeldKeysForDebug: Bool { !activeNonModifierKeyCodes.isEmpty }
     var hasShiftBaselineForDebug: Bool { lastModifiers.contains(.shift) }
 
+    mutating func reconcileHeldKeys(isKeyDown: (UInt16) -> Bool) {
+      activeNonModifierKeyCodes = Set(activeNonModifierKeyCodes.filter(isKeyDown))
+    }
+
     mutating func cancelPendingGesture() {
       // 取消资格不等于物理松开。保留状态，避免另一路同一按下事件重新武装。
       armed = false
@@ -296,7 +300,21 @@ struct InputiaShortcutClassifier {
       shortcut: "shift", modifiers: [], allowToggle: true
     ) == .none
 
+    var missingRelease = ShiftInputModeGestureState()
+    missingRelease.observeLocalKeyDown(keyCode: keyCodeV, modifiers: [])
+    missingRelease.reconcileHeldKeys { _ in false }
+    _ = missingRelease.observeFlagsChanged(shortcut: "shift", modifiers: [.shift], allowToggle: true)
+    let physicalReleaseRecovers = missingRelease.observeFlagsChanged(shortcut: "shift", modifiers: [], allowToggle: true) == .toggle
+    var realHold = ShiftInputModeGestureState()
+    realHold.observeLocalKeyDown(keyCode: keyCodeV, modifiers: [])
+    realHold.reconcileHeldKeys { _ in true }
+    _ = realHold.observeFlagsChanged(shortcut: "shift", modifiers: [.shift], allowToggle: true)
+    realHold.observeLocalKeyUp(keyCode: keyCodeV)
+    let physicalHoldStillRejects = realHold.observeFlagsChanged(shortcut: "shift", modifiers: [], allowToggle: true) == .none
+
     return [
+      ("shiftGesturePhysicalReleaseRecoversMissingKeyUp", physicalReleaseRecovers),
+      ("shiftGesturePhysicalHoldStillRejectsAfterEarlierKeyUp", physicalHoldStillRejects),
       ("shiftGestureNewSessionRecoversMissingKeyUp", newSessionRecoversFromMissingKeyUp),
       ("shiftGestureNewSessionRejectsAlreadyHeldShift", newSessionRejectsAlreadyHeldShift),
       ("shiftGestureDelayedGlobalCannotCreateSecondToggle", delayedGlobalCannotCreateSecondToggle),
