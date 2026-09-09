@@ -80,6 +80,35 @@ process_pids() {
   /usr/bin/pgrep -x InputiaInputMethod 2>/dev/null || true
 }
 
+# 只读安装诊断：校验真实运行对象，不信任 argv 或把磁盘签名当运行签名。
+# 这不代替业务连接中的 audit-token 认证，也不会重启任何进程。
+verified_running_cdhash() {
+  local expected="$1" pid="$2" information identifier hash requirement
+  [[ "$expected" == /* && "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  /usr/bin/codesign --verify --strict "$expected" >/dev/null 2>&1 || return 1
+  information="$(/usr/bin/codesign -dv --verbose=4 "$expected" 2>&1)" || return 1
+  identifier="$(printf '%s\n' "$information" | /usr/bin/awk -F= '/^Identifier=/{print $2}')"
+  hash="$(printf '%s\n' "$information" | /usr/bin/awk -F= '/^CDHash=/{print $2}')"
+  [[ "$identifier" =~ ^[A-Za-z0-9._-]+$ && "$hash" =~ ^[a-f0-9]{40}$ ]] || return 1
+  requirement="=identifier \"$identifier\" and cdhash H\"$hash\""
+  /usr/bin/codesign --verify --strict -R "$requirement" "$pid" >/dev/null 2>&1 || return 1
+  printf '%s\n' "$hash"
+}
+
+# 候选流程可仅检查已知安装和 PID，不运行日常版的 TIS/安装检查。
+if [[ "${1:-}" == "--running-identity" ]]; then
+  if [[ "$#" != 3 ]]; then
+    echo 'runningIdentityPassed=false reason=invalid-arguments'
+    exit 2
+  fi
+  if verified_hash="$(verified_running_cdhash "$2" "$3")"; then
+    echo "runningIdentityPassed=true pid=$3 cdhash=$verified_hash"
+    exit 0
+  fi
+  echo 'runningIdentityPassed=false reason=missing-invalid-or-mismatched-process'
+  exit 1
+fi
+
 append_reason() {
   local reasons="$1"
   local reason="$2"
@@ -623,6 +652,7 @@ echo "installCheckTISDuplicateMatches=$tis_duplicate_matches"
 section "running host"
 running_matches_build=false
 running_found=false
+running_target_invalid=false
 while IFS= read -r pid; do
   [[ -z "$pid" ]] && continue
   running_found=true
@@ -630,16 +660,24 @@ while IFS= read -r pid; do
   echo "runningPID=$pid"
   echo "runningCommand=$command"
   if [[ "$command" == "$SYSTEM_APP/Contents/MacOS/InputiaInputMethod"* ]]; then
-    running_version="$(app_version "$SYSTEM_APP")"
-    running_cdhash="$(app_cdhash "$SYSTEM_APP")"
+    running_cdhash="$(verified_running_cdhash "$SYSTEM_APP" "$pid" || true)"
     echo "runningApp=$SYSTEM_APP"
-    echo "runningVersion=${running_version:-unknown}"
+    if [[ -n "$running_cdhash" ]]; then
+      echo "runningVersion=$(app_version "$SYSTEM_APP")"
+    else
+      echo "runningVersion=unverified"
+      running_target_invalid=true
+    fi
     echo "runningCDHash=${running_cdhash:-unknown}"
     if [[ -n "${build_cdhash:-}" && "$running_cdhash" == "$build_cdhash" ]]; then
       running_matches_build=true
     fi
   fi
 done <<<"$(process_pids)"
+# 不能因同时存在一个新进程而忽略仍占着同一安装入口的旧进程。
+if [[ "$running_target_invalid" == true ]]; then
+  running_matches_build=false
+fi
 echo "runningHostFound=$running_found"
 echo "runningMatchesBuild=$running_matches_build"
 
