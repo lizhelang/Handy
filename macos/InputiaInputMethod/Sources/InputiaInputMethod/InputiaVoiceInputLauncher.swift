@@ -22,7 +22,247 @@ enum InputiaVoiceInputLauncher {
   private static var unifiedConnection: InputiaVoiceServiceConnection?
   private static var unifiedSession: String?
   private static var lastUnifiedPhase: String?
+  private static var shortcutTerms: InputiaVoiceTermsVersion?
+  private static var shortcutTarget: InputiaVoiceTarget?
+  private static var shortcutServer: String?
+  private static var shortcutSession: String?
+  private static var shortcutDeliver: ((InputiaVoiceDelivery, @escaping (String) -> Void) -> Void)?
+  private static var shortcutStatus: ((String) -> Void)?
+  private static let shortcutQueue = DispatchQueue(label: "Inputia.shortcut-control")
+  private static var shortcutConnection: InputiaVoiceServiceConnection?
+  private static var shortcutLease: InputiaHostShortcutLease?
+  private static var shortcutLeaseEpoch: UInt64 = 0
+  private static var shortcutTimer: DispatchSourceTimer?
+  private static var shortcutCycleBusy = false
+  private static var shortcutRetryAfter: TimeInterval = 0
+  private static var shortcutHasActiveOwner = false
   private struct Endpoint: Decodable { let profile_id: String; let protocol_major: Int; let server_instance: String; let socket_path: String }
+
+  /// provider 和新会话复核在主线程；定时器、认证、数据库和 socket 均在后台。
+  static func startShortcutListening(
+    targetProvider: @escaping () -> InputiaVoiceTarget?,
+    acceptStart: @escaping (InputiaHostShortcutTrigger, @escaping (Bool) -> Void) -> Void
+  ) {
+    shortcutQueue.async {
+      guard shortcutTimer == nil else { return }
+      let timer = DispatchSource.makeTimerSource(queue: shortcutQueue)
+      timer.schedule(deadline: .now(), repeating: .milliseconds(200), leeway: .milliseconds(30))
+      timer.setEventHandler {
+        guard !shortcutCycleBusy, ProcessInfo.processInfo.systemUptime >= shortcutRetryAfter else { return }
+        shortcutCycleBusy = true
+        DispatchQueue.main.async {
+          let target = targetProvider()
+          shortcutQueue.async {
+            do {
+              if target == nil && !shortcutHasActiveOwner {
+                shortcutConnection?.close()
+                shortcutConnection = nil
+                shortcutLease = nil
+                shortcutCycleBusy = false
+                return
+              }
+              if shortcutConnection == nil {
+                // 没有可注册目标时不主动建立无用连接；已有连接仍可接收停止。
+                guard target != nil || shortcutHasActiveOwner else { shortcutCycleBusy = false; return }
+                shortcutConnection = try openAuthenticatedConnection()
+              }
+              guard let connection = shortcutConnection else { throw InputiaVoiceServiceError.handshake }
+              if let target {
+                let newTarget = shortcutLease?.target != target
+                if shortcutLease?.target != target {
+                  guard shortcutLeaseEpoch < UInt64.max else { throw InputiaVoiceServiceError.policy }
+                  shortcutLeaseEpoch += 1
+                  let now = UInt64(max(0, Date().timeIntervalSince1970 * 1000))
+                  shortcutLease = InputiaHostShortcutLease(lease_id: UUID().uuidString,
+                    lease_epoch: shortcutLeaseEpoch, target: target,
+                    issued_at_unix_ms: now, expires_at_unix_ms: now + 1000)
+                }
+                if let previous = shortcutLease {
+                  let now = UInt64(max(0, Date().timeIntervalSince1970 * 1000))
+                  let renewed = InputiaHostShortcutLease(lease_id: previous.lease_id,
+                    lease_epoch: previous.lease_epoch, target: previous.target,
+                    issued_at_unix_ms: now, expires_at_unix_ms: now + 1000)
+                  try connection.registerShortcutLease(renewed)
+                  if newTarget { NSLog("inputia_shortcut_target_registered field_observable=%@", target.field_id == nil ? "false" : "true") }
+                  shortcutLease = renewed
+                }
+              }
+              guard let trigger = try connection.pollShortcut(maxWaitMs: 50) else {
+                shortcutCycleBusy = false; return
+              }
+              let finished: (Bool) -> Void = { accepted in
+                shortcutQueue.async {
+                  if trigger.starts_session && !accepted {
+                    do {
+                      if try connection.rejectUnconsumedShortcut(trigger.trigger_id) {
+                        voiceQueue.async {
+                          guard shortcutSession == trigger.session_id, shortcutServer == trigger.server_instance else { return }
+                          clearShortcutOwnership(sessionID: trigger.session_id)
+                        }
+                      }
+                    } catch {
+                      // 撤销回执未知不宣称未执行；保持原操作身份，绝不换路开始。
+                      NSLog("inputia_shortcut_rejection_unconfirmed automatic_replay=false")
+                    }
+                  }
+                  shortcutCycleBusy = false
+                }
+              }
+              if trigger.starts_session {
+                guard let lease = shortcutLease, trigger.lease_id == lease.lease_id,
+                  trigger.lease_epoch == lease.lease_epoch, trigger.target == lease.target,
+                  target == lease.target else { finished(false); return }
+                DispatchQueue.main.async { acceptStart(trigger, finished) }
+              } else {
+                // 已有会话的停止不依赖当前光标；真正使用的是首次开始时保存的回调。
+                sendUnifiedShortcutTrigger(trigger, deliver: { _, ack in ack("pending_target") },
+                  status: { _ in }, completion: finished)
+              }
+            } catch {
+              shortcutConnection?.close()
+              shortcutConnection = nil
+              shortcutLease = nil
+              shortcutCycleBusy = false
+              shortcutRetryAfter = ProcessInfo.processInfo.systemUptime + 1
+              // 重连仅恢复监听，不重放任何已经取出的触发。
+              NSLog("inputia_shortcut_listener_unavailable automatic_trigger_replay=false")
+            }
+          }
+        }
+      }
+      shortcutTimer = timer
+      timer.resume()
+    }
+  }
+
+  private static func openAuthenticatedConnection() throws -> InputiaVoiceServiceConnection {
+    let profile = InputiaProfile.current
+    try profile.validateCandidatePaths()
+    let endpoint = try JSONDecoder().decode(Endpoint.self,
+      from: Data(contentsOf: profile.handyRoot.appendingPathComponent("integration-endpoint.json")))
+    guard endpoint.protocol_major == 1,
+      endpoint.profile_id == "unified-candidate:\(profile.runID ?? "")" else { throw InputiaVoiceServiceError.profile }
+    let manifest = try Data(contentsOf: profile.root.deletingLastPathComponent().appendingPathComponent("pair-manifest.json"))
+    guard manifest.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
+    let state = try InputiaVoiceSharedState(profile: profile)
+    let connection = try InputiaVoiceServiceConnection.connect(endpoint: endpoint.socket_path,
+      signedManifest: manifest, trust: InputiaEmbeddedPairTrust.trust, profile: profile,
+      previousEpoch: state.lastVersion().policy_epoch)
+    do {
+      guard connection.server.instance_id == endpoint.server_instance else { throw InputiaVoiceServiceError.handshake }
+      try connection.synchronizePolicy(using: state)
+      return connection
+    } catch { connection.close(); throw error }
+  }
+
+  private static func clearShortcutOwnership(sessionID: String) {
+    guard shortcutSession == sessionID else { return }
+    if unifiedSession == sessionID {
+      unifiedConnection?.close()
+      unifiedConnection = nil
+      unifiedSession = nil
+    }
+    shortcutSession = nil
+    shortcutTarget = nil
+    shortcutServer = nil
+    shortcutTerms = nil
+    shortcutDeliver = nil
+    shortcutStatus = nil
+    shortcutQueue.async { shortcutHasActiveOwner = false }
+  }
+
+  /// 新会话由调用方先在主线程复核预备目标；后续停止边沿不重新捕获当前输入框。
+  static func sendUnifiedShortcutTrigger(_ trigger: InputiaHostShortcutTrigger,
+    deliver: @escaping (InputiaVoiceDelivery, @escaping (String) -> Void) -> Void,
+    status: @escaping (String) -> Void,
+    completion: @escaping (Bool) -> Void) {
+    voiceQueue.async {
+      var touchedConnection = false
+      var resumePolling = trigger.starts_session
+      do {
+        if trigger.starts_session {
+          guard unifiedSession == nil else { throw InputiaVoiceServiceError.policy }
+          let connection = try openAuthenticatedConnection()
+          if let previous = shortcutSession {
+            if shortcutServer == connection.server.instance_id {
+              let old = try connection.request(sessionID: previous, requestID: UUID().uuidString, command: .status)
+              guard old.view.map({ !["preparing", "recording", "processing"].contains($0.phase) }) == true else {
+                connection.close(); throw InputiaVoiceServiceError.policy
+              }
+            }
+            clearShortcutOwnership(sessionID: previous)
+          }
+          guard connection.server.instance_id == trigger.server_instance,
+            let terms = connection.locallyAppliedVersion, terms.policy_epoch == trigger.policy_epoch else {
+            connection.close(); throw InputiaVoiceServiceError.policy
+          }
+          // 写入前保留操作归属；回执未知后只查询事实，不重放新建会话。
+          unifiedSession = trigger.session_id
+          unifiedConnection = connection
+          touchedConnection = true
+          shortcutSession = trigger.session_id
+          shortcutQueue.async { shortcutHasActiveOwner = true }
+          shortcutDeliver = deliver
+          shortcutStatus = status
+          shortcutTerms = terms
+          shortcutTarget = trigger.target
+          shortcutServer = trigger.server_instance
+          lastUnifiedPhase = nil
+        } else {
+          guard shortcutSession == trigger.session_id,
+            unifiedSession == nil || unifiedSession == trigger.session_id, shortcutTarget == trigger.target,
+            shortcutServer == trigger.server_instance else { throw InputiaVoiceServiceError.policy }
+          if unifiedConnection == nil {
+            let recovered = try openAuthenticatedConnection()
+            guard recovered.server.instance_id == trigger.server_instance else {
+              recovered.close(); throw InputiaVoiceServiceError.handshake
+            }
+            let observed = try recovered.request(sessionID: trigger.session_id,
+              requestID: UUID().uuidString, command: .status)
+            guard observed.status == "session" else { recovered.close(); throw InputiaVoiceServiceError.handshake }
+            guard let view = observed.view, ["preparing", "recording", "processing"].contains(view.phase) else {
+              recovered.close()
+              clearShortcutOwnership(sessionID: trigger.session_id)
+              completion(true)
+              return
+            }
+            unifiedConnection = recovered
+            unifiedSession = trigger.session_id
+            resumePolling = true
+          }
+          touchedConnection = true
+        }
+        guard let connection = unifiedConnection, let terms = shortcutTerms else {
+          throw InputiaVoiceServiceError.policy
+        }
+        let reply = try connection.request(sessionID: trigger.session_id, requestID: trigger.trigger_id,
+          command: .hostShortcut(target: trigger.target,
+            postProcess: trigger.binding_id == "transcribe_with_post_process", terms: terms, edge: trigger.edge))
+        guard reply.status == "session" else {
+          if trigger.starts_session && reply.code != "unknown" {
+            clearShortcutOwnership(sessionID: trigger.session_id)
+          } else if let observed = try? connection.request(sessionID: trigger.session_id,
+              requestID: UUID().uuidString, command: .status),
+              let view = observed.view, !["preparing", "recording", "processing"].contains(view.phase) {
+            clearShortcutOwnership(sessionID: trigger.session_id)
+          }
+          throw InputiaVoiceServiceError.handshake
+        }
+        if resumePolling, let originalDeliver = shortcutDeliver, let originalStatus = shortcutStatus {
+          pollUnifiedVoice(connection: connection, session: trigger.session_id, target: trigger.target,
+            deliver: originalDeliver, completion: originalStatus)
+        }
+        completion(true)
+      } catch {
+        if touchedConnection {
+          unifiedConnection?.close()
+          unifiedConnection = nil
+        }
+        DispatchQueue.main.async { status("快捷键会话结果未确认；未重放，也未改用其他插入方式。") }
+        completion(false)
+      }
+    }
+  }
 
   /// 统一菜单与语音共用串行通讯队列；不在系统菜单或按键回调等待服务。
   static func menuAction(kind: String, modelID: String? = nil, completion: @escaping (InputiaMenuReply?) -> Void) {
@@ -116,7 +356,7 @@ enum InputiaVoiceInputLauncher {
     deliver: @escaping (InputiaVoiceDelivery, @escaping (String) -> Void) -> Void,
     completion: @escaping (String) -> Void) {
     voiceQueue.asyncAfter(deadline: .now() + 0.25) {
-      guard unifiedSession == session else { return }
+      guard unifiedSession == session, unifiedConnection === connection else { return }
       do {
         let reply = try connection.request(sessionID: session, requestID: UUID().uuidString, command: .status)
         guard let view = reply.view, reply.status == "session" else { throw InputiaVoiceServiceError.handshake }
@@ -131,6 +371,7 @@ enum InputiaVoiceInputLauncher {
           // 只有唯一fetch成功才会取得正文；失联/重复请求绝不换路或再次fetch。
           guard let delivery = try connection.fetchDelivery(view: view, target: target) else {
             connection.close(); unifiedConnection = nil; unifiedSession = nil
+            clearShortcutOwnership(sessionID: session)
             DispatchQueue.main.async { completion("结果已有输出状态，未重复插入。请在 Inputia 查看历史。") }
             return
           }
@@ -149,6 +390,7 @@ enum InputiaVoiceInputLauncher {
                   DispatchQueue.main.async { completion("插入回执未知，未重放。请核对输入框和历史。") }
                 }
                 connection.close(); unifiedConnection = nil; unifiedSession = nil
+                clearShortcutOwnership(sessionID: session)
               }
             }
             guard ProcessInfo.processInfo.systemUptime < delivery.dispatchDeadline else {
@@ -159,6 +401,7 @@ enum InputiaVoiceInputLauncher {
         } else {
           NSLog("inputia_unified_voice_session_terminal phase=%@", view.phase)
           connection.close(); unifiedConnection = nil; unifiedSession = nil
+          clearShortcutOwnership(sessionID: session)
           DispatchQueue.main.async { completion(view.phase == "pending_target" ? "转写已保存到历史记录，结果待插入。" : "语音会话已结束。") }
         }
       } catch {

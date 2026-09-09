@@ -129,8 +129,9 @@ struct InputiaVoiceTarget: Codable, Equatable {
 
 enum InputiaVoiceCommand: Encodable {
   case start(target: InputiaVoiceTarget, postProcess: Bool, terms: InputiaVoiceTermsVersion)
+  case hostShortcut(target: InputiaVoiceTarget, postProcess: Bool, terms: InputiaVoiceTermsVersion, edge: InputiaHostShortcutEdge)
   case stop, cancel, status
-  private enum Keys: String, CodingKey { case kind, target, post_process, terms }
+  private enum Keys: String, CodingKey { case kind, target, post_process, terms, edge }
   func encode(to encoder: Encoder) throws {
     var values = encoder.container(keyedBy: Keys.self)
     switch self {
@@ -139,11 +140,92 @@ enum InputiaVoiceCommand: Encodable {
       try values.encode(target, forKey: .target)
       try values.encode(postProcess, forKey: .post_process)
       try values.encode(terms, forKey: .terms)
+    case .hostShortcut(let target, let postProcess, let terms, let edge):
+      try values.encode("host_shortcut", forKey: .kind)
+      try values.encode(target, forKey: .target)
+      try values.encode(postProcess, forKey: .post_process)
+      try values.encode(terms, forKey: .terms)
+      try values.encode(edge, forKey: .edge)
     case .stop: try values.encode("stop", forKey: .kind)
     case .cancel: try values.encode("cancel", forKey: .kind)
     case .status: try values.encode("status", forKey: .kind)
     }
   }
+}
+
+enum InputiaVoiceShortcutActivation: String, Codable {
+  case toggle
+  case pushToTalk = "push_to_talk"
+  case holdOrToggle = "hold_or_toggle"
+}
+
+struct InputiaHostShortcutEdge: Codable {
+  let trigger_id: String
+  let starts_session: Bool
+  let lease_id: String
+  let lease_epoch: UInt64
+  let binding_id: String
+  let hotkey_string: String
+  let is_pressed: Bool
+  let activation: InputiaVoiceShortcutActivation
+  let pressed_at_unix_ms: UInt64
+  let hold_threshold_ms: UInt64
+}
+
+struct InputiaHostShortcutLease: Codable {
+  let lease_id: String
+  let lease_epoch: UInt64
+  let target: InputiaVoiceTarget
+  let issued_at_unix_ms: UInt64
+  let expires_at_unix_ms: UInt64
+}
+
+struct InputiaHostShortcutTrigger: Decodable {
+  let trigger_id: String
+  let session_id: String
+  let starts_session: Bool
+  let lease_id: String
+  let lease_epoch: UInt64
+  let target: InputiaVoiceTarget
+  let binding_id: String
+  let hotkey_string: String
+  let is_pressed: Bool
+  let activation: InputiaVoiceShortcutActivation
+  let pressed_at_unix_ms: UInt64
+  let hold_threshold_ms: UInt64
+  let server_instance: String
+  let client_instance: String
+  let policy_epoch: UInt64
+
+  var edge: InputiaHostShortcutEdge {
+    InputiaHostShortcutEdge(trigger_id: trigger_id, starts_session: starts_session, lease_id: lease_id, lease_epoch: lease_epoch,
+      binding_id: binding_id, hotkey_string: hotkey_string, is_pressed: is_pressed,
+      activation: activation, pressed_at_unix_ms: pressed_at_unix_ms, hold_threshold_ms: hold_threshold_ms)
+  }
+}
+
+private struct InputiaHostShortcutCommand: Encodable {
+  let kind: String
+  var lease: InputiaHostShortcutLease? = nil
+  var max_wait_ms: UInt64? = nil
+  var lease_id: String? = nil
+  var lease_epoch: UInt64? = nil
+  var trigger_id: String? = nil
+}
+private struct InputiaHostShortcutRequest: Encodable {
+  let request_id: String
+  let client_instance: String
+  let server_instance: String
+  let policy_epoch: UInt64
+  let shortcut: InputiaHostShortcutCommand
+}
+private struct InputiaHostShortcutReply: Decodable {
+  let status: String
+  let request_id: String
+  let lease_id: String?
+  let lease_epoch: UInt64?
+  let trigger: InputiaHostShortcutTrigger?
+  let code: String?
 }
 struct InputiaVoiceRequest: Encodable {
   let request_id: String
@@ -272,6 +354,60 @@ final class InputiaVoiceServiceConnection {
 
   func close() { locallyAppliedVersion = nil; connection.close() }
 
+  func registerShortcutLease(_ lease: InputiaHostShortcutLease) throws {
+    guard lease.target.host_instance == Self.processInstance else { throw InputiaVoiceServiceError.handshake }
+    let reply = try shortcutRequest(InputiaHostShortcutCommand(kind: "register", lease: lease))
+    guard reply.status == "registered", reply.lease_id == lease.lease_id,
+      reply.lease_epoch == lease.lease_epoch else { close(); throw InputiaVoiceServiceError.handshake }
+  }
+
+  func pollShortcut(maxWaitMs: UInt64 = 250) throws -> InputiaHostShortcutTrigger? {
+    guard maxWaitMs <= 1000 else { throw InputiaVoiceServiceError.handshake }
+    let reply = try shortcutRequest(InputiaHostShortcutCommand(kind: "poll", max_wait_ms: maxWaitMs))
+    if reply.status == "empty", reply.trigger == nil { return nil }
+    guard reply.status == "trigger", let trigger = reply.trigger,
+      trigger.client_instance == Self.processInstance, trigger.server_instance == server.instance_id,
+      let applied = locallyAppliedVersion,
+      trigger.starts_session ? trigger.policy_epoch == applied.policy_epoch : trigger.policy_epoch <= applied.policy_epoch,
+      trigger.target.host_instance == Self.processInstance,
+      ["transcribe", "transcribe_with_post_process"].contains(trigger.binding_id),
+      !trigger.trigger_id.isEmpty, trigger.trigger_id.utf8.count <= 256,
+      !trigger.session_id.isEmpty, trigger.session_id.utf8.count <= 256,
+      trigger.hotkey_string.utf8.count <= 256
+    else { close(); throw InputiaVoiceServiceError.handshake }
+    return trigger
+  }
+
+  func retireShortcutLease(_ lease: InputiaHostShortcutLease) throws {
+    let reply = try shortcutRequest(InputiaHostShortcutCommand(kind: "retire", lease_id: lease.lease_id, lease_epoch: lease.lease_epoch))
+    guard reply.status == "retired" else { close(); throw InputiaVoiceServiceError.handshake }
+  }
+
+  func rejectUnconsumedShortcut(_ triggerID: String) throws -> Bool {
+    let reply = try shortcutRequest(InputiaHostShortcutCommand(kind: "reject", trigger_id: triggerID))
+    if reply.status == "retired" { return true }
+    guard reply.status == "rejected", reply.code != nil else { close(); throw InputiaVoiceServiceError.handshake }
+    return false
+  }
+
+  private func shortcutRequest(_ command: InputiaHostShortcutCommand) throws -> InputiaHostShortcutReply {
+    do {
+      guard !Thread.isMainThread, let version = locallyAppliedVersion else { throw InputiaVoiceServiceError.policy }
+      let requestID = UUID().uuidString
+      try connection.write(InputiaHostShortcutRequest(request_id: requestID,
+        client_instance: Self.processInstance, server_instance: server.instance_id,
+        policy_epoch: version.policy_epoch, shortcut: command))
+      let reply = try connection.read(InputiaHostShortcutReply.self)
+      guard reply.request_id == requestID else { throw InputiaVoiceServiceError.handshake }
+      if command.kind == "reject", reply.status == "rejected",
+        let code = reply.code, ["unauthorized", "unknown", "coordinator_rejected"].contains(code) {
+        return reply
+      }
+      guard reply.code == nil else { throw InputiaVoiceServiceError.handshake }
+      return reply
+    } catch { close(); throw error }
+  }
+
   func menuRequest(kind: String, modelID: String? = nil) throws -> InputiaMenuReply {
     do {
       guard !Thread.isMainThread, let version = locallyAppliedVersion,
@@ -365,14 +501,22 @@ final class InputiaVoiceServiceConnection {
             !requestID.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
         throw InputiaVoiceServiceError.handshake
       }
-      if case .start(let target, _, let terms) = command {
+      var requestEpoch = locallyAppliedVersion?.policy_epoch ?? server.policy_epoch
+      switch command {
+      case .start(let target, _, let terms):
         guard target.host_instance == Self.processInstance, terms == locallyAppliedVersion else {
           throw InputiaVoiceServiceError.policy
         }
+      case .hostShortcut(let target, _, let terms, let edge):
+        guard target.host_instance == Self.processInstance, let applied = locallyAppliedVersion,
+          edge.starts_session ? terms == applied : terms.policy_epoch <= applied.policy_epoch
+        else { throw InputiaVoiceServiceError.policy }
+        requestEpoch = terms.policy_epoch
+      default: break
       }
       let request = InputiaVoiceRequest(request_id: requestID, session_id: sessionID,
         server_instance: server.instance_id, client_instance: Self.processInstance,
-        policy_epoch: locallyAppliedVersion?.policy_epoch ?? server.policy_epoch, command: command)
+        policy_epoch: requestEpoch, command: command)
       try connection.write(request)
       let reply = try connection.read(InputiaVoiceReply.self)
       guard reply.request_id == requestID else { throw InputiaVoiceServiceError.handshake }

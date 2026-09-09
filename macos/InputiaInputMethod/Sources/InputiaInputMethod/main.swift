@@ -107,6 +107,7 @@ final class InputiaInputController: IMKInputController {
   private var voiceTargetCaptureNotice: String?
   private var voiceTargetSnapshots: [String: InputiaVoiceTargetSnapshot.Snapshot] = [:]
   private var attemptedVoiceOutputOperations = Set<String>()
+  private var shortcutPreparedSnapshot: InputiaVoiceTargetSnapshot.Snapshot?
   #endif
   private let bridge = InputiaRustBridge.makeDefault()
   private var latestCandidates: [String] = []
@@ -759,7 +760,39 @@ final class InputiaInputController: IMKInputController {
   }
 
   #if INPUTIA_PAIRED_BUILD
-  private func startUnifiedVoice(client: IMKTextInput?) {
+  func shortcutRegistrationTarget() -> InputiaVoiceTarget? {
+    guard InputiaHost.activeInputController === self, isCurrentInputiaSourceSelected(),
+      !IsSecureEventInputEnabled(), let client = client() else { return nil }
+    if let snapshot = shortcutPreparedSnapshot, snapshot.activationGeneration == voiceActivationGeneration,
+      snapshot.reusableForShortcut {
+      return snapshot.inputiaTarget
+    }
+    guard let target = prepareUnifiedVoiceTarget(client: client),
+      let snapshot = voiceTargetSnapshots.removeValue(forKey: target.target_id) else {
+      shortcutPreparedSnapshot = nil
+      return nil
+    }
+    shortcutPreparedSnapshot = snapshot
+    return target
+  }
+
+  func acceptUnifiedShortcut(_ trigger: InputiaHostShortcutTrigger, completion: @escaping (Bool) -> Void) {
+    guard trigger.starts_session, InputiaHost.activeInputController === self,
+      isCurrentInputiaSourceSelected(), let snapshot = shortcutPreparedSnapshot,
+      snapshot.inputiaTarget == trigger.target,
+      snapshot.isCurrentForShortcut(client: client(), controllerID: voiceControllerID,
+        activationGeneration: voiceActivationGeneration,
+        isSensitiveApp: { self.bridge.isSensitiveApp(bundleId: $0, windowTitle: $1) },
+        windowTitle: { self.activeWindowTitle(forBundleId: $0) })
+    else { completion(false); return }
+    voiceTargetSnapshots[snapshot.targetID] = snapshot
+    InputiaVoiceInputLauncher.sendUnifiedShortcutTrigger(trigger, deliver: { [weak self] delivery, ack in
+      guard let self else { ack("pending_target"); return }
+      self.deliverUnifiedVoice(delivery, acknowledge: ack)
+    }, status: { [weak self] message in self?.voiceStatus = message }, completion: completion)
+  }
+
+  private func prepareUnifiedVoiceTarget(client: IMKTextInput?) -> InputiaVoiceTarget? {
     var target: InputiaVoiceTarget?
     voiceTargetCaptureNotice = nil
     pruneVoiceTargetSnapshots()
@@ -799,6 +832,11 @@ final class InputiaInputController: IMKInputController {
         voiceStatus = notice
       }
     }
+    return target
+  }
+
+  private func startUnifiedVoice(client: IMKTextInput?) {
+    let target = prepareUnifiedVoiceTarget(client: client)
     InputiaVoiceInputLauncher.triggerUnifiedVoice(target: target, deliver: { [weak self] delivery, acknowledge in
       guard let self else {
         acknowledge("pending_target")
@@ -1610,6 +1648,14 @@ struct InputiaInputMethodApp {
       let resolvedBundleIdentifier = bundle.bundleIdentifier ?? fallbackBundleIdentifier
       server = IMKServer(name: resolvedConnectionName, bundleIdentifier: resolvedBundleIdentifier)
       InputiaHost.candidatePanel = InputiaCandidatePanel()
+      #if INPUTIA_PAIRED_BUILD
+      InputiaVoiceInputLauncher.startShortcutListening(targetProvider: {
+        InputiaHost.activeInputController?.shortcutRegistrationTarget()
+      }, acceptStart: { trigger, completion in
+        guard let controller = InputiaHost.activeInputController else { completion(false); return }
+        controller.acceptUnifiedShortcut(trigger, completion: completion)
+      })
+      #endif
       InputiaHost.modifierMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { event in
         InputiaHost.activeInputController?.handleGlobalFlagsChanged(event)
       }

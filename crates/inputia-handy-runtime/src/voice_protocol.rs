@@ -29,6 +29,29 @@ pub struct VoiceTermsVersion {
     pub learning_generation: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceShortcutActivation {
+    Toggle,
+    PushToTalk,
+    HoldOrToggle,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostShortcutEdge {
+    pub trigger_id: String,
+    pub starts_session: bool,
+    pub lease_id: String,
+    pub lease_epoch: u64,
+    pub binding_id: String,
+    pub hotkey_string: String,
+    pub is_pressed: bool,
+    pub activation: VoiceShortcutActivation,
+    pub pressed_at_unix_ms: u64,
+    pub hold_threshold_ms: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VoiceCommand {
@@ -36,6 +59,12 @@ pub enum VoiceCommand {
         target: HostTargetToken,
         post_process: bool,
         terms: VoiceTermsVersion,
+    },
+    HostShortcut {
+        target: HostTargetToken,
+        post_process: bool,
+        terms: VoiceTermsVersion,
+        edge: HostShortcutEdge,
     },
     Stop,
     Cancel,
@@ -80,7 +109,7 @@ impl VoiceRequest {
         if self.policy_epoch > peer.policy_epoch {
             return Err(ProtocolError::PolicyRefreshRequired);
         }
-        if let VoiceCommand::Start { target, terms, .. } = &self.command {
+        if let Some((target, terms)) = self.strict_start_identity() {
             if !peer.policy_applied
                 || self.policy_epoch != peer.policy_epoch
                 || terms.policy_epoch != peer.policy_epoch
@@ -96,8 +125,47 @@ impl VoiceRequest {
                 return Err(ProtocolError::InvalidEnvelope);
             }
         }
+        if let VoiceCommand::HostShortcut { target, edge, .. } = &self.command {
+            if target.host_instance != peer.client_instance
+                || !id(&target.target_id)
+                || !id(&target.controller_id)
+                || target.field_id.as_ref().is_some_and(|field| !id(field))
+                || target.source_app.as_ref().is_some_and(|app| !id(app))
+                || !id(&edge.trigger_id)
+                || !id(&edge.lease_id)
+                || edge.lease_epoch == 0
+                || !id(&edge.binding_id)
+                || !id(&edge.hotkey_string)
+            {
+                return Err(ProtocolError::InvalidEnvelope);
+            }
+        }
         // Stop/Cancel 可在策略撤销后关闭既有采集；session归属仍须由Coordinator核验。
         Ok(())
+    }
+
+    pub fn start_identity(&self) -> Option<(&HostTargetToken, &VoiceTermsVersion)> {
+        match &self.command {
+            VoiceCommand::Start { target, terms, .. }
+            | VoiceCommand::HostShortcut { target, terms, .. } => Some((target, terms)),
+            VoiceCommand::Stop | VoiceCommand::Cancel | VoiceCommand::Status => None,
+        }
+    }
+
+    pub fn strict_start_identity(&self) -> Option<(&HostTargetToken, &VoiceTermsVersion)> {
+        match &self.command {
+            VoiceCommand::Start { target, terms, .. } => Some((target, terms)),
+            VoiceCommand::HostShortcut {
+                target,
+                terms,
+                edge,
+                ..
+            } if edge.starts_session => Some((target, terms)),
+            VoiceCommand::HostShortcut { .. }
+            | VoiceCommand::Stop
+            | VoiceCommand::Cancel
+            | VoiceCommand::Status => None,
+        }
     }
 }
 
@@ -254,6 +322,133 @@ pub enum VoiceWireRequest {
     Control(VoiceRequest),
     Output(VoiceOutputRequest),
     Menu(MenuRequest),
+    HostShortcut(HostShortcutRequest),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostShortcutLease {
+    pub lease_id: String,
+    pub lease_epoch: u64,
+    pub target: HostTargetToken,
+    pub issued_at_unix_ms: u64,
+    pub expires_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HostShortcutCommand {
+    Register { lease: HostShortcutLease },
+    Poll { max_wait_ms: u64 },
+    Retire { lease_id: String, lease_epoch: u64 },
+    Reject { trigger_id: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostShortcutRequest {
+    pub request_id: String,
+    pub client_instance: String,
+    pub server_instance: String,
+    pub policy_epoch: u64,
+    pub shortcut: HostShortcutCommand,
+}
+
+impl HostShortcutRequest {
+    pub fn validate_for(&self, peer: &VoicePeer<'_>) -> Result<(), ProtocolError> {
+        if !id(&self.request_id)
+            || !id(&self.client_instance)
+            || !id(&self.server_instance)
+            || self.client_instance != peer.client_instance
+            || self.server_instance != peer.server_instance
+            || self.policy_epoch != peer.policy_epoch
+            || !peer.policy_applied
+        {
+            return Err(ProtocolError::InvalidEnvelope);
+        }
+        match &self.shortcut {
+            HostShortcutCommand::Register { lease } => {
+                if !id(&lease.lease_id)
+                    || lease.lease_epoch == 0
+                    || lease.issued_at_unix_ms >= lease.expires_at_unix_ms
+                    || lease.target.host_instance != peer.client_instance
+                    || !id(&lease.target.target_id)
+                    || !id(&lease.target.controller_id)
+                    || lease
+                        .target
+                        .field_id
+                        .as_ref()
+                        .is_some_and(|field| !id(field))
+                    || lease.target.source_app.as_ref().is_some_and(|app| !id(app))
+                {
+                    return Err(ProtocolError::InvalidEnvelope);
+                }
+            }
+            HostShortcutCommand::Poll { max_wait_ms } => {
+                if *max_wait_ms > 30_000 {
+                    return Err(ProtocolError::InvalidEnvelope);
+                }
+            }
+            HostShortcutCommand::Retire {
+                lease_id,
+                lease_epoch,
+            } => {
+                if !id(lease_id) || *lease_epoch == 0 {
+                    return Err(ProtocolError::InvalidEnvelope);
+                }
+            }
+            HostShortcutCommand::Reject { trigger_id } => {
+                if !id(trigger_id) {
+                    return Err(ProtocolError::InvalidEnvelope);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostShortcutTrigger {
+    pub trigger_id: String,
+    pub session_id: String,
+    pub starts_session: bool,
+    pub lease_id: String,
+    pub lease_epoch: u64,
+    pub target: HostTargetToken,
+    pub binding_id: String,
+    pub hotkey_string: String,
+    pub is_pressed: bool,
+    pub activation: VoiceShortcutActivation,
+    pub pressed_at_unix_ms: u64,
+    pub hold_threshold_ms: u64,
+    pub server_instance: String,
+    pub client_instance: String,
+    pub policy_epoch: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HostShortcutReply {
+    Registered {
+        request_id: String,
+        lease_id: String,
+        lease_epoch: u64,
+    },
+    Retired {
+        request_id: String,
+    },
+    Trigger {
+        request_id: String,
+        trigger: HostShortcutTrigger,
+    },
+    Empty {
+        request_id: String,
+    },
+    Rejected {
+        request_id: String,
+        code: VoiceReplyError,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

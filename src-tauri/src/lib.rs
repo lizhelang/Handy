@@ -13,6 +13,8 @@ mod custom_words_model;
 mod data_migration;
 mod dispatch_gate;
 mod helpers;
+#[cfg(target_os = "macos")]
+mod host_shortcut_broker;
 mod input;
 mod integration_output;
 mod llm_client;
@@ -249,6 +251,8 @@ fn initialize_core_logic(app_handle: &AppHandle) -> tauri::Result<()> {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
     app_handle.manage(clipboard_manager.clone());
+    #[cfg(target_os = "macos")]
+    app_handle.manage(host_shortcut_broker::HostShortcutBroker::default());
     app_handle.manage(Arc::new(
         managers::integration::IntegrationManager::new(app_handle)
             .map_err(|error| std::io::Error::other(error.to_string()))?,

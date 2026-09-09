@@ -79,6 +79,39 @@ enum InputiaVoiceTargetSnapshot {
       )
     }
 
+    var reusableForShortcut: Bool {
+      !observation.invalidated && ProcessInfo.processInfo.systemUptime - createdAt < 60
+    }
+
+    func isCurrentForShortcut(
+      client: IMKTextInput?, controllerID: String, activationGeneration: UInt64,
+      isSensitiveApp: (String, String?) -> Bool, windowTitle: (String) -> String?
+    ) -> Bool {
+      currentClient(client: client, controllerID: controllerID, activationGeneration: activationGeneration,
+        isSensitiveApp: isSensitiveApp, windowTitle: windowTitle) != nil
+    }
+
+    private func currentClient(
+      client: IMKTextInput?, controllerID currentControllerID: String,
+      activationGeneration currentActivationGeneration: UInt64,
+      isSensitiveApp: (String, String?) -> Bool, windowTitle: (String) -> String?
+    ) -> IMKTextInput? {
+      guard Thread.isMainThread,
+        currentControllerID == controllerID, currentActivationGeneration == activationGeneration,
+        !IsSecureEventInputEnabled(), let client, let originalClient = clientObject,
+        ObjectIdentifier(client as AnyObject) == clientIdentity,
+        ObjectIdentifier(originalClient) == clientIdentity, !observation.invalidated,
+        let sourceApp, client.bundleIdentifier() == sourceApp,
+        !isSensitiveApp(sourceApp, windowTitle(sourceApp)),
+        rangesMatch(captured: initialSelectedRange, current: validRange(client.selectedRange())),
+        rangesMatch(captured: initialAXSelectedRange, current: InputiaVoiceTargetSnapshot.selectedRange(from: focusedElement)),
+        let focus = InputiaVoiceTargetSnapshot.currentFocus(),
+        CFEqual(focus.application, focusedApplication), CFEqual(focus.element, focusedElement),
+        !InputiaVoiceTargetSnapshot.isSecureTextElement(focus.element)
+      else { return nil }
+      return client
+    }
+
     func dispatchDecision(
       delivery: InputiaVoiceDelivery,
       client: IMKTextInput?,
@@ -88,27 +121,10 @@ enum InputiaVoiceTargetSnapshot {
       isSensitiveApp: (String, String?) -> Bool,
       windowTitle: (String) -> String?
     ) -> DispatchDecision {
-      guard Thread.isMainThread,
-            delivery.target_id == targetID,
-            currentControllerID == controllerID,
-            currentActivationGeneration == activationGeneration,
-            latestComposing.isEmpty,
-            !IsSecureEventInputEnabled(),
-            let client,
-            let originalClient = clientObject,
-            ObjectIdentifier(client as AnyObject) == clientIdentity,
-            ObjectIdentifier(originalClient) == clientIdentity,
-            !observation.invalidated,
-            let sourceApp,
-            client.bundleIdentifier() == sourceApp,
-            !isSensitiveApp(sourceApp, windowTitle(sourceApp)),
-            rangesMatch(captured: initialSelectedRange, current: validRange(client.selectedRange())),
-            rangesMatch(captured: initialAXSelectedRange, current: InputiaVoiceTargetSnapshot.selectedRange(from: focusedElement)),
-            markedRangeIsClear(client.markedRange()),
-            let currentFocus = InputiaVoiceTargetSnapshot.currentFocus(),
-            CFEqual(currentFocus.application, focusedApplication),
-            CFEqual(currentFocus.element, focusedElement),
-            !InputiaVoiceTargetSnapshot.isSecureTextElement(currentFocus.element)
+      guard delivery.target_id == targetID, latestComposing.isEmpty,
+            let client = currentClient(client: client, controllerID: currentControllerID,
+              activationGeneration: currentActivationGeneration, isSensitiveApp: isSensitiveApp, windowTitle: windowTitle),
+            markedRangeIsClear(client.markedRange())
       else {
         return .pending
       }

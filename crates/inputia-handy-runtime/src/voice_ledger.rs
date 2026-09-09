@@ -128,7 +128,7 @@ pub fn get(conn: &Connection, session_id: &str) -> Result<Option<SessionRecord>>
         serde_json::from_str(&view).map_err(|_| VoiceLedgerError::Corrupt)?;
     if start.session_id != session_id
         || view.session_id != session_id
-        || !matches!(start.command, VoiceCommand::Start { .. })
+        || start.start_identity().is_none()
         || generation < 0
         || view.generation != generation as u64
         || digest(&start, true)? != hash
@@ -159,7 +159,10 @@ pub fn prepare(
     }
     let existing = get(conn, &request.session_id)?;
     match (&request.command, existing.as_ref()) {
-        (VoiceCommand::Start { target, .. }, None) => {
+        (_, None) if request.strict_start_identity().is_some() => {
+            let (target, _) = request
+                .strict_start_identity()
+                .ok_or(VoiceLedgerError::Invalid)?;
             let view = VoiceSessionView {
                 session_id: request.session_id.clone(),
                 generation: 0,
@@ -170,7 +173,7 @@ pub fn prepare(
             };
             conn.execute("INSERT INTO unified_voice_sessions(session_id,client_instance,server_instance,start_json,start_digest,view_json) VALUES(?1,?2,?3,?4,?5,?6)",params![request.session_id,request.client_instance,request.server_instance,encode(request)?,digest(request,true)?,encode(&view)?])?;
         }
-        (VoiceCommand::Start { .. }, Some(record)) => {
+        (_, Some(record)) if request.strict_start_identity().is_some() => {
             if digest(&record.start, true)? != digest(request, true)? {
                 return Err(VoiceLedgerError::Conflict);
             }
@@ -205,7 +208,7 @@ pub fn claim(conn: &Connection, request: &VoiceRequest) -> Result<bool> {
     {
         return Err(VoiceLedgerError::Conflict);
     }
-    if matches!(request.command, VoiceCommand::Start { .. }) {
+    if request.strict_start_identity().is_some() {
         let cancelled: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM unified_voice_cancellations WHERE session_id=?1)",
             [&request.session_id],

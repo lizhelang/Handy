@@ -11,6 +11,7 @@ use inputia_handy_runtime::{
 };
 use std::collections::HashMap;
 use std::os::{fd::AsFd, unix::net::UnixStream};
+use tauri::Manager;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionError {
@@ -139,6 +140,28 @@ impl VoiceConnection {
                     transport::write_frame(&mut self.stream, &reply)
                         .map_err(|_| ConnectionError::ControlFrame)
                 }
+                VoiceWireRequest::HostShortcut(request) => {
+                    use inputia_handy_runtime::voice_protocol::HostShortcutReply;
+                    let request_id = request.request_id.clone();
+                    let reply = match app.ok_or(DispatchError::Unauthorized).and_then(|app| {
+                        let broker = app
+                            .try_state::<crate::host_shortcut_broker::HostShortcutBroker>()
+                            .ok_or(DispatchError::Unauthorized)?;
+                        let epoch = history.policy_epoch().map_err(|_| DispatchError::Unknown)?;
+                        request
+                            .validate_for(&self.context.voice_peer(epoch))
+                            .map_err(|_| DispatchError::Unauthorized)?;
+                        Ok(broker.process_request(request))
+                    }) {
+                        Ok(reply) => reply,
+                        Err(error) => HostShortcutReply::Rejected {
+                            request_id,
+                            code: reply_error(error),
+                        },
+                    };
+                    transport::write_frame(&mut self.stream, &reply)
+                        .map_err(|_| ConnectionError::ControlFrame)
+                }
                 VoiceWireRequest::Control(request) => {
                     if request.request_id.is_empty()
                         || request.request_id.len() > 256
@@ -147,6 +170,29 @@ impl VoiceConnection {
                         return Err(ConnectionError::ControlFrame);
                     }
                     let request_id = request.request_id.clone();
+                    if matches!(
+                        request.command,
+                        inputia_handy_runtime::voice_protocol::VoiceCommand::HostShortcut { .. }
+                    ) {
+                        let authorized = app
+                            .and_then(|app| {
+                                app.try_state::<crate::host_shortcut_broker::HostShortcutBroker>()
+                            })
+                            .ok_or(DispatchError::Unauthorized)
+                            .and_then(|broker| {
+                                broker
+                                    .consume_voice_command(&request)
+                                    .map_err(|_| DispatchError::Unauthorized)
+                            });
+                        if let Err(error) = authorized {
+                            let reply = VoiceReply::Rejected {
+                                request_id,
+                                code: reply_error(error),
+                            };
+                            return transport::write_frame(&mut self.stream, &reply)
+                                .map_err(|_| ConnectionError::ControlFrame);
+                        }
+                    }
                     let reply = match VoiceDispatcher::new(history, coordinator)
                         .dispatch(&self.context, request)
                     {
@@ -393,6 +439,30 @@ fn reply_error(error: DispatchError) -> inputia_handy_runtime::voice_protocol::V
 }
 
 /// 接到实际候选App启动；日常构建不启用，缺少已签名配对材料时明确拒绝监听。
+struct VoiceClientConnectionGuard {
+    app: tauri::AppHandle,
+    client: String,
+}
+
+impl Drop for VoiceClientConnectionGuard {
+    fn drop(&mut self) {
+        use tauri::Manager;
+        let notify = || {
+            self.app
+                .state::<crate::TranscriptionCoordinator>()
+                .notify_voice_client_disconnected(&self.client);
+        };
+        if let Some(broker) = self
+            .app
+            .try_state::<crate::host_shortcut_broker::HostShortcutBroker>()
+        {
+            broker.note_disconnected_and_notify(&self.client, notify);
+        } else {
+            notify();
+        }
+    }
+}
+
 pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     use std::{
@@ -499,6 +569,11 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
                 policy_epoch: service.policy_epoch()?,
                 capabilities: vec![inputia_handy_runtime::voice_protocol::VOICE_CAPABILITY.into()],
             };
+            drop(manifest);
+            // Swift 认证 handle 有线程归属；只共享已验证的字节和静态构建信任。
+            let manifest_bytes = Arc::new(bytes);
+            let trust = Arc::new(trust);
+            let mut clients: Vec<std::thread::JoinHandle<()>> = Vec::new();
             while !stop.load(Ordering::Acquire) {
                 let stream = match listener.accept() {
                     Ok(stream) => stream,
@@ -508,27 +583,64 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
                     }
                     Err(_) => return Err("listener_accept".into()),
                 };
-                let mut connection =
-                    match VoiceConnection::accept(stream, &manifest, server.clone(), &service) {
+                clients.retain(|client| !client.is_finished());
+                if clients.len() >= 8 {
+                    drop(stream);
+                    log::warn!("unified_voice_connection_rejected stage=connection_limit");
+                    continue;
+                }
+                let app = app.clone();
+                let service = service.clone();
+                let stop = stop.clone();
+                let manifest_bytes = manifest_bytes.clone();
+                let trust = trust.clone();
+                let server = server.clone();
+                clients.push(std::thread::spawn(move || {
+                    let manifest = match PairManifest::load(&manifest_bytes, &trust) {
+                        Ok(manifest) => manifest,
+                        Err(_) => {
+                            log::warn!("unified_voice_connection_rejected stage=thread_manifest");
+                            return;
+                        }
+                    };
+                    let mut connection = match VoiceConnection::accept(
+                        stream,
+                        &manifest,
+                        server.clone(),
+                        &service,
+                    ) {
                         Ok(connection) => connection,
                         Err(error) => {
                             log::warn!("unified_voice_connection_rejected stage={error:?}");
-                            continue;
+                            return;
                         }
                     };
-                if connection.synchronize_policy(&service).is_err() {
-                    log::warn!("unified_voice_connection_rejected stage=policy_sync");
-                    continue;
-                }
-                let coordinator = app.state::<crate::TranscriptionCoordinator>();
-                while !stop.load(Ordering::Acquire) {
-                    if connection
-                        .process_one_with_app(&service, &*coordinator, Some(&app))
-                        .is_err()
+                    if let Some(broker) =
+                        app.try_state::<crate::host_shortcut_broker::HostShortcutBroker>()
                     {
-                        break;
+                        broker.note_connected(connection.client_instance());
                     }
-                }
+                    let _client_guard = VoiceClientConnectionGuard {
+                        app: app.clone(),
+                        client: connection.client_instance().to_owned(),
+                    };
+                    if connection.synchronize_policy(&service).is_err() {
+                        log::warn!("unified_voice_connection_rejected stage=policy_sync");
+                        return;
+                    }
+                    let coordinator = app.state::<crate::TranscriptionCoordinator>();
+                    while !stop.load(Ordering::Acquire) {
+                        if connection
+                            .process_one_with_app(&service, &*coordinator, Some(&app))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }));
+            }
+            for client in clients {
+                let _ = client.join();
             }
             Ok(())
         };

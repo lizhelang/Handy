@@ -35,6 +35,18 @@ pub struct AuthenticatedVoiceConnection {
 }
 
 impl AuthenticatedVoiceConnection {
+    pub(crate) fn voice_peer(&self, policy_epoch: u64) -> VoicePeer<'_> {
+        VoicePeer {
+            client_instance: &self.client,
+            server_instance: &self.server,
+            policy_epoch,
+            policy_applied: self
+                .applied_version
+                .as_ref()
+                .is_some_and(|version| version.policy_epoch == policy_epoch),
+        }
+    }
+
     pub(crate) fn authorize_menu(
         &self,
         request: &inputia_handy_runtime::voice_protocol::MenuRequest,
@@ -163,7 +175,7 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
             .history
             .voice_terms_version()
             .map_err(|_| DispatchError::Unknown)?;
-        if let VoiceCommand::Start { terms, .. } = &request.command {
+        if let Some((_, terms)) = request.strict_start_identity() {
             // 请求自报最新版本不能替代本连接真正完成的清理回执。
             if context.applied_version.as_ref() != Some(terms) {
                 return Err(DispatchError::Unauthorized);
@@ -213,7 +225,7 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
         let order = VOICE_ENQUEUE_ORDER
             .lock()
             .map_err(|_| DispatchError::Unknown)?;
-        if !matches!(request.command, VoiceCommand::Start { .. }) {
+        if request.strict_start_identity().is_none() {
             self.owned_record(context, &request.session_id)?;
         }
         let record = self
@@ -247,7 +259,7 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
             drop(order);
             return self.status(context, &request.session_id);
         }
-        let is_start = matches!(request.command, VoiceCommand::Start { .. });
+        let is_start = request.strict_start_identity().is_some();
         let receiver = self.coordinator.control(request);
         drop(order);
         match receiver.recv_timeout(self.reply_timeout) {
@@ -292,7 +304,7 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
         {
             return Err(DispatchError::Unknown);
         }
-        let VoiceCommand::Start { target, .. } = &record.start.command else {
+        let Some((target, _)) = record.start.start_identity() else {
             return Err(DispatchError::Unknown);
         };
         if target.field_id.is_none() || record.view.phase != VoicePhase::PendingTarget {
@@ -542,7 +554,7 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
         record: &SessionRecord,
         intent: &OutputIntent,
     ) -> Result<(), DispatchError> {
-        let VoiceCommand::Start { target, .. } = &record.start.command else {
+        let Some((target, _)) = record.start.start_identity() else {
             return Err(DispatchError::Unknown);
         };
         if intent.owner != OutputOwner::Ime
@@ -612,7 +624,9 @@ mod tests {
             let mut current = self.current.lock().unwrap();
             let generation = current.as_ref().map_or(1, |view| view.generation + 1);
             let phase = match request.command {
-                VoiceCommand::Start { .. } => VoicePhase::Preparing,
+                VoiceCommand::Start { .. } | VoiceCommand::HostShortcut { .. } => {
+                    VoicePhase::Preparing
+                }
                 VoiceCommand::Stop => VoicePhase::Processing,
                 VoiceCommand::Cancel => VoicePhase::Cancelled,
                 VoiceCommand::Status => panic!("Status must never use control"),

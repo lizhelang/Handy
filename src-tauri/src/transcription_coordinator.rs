@@ -2,7 +2,7 @@ use crate::actions::ACTION_MAP;
 use crate::managers::audio::AudioRecordingManager;
 use crate::settings::ShortcutActivation;
 use inputia_handy_runtime::voice_protocol::{
-    VoiceCommand, VoicePhase, VoiceRequest, VoiceSessionView,
+    VoiceCommand, VoicePhase, VoiceRequest, VoiceSessionView, VoiceShortcutActivation,
 };
 use log::{debug, error, warn};
 use std::collections::HashMap;
@@ -144,6 +144,8 @@ struct InputEvent {
     /// They fire on every edge by design and must never be debounced —
     /// dropping one desyncs toggle parity and wedges recording on.
     external: bool,
+    /// 已认证 host 回传的边沿，允许驱动它自己冻结目标的 owned 会话。
+    owned: bool,
 }
 
 impl InputEvent {
@@ -205,6 +207,9 @@ enum Command {
     PreparationFailed {
         binding_id: String,
         generation: u64,
+    },
+    VoiceClientDisconnected {
+        client_instance: String,
     },
 }
 
@@ -313,7 +318,7 @@ impl CoordinatorState {
     fn on_input(&mut self, input: InputEvent, now: Instant) -> Option<Effect> {
         // 本机同 binding 的明确停止按键仍可结束 IME 发起的录音，但不能换掉
         // 已冻结的目标/输出所有者；无关 release、PTT press 和其他 binding 不参与。
-        if self.active_voice.is_some() {
+        if self.active_voice.is_some() && !input.owned {
             if let Stage::Recording(binding) = &self.stage {
                 if !input.is_pressed
                     || input.binding_id != *binding
@@ -665,7 +670,9 @@ impl CoordinatorState {
             _ => VoicePhase::Interrupted,
         });
         let target_id = match &session.start.command {
-            VoiceCommand::Start { target, .. } => Some(target.target_id.clone()),
+            VoiceCommand::Start { target, .. } | VoiceCommand::HostShortcut { target, .. } => {
+                Some(target.target_id.clone())
+            }
             _ => None,
         };
         Ok(VoiceSessionView {
@@ -746,15 +753,14 @@ impl CoordinatorState {
         }
         // 达到容量不驱逐旧身份；Status 不产生副作用，Stop/Cancel 仍须能关闭采集。
         let at_capacity = self.voice_requests.len() >= MAX_VOICE_REQUESTS;
-        if at_capacity && matches!(request.command, VoiceCommand::Start { .. }) {
+        if at_capacity && request.strict_start_identity().is_some() {
             return (Err("语音请求账本已满；拒绝新会话".into()), None);
         }
-        let (result, effect) =
-            if matches!(request.command, VoiceCommand::Start { .. }) && now >= deadline {
-                (Err("语音 Start 排队已超时，未开始录音".into()), None)
-            } else {
-                self.apply_voice(&request, now)
-            };
+        let (result, effect) = if request.strict_start_identity().is_some() && now >= deadline {
+            (Err("语音 Start 排队已超时，未开始录音".into()), None)
+        } else {
+            self.apply_voice(&request, now)
+        };
         // 状态轮询只读，不占用去重容量。满容量时仍允许已授权 Stop/Cancel
         // 关闭采集，但依赖会话的幂等事实而不再分配新回执；既有 ID 从不驱逐。
         if !at_capacity && !matches!(request.command, VoiceCommand::Status) {
@@ -791,10 +797,36 @@ impl CoordinatorState {
             {
                 return (Err("语音会话不属于此连接实例".into()), None);
             }
-            if matches!(request.command, VoiceCommand::Start { .. }) {
+            if matches!(
+                request.command,
+                VoiceCommand::Start { .. } | VoiceCommand::HostShortcut { .. }
+            ) {
                 if session.start.command != request.command
                     || session.start.policy_epoch != request.policy_epoch
                 {
+                    if let (
+                        VoiceCommand::HostShortcut {
+                            target,
+                            post_process,
+                            terms,
+                            ..
+                        },
+                        VoiceCommand::HostShortcut {
+                            target: original_target,
+                            post_process: original_post_process,
+                            terms: original_terms,
+                            ..
+                        },
+                    ) = (&request.command, &session.start.command)
+                    {
+                        if target == original_target
+                            && post_process == original_post_process
+                            && terms == original_terms
+                            && request.policy_epoch == session.start.policy_epoch
+                        {
+                            return self.apply_host_shortcut(request, now);
+                        }
+                    }
                     return (
                         Err("重复 Start 的目标、选项或策略与原会话冲突".into()),
                         None,
@@ -802,7 +834,10 @@ impl CoordinatorState {
                 }
                 return (self.voice_view(&request.session_id), None);
             }
-        } else if !matches!(request.command, VoiceCommand::Start { .. }) {
+        } else if !matches!(
+            request.command,
+            VoiceCommand::Start { .. } | VoiceCommand::HostShortcut { .. }
+        ) {
             return (Err("未知语音会话".into()), None);
         }
         let effect = match &request.command {
@@ -836,6 +871,7 @@ impl CoordinatorState {
                 self.active_voice = Some(request.session_id.clone());
                 Some(effect)
             }
+            VoiceCommand::HostShortcut { .. } => return self.apply_host_shortcut(request, now),
             VoiceCommand::Stop => {
                 if self.active_voice.as_deref() == Some(&request.session_id) {
                     if let Stage::Recording(binding) = &self.stage {
@@ -870,6 +906,76 @@ impl CoordinatorState {
             }
             VoiceCommand::Status => None,
         };
+        (self.voice_view(&request.session_id), effect)
+    }
+
+    fn apply_host_shortcut(
+        &mut self,
+        request: &VoiceRequest,
+        now: Instant,
+    ) -> (Result<VoiceSessionView, String>, Option<Effect>) {
+        let VoiceCommand::HostShortcut {
+            post_process, edge, ..
+        } = &request.command
+        else {
+            return (Err("无效 host 快捷键请求".into()), None);
+        };
+        let existed = self.voice_sessions.contains_key(&request.session_id);
+        if !existed && !edge.is_pressed {
+            return (Err("未知语音会话".into()), None);
+        }
+        if !is_transcribe_binding(&edge.binding_id) {
+            return (Err("无效语音快捷键绑定".into()), None);
+        }
+        if !existed
+            && (self.stage != Stage::Idle
+                || self.pending_press.is_some()
+                || self.voice_sessions.len() >= MAX_VOICE_SESSIONS
+                || self.generation == u64::MAX)
+        {
+            return (Err("录音或处理流水线忙，不能开始新语音会话".into()), None);
+        }
+        if existed
+            && self.active_voice.as_deref() != Some(&request.session_id)
+            && !matches!(self.stage, Stage::Processing)
+        {
+            return (Err("语音会话已关闭或不再是当前会话".into()), None);
+        }
+        let binding_id = if *post_process {
+            "transcribe_with_post_process"
+        } else {
+            "transcribe"
+        };
+        if edge.binding_id != binding_id {
+            return (Err("host 快捷键绑定与转写模式不一致".into()), None);
+        }
+        let effect = self.on_input(
+            InputEvent {
+                binding_id: edge.binding_id.clone(),
+                hotkey_string: edge.hotkey_string.clone(),
+                is_pressed: edge.is_pressed,
+                mode: shortcut_activation(edge.activation),
+                hold_threshold: Duration::from_millis(edge.hold_threshold_ms),
+                external: false,
+                owned: true,
+            },
+            now,
+        );
+        if !existed && matches!(effect, Some(Effect::Start { .. })) {
+            self.voice_sessions.insert(
+                request.session_id.clone(),
+                OwnedVoiceSession {
+                    start: request.clone(),
+                    view_generation: 1,
+                    binding_id: binding_id.to_owned(),
+                    microphone_generation: None,
+                    microphone_ready: false,
+                    terminal: None,
+                    result: None,
+                },
+            );
+            self.active_voice = Some(request.session_id.clone());
+        }
         (self.voice_view(&request.session_id), effect)
     }
 
@@ -932,6 +1038,22 @@ impl CoordinatorState {
         self.on_start_result(binding_id, false);
         Some(Effect::Cancel)
     }
+
+    fn on_voice_client_disconnected(&mut self, client_instance: &str) -> Option<Effect> {
+        let owned_by_client = self
+            .active_voice
+            .as_ref()
+            .and_then(|id| self.voice_sessions.get(id))
+            .is_some_and(|session| {
+                session.terminal.is_none() && session.start.client_instance == client_instance
+            });
+        if !owned_by_client {
+            return None;
+        }
+        let recording_was_active = matches!(self.stage, Stage::Recording(_));
+        self.on_cancel(recording_was_active);
+        Some(Effect::Cancel)
+    }
 }
 
 /// Serialises all transcription lifecycle events through a single thread
@@ -946,6 +1068,14 @@ pub struct TranscriptionCoordinator {
 
 pub fn is_transcribe_binding(id: &str) -> bool {
     id == "transcribe" || id == "transcribe_with_post_process"
+}
+
+fn shortcut_activation(value: VoiceShortcutActivation) -> ShortcutActivation {
+    match value {
+        VoiceShortcutActivation::Toggle => ShortcutActivation::Toggle,
+        VoiceShortcutActivation::PushToTalk => ShortcutActivation::PushToTalk,
+        VoiceShortcutActivation::HoldOrToggle => ShortcutActivation::HoldOrToggle,
+    }
 }
 
 impl TranscriptionCoordinator {
@@ -1142,6 +1272,7 @@ impl TranscriptionCoordinator {
                 mode,
                 hold_threshold,
                 external,
+                owned: false,
             }))
             .is_err()
         {
@@ -1157,6 +1288,18 @@ impl TranscriptionCoordinator {
 
     pub fn notify_processing_finished(&self) {
         if self.tx.send(Command::ProcessingFinished).is_err() {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
+    pub fn notify_voice_client_disconnected(&self, client_instance: &str) {
+        if self
+            .tx
+            .send(Command::VoiceClientDisconnected {
+                client_instance: client_instance.to_owned(),
+            })
+            .is_err()
+        {
             warn!("Transcription coordinator channel closed");
         }
     }
@@ -1235,6 +1378,11 @@ fn dispatch_command(
             generation,
         } => {
             if let Some(effect) = state.on_preparation_failed(&binding_id, generation) {
+                execute(state, effect);
+            }
+        }
+        Command::VoiceClientDisconnected { client_instance } => {
+            if let Some(effect) = state.on_voice_client_disconnected(&client_instance) {
                 execute(state, effect);
             }
         }
@@ -1335,6 +1483,45 @@ mod tests {
         }
     }
 
+    fn host_shortcut(
+        start: &VoiceRequest,
+        request_id: &str,
+        is_pressed: bool,
+        activation: VoiceShortcutActivation,
+        starts_session: bool,
+    ) -> VoiceRequest {
+        use inputia_handy_runtime::voice_protocol::HostShortcutEdge;
+        let VoiceCommand::Start {
+            target,
+            post_process,
+            terms,
+        } = start.command.clone()
+        else {
+            unreachable!();
+        };
+        VoiceRequest {
+            request_id: request_id.into(),
+            command: VoiceCommand::HostShortcut {
+                target,
+                post_process,
+                terms,
+                edge: HostShortcutEdge {
+                    trigger_id: format!("trigger-{request_id}"),
+                    starts_session,
+                    lease_id: "lease-one".into(),
+                    lease_epoch: 1,
+                    binding_id: "transcribe".into(),
+                    hotkey_string: "Option+Space".into(),
+                    is_pressed,
+                    activation,
+                    pressed_at_unix_ms: 1,
+                    hold_threshold_ms: 400,
+                },
+            },
+            ..start.clone()
+        }
+    }
+
     #[test]
     fn prepared_result_survives_finish_and_cannot_be_replaced_or_move_next_session() {
         let mut state = CoordinatorState::new();
@@ -1374,6 +1561,136 @@ mod tests {
             ready
         );
         assert_eq!(state.voice_context(), Some(next));
+    }
+
+    #[test]
+    fn host_shortcut_push_to_talk_release_stops_owned_session_with_same_target() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let template = voice_start("host-session", "template");
+        let start = host_shortcut(
+            &template,
+            "host-press",
+            true,
+            VoiceShortcutActivation::PushToTalk,
+            true,
+        );
+        let (view, effect) = state.on_voice(start.clone(), now);
+        assert!(matches!(effect, Some(Effect::Start { .. })));
+        assert_eq!(view.unwrap().target_id.as_deref(), Some("field-token"));
+        let release = host_shortcut(
+            &template,
+            "host-release",
+            false,
+            VoiceShortcutActivation::PushToTalk,
+            false,
+        );
+        let (_, effect) = state.on_voice(release, now + Duration::from_millis(100));
+        assert!(effect.is_none());
+        let effect = state.on_grace_expired();
+        assert!(matches!(effect, Some(Effect::Stop { .. })));
+        assert_eq!(
+            state.voice_view("host-session").unwrap().phase,
+            VoicePhase::Processing
+        );
+    }
+
+    #[test]
+    fn host_shortcut_hold_or_toggle_tap_locks_until_next_press() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let template = voice_start("host-session", "template");
+        let start = host_shortcut(
+            &template,
+            "host-press",
+            true,
+            VoiceShortcutActivation::HoldOrToggle,
+            true,
+        );
+        assert!(matches!(
+            state.on_voice(start, now).1,
+            Some(Effect::Start { .. })
+        ));
+        let release = host_shortcut(
+            &template,
+            "host-release",
+            false,
+            VoiceShortcutActivation::HoldOrToggle,
+            false,
+        );
+        assert!(state
+            .on_voice(release, now + Duration::from_millis(50))
+            .1
+            .is_none());
+        assert!(state.on_grace_expired().is_none());
+        let stop_press = host_shortcut(
+            &template,
+            "host-stop",
+            true,
+            VoiceShortcutActivation::HoldOrToggle,
+            false,
+        );
+        assert!(matches!(
+            state
+                .on_voice(stop_press, now + Duration::from_millis(500))
+                .1,
+            Some(Effect::Stop { .. })
+        ));
+    }
+
+    #[test]
+    fn host_shortcut_later_edge_cannot_change_frozen_target() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let template = voice_start("host-session", "template");
+        let start = host_shortcut(
+            &template,
+            "host-press",
+            true,
+            VoiceShortcutActivation::Toggle,
+            true,
+        );
+        state.on_voice(start, now).0.unwrap();
+        let mut changed = host_shortcut(
+            &template,
+            "host-stop",
+            true,
+            VoiceShortcutActivation::Toggle,
+            false,
+        );
+        if let VoiceCommand::HostShortcut { target, .. } = &mut changed.command {
+            target.target_id = "other-target".into();
+        }
+        let (result, effect) = state.on_voice(changed, now + Duration::from_millis(500));
+        assert!(result.is_err());
+        assert!(effect.is_none());
+        assert!(matches!(state.stage, Stage::Recording(_)));
+    }
+
+    #[test]
+    fn menu_owned_start_can_be_stopped_by_unified_shortcut_press_without_new_session() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        let start = voice_start("menu-session", "menu-start");
+        assert!(state.on_voice(start.clone(), now).0.is_ok());
+        let effect = state.on_input(
+            InputEvent {
+                binding_id: "transcribe".into(),
+                hotkey_string: "Option+Space".into(),
+                is_pressed: true,
+                mode: ShortcutActivation::Toggle,
+                hold_threshold: Duration::ZERO,
+                external: false,
+                owned: false,
+            },
+            now + Duration::from_millis(500),
+        );
+        assert!(matches!(effect, Some(Effect::Stop { .. })));
+        assert_eq!(
+            state.voice_view("menu-session").unwrap().phase,
+            VoicePhase::Processing
+        );
+        assert_eq!(state.voice_sessions.len(), 1);
     }
 
     #[test]
@@ -2470,6 +2787,7 @@ mod tests {
             mode: ShortcutActivation::PushToTalk,
             hold_threshold: Duration::ZERO,
             external: false,
+            owned: false,
         }
     }
 
@@ -2609,6 +2927,7 @@ mod tests {
                     mode: ShortcutActivation::Toggle,
                     hold_threshold: Duration::ZERO,
                     external: true,
+                    owned: false,
                 },
                 at,
             )
@@ -2671,6 +2990,7 @@ mod tests {
             mode: ShortcutActivation::Toggle,
             hold_threshold: Duration::ZERO,
             external,
+            owned: false,
         }
     }
 
@@ -2796,6 +3116,7 @@ mod tests {
             mode,
             hold_threshold: HOLD_THRESHOLD,
             external: false,
+            owned: false,
         }
     }
 

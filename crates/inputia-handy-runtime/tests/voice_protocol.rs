@@ -201,6 +201,70 @@ fn withdrawal_does_not_prevent_stop_or_cancel_but_future_epochs_are_rejected() {
 }
 
 #[test]
+fn host_shortcut_start_requires_policy_but_later_edges_can_close_old_session() {
+    let mut start = request();
+    let VoiceCommand::Start {
+        target,
+        post_process,
+        terms,
+    } = start.command
+    else {
+        unreachable!();
+    };
+    start.command = VoiceCommand::HostShortcut {
+        target: target.clone(),
+        post_process,
+        terms: terms.clone(),
+        edge: HostShortcutEdge {
+            trigger_id: "trigger-1".into(),
+            starts_session: true,
+            lease_id: "lease-1".into(),
+            lease_epoch: 1,
+            binding_id: "transcribe".into(),
+            hotkey_string: "Option+Space".into(),
+            is_pressed: true,
+            activation: VoiceShortcutActivation::PushToTalk,
+            pressed_at_unix_ms: 1,
+            hold_threshold_ms: 0,
+        },
+    };
+    assert!(start.validate_for(&peer()).is_ok());
+    assert!(start
+        .validate_for(&VoicePeer {
+            policy_applied: false,
+            ..peer()
+        })
+        .is_err());
+
+    let mut release = start.clone();
+    release.request_id = "request-2".into();
+    release.policy_epoch = 6;
+    release.command = VoiceCommand::HostShortcut {
+        target,
+        post_process,
+        terms,
+        edge: HostShortcutEdge {
+            trigger_id: "trigger-2".into(),
+            starts_session: false,
+            lease_id: "lease-1".into(),
+            lease_epoch: 1,
+            binding_id: "transcribe".into(),
+            hotkey_string: "Option+Space".into(),
+            is_pressed: false,
+            activation: VoiceShortcutActivation::PushToTalk,
+            pressed_at_unix_ms: 1,
+            hold_threshold_ms: 0,
+        },
+    };
+    assert!(release
+        .validate_for(&VoicePeer {
+            policy_applied: false,
+            ..peer()
+        })
+        .is_ok());
+}
+
+#[test]
 fn missing_field_identity_is_representable_but_never_manufactured_from_bundle_id() {
     let mut request = request();
     if let VoiceCommand::Start { target, .. } = &mut request.command {

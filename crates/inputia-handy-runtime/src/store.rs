@@ -404,10 +404,7 @@ impl IntegrationStore {
         item_id: &str,
         revision: u64,
     ) -> StoreResult<crate::output_ledger::OutputRecord> {
-        use crate::{
-            output_ledger::*,
-            voice_protocol::{VoiceCommand, VoicePhase},
-        };
+        use crate::{output_ledger::*, voice_protocol::VoicePhase};
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -442,7 +439,7 @@ impl IntegrationStore {
         {
             return Err(StoreError::Invalid("voice result is no longer eligible"));
         }
-        let VoiceCommand::Start { target, .. } = &session.start.command else {
+        let Some((target, _)) = session.start.start_identity() else {
             return Err(StoreError::Invalid("invalid voice start"));
         };
         let mut hash = Sha256::new();
@@ -1382,7 +1379,7 @@ fn validate_voice_terms_version(
     conn: &Connection,
     request: &crate::voice_protocol::VoiceRequest,
 ) -> StoreResult<()> {
-    if let crate::voice_protocol::VoiceCommand::Start { terms, .. } = &request.command {
+    if let Some((_, terms)) = request.strict_start_identity() {
         if terms.learning_generation != current_learning_generation(conn)? {
             return Err(StoreError::Invalid(
                 "voice terms snapshot changed before start",

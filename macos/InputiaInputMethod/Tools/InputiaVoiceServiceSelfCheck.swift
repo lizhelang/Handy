@@ -30,6 +30,24 @@ private final class SyntheticState: InputiaSharedStateBarrierApplying {
 @main
 struct InputiaVoiceServiceSelfCheck {
   static func main() throws {
+    let shortcutTarget = InputiaVoiceTarget(target_id: "synthetic-target", host_instance: "synthetic-host",
+      controller_id: "synthetic-controller", activation_generation: 1, field_id: "synthetic-field",
+      selection_generation: 0, composition_generation: 0, source_app: "synthetic.app")
+    for activation in [InputiaVoiceShortcutActivation.toggle, .pushToTalk, .holdOrToggle] {
+      let edge = InputiaHostShortcutEdge(trigger_id: "synthetic-trigger", starts_session: true,
+        lease_id: "synthetic-lease", lease_epoch: 1, binding_id: "transcribe",
+        hotkey_string: "alt+space", is_pressed: true, activation: activation,
+        pressed_at_unix_ms: 100, hold_threshold_ms: 300)
+      let encoded = try JSONEncoder().encode(InputiaVoiceCommand.hostShortcut(target: shortcutTarget,
+        postProcess: false, terms: InputiaVoiceTermsVersion(policy_epoch: 3, learning_generation: 7), edge: edge))
+      let object = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+      precondition(object["kind"] as? String == "host_shortcut")
+      let encodedEdge = object["edge"] as! [String: Any]
+      precondition(encodedEdge["activation"] as? String == activation.rawValue)
+      precondition(encodedEdge["starts_session"] as? Bool == true)
+      precondition(encodedEdge["lease_epoch"] as? Int == 1)
+    }
+    print("inputia_host_shortcut_wire=pass modes=3 synthetic_encoding_only=true")
     let state = SyntheticState()
     let good = InputiaVoicePolicyBarrier(barrier_id: String(repeating: "a", count: 64),
       version: InputiaVoiceTermsVersion(policy_epoch: 3, learning_generation: 7), clear_shared_personalization: true)

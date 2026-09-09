@@ -37,6 +37,33 @@ pub fn handle_shortcut_event(
     // Transcribe bindings are handled by the coordinator.
     if is_transcribe_binding(binding_id) {
         if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
+            if coordinator.voice_output_context().is_some_and(|request| {
+                matches!(
+                    request.command,
+                    inputia_handy_runtime::voice_protocol::VoiceCommand::Start { .. }
+                )
+            }) {
+                coordinator.send_input(
+                    binding_id,
+                    hotkey_string,
+                    is_pressed,
+                    settings.shortcut_activation,
+                    std::time::Duration::from_millis(settings.hold_threshold_ms),
+                );
+                return;
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(routing) =
+            route_inputia_host_shortcut(app, binding_id, hotkey_string, is_pressed)
+        {
+            match routing {
+                crate::host_shortcut_broker::ShortcutRouting::Legacy => {}
+                crate::host_shortcut_broker::ShortcutRouting::Forwarded => return,
+                crate::host_shortcut_broker::ShortcutRouting::HostPending => return,
+            }
+        }
+        if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
             coordinator.send_input(
                 binding_id,
                 hotkey_string,
@@ -73,4 +100,25 @@ pub fn handle_shortcut_event(
     } else {
         action.stop(app, binding_id, hotkey_string);
     }
+}
+
+#[cfg(target_os = "macos")]
+fn route_inputia_host_shortcut(
+    app: &AppHandle,
+    binding_id: &str,
+    hotkey_string: &str,
+    is_pressed: bool,
+) -> Option<crate::host_shortcut_broker::ShortcutRouting> {
+    let broker = app.try_state::<crate::host_shortcut_broker::HostShortcutBroker>()?;
+    let manager = app.try_state::<Arc<crate::managers::integration::IntegrationManager>>()?;
+    let policy_epoch = manager.service.policy_epoch().ok()?;
+    let settings = get_settings(app);
+    Some(broker.route_shortcut_event(
+        binding_id,
+        hotkey_string,
+        is_pressed,
+        settings.shortcut_activation,
+        std::time::Duration::from_millis(settings.hold_threshold_ms),
+        policy_epoch,
+    ))
 }
