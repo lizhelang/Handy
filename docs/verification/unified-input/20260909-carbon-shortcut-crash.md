@@ -30,3 +30,11 @@
 修改尚未装入候选，需独立审查、重新签名构建/配对，再在原生路径复核。不能因为权限导航曾通过而忽略此发布阻塞。真正麦克风闭环仍需用户方便时验证，不自动录音。
 
 另独立只读定位 A12 得到后续阻塞：当前 snapshot restore 不是保留新增数据的兼容回滚，旧 import 仍直接进入 SqliteMemory.learn，Host shared_terms barrier 不覆盖旧 memory/Rime。此轮因实际崩溃优先，未执行恢复或改变真实数据。
+
+## 修复候选已安装，原生触发复测仍待验证
+
+基于代码提交 `51935bea` 的签名构建成功，日志 `/tmp/inputia-carbon-fix-candidate.log`。产物 `src-tauri/target/release/bundle/macos/Inputia Candidate.app` 已更新至 `/Applications/Inputia Candidate.app`；固定签名 deep/strict 校验通过，配对清单重新签署。实际 PID 6520 的运行身份匹配 CDHash `df9d4f090e0a410f4db97eb714dce483e57e9edb`。
+
+22:27:25 Sydney 实际日志显示 `unified_voice_listener_ready`，CUA 打开设置窗口正常。专用 TextEdit 原有合成内容未改动，当前输入源仍为 Inputia (Test)。本次观察窗口内没有新目标登记日志，因此不声称重新认证/目标登记已通过；更不声称快捷键崩溃或麦克风闭环已原生复测。
+
+旧候选包与旧/新配对保留于 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/carbon-fix-20260909.PnzaBI`。旧包包含已确认崩溃，只作为回溯材料，不建议日常回退使用；未恢复旧数据库，未修改日常安装。后续首要原生实验是用户方便录音时的真实快捷键触发，核查进程存活、会话归属和正常/变焦点输出。
