@@ -2,6 +2,8 @@
 
 ## 最新检查点（北京时间 2026-09-09 23:46）
 
+- 最新安装为IME62（`3f9f8bf4`）：补充固定目标失败码后重跑基础输入成功；目标注册仍无ready证据，CUA坐标点击两次noWindowsAvailable，需真实前台点击区分生命周期/工具焦点。详见[62目标诊断](./20260910-target-readiness-native.md)。未录音、未放宽保护。
+
 - 后续原生推进：输入法61（`5372e075`）已安装，控制中心保留原包并重启加载匹配配对。新PID/CDHash已核对；专用TextEdit真实n、i出现候选，space提交“你”。首次选源就绪时序、focused_application_mismatch及共享词原生验证仍未解决/验收，详情见[61安装分项](./20260910-chinese-shared-candidates.md)。
 
 - 实际已安装配套为控制中心代码 `32c25484` 与 IME60，不是下方历史入口的 `8870df79`/IME59；两候选进程本轮只读复核仍运行。详见 [已安装60](./20260910-ime-shared-terms.md)。
