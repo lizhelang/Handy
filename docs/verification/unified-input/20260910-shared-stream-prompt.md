@@ -13,3 +13,9 @@ Qwen预览先清理完整文本再拆回committed/tentative，避免context回�
 尚未安装本批；独立审查进行中。真实长流、录制中遗忘/断线、原生质量及Inputia候选消费仍未验证，不能据单元测试称P4或语音闭环完成。
 
 独立审查已完成：review_socket_path 为Approve，无阻塞发现；复核了已捕获Finalize只回一次None、失效Feed的引擎归还/排空以及仍由原owned输出路径处理。另跑shared_stream6项、转写31项、cargo check和diff检查通过。完整app严格静态门禁仍有既有债，不据此宣称全门禁完成。
+
+## 已进入候选安装
+
+代码b16acae5完成固定本地证书签名构建，日志 `/tmp/inputia-shared-asr-candidate.log`。已更新 `/Applications/Inputia Candidate.app`，实际PID46475运行身份匹配CDHash `c690875f912e6f30f96aabab155458ce1437b869`；设置窗口和listener正常启动。IME59/PID37732保持运行，未替换输入法包。
+
+旧候选包和旧/新配对保留在 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/shared-asr-candidate-20260910.jLhcK4`。本次不涉及schema变更，原库仍schema4、5条历史；日常安装未动。未启动麦克风、未新增识别质量成绩、未notarize。原生共享词与长流失效验收仍未完成。
