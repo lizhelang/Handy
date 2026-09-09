@@ -25,6 +25,8 @@ swiftc macos/InputiaInputMethod/Sources/InputiaInputMethod/InputiaShortcutClassi
 
 安装与实际实验补记：
 
+- **最新用户实际使用确认（经侧聊转达）**：单独 Shift 无法切换中英文的问题已经解决。登记为该回归通过，不再要求用户重复验证；不扩展为所有应用、所有组合键/松开顺序均已通过。
+
 - **56 实际修复**：55 的 17:28:57（悉尼时间）记录显示首次独立 Shift `held=false` 并成功 local toggle；17:28:58 起多次 Shift `configured=true blocked=false held=true`，资格被残留普通键状态阻止。原始无正文阶段日志存于备份目录 `phase-events-55.log`。这比“收不到本地事件”的旧假设更具体。
 - 56 在新的本地 Shift 周期开始，仅对已经记录的普通键使用当前系统键状态剔除已松开的残留；不依赖时间阈值，不改变本周期组合参与的 sticky 否决。参考本机 CoreGraphics CGEventSource.h 123–128 和 [Apple keyState 文档](https://developer.apple.com/documentation/coregraphics/cgeventsource/keystate%28_%3Akey%3A%29)。不扫描用户文本/窗口或数据库。
 - 新增回归覆盖漏 keyUp 后恢复、真正按住的键仍拒绝切换；全部快捷键自检通过。独立审查批准限定56修复进入原生实验，未发现可证实的重复输出、焦点越界或组合松开顺序新问题。
