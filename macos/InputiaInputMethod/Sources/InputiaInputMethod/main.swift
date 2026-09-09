@@ -108,6 +108,7 @@ final class InputiaInputController: IMKInputController {
   private var voiceTargetSnapshots: [String: InputiaVoiceTargetSnapshot.Snapshot] = [:]
   private var attemptedVoiceOutputOperations = Set<String>()
   private var shortcutPreparedSnapshot: InputiaVoiceTargetSnapshot.Snapshot?
+  private var shortcutReadinessReason = ""
   #endif
   private let bridge = InputiaRustBridge.makeDefault()
   private var latestCandidates: [String] = []
@@ -760,19 +761,36 @@ final class InputiaInputController: IMKInputController {
   }
 
   #if INPUTIA_PAIRED_BUILD
+  private func reportShortcutReadiness(_ reason: String) {
+    guard reason != shortcutReadinessReason else { return }
+    shortcutReadinessReason = reason
+    shiftDiagnostic.notice("shortcut_target reason=\(reason, privacy: .public)")
+  }
+
   func shortcutRegistrationTarget() -> InputiaVoiceTarget? {
-    guard InputiaHost.activeInputController === self, isCurrentInputiaSourceSelected(),
-      !IsSecureEventInputEnabled(), let client = client() else { return nil }
+    guard InputiaHost.activeInputController === self, isCurrentInputiaSourceSelected() else {
+      reportShortcutReadiness("inactive_source"); return nil
+    }
+    guard AXIsProcessTrusted() else { reportShortcutReadiness("accessibility_permission_required"); return nil }
+    guard !IsSecureEventInputEnabled() else { reportShortcutReadiness("secure_input_enabled"); return nil }
+    guard let client = client() else { reportShortcutReadiness("missing_imk_client"); return nil }
     if let snapshot = shortcutPreparedSnapshot, snapshot.activationGeneration == voiceActivationGeneration,
       snapshot.reusableForShortcut {
+      reportShortcutReadiness("ready")
       return snapshot.inputiaTarget
     }
-    guard let target = prepareUnifiedVoiceTarget(client: client),
-      let snapshot = voiceTargetSnapshots.removeValue(forKey: target.target_id) else {
+    guard let target = prepareUnifiedVoiceTarget(client: client) else {
+      reportShortcutReadiness("target_not_eligible")
+      shortcutPreparedSnapshot = nil
+      return nil
+    }
+    guard let snapshot = voiceTargetSnapshots.removeValue(forKey: target.target_id) else {
+      reportShortcutReadiness(target.field_id == nil ? InputiaVoiceTargetSnapshot.lastCaptureFailureReason : "missing_snapshot")
       shortcutPreparedSnapshot = nil
       return nil
     }
     shortcutPreparedSnapshot = snapshot
+    reportShortcutReadiness("ready")
     return target
   }
 

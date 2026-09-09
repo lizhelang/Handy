@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import OSLog
 
 enum InputiaVoiceInputLaunchResult: Equatable {
   case started(appPath: String, delayed: Bool)
@@ -18,6 +19,7 @@ struct InputiaVoiceInputLaunchPlan: Equatable {
 
 enum InputiaVoiceInputLauncher {
   #if INPUTIA_PAIRED_BUILD
+  private static let shortcutDiagnostic = Logger(subsystem: "com.inputia.shortcut", category: "control")
   private static let voiceQueue = DispatchQueue(label: "Inputia.unified-voice")
   private static var unifiedConnection: InputiaVoiceServiceConnection?
   private static var unifiedSession: String?
@@ -36,6 +38,7 @@ enum InputiaVoiceInputLauncher {
   private static var shortcutCycleBusy = false
   private static var shortcutRetryAfter: TimeInterval = 0
   private static var shortcutHasActiveOwner = false
+  private static var shortcutProviderHadTarget: Bool?
   private struct Endpoint: Decodable { let profile_id: String; let protocol_major: Int; let server_instance: String; let socket_path: String }
 
   /// provider 和新会话复核在主线程；定时器、认证、数据库和 socket 均在后台。
@@ -54,6 +57,10 @@ enum InputiaVoiceInputLauncher {
           let target = targetProvider()
           shortcutQueue.async {
             do {
+              if shortcutProviderHadTarget != (target != nil) {
+                shortcutProviderHadTarget = target != nil
+                shortcutDiagnostic.notice("provider has_target=\(target != nil)")
+              }
               if target == nil && !shortcutHasActiveOwner {
                 shortcutConnection?.close()
                 shortcutConnection = nil
@@ -83,7 +90,7 @@ enum InputiaVoiceInputLauncher {
                     lease_epoch: previous.lease_epoch, target: previous.target,
                     issued_at_unix_ms: now, expires_at_unix_ms: now + 1000)
                   try connection.registerShortcutLease(renewed)
-                  if newTarget { NSLog("inputia_shortcut_target_registered field_observable=%@", target.field_id == nil ? "false" : "true") }
+                  if newTarget { shortcutDiagnostic.notice("target_registered field_observable=\(target.field_id != nil)") }
                   shortcutLease = renewed
                 }
               }
@@ -125,13 +132,14 @@ enum InputiaVoiceInputLauncher {
               shortcutCycleBusy = false
               shortcutRetryAfter = ProcessInfo.processInfo.systemUptime + 1
               // 重连仅恢复监听，不重放任何已经取出的触发。
-              NSLog("inputia_shortcut_listener_unavailable automatic_trigger_replay=false")
+              shortcutDiagnostic.notice("listener_unavailable automatic_trigger_replay=false")
             }
           }
         }
       }
       shortcutTimer = timer
       timer.resume()
+      shortcutDiagnostic.notice("listener_started")
     }
   }
 
