@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { commands } from "@/bindings";
 import { useSettingsStore } from "@/stores/settingsStore";
 import InputiaWordmark from "../icons/InputiaWordmark";
+import { InputiaPermissionHelp } from "../settings/general/InputiaPermissionHelp";
 import {
   Keyboard,
   Mic,
@@ -406,7 +407,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
 
   // Show permissions request screen
   return (
-    <div className="h-screen w-screen flex flex-col p-6 gap-6 items-center justify-center">
+    <div className="h-screen w-screen flex flex-col p-6 gap-6 items-center overflow-y-auto">
       <div className="flex flex-col items-center gap-2">
         <InputiaWordmark size="hero" />
       </div>
@@ -518,6 +519,8 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
             </div>
           </div>
         )}
+
+        {isMacOS && <InputiaPermissionHelp />}
 
         {isMacOS && (
           <button

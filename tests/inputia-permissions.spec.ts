@@ -160,6 +160,33 @@ async function calls(page: Page) {
 }
 
 test.describe("Inputia permissions onboarding", () => {
+  test("blocked onboarding exposes navigation without granting permissions", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 800, height: 600 });
+    await mountPermissions(page, [false], [false]);
+    await page.getByRole("button", { name: "Locate input method" }).click();
+    await page
+      .getByRole("button", { name: "Open permission settings" })
+      .click();
+    const observed = await calls(page);
+    expect(
+      observed.filter((command) => command === "open_inputia_permission_help"),
+    ).toHaveLength(2);
+    expect(
+      observed.some(
+        (command) =>
+          command.includes("request_accessibility_permission") ||
+          command.includes("request_microphone_permission"),
+      ),
+    ).toBe(false);
+    expect(
+      await page.evaluate(() => window.__INPUTIA_PERMISSIONS__.completed),
+    ).toBe(false);
+    await expect(
+      page.getByRole("button", { name: "Check Again" }),
+    ).toBeEnabled();
+  });
   test("keeps one granted permission when the other check fails", async ({
     page,
   }) => {
