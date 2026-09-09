@@ -908,6 +908,7 @@
     "save": "Confirm and save",
     "saving": "Saving…",
     "saved": "Saved to the local dictionary. Shared use by speech recognition and the input method is still being integrated in this candidate.",
-    "failed": "The result is not confirmed. Retrying uses the same operation. Changed, untrusted or sensitive sources cannot be learned."
+    "failed": "The result is not confirmed. Retrying uses the same operation. Changed, untrusted or sensitive sources cannot be learned.",
+    "replayed": "This confirmation was already processed and will not learn again. Later deletion or forgetting remains in effect."
   }
 }

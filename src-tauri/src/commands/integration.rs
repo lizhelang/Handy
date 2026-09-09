@@ -1,11 +1,7 @@
 use crate::managers::clipboard::ClipboardManager;
 use crate::managers::integration::IntegrationManager;
-use inputia_core::integration::{
-    events::{Identifier, SourceRecord},
-    privacy::{HistoryMode, PrivacyContext, PrivacyPolicy, SourceTrust as PrivacySourceTrust},
-    terms::{validate_term, TermEvidence},
-};
-use inputia_handy_runtime::learning::{ApplyContribution, ContributionInput};
+use inputia_core::integration::events::Identifier;
+use inputia_handy_runtime::learning::{ApplyContribution, HistoryTermConfirmation};
 use inputia_handy_runtime::output_ledger::{
     OutputAction, OutputIntent, OutputOutcome, OutputOwner, OutputState,
 };
@@ -33,56 +29,6 @@ fn validate_term_confirmation(
     Ok(())
 }
 
-fn confirmed_term_input(
-    item: IndexedItem,
-    operation_id: String,
-    term: String,
-    epoch: u64,
-) -> Result<(ContributionInput, PrivacyPolicy, PrivacyContext), String> {
-    if item.snapshot.content_type != ContentType::Text {
-        return Err("term source must be plain text".into());
-    }
-    let term = validate_term(&term, TermEvidence::ConfirmedCorrection)
-        .map_err(|_| "learning term is ineligible".to_owned())?;
-    let source_trust = match item.snapshot.source_trust {
-        inputia_handy_runtime::store::SourceTrust::Verified => PrivacySourceTrust::Verified,
-        inputia_handy_runtime::store::SourceTrust::Observed => PrivacySourceTrust::Observed,
-        inputia_handy_runtime::store::SourceTrust::Unknown => PrivacySourceTrust::Unknown,
-    };
-    Ok((
-        ContributionInput {
-            contribution_id: Identifier::parse(operation_id)?,
-            source: SourceRecord {
-                store_id: Identifier::parse(item.store_id)?,
-                record_id: Identifier::parse(item.record_id)?,
-            },
-            source_revision: item.revision,
-            policy_epoch: epoch,
-            term,
-            evidence: TermEvidence::ConfirmedCorrection,
-            explicit_relearn: false,
-        },
-        PrivacyPolicy {
-            epoch,
-            history_enabled: false,
-            history_mode: HistoryMode::Strict,
-            // 只授权本次明确确认；不修改全局学习或远程使用设置。
-            learning_enabled: true,
-            remote_learning_terms_enabled: false,
-        },
-        PrivacyContext {
-            source_trust,
-            // 来源敏感应用由规范库按实际 snapshot 在事务内检查。
-            source_sensitive: false,
-            // 已知目标仅代表控制中心的这次确认，不能提升原内容的来源信任。
-            target_known: true,
-            target_sensitive: false,
-            secure_input: false,
-            transient_or_concealed: false,
-        },
-    ))
-}
-
 /// 在控制中心明确确认一个短词；来源身份及策略版本只能从服务端读取。
 #[tauri::command]
 #[specta::specta]
@@ -103,21 +49,22 @@ pub async fn confirm_unified_history_term(
     )?;
     let service = manager.service.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let item = service
-            .get_item(item_id, expected_revision)
-            .map_err(|_| "term source is unavailable or changed".to_owned())?;
-        let epoch = service
-            .policy_epoch()
-            .map_err(|_| "term policy is unavailable".to_owned())?;
-        let (input, policy, context) = confirmed_term_input(item, operation_id, term, epoch)?;
-        validate_term_confirmation(
-            window.label(),
-            window.is_focused().unwrap_or(false),
-            confirmed,
-            crate::secure_input::is_enabled_now(),
-        )?;
+        let request = HistoryTermConfirmation {
+            operation_id: Identifier::parse(operation_id)?,
+            item_id,
+            expected_revision,
+            term,
+        };
         service
-            .contribute_term(input, policy, context)
+            .confirm_history_term(request, move || {
+                validate_term_confirmation(
+                    window.label(),
+                    window.is_focused().unwrap_or(false),
+                    confirmed,
+                    crate::secure_input::is_enabled_now(),
+                )
+                .is_ok()
+            })
             .map(|result| {
                 match result {
                     ApplyContribution::Applied => "applied",
@@ -780,91 +727,7 @@ pub async fn refresh_unified_history(
 
 #[cfg(test)]
 mod term_confirmation_tests {
-    use super::*;
-    use inputia_handy_runtime::store::{ItemSnapshot, SourceTrust};
-
-    #[test]
-    fn confirmed_input_replays_once_and_cannot_revive_a_forgotten_term() {
-        use inputia_handy_runtime::store::{IntegrationStore, SourceChange, SourceOperation};
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("index.db");
-        let key = [73; 32];
-        let mut store = IntegrationStore::open(&path, "term-test").unwrap();
-        store.register_source("voice", "source-store").unwrap();
-        store.enable_learning(&key).unwrap();
-        store
-            .apply_change(&SourceChange {
-                store_id: "source-store".into(),
-                seq: 1,
-                event_id: "source-event".into(),
-                record_id: "record-2".into(),
-                revision: 9,
-                operation: SourceOperation::Upsert,
-                policy_epoch: 1,
-                payload: Some(item(ContentType::Text, SourceTrust::Verified).snapshot),
-            })
-            .unwrap();
-        let make_input = |epoch| {
-            confirmed_term_input(
-                item(ContentType::Text, SourceTrust::Verified),
-                "confirm-atomic".into(),
-                "Inputia".into(),
-                epoch,
-            )
-            .unwrap()
-        };
-        let (input, policy, context) = make_input(1);
-        assert_eq!(
-            store
-                .contribute_term(&key, &input, &policy, context)
-                .unwrap(),
-            ApplyContribution::Applied
-        );
-        assert_eq!(
-            store
-                .contribute_term(&key, &input, &policy, context)
-                .unwrap(),
-            ApplyContribution::Replay
-        );
-        assert_eq!(store.list_terms(10, 0).unwrap()[0].contributions, 1);
-        store
-            .forget_term_with_receipt(
-                &key,
-                &Identifier::parse("forget-test").unwrap(),
-                "Inputia",
-                1,
-            )
-            .unwrap();
-        drop(store);
-        let mut store = IntegrationStore::open(&path, "term-test").unwrap();
-        store.enable_learning(&key).unwrap();
-        let (input, policy, context) = make_input(2);
-        assert!(store
-            .contribute_term(&key, &input, &policy, context)
-            .is_err());
-        assert!(store.list_terms(10, 0).unwrap().is_empty());
-    }
-
-    fn item(content_type: ContentType, source_trust: SourceTrust) -> IndexedItem {
-        IndexedItem {
-            item_id: "item-1".into(),
-            store_id: "source-store".into(),
-            record_id: "record-2".into(),
-            revision: 9,
-            snapshot: ItemSnapshot {
-                source_kind: SourceKind::Voice,
-                content_type,
-                text: Some("原始历史全文不能自动导入词库".into()),
-                title: None,
-                starred: false,
-                pinned: false,
-                created_at_ms: 1,
-                asset_ref: None,
-                source_app: None,
-                source_trust,
-            },
-        }
-    }
+    use super::validate_term_confirmation;
 
     #[test]
     fn confirmation_requires_focused_control_center_and_nonsecure_explicit_consent() {
@@ -877,78 +740,5 @@ mod term_confirmation_tests {
         ] {
             assert!(validate_term_confirmation(label, focused, confirmed, secure).is_err());
         }
-    }
-
-    #[test]
-    fn confirmation_preserves_source_identity_and_only_authorizes_one_local_term() {
-        for trust in [
-            SourceTrust::Verified,
-            SourceTrust::Observed,
-            SourceTrust::Unknown,
-        ] {
-            let (input, policy, context) = confirmed_term_input(
-                item(ContentType::Text, trust),
-                "confirm-1".into(),
-                "Inputia".into(),
-                7,
-            )
-            .unwrap();
-            assert_eq!(input.source.store_id.as_str(), "source-store");
-            assert_eq!(input.source.record_id.as_str(), "record-2");
-            assert_eq!(input.source_revision, 9);
-            assert_eq!(input.policy_epoch, 7);
-            assert_eq!(input.term, "Inputia");
-            assert_eq!(input.evidence, TermEvidence::ConfirmedCorrection);
-            assert!(!input.explicit_relearn);
-            assert!(!policy.history_enabled);
-            let decision = policy.decide(7, context);
-            assert_eq!(decision.learn, trust == SourceTrust::Verified);
-            assert!(!decision.remote_use);
-        }
-    }
-
-    #[test]
-    fn confirmation_rejects_rich_and_nontext_sources() {
-        for kind in [
-            ContentType::Html,
-            ContentType::Rtf,
-            ContentType::Image,
-            ContentType::Files,
-        ] {
-            assert!(confirmed_term_input(
-                item(kind, SourceTrust::Verified),
-                "confirm-1".into(),
-                "Inputia".into(),
-                7,
-            )
-            .is_err());
-        }
-    }
-
-    #[test]
-    fn confirmation_reuses_short_term_filters_and_rejects_invalid_operation_ids() {
-        for term in [
-            "这是一整段文字，不能自动学习。",
-            "a@example.com",
-            "token=secret",
-            "<|system|>",
-            "a",
-            "abcdefghijklmnopqrstuvwxyz0123456789",
-        ] {
-            assert!(confirmed_term_input(
-                item(ContentType::Text, SourceTrust::Verified),
-                "confirm-1".into(),
-                term.into(),
-                7,
-            )
-            .is_err());
-        }
-        assert!(confirmed_term_input(
-            item(ContentType::Text, SourceTrust::Verified),
-            "invalid/id".into(),
-            "Inputia".into(),
-            7,
-        )
-        .is_err());
     }
 }

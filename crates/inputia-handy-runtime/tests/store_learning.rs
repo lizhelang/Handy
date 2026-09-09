@@ -13,6 +13,156 @@ use inputia_handy_runtime::{
 use rusqlite::Connection;
 const KEY: [u8; 32] = [43; 32];
 
+fn confirmation() -> inputia_handy_runtime::learning::HistoryTermConfirmation {
+    inputia_handy_runtime::learning::HistoryTermConfirmation {
+        operation_id: Identifier::parse("confirmation-1").unwrap(),
+        item_id: inputia_handy_runtime::store::item_id("history", "1"),
+        expected_revision: 1,
+        term: "Codex".into(),
+    }
+}
+
+#[test]
+fn confirmation_replays_after_forgetting_and_restart_without_reviving() {
+    use inputia_handy_runtime::learning::ApplyContribution;
+    for forgotten in ["Inputia", "Codex"] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("index.db");
+        let mut store = open(&path);
+        let request = confirmation();
+        assert_eq!(
+            store.confirm_history_term(&KEY, &request, || true).unwrap(),
+            ApplyContribution::Applied
+        );
+        store.forget_term(&KEY, forgotten, 1).unwrap();
+        let before = words(&store, 2);
+        drop(store);
+        let mut store = IntegrationStore::open(&path, "test").unwrap();
+        store.enable_learning(&KEY).unwrap();
+        assert_eq!(
+            store
+                .confirm_history_term(&KEY, &request, || false)
+                .unwrap(),
+            ApplyContribution::Replay
+        );
+        assert_eq!(words(&store, 2), before);
+        for altered in [
+            inputia_handy_runtime::learning::HistoryTermConfirmation {
+                term: "Other".into(),
+                ..request.clone()
+            },
+            inputia_handy_runtime::learning::HistoryTermConfirmation {
+                item_id: "other".into(),
+                ..request.clone()
+            },
+            inputia_handy_runtime::learning::HistoryTermConfirmation {
+                expected_revision: 2,
+                ..request.clone()
+            },
+        ] {
+            assert!(store.confirm_history_term(&KEY, &altered, || true).is_err());
+        }
+        assert!(store
+            .confirm_history_term(&[44; 32], &request, || true)
+            .is_err());
+        let reader = Connection::open(&path).unwrap();
+        assert_eq!(
+            reader
+                .query_row(
+                    "SELECT COUNT(*) FROM learning_confirmation_receipts",
+                    [],
+                    |row| row.get::<_, u32>(0)
+                )
+                .unwrap(),
+            1
+        );
+    }
+}
+
+#[test]
+fn confirmation_receipt_failure_and_guard_denial_are_atomic() {
+    use inputia_handy_runtime::learning::ApplyContribution;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("index.db");
+    let mut store = open(&path);
+    let request = confirmation();
+    assert!(store
+        .confirm_history_term(&KEY, &request, || false)
+        .is_err());
+    assert_eq!(words(&store, 1), vec!["Inputia"]);
+    let reader = Connection::open(&path).unwrap();
+    reader.execute_batch("CREATE TRIGGER reject_confirmation BEFORE INSERT ON learning_confirmation_receipts BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+    assert!(store.confirm_history_term(&KEY, &request, || true).is_err());
+    assert_eq!(words(&store, 1), vec!["Inputia"]);
+    assert_eq!(
+        reader
+            .query_row(
+                "SELECT COUNT(*) FROM learning_receipts WHERE contribution_id='confirmation-1'",
+                [],
+                |row| row.get::<_, u32>(0)
+            )
+            .unwrap(),
+        0
+    );
+    reader
+        .execute_batch("DROP TRIGGER reject_confirmation;")
+        .unwrap();
+    assert_eq!(
+        store.confirm_history_term(&KEY, &request, || true).unwrap(),
+        ApplyContribution::Applied
+    );
+    store.apply_change(&change(2, 2, None)).unwrap();
+    drop(store);
+    let mut store = IntegrationStore::open(&path, "test").unwrap();
+    store.enable_learning(&KEY).unwrap();
+    assert_eq!(
+        store.confirm_history_term(&KEY, &request, || true).unwrap(),
+        ApplyContribution::Replay
+    );
+    assert!(words(&store, store.policy_epoch().unwrap()).is_empty());
+}
+
+#[test]
+fn confirmation_never_promotes_source_trust_or_relearns_forgotten_terms() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = open(&temp.path().join("index.db"));
+    let mut image = change(2, 2, Some("Codex"));
+    image.payload.as_mut().unwrap().content_type = ContentType::Image;
+    store.apply_change(&image).unwrap();
+    assert!(store
+        .confirm_history_term(
+            &KEY,
+            &inputia_handy_runtime::learning::HistoryTermConfirmation {
+                expected_revision: 2,
+                ..confirmation()
+            },
+            || true
+        )
+        .is_err());
+    for trust in [ItemTrust::Unknown, ItemTrust::Observed] {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = open(&temp.path().join("index.db"));
+        let mut update = change(2, 2, Some("Codex"));
+        update.payload.as_mut().unwrap().source_trust = trust;
+        store.apply_change(&update).unwrap();
+        let request = inputia_handy_runtime::learning::HistoryTermConfirmation {
+            expected_revision: 2,
+            ..confirmation()
+        };
+        assert!(store.confirm_history_term(&KEY, &request, || true).is_err());
+        assert!(words(&store, store.policy_epoch().unwrap()).is_empty());
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = open(&temp.path().join("index.db"));
+    store.forget_term(&KEY, "Codex", 1).unwrap();
+    assert!(store
+        .confirm_history_term(&KEY, &confirmation(), || true)
+        .is_err());
+    let mut long = confirmation();
+    long.term = "this is an entire paragraph and should never be a short term".into();
+    assert!(store.confirm_history_term(&KEY, &long, || true).is_err());
+}
+
 #[test]
 fn forget_receipt_failure_rolls_back_the_entire_forget() {
     let temp = tempfile::tempdir().unwrap();

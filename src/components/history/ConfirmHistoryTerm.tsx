@@ -13,7 +13,9 @@ export function ConfirmHistoryTerm({
   const [term, setTerm] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<"saved" | "failed" | null>(null);
+  const [status, setStatus] = useState<"saved" | "replayed" | "failed" | null>(
+    null,
+  );
   const attempt = useRef<{ term: string; id: string } | null>(null);
 
   const save = async () => {
@@ -32,9 +34,11 @@ export function ConfirmHistoryTerm({
         confirmed,
       });
       setStatus(
-        ["applied", "replay", "already_contributed"].includes(result)
-          ? "saved"
-          : "failed",
+        result === "replay"
+          ? "replayed"
+          : ["applied", "already_contributed"].includes(result)
+            ? "saved"
+            : "failed",
       );
     } catch {
       // 回执未知时保留原操作身份，不自动提交另一笔贡献。
@@ -77,7 +81,11 @@ export function ConfirmHistoryTerm({
         <button
           type="button"
           disabled={
-            busy || !confirmed || term.trim().length < 2 || status === "saved"
+            busy ||
+            !confirmed ||
+            term.trim().length < 2 ||
+            status === "saved" ||
+            status === "replayed"
           }
           onClick={() => void save()}
           className="rounded-md border border-text/15 px-3 py-1.5 disabled:opacity-40 hover:bg-text/5"

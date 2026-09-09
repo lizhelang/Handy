@@ -7,7 +7,9 @@ use std::{collections::HashSet, fmt, path::Path, time::Duration};
 
 use crate::source::{SnapshotHeader, SnapshotRecord};
 
-use crate::learning::{ApplyContribution, ContributionInput, LearningError, LearningLedger};
+use crate::learning::{
+    ApplyContribution, ContributionInput, HistoryTermConfirmation, LearningError, LearningLedger,
+};
 use inputia_core::integration::events::Identifier;
 use inputia_core::integration::{
     privacy::{PrivacyContext, PrivacyPolicy},
@@ -690,6 +692,133 @@ impl IntegrationStore {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// 仅读取已提交请求，恢复回执不依赖当前源同步是否可用。
+    pub fn history_term_confirmation_received(
+        &self,
+        key: &[u8],
+        request: &HistoryTermConfirmation,
+    ) -> StoreResult<bool> {
+        use inputia_core::integration::terms::{validate_term, TermEvidence};
+        let ledger = LearningLedger::new(key)?;
+        ledger.check_key(&self.conn)?;
+        let term = validate_term(&request.term, TermEvidence::ConfirmedCorrection)
+            .map_err(LearningError::InvalidTerm)?;
+        let digest = ledger.confirmation_digest(request, &term);
+        let receipt: Option<Vec<u8>> = self
+            .conn
+            .query_row(
+                "SELECT digest FROM learning_confirmation_receipts WHERE operation_id=?1",
+                [request.operation_id.as_str()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match receipt {
+            Some(previous) if previous != digest => Err(LearningError::ReplayConflict.into()),
+            Some(_) => Ok(true),
+            None => Ok(false),
+        }
+    }
+
+    /// 确认回执只证明历史处理完成；即便词已撤销，也不会重新贡献。
+    pub fn confirm_history_term(
+        &mut self,
+        key: &[u8],
+        request: &HistoryTermConfirmation,
+        guard: impl Fn() -> bool,
+    ) -> StoreResult<ApplyContribution> {
+        use inputia_core::integration::{
+            events::SourceRecord,
+            privacy::HistoryMode,
+            terms::{validate_term, TermEvidence},
+        };
+        let ledger = LearningLedger::new(key)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ledger.check_key(&tx)?;
+        let term = validate_term(&request.term, TermEvidence::ConfirmedCorrection)
+            .map_err(LearningError::InvalidTerm)?;
+        let digest = ledger.confirmation_digest(request, &term);
+        let receipt: Option<Vec<u8>> = tx
+            .query_row(
+                "SELECT digest FROM learning_confirmation_receipts WHERE operation_id=?1",
+                [request.operation_id.as_str()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(previous) = receipt {
+            return if previous == digest {
+                Ok(ApplyContribution::Replay)
+            } else {
+                Err(LearningError::ReplayConflict.into())
+            };
+        }
+        let live: Option<(String, String, i64, i64, String)> = tx.query_row(
+            "SELECT store_id,record_id,revision,content_revision,snapshot FROM integration_items WHERE item_id=?1",
+            [&request.item_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
+        ).optional()?;
+        let Some((store_id, record_id, revision, content_revision, snapshot)) = live else {
+            return Err(StoreError::Invalid("learning source is absent or changed"));
+        };
+        if revision != checked_number(request.expected_revision)? || request.expected_revision == 0
+        {
+            return Err(StoreError::Invalid("learning source is absent or changed"));
+        }
+        let snapshot: ItemSnapshot = serde_json::from_str(&snapshot)?;
+        if snapshot.content_type != ContentType::Text {
+            return Err(StoreError::Invalid("learning source is not text"));
+        }
+        let source_trust = match snapshot.source_trust {
+            SourceTrust::Verified => inputia_core::integration::privacy::SourceTrust::Verified,
+            SourceTrust::Observed => inputia_core::integration::privacy::SourceTrust::Observed,
+            SourceTrust::Unknown => inputia_core::integration::privacy::SourceTrust::Unknown,
+        };
+        let policy_epoch = epoch(&tx)?;
+        let policy = PrivacyPolicy {
+            epoch: policy_epoch,
+            history_enabled: false,
+            history_mode: HistoryMode::Strict,
+            learning_enabled: true,
+            remote_learning_terms_enabled: false,
+        };
+        let context = PrivacyContext {
+            source_trust,
+            source_sensitive: snapshot.source_app.as_deref().is_some_and(|app| {
+                inputia_core::AppPolicy::default().excludes(&inputia_core::AppContext::new(app))
+            }),
+            target_known: true,
+            target_sensitive: false,
+            secure_input: false,
+            transient_or_concealed: false,
+        };
+        let contribution = ContributionInput {
+            contribution_id: request.operation_id.clone(),
+            source: SourceRecord {
+                store_id: Identifier::parse(store_id).map_err(StoreError::Invalid)?,
+                record_id: Identifier::parse(record_id).map_err(StoreError::Invalid)?,
+            },
+            source_revision: content_revision as u64,
+            policy_epoch,
+            term,
+            evidence: TermEvidence::ConfirmedCorrection,
+            explicit_relearn: false,
+        };
+        // 在同步屏障和真实源读取之后、任何账本写入之前复查 UI 焦点及 secure input。
+        if !guard() {
+            return Err(LearningError::PrivacyDenied.into());
+        }
+        let result = ledger.apply_contribution(&tx, &contribution, &policy, context)?;
+        tx.execute(
+            "INSERT INTO learning_confirmation_receipts(operation_id,digest) VALUES(?1,?2)",
+            params![request.operation_id.as_str(), digest],
+        )?;
+        if result == ApplyContribution::Applied {
+            tx.execute("UPDATE integration_meta SET value=CAST(value AS INTEGER)+1 WHERE key='learning_generation'", [])?;
+        }
+        tx.commit()?;
+        Ok(result)
     }
 
     pub fn contribute_term(

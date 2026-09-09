@@ -1,7 +1,7 @@
 //! 单一后台写入线程；Tauri/Host 通过请求队列访问，不在按键线程等待。
 
 use crate::{
-    learning::{ApplyContribution, ContributionInput},
+    learning::{ApplyContribution, ContributionInput, HistoryTermConfirmation},
     source::SourceTable,
     store::{
         ContentRevision, HistoryQuery, IndexedItem, IntegrationStore, LearnedTermView, TermSnapshot,
@@ -361,6 +361,34 @@ impl HistoryService {
                 .store
                 .list_terms(limit, offset)
                 .map_err(|e| e.to_string())
+        })
+    }
+
+    /// 逐词本地同意入口；超时后以同一请求重试，仅返回历史处理回执。
+    pub fn confirm_history_term(
+        &self,
+        request: HistoryTermConfirmation,
+        guard: impl Fn() -> bool + Send + 'static,
+    ) -> ServiceResult<ApplyContribution> {
+        self.call(move |worker| {
+            if worker
+                .store
+                .history_term_confirmation_received(&worker.learning_key, &request)
+                .map_err(|error| error.to_string())?
+            {
+                return Ok(ApplyContribution::Replay);
+            }
+            worker.sync_once()?;
+            worker.revoke_outputs();
+            let result = worker
+                .store
+                .confirm_history_term(&worker.learning_key, &request, guard)
+                .map_err(|error| error.to_string())?;
+            if result == ApplyContribution::Applied {
+                worker.generation = worker.generation.saturating_add(1);
+                (worker.changed)(worker.generation);
+            }
+            Ok(result)
         })
     }
 
@@ -754,6 +782,76 @@ impl Drop for HistoryService {
 #[cfg(test)]
 mod output_permit_tests {
     use super::*;
+
+    #[test]
+    fn confirmation_receipt_survives_source_sync_failure() {
+        use crate::store::{
+            ContentType, ItemSnapshot, SourceChange, SourceKind, SourceOperation, SourceTrust,
+        };
+        use inputia_core::integration::events::Identifier;
+        let root = tempfile::tempdir().unwrap();
+        Connection::open(root.path().join("history.db")).unwrap().execute_batch("CREATE TABLE transcription_history(id INTEGER PRIMARY KEY,file_name TEXT,timestamp INTEGER,saved INTEGER,title TEXT,transcription_text TEXT,post_processed_text TEXT);").unwrap();
+        let clipboard = Connection::open(root.path().join("clipboard.db")).unwrap();
+        clipboard.execute_batch("CREATE TABLE clipboard_history(id INTEGER PRIMARY KEY,content_type TEXT,full_text TEXT,title TEXT,is_favorite INTEGER,is_pinned INTEGER,created_at INTEGER,image_path TEXT,source_app TEXT);").unwrap();
+        let service = HistoryService::start(root.path().into(), "fixture".into(), |_| {}).unwrap();
+        service
+            .call(|worker| {
+                worker
+                    .store
+                    .register_source("fixture", "fixture")
+                    .map_err(|e| e.to_string())?;
+                worker
+                    .store
+                    .apply_change(&SourceChange {
+                        store_id: "fixture".into(),
+                        seq: 1,
+                        event_id: "fixture-1".into(),
+                        record_id: "1".into(),
+                        revision: 1,
+                        operation: SourceOperation::Upsert,
+                        policy_epoch: 1,
+                        payload: Some(ItemSnapshot {
+                            source_kind: SourceKind::Voice,
+                            content_type: ContentType::Text,
+                            text: Some("Inputia".into()),
+                            title: None,
+                            starred: false,
+                            pinned: false,
+                            created_at_ms: 1,
+                            asset_ref: None,
+                            source_app: None,
+                            source_trust: SourceTrust::Verified,
+                        }),
+                    })
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            })
+            .unwrap();
+        let request = HistoryTermConfirmation {
+            operation_id: Identifier::parse("confirm-sync").unwrap(),
+            item_id: crate::store::item_id("fixture", "1"),
+            expected_revision: 1,
+            term: "Inputia".into(),
+        };
+        assert_eq!(
+            service
+                .confirm_history_term(request.clone(), || true)
+                .unwrap(),
+            ApplyContribution::Applied
+        );
+        service
+            .forget_term("forget-sync".into(), "Inputia".into(), 1)
+            .unwrap();
+        clipboard
+            .execute_batch("DROP TABLE unified_source_outbox;")
+            .unwrap();
+        assert!(service.synchronize().is_err());
+        assert_eq!(
+            service.confirm_history_term(request, || false).unwrap(),
+            ApplyContribution::Replay
+        );
+        assert!(service.list_terms(100, 0).unwrap().is_empty());
+    }
 
     #[test]
     fn timed_out_forget_retries_original_receipt_after_restart() {

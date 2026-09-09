@@ -32,6 +32,15 @@ pub struct ContributionInput {
     pub explicit_relearn: bool,
 }
 
+/// 主控制中心逐词确认；重试必须保留完整请求，不包含可伪造的源信任或策略版本。
+#[derive(Clone)]
+pub struct HistoryTermConfirmation {
+    pub operation_id: Identifier,
+    pub item_id: String,
+    pub expected_revision: u64,
+    pub term: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApplyContribution {
     Applied,
@@ -114,6 +123,9 @@ impl LearningLedger {
              CREATE TABLE IF NOT EXISTS learning_forget_receipts (
                 operation_id TEXT PRIMARY KEY, digest BLOB NOT NULL,
                 result_epoch INTEGER NOT NULL CHECK(result_epoch>0)
+             );
+             CREATE TABLE IF NOT EXISTS learning_confirmation_receipts (
+                operation_id TEXT PRIMARY KEY, digest BLOB NOT NULL
              );
              CREATE TABLE IF NOT EXISTS learning_contributions (
                 contribution_id TEXT PRIMARY KEY,
@@ -417,7 +429,7 @@ impl LearningLedger {
         Ok(())
     }
 
-    fn check_key(&self, connection: &Connection) -> Result<()> {
+    pub(crate) fn check_key(&self, connection: &Connection) -> Result<()> {
         let stored: Vec<u8> = connection.query_row(
             "SELECT key_check FROM learning_meta WHERE singleton=1",
             [],
@@ -449,6 +461,19 @@ impl LearningLedger {
         let mut payload = expected_epoch.to_be_bytes().to_vec();
         payload.extend_from_slice(term.as_bytes());
         self.keyed_identity(b"forget-receipt-v1", &payload)
+    }
+
+    pub(crate) fn confirmation_digest(
+        &self,
+        request: &HistoryTermConfirmation,
+        term: &str,
+    ) -> Vec<u8> {
+        let mut payload = Sha256::new();
+        for field in [request.operation_id.as_str(), &request.item_id, term] {
+            hash_field(&mut payload, field.as_bytes());
+        }
+        payload.update(request.expected_revision.to_be_bytes());
+        self.keyed_identity(b"history-confirmation-receipt-v1", &payload.finalize())
     }
 
     fn keyed_identity(&self, domain: &[u8], text: &[u8]) -> Vec<u8> {

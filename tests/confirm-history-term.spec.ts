@@ -58,7 +58,7 @@ test("term confirmation is opt-in and retries the same operation", async ({
   await save.click();
   await expect(page.getByRole("alert")).toBeVisible();
   await save.click();
-  await expect(page.getByRole("status")).toContainText("已保存到本地词库");
+  await expect(page.getByRole("status")).toContainText("这次确认操作已处理");
   const calls = await page.evaluate(() => Reflect.get(window, "termCalls"));
   expect(calls).toHaveLength(2);
   expect(calls[0]).toEqual(calls[1]);
