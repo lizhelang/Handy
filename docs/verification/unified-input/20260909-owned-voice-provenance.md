@@ -32,3 +32,9 @@ schema4需要相应兼容构建，旧schema3代码不能被假定可以直接回
 命令：`cargo run --manifest-path crates/inputia-handy-runtime/Cargo.toml --example source_upgrade_probe -- /private/tmp/inputia-source-upgrade-20260909.Eub8Qy/history-copy.db`。结果日志同目录 result.log，输出不含正文。首次传入/tmp别名被canonical路径保护拒绝，随后使用真实/private/tmp路径，未放宽检查。
 
 这是实际候选历史副本的结构兼容证据，不涵盖新增记录后兼容回滚、录音附件、旧Host重新导入或完整A12；不能从5条记录推断大数据性能。
+
+## 构建完成，未替换当前安装
+
+代码 `8870df79` 的候选构建完成，日志 `/tmp/inputia-provenance-candidate.log`，固定本地证书签名deep/strict校验通过，CDHash `a6ba91411d5f94e164ef1b054ae032919de4d5e0`。独立保留产物 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/provenance-candidate-20260909.ZfTOxZ/Inputia Candidate.app`，未notarize。
+
+安装暂缓：实际旧代码 `9fa26dd3` 的 SourceOutbox::install只接受schema1–3，不能把旧包直接作为schema4恢复构建。需先准备相应兼容恢复构建/验证，不用覆盖旧数据库代替。当前已安装候选历史库复查仍schema3；未更换安装、未重新配对、未启动录音。
