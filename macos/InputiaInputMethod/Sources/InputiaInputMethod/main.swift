@@ -482,7 +482,7 @@ final class InputiaInputController: IMKInputController {
     reloadSettingsIfDue(client: client)
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     let shortcut = bridge.inputModeToggleShortcut()
-    shiftDiagnostic.notice("phase=local-flags shift=\(modifiers.contains(.shift)) armed=\(self.shiftInputModeGesture.isArmedForDebug)")
+    shiftDiagnostic.notice("phase=local-flags shift=\(modifiers.contains(.shift)) armed=\(self.shiftInputModeGesture.isArmedForDebug) held=\(self.shiftInputModeGesture.hasHeldKeysForDebug) baseline=\(self.shiftInputModeGesture.hasShiftBaselineForDebug) configured=\(shortcut == "shift") blocked=\(!modifiers.intersection([.control, .option, .command]).isEmpty)")
 
     inputiaDebugLog(
       "flagsChanged keyCode=\(event.keyCode) current=\(modifiers.rawValue) shortcut=\(shortcut) armed=\(shiftInputModeGesture.isArmedForDebug)"

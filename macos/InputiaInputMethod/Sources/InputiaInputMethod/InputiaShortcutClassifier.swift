@@ -23,6 +23,9 @@ struct InputiaShortcutClassifier {
       armed && !invalidated
     }
 
+    var hasHeldKeysForDebug: Bool { !activeNonModifierKeyCodes.isEmpty }
+    var hasShiftBaselineForDebug: Bool { lastModifiers.contains(.shift) }
+
     mutating func cancelPendingGesture() {
       // 取消资格不等于物理松开。保留状态，避免另一路同一按下事件重新武装。
       armed = false

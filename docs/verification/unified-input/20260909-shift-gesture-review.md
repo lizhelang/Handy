@@ -29,6 +29,9 @@ swiftc macos/InputiaInputMethod/Sources/InputiaInputMethod/InputiaShortcutClassi
 - 为区分本地事件缺失与会话取消，候选 54 仅增加 OSLog 手势阶段/布尔诊断，没有改变判定行为。已安装，实际 PID 42337/CDHash `aec88c03078c84dba09a8499e78ebf9bbe0cbe45` 校验通过；测试控制中心已重启加载新配对。备份及旧配对在 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/shift-diagnostic-20260909.1fENsU`。
 - 诊断子系统 `com.inputia.shift` 只记录 global/local flags、toggle 和 session-reset 原因，不记录普通按键、正文、窗口标题；未启用旧 INPUTIA_DEBUG_EVENTS 日志。
 - 初始原生记录显示 activate/deactivate 交替且 shift=false。尚未收到对应用户单独 Shift 的确认，不能据此判定回归原因。下一实验是实体单独 Shift 的 local/global/reset 顺序。
+- 后续 54 日志在 17:18:05、17:18:09（悉尼时间）出现 global/local 的 Shift down/up，local 阶段 armed=false，未执行 toggle。这排除“所有本地 flags 都收不到”的假设，但尚不足以区分残留键、修饰键组合与设置状态。日志保存在上述备份目录 `phase-events-54.log`。
+- 55 仅增加 held/baseline/configured/blocked 布尔诊断（不记键值），完整构建后已安装；PID 44259、CDHash `71d2bdeb39c75ba691af0f4efc38fda24e05f99a` 实际校验通过。旧 54 包仍在备份目录，配对为 `pair-55.json`，测试控制中心已重启。
+- CUA 在专用文稿调用 Shift+/ 后显示新增问号，但对应观察窗口没有 flags 记录，只有 session-reset；因此不能用 CUA 送键替代本次实体修饰键诊断。仍等待 55 的实体单 Shift 事件，不归因、不放宽判断条件。
 
 - **最新用户实体键盘确认**：`Shift+/` 能输出 `?`，且中文模式保持。该组合键场景已通过用户原生确认，取代下方自动送键实验对该场景的未决结论。不据此推断任意松开顺序、独立 Shift、焦点变化或所有应用均通过；无需再次请求用户重复此项。
 
