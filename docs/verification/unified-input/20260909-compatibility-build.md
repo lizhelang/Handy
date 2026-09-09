@@ -9,3 +9,7 @@
 构建复用 `/Users/lzl/FILE/github/Handy-unified-input-system/src-tauri/target` 缓存，只允许顺序运行；新的主候选已单独保留于 `provenance-candidate-20260909.ZfTOxZ`，不依赖会被后续构建覆盖的bundle输出。恢复包最终应独立保存并配对签署。
 
 尚未证明：新版本写入新增记录/确认/遗忘后换此构建的实际启动与对账、旧Host导入不复活、原生语音闭环。尤其旧导入重复学习缺陷仍存在，不能将“支持schema4”宣称为完整A12或可日常发布。
+
+独立复审review_socket_path为Approve，确认旧LearningLedger初始化不会删除新confirmation receipts或forgotten状态。跨版本合成数据库实验也通过：主分支新代码写入2条历史/2条确认并忘记其中1词，本兼容代码通过verify_confirmation_compat连续打开两次，epoch/回执/遗忘/标题收藏置顶附件引用均保留，仅未忘词有1份贡献。再由新代码以原operation重试两词均返回Replay，已忘词不复活。数据与3段日志保留于 `/private/tmp/inputia-cross-version-20260909.IAKPzi`。
+
+这是真实两版runtime进程对同一合成库的对账，不是原生app换包验收；附件仅核对引用，没有音频文件。首次fixture编译因timestamp整数类型不匹配失败，修正类型后完整按新→兼容→新顺序通过。旧Host导入行为尚未纳入本次实验。
