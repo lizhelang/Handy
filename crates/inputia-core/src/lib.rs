@@ -1003,6 +1003,8 @@ impl<E: ChineseEngine> InputiaCore<E> {
                 self.composing = selection.composing;
                 self.candidates = selection.candidates;
                 self.page = 0;
+                // 引擎选择回执可能只含原生小页；剩余组合仍按用户页大小补足。
+                self.ensure_candidates_for_page(0);
             }
             return commit;
         }
@@ -1640,6 +1642,54 @@ mod tests {
         let outcome = core.handle_key(Key::Space);
         assert_eq!(outcome.commit.as_deref(), Some("你"));
         assert_eq!(outcome.snapshot.composing, "");
+    }
+
+    #[test]
+    fn partial_selection_refills_configured_candidate_page() {
+        struct PagedSelectionEngine;
+        impl ChineseEngine for PagedSelectionEngine {
+            fn candidates(&self, composing: &str) -> Vec<Candidate> {
+                let words: &[&str] = match composing {
+                    "nihkxd" => &["你好"],
+                    "xd" => &["想", "向", "像", "象", "相", "乡", "箱", "响"],
+                    _ => &[],
+                };
+                words
+                    .iter()
+                    .enumerate()
+                    .map(|(i, word)| Candidate::new(i.to_string(), *word))
+                    .collect()
+            }
+            fn select_candidate(
+                &self,
+                composing: &str,
+                _: usize,
+                _: usize,
+                _: &Candidate,
+            ) -> Option<CandidateSelection> {
+                (composing == "nihkxd").then(|| CandidateSelection {
+                    commit: "你好".into(),
+                    composing: "xd".into(),
+                    candidates: self.candidates("xd").into_iter().take(5).collect(),
+                })
+            }
+        }
+        for count in [7, 8] {
+            let mut core = InputiaCore::new(
+                CoreSettings {
+                    candidate_page_size: count,
+                    ..CoreSettings::default()
+                },
+                PagedSelectionEngine,
+            );
+            core.handle_key(Key::Shift);
+            feed(&mut core, "nihkxd");
+            let selected = core.handle_key(Key::Space);
+            assert_eq!(selected.commit.as_deref(), Some("你好"));
+            assert_eq!(selected.snapshot.composing, "xd");
+            assert_eq!(selected.snapshot.visible_candidates.len(), count);
+            assert_eq!(core.handle_key(Key::Digit(7)).commit.as_deref(), Some("箱"));
+        }
     }
 
     #[test]

@@ -164,11 +164,9 @@ fn show_main_window(app: &AppHandle) {
 /// transition entirely; showing the window later promotes to Regular, which is
 /// the supported direction.
 ///
-/// Mirrors the show-window decision in `setup`: the app launches without a
-/// Dock icon only when it will start hidden (setting or `--start-hidden`) AND a
-/// tray icon is available (setting and not `--no-tray`). With no tray the Dock
-/// icon stays as the only way back into the app (#903). Headless one-shot
-/// runs are left alone.
+/// Inputia 的后台服务由系统输入法菜单或重新打开应用唤起控制中心，
+/// 不再依赖已移除的独立托盘。隐藏启动不能因此留下无窗口的 Dock 占位。
+/// 显式打开主窗口仍在 show_main_window 中提升为 Regular。
 #[cfg(target_os = "macos")]
 fn apply_startup_activation_policy(app: &mut tauri::App, headless_mode: bool) {
     if headless_mode {
@@ -179,10 +177,8 @@ fn apply_startup_activation_policy(app: &mut tauri::App, headless_mode: bool) {
     let settings = settings::get_settings(app.handle());
 
     let should_hide = settings.start_hidden || cli_args.start_hidden;
-    let tray_available = tray::independent_tray_enabled(settings.show_tray_icon, cli_args.no_tray);
-
-    if should_hide && tray_available {
-        log::info!("Starting hidden with tray available: launching as Accessory (no Dock icon)");
+    if should_hide {
+        log::info!("Inputia service starting hidden as Accessory (no Dock icon)");
         app.set_activation_policy(tauri::ActivationPolicy::Accessory);
     }
 }

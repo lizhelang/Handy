@@ -4,6 +4,24 @@ import Foundation
 @main
 struct InputiaVoiceInputLauncherSelfCheck {
   static func main() {
+    precondition(InputiaVoiceInputLauncher.activeSessionMenuActions.contains("quit_service"))
+    precondition(!InputiaVoiceInputLauncher.activeSessionMenuActions.contains("select_model"))
+    var readiness = InputiaVoiceServiceReadiness()
+    precondition(!readiness.requestStart(isRunning: true))
+    precondition(readiness.requestStart(isRunning: false))
+    precondition(!readiness.requestStart(isRunning: false))
+    readiness.suspend()
+    precondition(!readiness.requestStart(isRunning: false))
+    var explicitlyQuit = InputiaVoiceServiceReadiness()
+    explicitlyQuit.suspend()
+    precondition(!explicitlyQuit.requestStart(isRunning: false))
+    var observedExit = InputiaVoiceServiceReadiness()
+    precondition(!observedExit.requestStart(isRunning: true))
+    observedExit.suspend()
+    precondition(!observedExit.requestStart(isRunning: false))
+    precondition(InputiaVoiceInputLauncher.installedServiceAppPaths(homeDirectory: "/Users/example") == [
+      "/Applications/Inputia Candidate.app", "/Users/example/Applications/Inputia Candidate.app",
+    ])
     let fakeApp = "/tmp/InputiaVoiceInputLauncherSelfCheck/Inputia.app"
     let fakeExecutable = "\(fakeApp)/Contents/MacOS/handy"
     try? FileManager.default.removeItem(atPath: "/tmp/InputiaVoiceInputLauncherSelfCheck")
@@ -62,6 +80,7 @@ struct InputiaVoiceInputLauncherSelfCheck {
       && coldPlanStartsHiddenThenToggles
 
     print("voiceInputLauncherSelfCheck=\(ok)")
+    print("serviceReadinessSelfCheck=true cold_start_once=true explicit_quit_suppressed=true observed_exit_suppressed=true installed_paths_only=true")
     print("candidatesAreOrdered=\(candidatesAreOrdered)")
     print("findsEnvApp=\(findsEnvApp)")
     print("missingWhenExecutableAbsent=\(missingWhenExecutableAbsent)")

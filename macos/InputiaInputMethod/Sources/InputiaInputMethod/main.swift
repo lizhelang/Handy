@@ -347,6 +347,8 @@ final class InputiaInputController: IMKInputController {
 
   private func showHostAlert(title: String, message: String) {
     let app = NSApplication.shared
+    let previousPolicy = app.activationPolicy()
+    defer { app.setActivationPolicy(previousPolicy) }
     app.setActivationPolicy(.regular)
     app.activate(ignoringOtherApps: true)
 
@@ -437,6 +439,7 @@ final class InputiaInputController: IMKInputController {
 
   override func activateServer(_ sender: Any!) {
     #if INPUTIA_PAIRED_BUILD
+    InputiaVoiceInputLauncher.ensureUnifiedServiceReady()
     sharedTargetReady = false
     InputiaSharedTermsMemory.shared.clear()
     voiceActivationGeneration &+= 1

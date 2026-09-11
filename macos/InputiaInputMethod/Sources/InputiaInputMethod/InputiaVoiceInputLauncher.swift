@@ -1,6 +1,21 @@
 import AppKit
 import Foundation
 import OSLog
+#if INPUTIA_PAIRED_BUILD
+import Security
+#endif
+
+/// 自动准备只允许启动一次；明确退出或观察到进程结束后，不循环拉起服务。
+struct InputiaVoiceServiceReadiness {
+  private var attempted = false
+  private var suspended = false
+  mutating func requestStart(isRunning: Bool) -> Bool {
+    guard !isRunning, !attempted, !suspended else { return false }
+    attempted = true
+    return true
+  }
+  mutating func suspend() { suspended = true }
+}
 
 enum InputiaVoiceInputLaunchResult: Equatable {
   case started(appPath: String, delayed: Bool)
@@ -18,9 +33,66 @@ struct InputiaVoiceInputLaunchPlan: Equatable {
 }
 
 enum InputiaVoiceInputLauncher {
+  static let activeSessionMenuActions: Set<String> = ["status", "copy_latest", "history", "settings", "check_updates", "quit_service"]
   #if INPUTIA_PAIRED_BUILD
   private static let shortcutDiagnostic = Logger(subsystem: "com.inputia.shortcut", category: "control")
   private static let voiceQueue = DispatchQueue(label: "Inputia.unified-voice")
+  private static let readinessQueue = DispatchQueue(label: "Inputia.service-readiness")
+  private static var readiness = InputiaVoiceServiceReadiness()
+  private static var serviceTerminationObserver: NSObjectProtocol?
+
+  /// 输入法启用时异步准备同一签名配对服务，仅隐藏启动，不发送任何录音命令。
+  static func ensureUnifiedServiceReady() {
+    readinessQueue.async {
+      do {
+        let profile = InputiaProfile.current
+        try profile.validateCandidatePaths()
+        let bytes = try Data(contentsOf: profile.root.deletingLastPathComponent().appendingPathComponent("pair-manifest.json"))
+        let manifest = try SignedPairManifest.verify(bytes, trust: InputiaEmbeddedPairTrust.trust)
+        let identity = try manifest.identity(for: .handy)
+        if serviceTerminationObserver == nil {
+          serviceTerminationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: nil
+          ) { notification in
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              app.bundleIdentifier == identity.identifier else { return }
+            readinessQueue.async { readiness.suspend() }
+          }
+        }
+        let running = !NSRunningApplication.runningApplications(withBundleIdentifier: identity.identifier).isEmpty
+        guard readiness.requestStart(isRunning: running) else { return }
+        let app = try verifiedInstalledService(identity: identity)
+        openHiddenService(appPath: app.path) { error in
+          if error != nil { NSLog("inputia_service_prepare_failed automatic_retry=false") }
+          else { NSLog("inputia_service_hidden_start_requested recording_command_sent=false") }
+        }
+      } catch {
+        NSLog("inputia_service_prepare_unavailable automatic_retry=false")
+      }
+    }
+  }
+
+  private static func verifiedInstalledService(identity: PairCodeIdentity) throws -> URL {
+    let hashes = identity.cdhashes.map { "cdhash H\"\($0)\"" }.joined(separator: " or ")
+    var requirement: SecRequirement?
+    guard SecRequirementCreateWithString("identifier \"\(identity.identifier)\" and (\(hashes))" as CFString, [], &requirement) == errSecSuccess,
+      let requirement else { throw InputiaVoiceServiceError.handshake }
+    // 不采用 LaunchServices 可能指向构建备份的 URL，也不回落到日常 Handy 包。
+    for path in installedServiceAppPaths() {
+      let url = URL(fileURLWithPath: path).standardizedFileURL
+      guard url.resolvingSymlinksInPath() == url,
+        Bundle(url: url)?.bundleIdentifier == identity.identifier else { continue }
+      var code: SecStaticCode?
+      guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code,
+        SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSCheckAllArchitectures), requirement) == errSecSuccess else { continue }
+      var information: CFDictionary?
+      guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+        let info = information as? [String: Any], let flags = info[kSecCodeInfoFlags as String] as? NSNumber,
+        flags.uint32Value & 0x10000 != 0 else { continue }
+      return url
+    }
+    throw InputiaVoiceServiceError.profile
+  }
   private static var unifiedConnection: InputiaVoiceServiceConnection?
   private static var unifiedSession: String?
   private static var lastUnifiedPhase: String?
@@ -314,10 +386,11 @@ enum InputiaVoiceInputLauncher {
 
   /// 统一菜单与语音共用串行通讯队列；不在系统菜单或按键回调等待服务。
   static func menuAction(kind: String, modelID: String? = nil, completion: @escaping (InputiaMenuReply?) -> Void) {
+    if kind == "quit_service" { readinessQueue.async { readiness.suspend() } }
     voiceQueue.async {
       do {
         if let connection = unifiedConnection {
-          guard ["status", "copy_latest", "history", "settings", "check_updates"].contains(kind) else {
+          guard activeSessionMenuActions.contains(kind) else {
             DispatchQueue.main.async { completion(nil) }; return
           }
           let reply = try connection.menuRequest(kind: kind, modelID: modelID)
@@ -468,6 +541,21 @@ enum InputiaVoiceInputLauncher {
   static let startupArguments = ["--start-hidden"]
   static let startupToggleDelaySeconds: TimeInterval = 1.5
 
+  static func installedServiceAppPaths(homeDirectory: String = NSHomeDirectory()) -> [String] {
+    ["/Applications/Inputia Candidate.app", "\(homeDirectory)/Applications/Inputia Candidate.app"]
+  }
+
+  private static func openHiddenService(appPath: String, completion: @escaping (Error?) -> Void) {
+    let configuration = NSWorkspace.OpenConfiguration()
+    configuration.arguments = startupArguments
+    configuration.activates = false
+    configuration.hides = true
+    configuration.createsNewApplicationInstance = false
+    NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: appPath), configuration: configuration) { _, error in
+      completion(error)
+    }
+  }
+
   static func candidateAppPaths(
     environment: [String: String] = ProcessInfo.processInfo.environment,
     homeDirectory: String = NSHomeDirectory(),
@@ -547,14 +635,7 @@ enum InputiaVoiceInputLauncher {
 
     let plan = launchPlan(appPath: appPath, isRunning: isHandyRunning())
     if plan.delayed {
-      let configuration = NSWorkspace.OpenConfiguration()
-      configuration.arguments = plan.startupArguments
-      configuration.activates = false
-      configuration.hides = true
-      NSWorkspace.shared.openApplication(
-        at: URL(fileURLWithPath: plan.appPath),
-        configuration: configuration
-      ) { _, error in
+      openHiddenService(appPath: plan.appPath) { error in
         if let error {
           NSLog("Inputia failed to start voice service: \(error.localizedDescription)")
           return

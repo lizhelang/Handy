@@ -2150,6 +2150,73 @@ mod tests {
     }
 
     #[test]
+    fn capi_partial_double_pinyin_selection_preserves_configured_candidate_count() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        let shared_data_dir = bundled_shared_data_dir().expect("部分选词回归需要实际 RimeData");
+        for count in [7, 8] {
+            let temp = tempfile::tempdir().unwrap();
+            let settings_path = temp.path().join("settings.json");
+            let settings = InputiaSettings {
+                schema_id: "double_pinyin".into(),
+                rime_shared_data_dir: Some(shared_data_dir.clone()),
+                rime_user_data_dir: Some(temp.path().join("rime-user")),
+                memory_enabled: false,
+                candidate_page_size: count,
+                ..InputiaSettings::default()
+            };
+            settings.save(&settings_path).unwrap();
+            let settings_path = CString::new(settings_path.to_string_lossy().as_bytes()).unwrap();
+            let session = unsafe { inputia_session_new_from_settings(settings_path.as_ptr()) };
+            assert!(!session.is_null(), "部分选词回归必须初始化真实 Rime");
+            handle_json(unsafe { inputia_session_set_input_mode(session, INPUT_MODE_CHINESE) });
+            let mut current = Value::Null;
+            for ch in "nihkxd".chars() {
+                current = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
+            }
+            assert_eq!(current["composing"], "nihkxd");
+            let candidates = current["visible_candidates"].as_array().unwrap();
+            let first = candidates
+                .iter()
+                .position(|candidate| candidate["text"] == "你好")
+                .unwrap_or_else(|| panic!("nihkxd 的可见候选必须包含部分选择你好：{candidates:?}"));
+            let partial =
+                handle_json(unsafe { inputia_session_handle_digit(session, (first + 1) as u8) });
+            assert_eq!(partial["commit"], "你好");
+            assert_eq!(partial["composing"], "xd");
+            let remainder = partial["visible_candidates"].as_array().unwrap();
+            assert_eq!(
+                remainder.len(),
+                count,
+                "部分选词后应保留配置的候选数：{remainder:?}"
+            );
+            // 隔离默认字频不同于用户词频；按真实引擎翻页，不要求箱固定排在首页。
+            let mut page = partial.clone();
+            let mut box_index = None;
+            for _ in 0..10 {
+                box_index = page["visible_candidates"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .position(|candidate| candidate["text"] == "箱");
+                if box_index.is_some() {
+                    break;
+                }
+                page =
+                    handle_json(unsafe { inputia_session_handle_special(session, KEY_PAGE_DOWN) });
+                assert_eq!(page["composing"], "xd");
+            }
+            let box_index =
+                box_index.unwrap_or_else(|| panic!("xd 的真实引擎前十页必须可找到箱：{page:?}"));
+            let chosen = handle_json(unsafe {
+                inputia_session_handle_digit(session, (box_index + 1) as u8)
+            });
+            assert_eq!(chosen["commit"], "箱");
+            assert_eq!(chosen["composing"], "");
+            unsafe { inputia_session_free(session) };
+        }
+    }
+
+    #[test]
     fn capi_settings_schemas_commit_zhongguo_when_available() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let Some(shared_data_dir) = bundled_shared_data_dir() else {
