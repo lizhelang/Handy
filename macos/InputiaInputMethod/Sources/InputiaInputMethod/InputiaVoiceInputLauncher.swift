@@ -17,6 +17,16 @@ struct InputiaVoiceServiceReadiness {
   mutating func suspend() { suspended = true }
 }
 
+/// 仅约束当前会话的首次 Fetch；一旦发起便保留 attempted，未知回执不能重试。
+struct InputiaVoiceFirstFetchGate {
+  private(set) var attempted = false
+  mutating func claimAfterPolicyRefresh(verified: Bool) -> Bool {
+    guard verified, !attempted else { return false }
+    attempted = true
+    return true
+  }
+}
+
 enum InputiaVoiceInputLaunchResult: Equatable {
   case started(appPath: String, delayed: Bool)
   case missing
@@ -95,6 +105,7 @@ enum InputiaVoiceInputLauncher {
   }
   private static var unifiedConnection: InputiaVoiceServiceConnection?
   private static var unifiedSession: String?
+  private static var unifiedFetchGate = InputiaVoiceFirstFetchGate()
   private static var lastUnifiedPhase: String?
   private static var shortcutTerms: InputiaVoiceTermsVersion?
   private static var shortcutTarget: InputiaVoiceTarget?
@@ -318,6 +329,7 @@ enum InputiaVoiceInputLauncher {
           }
           // 写入前保留操作归属；回执未知后只查询事实，不重放新建会话。
           unifiedSession = trigger.session_id
+          unifiedFetchGate = InputiaVoiceFirstFetchGate()
           unifiedConnection = connection
           touchedConnection = true
           shortcutSession = trigger.session_id
@@ -461,6 +473,7 @@ enum InputiaVoiceInputLauncher {
         guard reply.status == "session" else { connection.close(); throw InputiaVoiceServiceError.handshake }
         unifiedConnection = connection
         unifiedSession = session
+        unifiedFetchGate = InputiaVoiceFirstFetchGate()
         lastUnifiedPhase = nil
         DispatchQueue.main.async { completion("正在准备，再次点击停止") }
         pollUnifiedVoice(connection: connection, session: session, target: target, deliver: deliver, completion: completion)
@@ -477,7 +490,8 @@ enum InputiaVoiceInputLauncher {
     deliver: @escaping (InputiaVoiceDelivery, @escaping (String) -> Void) -> Void,
     completion: @escaping (String) -> Void) {
     voiceQueue.asyncAfter(deadline: .now() + 0.25) {
-      guard unifiedSession == session, unifiedConnection === connection else { return }
+      guard unifiedSession == session, unifiedConnection === connection, !unifiedFetchGate.attempted else { return }
+      var fetchConnection: InputiaVoiceServiceConnection?
       do {
         let reply = try connection.request(sessionID: session, requestID: UUID().uuidString, command: .status)
         guard let view = reply.view, reply.status == "session" else { throw InputiaVoiceServiceError.handshake }
@@ -489,9 +503,24 @@ enum InputiaVoiceInputLauncher {
         if ["preparing", "recording", "processing"].contains(view.phase) {
           pollUnifiedVoice(connection: connection, session: session, target: target, deliver: deliver, completion: completion)
         } else if view.phase == "pending_target", target.field_id != nil {
+          let refreshed: (InputiaVoiceServiceConnection, InputiaVoiceSessionView)
+          do {
+            refreshed = try refreshBeforeFirstFetch(connection: connection, session: session, target: target, previous: view)
+          } catch {
+            // 结束本地等待，但保留 shortcutSession/target 与持久 Prepared 结果；不重放。
+            finishFailedPreFetch(connection)
+            NSLog("inputia_voice_pre_fetch_refresh_failed fetch_attempted=false")
+            DispatchQueue.main.async { completion("转写已保存，插入前策略同步未完成；未提取或重放结果。") }
+            return
+          }
+          let outputConnection = refreshed.0
+          guard unifiedFetchGate.claimAfterPolicyRefresh(verified: true) else { outputConnection.close(); return }
+          fetchConnection = outputConnection
+          unifiedConnection = outputConnection
+          connection.close()
           // 只有唯一fetch成功才会取得正文；失联/重复请求绝不换路或再次fetch。
-          guard let delivery = try connection.fetchDelivery(view: view, target: target) else {
-            connection.close(); unifiedConnection = nil; unifiedSession = nil
+          guard let delivery = try outputConnection.fetchDelivery(view: refreshed.1, target: target) else {
+            outputConnection.close(); unifiedConnection = nil; unifiedSession = nil
             clearShortcutOwnership(sessionID: session)
             DispatchQueue.main.async { completion("结果已有输出状态，未重复插入。请在 Inputia 查看历史。") }
             return
@@ -499,9 +528,9 @@ enum InputiaVoiceInputLauncher {
           DispatchQueue.main.async {
             let acknowledge: (String) -> Void = { receipt in
               voiceQueue.async {
-                guard unifiedSession == session else { return }
+                guard unifiedSession == session, unifiedConnection === outputConnection else { return }
                 do {
-                  try connection.acknowledgeDelivery(delivery, receipt: receipt)
+                  try outputConnection.acknowledgeDelivery(delivery, receipt: receipt)
                   NSLog("inputia_unified_voice_output_receipt=%@", receipt)
                   DispatchQueue.main.async {
                     completion(receipt == "dispatched" ? "已向原输入框派发文字。" : "结果保留在历史，未自动重试插入。")
@@ -510,7 +539,7 @@ enum InputiaVoiceInputLauncher {
                   NSLog("inputia_unified_voice_output_receipt_unknown automatic_replay=false")
                   DispatchQueue.main.async { completion("插入回执未知，未重放。请核对输入框和历史。") }
                 }
-                connection.close(); unifiedConnection = nil; unifiedSession = nil
+                outputConnection.close(); unifiedConnection = nil; unifiedSession = nil
                 clearShortcutOwnership(sessionID: session)
               }
             }
@@ -526,12 +555,51 @@ enum InputiaVoiceInputLauncher {
           DispatchQueue.main.async { completion(view.phase == "pending_target" ? "转写已保存到历史记录，结果待插入。" : "语音会话已结束。") }
         }
       } catch {
-        connection.close(); unifiedConnection = nil; unifiedSession = nil
+        (fetchConnection ?? connection).close(); unifiedConnection = nil; unifiedSession = nil
         NSLog("inputia_unified_voice_receipt_unknown automatic_replay=false")
         DispatchQueue.main.async { completion("语音回执未知，未重放请求。请在 Inputia 查看状态和历史。") }
       }
     }
   }
+
+  private static func refreshBeforeFirstFetch(connection: InputiaVoiceServiceConnection, session: String,
+    target: InputiaVoiceTarget, previous: InputiaVoiceSessionView) throws -> (InputiaVoiceServiceConnection, InputiaVoiceSessionView) {
+    guard !unifiedFetchGate.attempted, unifiedSession == session, unifiedConnection === connection else {
+      throw InputiaVoiceServiceError.policy
+    }
+    let refreshed = try openAuthenticatedConnection()
+    do {
+      guard refreshed.server.instance_id == connection.server.instance_id else { throw InputiaVoiceServiceError.handshake }
+      let reply = try refreshed.request(sessionID: session, requestID: UUID().uuidString, command: .status)
+      guard reply.status == "session", let current = reply.view, current.phase == "pending_target",
+        current.session_id == session, previous.session_id == session,
+        current.target_id == target.target_id, current.target_id == previous.target_id,
+        current.item_id != nil, current.item_id == previous.item_id,
+        current.output_operation_id != nil, current.output_operation_id == previous.output_operation_id,
+        unifiedSession == session, unifiedConnection === connection, !unifiedFetchGate.attempted else {
+        throw InputiaVoiceServiceError.policy
+      }
+      return (refreshed, current)
+    } catch { refreshed.close(); throw error }
+  }
+
+  private static func finishFailedPreFetch(_ connection: InputiaVoiceServiceConnection?) {
+    connection?.close()
+    unifiedConnection = nil
+    unifiedSession = nil
+  }
+
+  #if INPUTIA_CONNECTION_SELF_CHECK
+  static func checkPreFetchFailureReleasesWait() -> Bool {
+    let owner = "synthetic-pre-fetch-owner"
+    unifiedSession = owner
+    shortcutSession = owner
+    finishFailedPreFetch(nil)
+    let correct = unifiedSession == nil && unifiedConnection == nil && shortcutSession == owner
+    shortcutSession = nil
+    return correct
+  }
+  #endif
   #endif
   static let handyBundleIdentifier = "com.pais.handy"
   // 用户可见名称变更不擅自改协议/授权身份；发布程序仍兼容原bundle ID。

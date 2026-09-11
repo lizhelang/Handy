@@ -784,6 +784,68 @@ mod tests {
     }
 
     #[test]
+    fn saved_result_generation_change_allows_status_but_requires_fresh_barrier_before_fetch() {
+        let root = tempfile::tempdir().unwrap();
+        let history = service(root.path());
+        let coordinator = FakeCoordinator::default();
+        let dispatcher = VoiceDispatcher::new(&history, &coordinator);
+        let old = context("server");
+        let start = request("start", "server");
+        dispatcher.dispatch(&old, start.clone()).unwrap();
+        let output = prepare_pending_voice_output(root.path(), &history, &start, "synthetic");
+        Connection::open(root.path().join("integration.db"))
+            .unwrap()
+            .execute(
+                "UPDATE integration_meta SET value='1' WHERE key='learning_generation'",
+                [],
+            )
+            .unwrap();
+        let mut status = request("status", "server");
+        status.command = VoiceCommand::Status;
+        assert_eq!(
+            dispatcher.dispatch(&old, status.clone()).unwrap().phase,
+            VoicePhase::PendingTarget
+        );
+        assert!(matches!(
+            dispatcher.fetch_output(&old, fetch_request("old-fetch", &start)),
+            Err(DispatchError::Unauthorized)
+        ));
+        assert_eq!(
+            history
+                .voice_result("session".into())
+                .unwrap()
+                .unwrap()
+                .state,
+            OutputState::Prepared
+        );
+
+        let mut refreshed = context("server");
+        let version = history.voice_terms_version().unwrap();
+        refreshed
+            .acknowledge_policy(version.clone(), &version)
+            .unwrap();
+        assert_eq!(
+            dispatcher
+                .dispatch(&refreshed, status)
+                .unwrap()
+                .output_operation_id,
+            Some(output.intent.operation_id.clone())
+        );
+        let (_, delivery) = dispatcher
+            .fetch_output(&refreshed, fetch_request("first-authorized-fetch", &start))
+            .unwrap();
+        assert_eq!(delivery.unwrap().0, output.intent);
+        assert_eq!(
+            history
+                .voice_result("session".into())
+                .unwrap()
+                .unwrap()
+                .state,
+            OutputState::Dispatched
+        );
+    }
+
+    #[test]
     fn fetch_claims_once_then_receipt_records_dispatched_without_replaying_body() {
         let root = tempfile::tempdir().unwrap();
         let history = service(root.path());

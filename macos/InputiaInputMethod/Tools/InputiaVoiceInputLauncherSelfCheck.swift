@@ -4,6 +4,19 @@ import Foundation
 @main
 struct InputiaVoiceInputLauncherSelfCheck {
   static func main() {
+    #if INPUTIA_PAIRED_BUILD && INPUTIA_CONNECTION_SELF_CHECK
+    precondition(InputiaVoiceInputLauncher.checkPreFetchFailureReleasesWait())
+    print("preFetchFailureReleasesWait=true shortcut_owner_retained=true")
+    #endif
+    var firstFetch = InputiaVoiceFirstFetchGate()
+    precondition(!firstFetch.claimAfterPolicyRefresh(verified: false))
+    precondition(!firstFetch.attempted)
+    precondition(firstFetch.claimAfterPolicyRefresh(verified: true))
+    precondition(firstFetch.attempted)
+    precondition(!firstFetch.claimAfterPolicyRefresh(verified: true))
+    var nextSessionFetch = InputiaVoiceFirstFetchGate()
+    precondition(!nextSessionFetch.claimAfterPolicyRefresh(verified: false))
+    precondition(nextSessionFetch.claimAfterPolicyRefresh(verified: true))
     precondition(InputiaVoiceInputLauncher.activeSessionMenuActions.contains("quit_service"))
     precondition(!InputiaVoiceInputLauncher.activeSessionMenuActions.contains("select_model"))
     var readiness = InputiaVoiceServiceReadiness()
@@ -80,6 +93,7 @@ struct InputiaVoiceInputLauncherSelfCheck {
       && coldPlanStartsHiddenThenToggles
 
     print("voiceInputLauncherSelfCheck=\(ok)")
+    print("voiceFirstFetchGateSelfCheck=true refresh_required=true once_per_session=true unknown_fetch_not_replayed=true new_session_not_blocked=true")
     print("serviceReadinessSelfCheck=true cold_start_once=true explicit_quit_suppressed=true observed_exit_suppressed=true installed_paths_only=true")
     print("candidatesAreOrdered=\(candidatesAreOrdered)")
     print("findsEnvApp=\(findsEnvApp)")
