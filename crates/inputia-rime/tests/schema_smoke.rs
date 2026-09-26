@@ -5,6 +5,69 @@ use inputia_rime::{RimeEngine, RimeEngineConfig};
 
 static RIME_SCHEMA_SMOKE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[cfg(feature = "bundled-static-rime")]
+#[test]
+fn natural_code_accepts_full_pinyin_and_keeps_native_partial_selection() {
+    let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();
+    let shared_data_dir = bundled_shared_data_dir().expect("explicit bundled resources required");
+    let user_temp = tempfile::tempdir().unwrap();
+    let config = RimeEngineConfig::squirrel_luna_pinyin_simp(user_temp.path())
+        .with_shared_data_dir(&shared_data_dir)
+        .with_schema("double_pinyin");
+    let engine = RimeEngine::open(config.clone()).expect("natural-code schema should open");
+    for (code, expected) in [
+        ("edu", "额度"),
+        ("vsgo", "中国"),
+        ("zhongguo", "中国"),
+        ("nihaoma", "你好吗"),
+    ] {
+        let candidates = engine.candidates_up_to(code, 256);
+        let selected = candidates
+            .iter()
+            .find(|c| c.text == expected)
+            .unwrap_or_else(|| panic!("{code} missing {expected}: {candidates:?}"));
+        assert_eq!(
+            engine.candidate_consumed_len(code, selected),
+            Some(code.len())
+        );
+        let committed = engine.select_candidate(code, 0, 0, selected).unwrap();
+        assert_eq!(committed.commit, expected);
+        assert!(committed.composing.is_empty(), "{code}: {committed:?}");
+    }
+    for (code, consumed, rest) in [
+        ("zhongguo", 5, "guo"),
+        ("vsgo", 2, "go"),
+        ("zhonggo", 5, "go"),
+        ("vsguo", 2, "guo"),
+    ] {
+        let candidates = engine.candidates_up_to(code, 256);
+        let selected = candidates
+            .iter()
+            .find(|c| c.text == "中")
+            .unwrap_or_else(|| panic!("{code} missing prefix 中: {candidates:?}"));
+        assert_eq!(
+            engine.candidate_consumed_len(code, selected),
+            Some(consumed)
+        );
+        let partial = engine.select_candidate(code, 0, 0, selected).unwrap();
+        assert_eq!(partial.commit, "中");
+        assert_eq!(partial.composing, rest);
+        let country = partial.candidates.iter().find(|c| c.text == "国").unwrap();
+        let completed = engine.select_candidate(rest, 0, 0, country).unwrap();
+        assert_eq!(completed.commit, "国");
+        assert!(completed.composing.is_empty());
+    }
+    // 选择非首位原生候选，确认全拼兼容没有绕过 Rime 用户词典学习。
+    for _ in 0..3 {
+        let candidates = engine.candidates_up_to("zhongguo", 256);
+        let selected = candidates.iter().find(|c| c.text == "种果").unwrap();
+        engine.select_candidate("zhongguo", 0, 0, selected).unwrap();
+    }
+    drop(engine);
+    let reopened = RimeEngine::open(config).unwrap();
+    assert_eq!(reopened.candidates("zhongguo")[0].text, "种果");
+}
+
 #[test]
 fn bundled_rime_schemas_commit_zhongguo_when_available() {
     let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();

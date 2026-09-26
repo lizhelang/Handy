@@ -46,3 +46,23 @@ run ID 只允许 1–64 位 ASCII 字母、数字、短横线和下划线。输�
 ```sh
 /usr/bin/python3 -m unittest discover -s macos/InputiaInputMethod/candidate-rime-data -p 'test_prepare.py'
 ```
+
+## 自然码全拼兼容（2026-09-27）
+
+仅 `double_pinyin` 增加全拼音节派生，保留原自然码编码；不修改用户选择的方案。先执行原有无效 `xx` 音节擦除，再用首尾标记保护全拼副本，完成双拼转换后恢复副本。原有词典、原生候选地址、选择与用户词典学习继续使用 Rime。
+
+自然码的 preedit 改为原始输入分节，避免旧双拼展开规则误改写全拼字母。候选扫描保留第一页引擎明确音节边界，防止翻到单字候选页时合并的 preedit 使全拼消费长度错误；不按汉字个数推测全拼键数。
+
+独立离线资源 `artifacts/outputs/natural-full-20260927/RimeData`、临时 Rime 用户目录及真实静态引擎已验证：`edu → 额度`、`vsgo → 中国`、`zhongguo → 中国`、`nihaoma → 你好吗`；`zhongguo` 选择“中”消费5键、剩余 `guo`，`vsgo` 消费2键、剩余 `go`；混合 `zhonggo` / `vsguo` 分别消费5/2键，剩余部分继续原生选择“国”。选择非首位“种果”三次，关闭并重开后该候选升到首位，证明 Rime 原生学习仍生效。资源供应11项单测通过；完整静态 schema_smoke 8项通过（132.84秒），包含其他双拼方案、原双拼部分提交、纠错、词典扩展及增量会话回归。将消费长度修正限定于自然码后，综合回归再次通过（5.44秒）。
+
+实际引擎回归命令（资源路径改为当前工作区绝对路径）：
+
+```sh
+MACOSX_DEPLOYMENT_TARGET=13.0 \
+INPUTIA_STATIC_RIME_DIR="$PWD/native/static-rime/artifacts/output/arm64" \
+INPUTIA_RIME_SHARED_DATA_DIR="$PWD/macos/InputiaInputMethod/candidate-rime-data/artifacts/outputs/natural-full-20260927/RimeData" \
+cargo test --manifest-path crates/inputia-rime/Cargo.toml --features bundled-static-rime \
+  --test schema_smoke natural_code_accepts -- --nocapture
+```
+
+这些回归使用独立资源和合成用户目录，不安装输入法、不改已有设置，也不替代最终系统输入验收。

@@ -164,6 +164,27 @@ def transform(output, legacy_script):
         text = re.sub(r"(?m)^([ \t]*dictionary:[ \t]*)luna_pinyin([ \t]*(?:#.*)?)$",
                       r"\1inputia_luna_pinyin", text)
         path.write_text(text)
+    # 自然码同时保留全拼：首尾标记保护原音节，避免双拼前缀/韵母转换
+    # 改写派生副本；最后才恢复全拼编码。不改变其他双拼方案。
+    path = output / "double_pinyin.schema.yaml"
+    text = path.read_text()
+    algebra = "  algebra:\n"
+    if text.count(algebra) != 1:
+        raise RuntimeError("natural-code algebra contract changed")
+    erase = "    - erase/^xx$/\n"
+    if text.count(erase) != 1:
+        raise RuntimeError("natural-code invalid-syllable contract changed")
+    text = text.replace(erase, erase + "    - derive/^(.+)$/~$1~/\n", 1)
+    section_end = text.find("\ntranslator:")
+    if section_end < 0:
+        raise RuntimeError("natural-code translator contract changed")
+    text = text[:section_end].rstrip() + "\n    - xform/^~(.+)~$/$1/\n" + text[section_end:]
+    # 原有双拼展开会把全拼中的两字母误展开。保留 Rime 原始分节
+    # preedit，让引擎消费长度同时适用于全拼、双拼及混合输入。
+    text, count = re.subn(r"(?m)^  preedit_format:\n(?:[ \t]+[^\n]*\n|\n)*", "  preedit_format: []\n\n", text, count=1)
+    if count != 1:
+        raise RuntimeError("natural-code preedit contract changed")
+    path.write_text(text)
     for schema in SCHEMAS:
         if not (output / (schema + ".schema.yaml")).is_file():
             raise RuntimeError("required schema missing: " + schema)

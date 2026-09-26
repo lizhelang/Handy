@@ -617,6 +617,7 @@ impl RimeEngine {
         candidates: &mut Vec<Candidate>,
         seen_texts: &mut HashSet<String>,
     ) {
+        let mut initial_preedit = None;
         for page in 0..RIME_CANDIDATE_PAGE_SCAN_GUARD {
             let snapshot = if corrected {
                 let key_sequence = paged_key_sequence(composing, page);
@@ -631,9 +632,16 @@ impl RimeEngine {
             if snapshot.candidates.is_empty() {
                 break;
             }
+            // 翻页高亮单字候选时，Rime 可能合并 preedit 音节。使用第一页
+            // 引擎给出的分节计算前缀长度，避免全拼被按双拼两键截断。
+            let preedit = initial_preedit.get_or_insert_with(|| snapshot.preedit.clone());
 
             let mut added_candidates = 0;
             for mut candidate in snapshot.candidates {
+                if self.config.schema_id == "double_pinyin" {
+                    candidate.consumed_len =
+                        preedit_consumed_len(composing, preedit, &candidate.text);
+                }
                 if !is_valid_candidate_text(&candidate.text) {
                     continue;
                 }

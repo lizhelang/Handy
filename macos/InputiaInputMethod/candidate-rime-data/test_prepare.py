@@ -21,6 +21,11 @@ class CandidateResourceTests(unittest.TestCase):
         for schema in set(prepare.SCHEMAS + prepare.EXTENDED_SCHEMAS) - {"double_pinyin_sogou"}:
             (self.base / (schema + ".schema.yaml")).write_text(
                 "schema:\n  schema_id: " + schema + "\ntranslator:\n  dictionary: luna_pinyin # comment\n")
+        (self.base / "double_pinyin.schema.yaml").write_text(
+            "schema:\n  schema_id: double_pinyin\nspeller:\n  algebra:\n"
+            "    - erase/^xx$/\n    - xform/^zh/V/\n    - xform/ong$/S/\n"
+            "translator:\n  dictionary: luna_pinyin # comment\n"
+            "  preedit_format:\n    - xform/v/zh/\n\nreverse_lookup:\n  dictionary: stroke\n")
         (self.base / "default.yaml").write_text("config_version: '1'\nschema_list:\n  - schema: old\n\nmenu:\n  page_size: 5\n")
         (self.base / "untouched.dict.yaml").write_text("完整源词典\n")
         (self.base / "opencc").mkdir()
@@ -61,6 +66,16 @@ class CandidateResourceTests(unittest.TestCase):
         (self.extensions / prepare.EXTENSIONS[-1]).unlink()
         with self.assertRaisesRegex(RuntimeError, "incomplete"):
             self.assemble()
+
+    def test_natural_code_preserves_full_pinyin_and_raw_syllable_boundaries(self):
+        self.assemble()
+        schema = (self.output / "double_pinyin.schema.yaml").read_text()
+        self.assertLess(schema.index("erase/^xx$/"), schema.index("derive/^(.+)$/~$1~/"))
+        self.assertLess(schema.index("derive/^(.+)$/~$1~/"), schema.index("xform/^zh/V/"))
+        self.assertGreater(schema.index("xform/^~(.+)~$/$1/"), schema.index("xform/ong$/S/"))
+        self.assertIn("preedit_format: []", schema)
+        self.assertNotIn("xform/v/zh/", schema)
+        self.assertIn("reverse_lookup:\n  dictionary: stroke", schema)
 
     def test_ambiguous_legacy_template_fails(self):
         self.legacy.write_text(self.legacy.read_text() * 2)

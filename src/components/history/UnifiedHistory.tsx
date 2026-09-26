@@ -29,7 +29,7 @@ import type {
 } from "@/lib/types/unifiedHistory";
 
 const buttonClass =
-  "rounded-md border border-text/15 px-3 py-1.5 text-sm hover:bg-text/5 disabled:opacity-40 disabled:cursor-not-allowed";
+  "max-w-full rounded-md border border-text/15 px-3 py-1.5 text-sm hover:bg-text/5 disabled:opacity-40 disabled:cursor-not-allowed";
 const inputClass =
   "min-w-0 rounded-md border border-text/15 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-logo-primary";
 
@@ -308,11 +308,13 @@ export function UnifiedHistory({
   return (
     <section
       aria-label={t("unifiedHistory.heading")}
-      className="flex h-full min-h-0 flex-col gap-4 text-text"
+      className="flex h-full w-full min-h-0 min-w-0 flex-col gap-4 text-text"
       onKeyDown={handleKeys}
     >
-      <header className="flex items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold">{t("unifiedHistory.heading")}</h1>
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="min-w-0 text-lg font-semibold">
+          {t("unifiedHistory.heading")}
+        </h1>
         {onOpenRecordings && (
           <button
             className={buttonClass}
@@ -331,7 +333,7 @@ export function UnifiedHistory({
         </button>
       </header>
       <div className="flex flex-wrap items-center gap-2">
-        <label className="relative min-w-40 flex-1">
+        <label className="relative min-w-0 basis-40 flex-1">
           <Search
             size={16}
             aria-hidden="true"
@@ -406,7 +408,7 @@ export function UnifiedHistory({
       )}
       <div className="flex min-h-0 flex-1 flex-wrap gap-4">
         <div
-          className="min-w-56 flex-1 overflow-y-auto"
+          className="min-w-0 basis-72 flex-1 overflow-y-auto"
           aria-busy={state.loading}
         >
           <ul
@@ -444,7 +446,7 @@ export function UnifiedHistory({
                           : item.text) ||
                         t(`unifiedHistory.types.${item.content_type}`)}
                     </p>
-                    <p className="mt-1 text-xs text-text/50">
+                    <p className="mt-1 line-clamp-2 break-words [overflow-wrap:anywhere] text-xs text-text/50">
                       {t(`unifiedHistory.sources.${item.source_kind}`)} ·{" "}
                       {new Date(item.created_at_ms).toLocaleString(
                         i18n.language,
@@ -499,14 +501,14 @@ export function UnifiedHistory({
           )}
         </div>
         {(!selected || !state.previewOpen) && (
-          <div className="min-w-56 flex-1 rounded-md border border-text/10 p-8 text-center text-sm text-text/45">
+          <div className="min-w-0 basis-72 flex-1 rounded-md border border-text/10 p-8 text-center text-sm text-text/45">
             {t("unifiedHistory.previewHint")}
           </div>
         )}
         {selected && state.previewOpen && (
           <aside
             aria-label={t("unifiedHistory.preview")}
-            className="min-w-56 flex-1 space-y-4 overflow-y-auto rounded-md border border-text/10 p-4"
+            className="min-w-0 basis-72 flex-1 space-y-4 overflow-y-auto rounded-md border border-text/10 p-4"
           >
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold">
@@ -574,10 +576,10 @@ export function UnifiedHistory({
               </div>
             ) : (
               <>
-                <h3 className="break-words text-sm font-medium">
+                <h3 className="break-words [overflow-wrap:anywhere] text-sm font-medium">
                   {selected.title}
                 </h3>
-                <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
+                <pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-sans text-sm leading-relaxed">
                   {selected.content_type === "files"
                     ? fileNames(selected).join("\n")
                     : selected.text}
