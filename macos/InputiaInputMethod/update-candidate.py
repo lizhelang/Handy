@@ -23,6 +23,17 @@ def run(*args, timeout=30):
     return subprocess.check_output([str(a) for a in args], stderr=subprocess.STDOUT, text=True, timeout=timeout)
 
 
+
+def start_registered_components(apps):
+    # 替换 app 后先刷新注册，否则 TIS 显示选中但 IMK 会拒绝旧缓存的连接名。
+    # 注册失败时停止启动，交给外层事务回滚；不修改输入法身份或系统授权。
+    registrar = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+    for app in apps:
+        run(registrar, '-f', app)
+    run('/usr/bin/open', '-a', apps[0], '--args', '--start-hidden')
+    run('/usr/bin/open', '-a', apps[1])
+
+
 def canonical(path):
     path = Path(path).absolute()
     if path.resolve() != path or path.is_symlink():
@@ -179,8 +190,7 @@ def main():
         try:
             run(verifier, metadata, backup/'pair-before.json', pair, *destinations, args.run_id)
             atomic_json(marker, {'schema_version':1, 'active':False, 'epoch':str(uuid.uuid4())})
-            run('/usr/bin/open', '-a', destinations[0], '--args', '--start-hidden')
-            run('/usr/bin/open', '-a', destinations[1])
+            start_registered_components(destinations)
             deadline = time.monotonic()+10
             while len(process_ids(destinations)) < 2:
                 if time.monotonic() >= deadline: raise RuntimeError('新组件未启动')

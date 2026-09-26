@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import tempfile
 import unittest
+from unittest.mock import patch, call
 
 spec = importlib.util.spec_from_file_location('update_candidate', Path(__file__).resolve().parents[1]/'update-candidate.py')
 module = importlib.util.module_from_spec(spec)
@@ -10,6 +11,23 @@ spec.loader.exec_module(module)
 
 
 class CandidateUpdateTests(unittest.TestCase):
+    def test_registration_precedes_starting_either_component(self):
+        apps = [Path('/Applications/control.app'), Path('/Users/test/Library/Input Methods/ime.app')]
+        with patch.object(module, 'run', return_value='') as run:
+            module.start_registered_components(apps)
+        registrar = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+        self.assertEqual(run.call_args_list, [
+            call(registrar, '-f', apps[0]), call(registrar, '-f', apps[1]),
+            call('/usr/bin/open', '-a', apps[0], '--args', '--start-hidden'),
+            call('/usr/bin/open', '-a', apps[1]),
+        ])
+
+    def test_failed_registration_does_not_start_components(self):
+        with patch.object(module, 'run', side_effect=RuntimeError('registration failed')) as run:
+            with self.assertRaises(RuntimeError):
+                module.start_registered_components([Path('/control.app'), Path('/ime.app')])
+        self.assertEqual(run.call_count, 1)
+
     def test_maintenance_needs_fresh_ack_from_both_running_processes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
