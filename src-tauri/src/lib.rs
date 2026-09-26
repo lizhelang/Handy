@@ -11,11 +11,16 @@ mod clipboard;
 mod commands;
 mod custom_words_model;
 mod data_migration;
+mod decision_worker;
 mod dispatch_gate;
+mod embedding_worker;
 mod helpers;
 #[cfg(target_os = "macos")]
 mod host_shortcut_broker;
+#[cfg(target_os = "macos")]
+mod ime_target_broker;
 mod input;
+mod input_permission;
 mod integration_output;
 mod llm_client;
 mod managers;
@@ -26,6 +31,8 @@ mod native_hotwords;
 pub mod native_pair_auth;
 mod overlay;
 mod paste_tx;
+#[cfg(target_os = "macos")]
+mod personalization;
 pub mod portable;
 mod secure_input;
 mod settings;
@@ -34,6 +41,8 @@ mod signal_handle;
 mod transcription_coordinator;
 mod tray;
 mod tray_i18n;
+#[cfg(target_os = "macos")]
+mod typed_capture;
 #[cfg(target_os = "macos")]
 mod unified_target;
 mod utils;
@@ -874,6 +883,14 @@ pub fn run(cli_args: CliArgs) {
     }
 
     let invoke_handler = specta_builder.invoke_handler();
+    let permission_handler: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
+        Box::new(tauri::generate_handler![
+            commands::knowledge::knowledge_request,
+            commands::permissions::inputia_permission_status,
+            commands::permissions::inputia_permission_recheck,
+            commands::permissions::inputia_permission_prepare_maintenance,
+            commands::permissions::inputia_permission_resume,
+        ]);
 
     // 绑定导出不初始化设置、模型、窗口或任何用户数据库。
     #[cfg(debug_assertions)]
@@ -1140,6 +1157,8 @@ pub fn run(cli_args: CliArgs) {
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
 
             initialize_core_logic(&app_handle)?;
+            decision_worker::DecisionWorker::configure_from_resources(&app_handle);
+            commands::knowledge::start_indexer(&app_handle);
 
             if let Some(migration) = startup_migration.as_mut() {
                 migration.complete()?;
@@ -1149,6 +1168,7 @@ pub fn run(cli_args: CliArgs) {
             // silently blocks keyed shortcuts, warns the user, and activates
             // the Carbon fallback. See secure_input.rs and issue #1578.
             secure_input::init(&app_handle);
+            input_permission::start_monitor(&app_handle);
             #[cfg(target_os = "macos")]
             voice_connection::start_candidate_listener(&app_handle);
 
@@ -1209,7 +1229,14 @@ pub fn run(cli_args: CliArgs) {
             }
             _ => {}
         })
-        .invoke_handler(invoke_handler)
+        .invoke_handler(move |invoke| match invoke.message.command() {
+            "knowledge_request"
+            | "inputia_permission_status"
+            | "inputia_permission_recheck"
+            | "inputia_permission_prepare_maintenance"
+            | "inputia_permission_resume" => permission_handler(invoke),
+            _ => invoke_handler(invoke),
+        })
         .build(context)
         .expect("error while building tauri application");
 
@@ -1224,6 +1251,7 @@ pub fn run(cli_args: CliArgs) {
         }
         // Teardown transcribe.cpp before exit
         tauri::RunEvent::Exit => {
+            commands::knowledge::stop_indexer();
             #[cfg(target_os = "macos")]
             voice_connection::stop_candidate_listener(app);
             #[cfg(target_os = "macos")]

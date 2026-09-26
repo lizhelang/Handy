@@ -19,7 +19,10 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
 use std::ptr::null_mut;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 
 use inputia_core::{
     AppContext, AppPolicy, Candidate, CandidateSelection, CharacterWidthPreference, ChineseEngine,
@@ -50,6 +53,7 @@ pub struct InputiaSession {
     core: InputiaCore<RankedRimeEngine>,
     memory: Option<Arc<Mutex<SqliteMemory>>>,
     context: AppContext,
+    context_verified: Arc<AtomicBool>,
 }
 
 struct SessionOptions {
@@ -60,17 +64,24 @@ struct SessionOptions {
 }
 
 struct RankedRimeEngine {
+    context_verified: Arc<AtomicBool>,
     rime: RimeEngine,
     memory: Option<Arc<Mutex<SqliteMemory>>>,
 }
 
 impl ChineseEngine for RankedRimeEngine {
+    fn undo_recent_learning(&self) -> bool {
+        self.rime.undo_recent_learning().is_ok()
+    }
     fn candidates(&self, composing: &str) -> Vec<Candidate> {
         self.candidates_up_to(composing, 10)
     }
 
     fn candidates_up_to(&self, composing: &str, minimum_count: usize) -> Vec<Candidate> {
         let candidates = self.rime.candidates_up_to(composing, minimum_count);
+        if !self.context_verified.load(Ordering::Relaxed) {
+            return candidates;
+        }
         let Some(memory) = &self.memory else {
             return candidates;
         };
@@ -98,6 +109,9 @@ impl ChineseEngine for RankedRimeEngine {
             .rime
             .select_candidate(composing, page, page_index, candidate)
             .ok()?;
+        if !self.context_verified.load(Ordering::Relaxed) {
+            return Some(selection);
+        }
         let Some(memory) = &self.memory else {
             return Some(selection);
         };
@@ -329,6 +343,74 @@ pub unsafe extern "C" fn inputia_session_snapshot(session: *mut InputiaSession) 
     outcome_json(OutputEnvelope::ok(None, false, session.core.snapshot()))
 }
 
+/// 仅在宿主确认自身最后一次提交确实被撤销后调用，不执行文本删除。
+///
+/// # Safety
+/// session必须由当前线程独占且存活；不得用普通退格代替确认撤销。
+#[no_mangle]
+pub unsafe extern "C" fn inputia_session_undo_recent_learning(
+    session: *mut InputiaSession,
+) -> *mut c_char {
+    if session.is_null() {
+        return error_json("session is null");
+    }
+    let session = unsafe { &*session };
+    string_json(&serde_json::json!({"ok":true,"requested":session.core.undo_recent_learning()}))
+}
+
+/// 返回最多64个带稳定引擎身份的候选，不改变当前页。
+///
+/// # Safety
+/// session 必须存活，调用必须位于唯一所有者线程且与其他Rime操作串行。
+#[no_mangle]
+pub unsafe extern "C" fn inputia_session_candidate_pool(
+    session: *mut InputiaSession,
+    limit: usize,
+) -> *mut c_char {
+    if session.is_null() || limit == 0 || limit > 64 {
+        return error_json("invalid candidate pool request");
+    }
+    let session = unsafe { &mut *session };
+    let pool = session.core.candidate_pool(limit);
+    let snapshot = session.core.snapshot();
+    let candidates: Vec<_> = pool.into_iter().enumerate().map(|(rank, (c, consumed))| {
+        let match_type = if c.id.starts_with("rime-correction:") { "correction" }
+            else if consumed == snapshot.composing.len() { "exact" } else { "partial" };
+        serde_json::json!({"id":c.id,"text":c.text,"base_rank":rank,"consumed_len":consumed,"match_type":match_type})
+    }).collect();
+    string_json(
+        &serde_json::json!({"ok":true,"composing":snapshot.composing,"page":snapshot.page,"candidates":candidates}),
+    )
+}
+
+/// 核验输入码、候选ID及显示正文后，回到真实引擎选择路径。
+///
+/// # Safety
+/// 所有字符串指针必须有效且NUL结尾；session遵循唯一所有者及串行调用合同。
+#[no_mangle]
+pub unsafe extern "C" fn inputia_session_choose_candidate_id(
+    session: *mut InputiaSession,
+    composing: *const c_char,
+    candidate_id: *const c_char,
+    expected_text: *const c_char,
+) -> *mut c_char {
+    if session.is_null() {
+        return error_json("session is null");
+    }
+    let (Some(composing), Some(id), Some(text)) = (
+        unsafe { optional_c_string(composing) },
+        unsafe { optional_c_string(candidate_id) },
+        unsafe { optional_c_string(expected_text) },
+    ) else {
+        return error_json("invalid candidate identity");
+    };
+    let session = unsafe { &mut *session };
+    match session.core.choose_candidate_id(&composing, &id, &text) {
+        Some(outcome) => outcome_json(OutputEnvelope::from_outcome(outcome)),
+        None => error_json("candidate identity expired"),
+    }
+}
+
 /// 只读内存快照，返回渲染顺序；选择仍使用原候选索引。
 ///
 /// # Safety
@@ -401,6 +483,7 @@ pub unsafe extern "C" fn inputia_session_set_app_context(
         return learning_json(LearningEnvelope::error("bundle id is null"));
     };
     let session = unsafe { &mut *session };
+    session.context_verified.store(true, Ordering::Relaxed);
     session.context = AppContext::new(bundle_id);
     learning_json(LearningEnvelope::context_set())
 }
@@ -427,7 +510,29 @@ pub unsafe extern "C" fn inputia_session_set_app_context_with_window(
         .filter(|title| !title.is_empty());
 
     let session = unsafe { &mut *session };
+    session.context_verified.store(true, Ordering::Relaxed);
     session.context = AppContext::new(bundle_id).with_window_title(window_title);
+    learning_json(LearningEnvelope::context_set())
+}
+
+/// 未经主程序确认的上下文允许基本拼音，但禁止 Inputia 记忆读取、学习和重排。
+///
+/// # Safety
+/// session 须为有效且独占的本库会话；bundle_id 须满足 C 字符串合同。
+#[no_mangle]
+pub unsafe extern "C" fn inputia_session_set_context_unverified(
+    session: *mut InputiaSession,
+    bundle_id: *const c_char,
+) -> *mut c_char {
+    if session.is_null() {
+        return learning_json(LearningEnvelope::error("session is null"));
+    }
+    let Some(bundle_id) = (unsafe { optional_c_string(bundle_id) }) else {
+        return learning_json(LearningEnvelope::error("bundle id is null"));
+    };
+    let session = unsafe { &mut *session };
+    session.context_verified.store(false, Ordering::Relaxed);
+    session.context = AppContext::new(bundle_id);
     learning_json(LearningEnvelope::context_set())
 }
 
@@ -457,6 +562,9 @@ pub unsafe extern "C" fn inputia_session_learn(
     };
 
     let session = unsafe { &mut *session };
+    if !session.context_verified.load(Ordering::Relaxed) {
+        return learning_json(LearningEnvelope::error("context is not verified"));
+    }
     let Some(memory) = &session.memory else {
         return learning_json(LearningEnvelope::error("memory is not enabled"));
     };
@@ -499,6 +607,9 @@ pub unsafe extern "C" fn inputia_session_import_handy_history(
     };
 
     let session = unsafe { &mut *session };
+    if !session.context_verified.load(Ordering::Relaxed) {
+        return import_json(ImportEnvelope::error("context is not verified"));
+    }
     let Some(memory) = &session.memory else {
         return import_json(ImportEnvelope::error("memory is not enabled"));
     };
@@ -535,6 +646,9 @@ pub unsafe extern "C" fn inputia_session_import_handy_clipboard(
     };
 
     let session = unsafe { &mut *session };
+    if !session.context_verified.load(Ordering::Relaxed) {
+        return import_json(ImportEnvelope::error("context is not verified"));
+    }
     let Some(memory) = &session.memory else {
         return import_json(ImportEnvelope::error("memory is not enabled"));
     };
@@ -561,6 +675,9 @@ pub unsafe extern "C" fn inputia_session_voice_hotwords(
         return hotwords_json(HotwordsEnvelope::error("session is null"));
     }
     let session = unsafe { &mut *session };
+    if !session.context_verified.load(Ordering::Relaxed) {
+        return hotwords_json(HotwordsEnvelope::error("context is not verified"));
+    }
     let Some(memory) = &session.memory else {
         return hotwords_json(HotwordsEnvelope::error("memory is not enabled"));
     };
@@ -586,6 +703,9 @@ pub unsafe extern "C" fn inputia_session_clipboard_candidates(
         return candidate_list_json(CandidateListEnvelope::error("session is null"));
     }
     let session = unsafe { &mut *session };
+    if !session.context_verified.load(Ordering::Relaxed) {
+        return candidate_list_json(CandidateListEnvelope::error("context is not verified"));
+    }
     let Some(memory) = &session.memory else {
         return candidate_list_json(CandidateListEnvelope::error("memory is not enabled"));
     };
@@ -618,6 +738,9 @@ pub unsafe extern "C" fn inputia_session_completion_candidates(
         return candidate_list_json(CandidateListEnvelope::error("prefix is null"));
     };
     let session = unsafe { &mut *session };
+    if !session.context_verified.load(Ordering::Relaxed) {
+        return candidate_list_json(CandidateListEnvelope::error("context is not verified"));
+    }
     let Some(memory) = &session.memory else {
         return candidate_list_json(CandidateListEnvelope::error("memory is not enabled"));
     };
@@ -685,7 +808,9 @@ fn new_session_with_options(options: SessionOptions) -> *mut InputiaSession {
         }
         None => None,
     };
+    let context_verified = Arc::new(AtomicBool::new(true));
     let ranked_engine = RankedRimeEngine {
+        context_verified: context_verified.clone(),
         rime: engine,
         memory: memory.clone(),
     };
@@ -694,6 +819,7 @@ fn new_session_with_options(options: SessionOptions) -> *mut InputiaSession {
         core,
         memory,
         context: AppContext::new("dev.inputia.host"),
+        context_verified,
     }))
 }
 
@@ -854,6 +980,9 @@ fn with_session(
 }
 
 fn learn_committed_text(session: &mut InputiaSession, outcome: &InputOutcome) {
+    if !session.context_verified.load(Ordering::Relaxed) {
+        return;
+    }
     let Some(commit) = outcome.commit.as_ref() else {
         return;
     };
@@ -975,6 +1104,7 @@ impl OutputEnvelope {
 
 #[derive(Serialize)]
 struct CandidateEnvelope {
+    id: String,
     text: String,
     annotation: String,
     source: &'static str,
@@ -1100,6 +1230,7 @@ impl From<Candidate> for CandidateEnvelope {
     fn from(candidate: Candidate) -> Self {
         let final_score = candidate.final_score();
         Self {
+            id: candidate.id,
             text: candidate.text,
             annotation: candidate.annotation,
             source: match candidate.source {
@@ -1301,6 +1432,155 @@ mod tests {
     #[cfg(feature = "bundled-static-rime")]
     fn bundled_shared_data_dir() -> Option<std::path::PathBuf> {
         Some(static_test_data())
+    }
+
+    #[test]
+    #[cfg(feature = "bundled-static-rime")]
+    fn personalization_pool_selects_beyond_visible_page_and_rejects_stale_text() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let user = CString::new(temp.path().to_str().unwrap()).unwrap();
+        let session = unsafe { inputia_session_new_luna_pinyin_simp(user.as_ptr(), 7) };
+        assert!(!session.is_null());
+        handle_json(unsafe { inputia_session_set_input_mode(session, INPUT_MODE_CHINESE) });
+        for c in "shi".chars() {
+            handle_json(unsafe { inputia_session_handle_char(session, c as u32) });
+        }
+        let before = handle_json(unsafe { inputia_session_snapshot(session) });
+        let pool = handle_json(unsafe { inputia_session_candidate_pool(session, 32) });
+        let after = handle_json(unsafe { inputia_session_snapshot(session) });
+        assert_eq!(
+            before, after,
+            "expanding pool must preserve the visible page"
+        );
+        let rows = pool["candidates"].as_array().unwrap();
+        assert!(rows.len() > 7);
+        let selected = &rows[10];
+        let id = CString::new(selected["id"].as_str().unwrap()).unwrap();
+        let text = CString::new(selected["text"].as_str().unwrap()).unwrap();
+        let code = CString::new("shi").unwrap();
+        let wrong = CString::new("不是显示的词").unwrap();
+        let rejected = handle_json(unsafe {
+            inputia_session_choose_candidate_id(session, code.as_ptr(), id.as_ptr(), wrong.as_ptr())
+        });
+        assert_eq!(rejected["ok"], false);
+        let selected = handle_json(unsafe {
+            inputia_session_choose_candidate_id(session, code.as_ptr(), id.as_ptr(), text.as_ptr())
+        });
+        assert_eq!(selected["commit"], text.to_str().unwrap());
+        assert_eq!(selected["composing"], "");
+        assert_eq!(
+            handle_json(unsafe {
+                inputia_session_choose_candidate_id(
+                    session,
+                    code.as_ptr(),
+                    id.as_ptr(),
+                    text.as_ptr(),
+                )
+            })["ok"],
+            false
+        );
+        unsafe { inputia_session_free(session) };
+    }
+
+    #[test]
+    #[cfg(feature = "bundled-static-rime")]
+    fn native_rime_recent_learning_is_reversible_without_deleting_host_text() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        let mut observations = Vec::new();
+        let mut chosen = String::new();
+        for undo in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let user = CString::new(temp.path().to_str().unwrap()).unwrap();
+            let session = unsafe { inputia_session_new_luna_pinyin_simp(user.as_ptr(), 7) };
+            assert!(!session.is_null());
+            handle_json(unsafe { inputia_session_set_input_mode(session, INPUT_MODE_CHINESE) });
+            for c in "shijie".chars() {
+                handle_json(unsafe { inputia_session_handle_char(session, c as u32) });
+            }
+            let pool = handle_json(unsafe { inputia_session_candidate_pool(session, 32) });
+            let rows = pool["candidates"].as_array().unwrap();
+            if chosen.is_empty() {
+                chosen = rows
+                    .iter()
+                    .filter(|c| c["consumed_len"] == 6)
+                    .nth(3)
+                    .expect("full phrase candidate")["text"]
+                    .as_str()
+                    .unwrap()
+                    .into();
+            }
+            let before = rows.iter().position(|c| c["text"] == chosen).unwrap();
+            let item = &rows[before];
+            let code = CString::new("shijie").unwrap();
+            let id = CString::new(item["id"].as_str().unwrap()).unwrap();
+            let text = CString::new(chosen.clone()).unwrap();
+            let committed = handle_json(unsafe {
+                inputia_session_choose_candidate_id(
+                    session,
+                    code.as_ptr(),
+                    id.as_ptr(),
+                    text.as_ptr(),
+                )
+            });
+            assert_eq!(committed["commit"], chosen);
+            if undo {
+                assert_eq!(
+                    handle_json(unsafe { inputia_session_undo_recent_learning(session) })
+                        ["requested"],
+                    true
+                );
+            }
+            for c in "shijie".chars() {
+                handle_json(unsafe { inputia_session_handle_char(session, c as u32) });
+            }
+            let after = handle_json(unsafe { inputia_session_candidate_pool(session, 32) });
+            let rank = after["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .position(|c| c["text"] == chosen)
+                .unwrap();
+            observations.push((before, rank));
+            unsafe { inputia_session_free(session) };
+        }
+        eprintln!("native_rime_learning before/after={observations:?}");
+        assert!(
+            observations[0].1 < observations[0].0,
+            "native Rime selection should promote a full phrase"
+        );
+        assert!(
+            observations[1].1 >= observations[0].1,
+            "undo must not increase the learned preference"
+        );
+        assert_eq!(
+            observations[1].1, observations[1].0,
+            "native recent learning should roll back"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "bundled-static-rime")]
+    fn personalization_feedback_has_engine_provided_consumption_for_full_pinyin() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let user = CString::new(temp.path().to_str().unwrap()).unwrap();
+        let session = unsafe { inputia_session_new_luna_pinyin_simp(user.as_ptr(), 7) };
+        assert!(!session.is_null());
+        handle_json(unsafe { inputia_session_set_input_mode(session, INPUT_MODE_CHINESE) });
+        for c in "liming".chars() {
+            handle_json(unsafe { inputia_session_handle_char(session, c as u32) });
+        }
+        let pool = handle_json(unsafe { inputia_session_candidate_pool(session, 32) });
+        assert!(
+            pool["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["consumed_len"] == 6 && c["match_type"] == "exact"),
+            "{pool}"
+        );
+        unsafe { inputia_session_free(session) };
     }
 
     #[test]
@@ -1794,6 +2074,66 @@ mod tests {
         }
         assert_eq!(latest["visible_candidates"][0]["text"], "种过");
         assert_eq!(latest["visible_candidates"][0]["source"], "clipboard");
+
+        unsafe { inputia_session_free(session) };
+    }
+
+    #[test]
+    fn capi_unverified_context_types_without_memory_access() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let user_data_dir = temp.path().join("rime-user");
+        let memory_db = temp.path().join("inputia-memory.db");
+        let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
+        let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
+        let session = unsafe {
+            inputia_session_new_luna_pinyin_simp_with_memory(
+                user_data_dir.as_ptr(),
+                memory_db.as_ptr(),
+                5,
+            )
+        };
+        if session.is_null() {
+            unavailable("skip: Squirrel librime runtime is not available");
+            return;
+        }
+
+        let sensitive_app = CString::new("com.apple.TextEdit").unwrap();
+        let context = handle_json(unsafe {
+            inputia_session_set_context_unverified(session, sensitive_app.as_ptr())
+        });
+        assert_eq!(context["decision"], "context_set");
+
+        let shift = handle_json(unsafe { inputia_session_handle_special(session, KEY_SHIFT) });
+        assert_eq!(shift["mode"], "Chinese");
+
+        for ch in "zhongguo".chars() {
+            let _ = handle_json(unsafe { inputia_session_handle_char(session, ch as u32) });
+        }
+        let commit = handle_json(unsafe { inputia_session_handle_special(session, KEY_SPACE) });
+        assert_eq!(commit["commit"], "中国");
+
+        let hotwords = handle_json(unsafe { inputia_session_voice_hotwords(session, 10) });
+        assert_eq!(
+            hotwords["ok"], false,
+            "unverified context must not expose memory"
+        );
+        let text = CString::new("private-test-word").unwrap();
+        let learned = handle_json(unsafe {
+            inputia_session_learn(session, SOURCE_TYPED, text.as_ptr(), sensitive_app.as_ptr())
+        });
+        assert_eq!(learned["ok"], false);
+        let restored = handle_json(unsafe {
+            inputia_session_set_app_context(session, sensitive_app.as_ptr())
+        });
+        assert_eq!(restored["ok"], true);
+        let restored_words = handle_json(unsafe { inputia_session_voice_hotwords(session, 20) });
+        assert_eq!(restored_words["ok"], true);
+        assert!(!restored_words["hotwords"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "中国" || v == "private-test-word"));
 
         unsafe { inputia_session_free(session) };
     }

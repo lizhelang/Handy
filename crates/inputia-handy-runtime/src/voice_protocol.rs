@@ -5,6 +5,7 @@ use crate::output_ledger::OutputState;
 use crate::protocol::ProtocolError;
 use serde::{Deserialize, Serialize};
 
+pub const IME_TARGET_CAPABILITY: &str = "ime_target_broker_v1";
 pub const VOICE_CAPABILITY: &str = "voice_sessions_v1";
 pub const SHARED_TERMS_CAPABILITY: &str = "shared_terms_v1";
 pub const MAX_DELIVERY_TEXT_BYTES: usize = 192 * 1024;
@@ -320,11 +321,97 @@ impl VoiceOutputRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum VoiceWireRequest {
+    Personalization(crate::personalization_wire::PersonalizationRequest),
+    TypedCapture(TypedCaptureRequest),
+    TargetBridge(TargetBridgeRequest),
     Control(VoiceRequest),
     Output(VoiceOutputRequest),
     Menu(MenuRequest),
     HostShortcut(HostShortcutRequest),
     SharedTerms(SharedTermsRequest),
+}
+
+pub const TYPED_CAPTURE_CAPABILITY: &str = "typed_capture_v1";
+
+/// 仅在已认证的输入法连接上传递确认提交的正文；不接受键盘事件或待选文字。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TypedCaptureRequest {
+    pub request_id: String,
+    pub client_instance: String,
+    pub server_instance: String,
+    pub policy_epoch: u64,
+    pub typed_capture: TypedCaptureCommand,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TypedCaptureCommand {
+    Policy,
+    Commit {
+        capture_epoch: u64,
+        event_id: String,
+        segment_id: String,
+        text: String,
+        draft: Box<HostTargetToken>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TypedCaptureReply {
+    pub status: String,
+    pub request_id: String,
+    pub server_instance: String,
+    pub enabled: bool,
+    pub epoch: u64,
+    pub saved: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+}
+
+impl TypedCaptureRequest {
+    /// 同时核验连接世代、隐私屏障及有界载荷；字段身份仍由主程序重新捕获。
+    pub fn validate_for(&self, peer: &VoicePeer<'_>) -> Result<(), ProtocolError> {
+        let target_bridge = match &self.typed_capture {
+            TypedCaptureCommand::Policy => TargetBridgeCommand::Status,
+            TypedCaptureCommand::Commit {
+                capture_epoch,
+                event_id,
+                segment_id,
+                text,
+                draft,
+            } => {
+                if *capture_epoch == 0
+                    || !id(event_id)
+                    || !id(segment_id)
+                    || text.trim().is_empty()
+                    || text.len() > 8192
+                    || text
+                        .chars()
+                        .any(|c| c.is_control() && c != '\n' && c != '\t')
+                {
+                    return Err(ProtocolError::InvalidEnvelope);
+                }
+                if draft.field_id.as_deref() != Some(draft.target_id.as_str()) {
+                    return Err(ProtocolError::InvalidEnvelope);
+                }
+                TargetBridgeCommand::Validate {
+                    target: (**draft).clone(),
+                    purpose: TargetBridgePurpose::TypedCapture,
+                    operation_id: None,
+                }
+            }
+        };
+        TargetBridgeRequest {
+            request_id: self.request_id.clone(),
+            client_instance: self.client_instance.clone(),
+            server_instance: self.server_instance.clone(),
+            policy_epoch: self.policy_epoch,
+            target_bridge,
+        }
+        .validate_for(peer)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -674,5 +761,106 @@ impl VoicePolicyBarrier {
             return Err(ProtocolError::PolicyRefreshRequired);
         }
         Ok(())
+    }
+}
+
+/// Signed voice socket only. A draft is never itself an output authorization.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetBridgeRequest {
+    pub request_id: String,
+    pub client_instance: String,
+    pub server_instance: String,
+    pub policy_epoch: u64,
+    pub target_bridge: TargetBridgeCommand,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TargetBridgeCommand {
+    Status,
+    Capture {
+        draft: HostTargetToken,
+    },
+    Validate {
+        target: HostTargetToken,
+        purpose: TargetBridgePurpose,
+        #[serde(default)]
+        operation_id: Option<String>,
+    },
+    Release {
+        target_id: String,
+    },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetBridgePurpose {
+    Personalization,
+    TypedCapture,
+    Start,
+    Dispatch,
+    SharedTerms,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetBridgeSelection {
+    pub location: i64,
+    pub length: i64,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetBridgeReply {
+    pub status: String,
+    pub request_id: String,
+    pub ready: bool,
+    pub server_instance: String,
+    pub permission_epoch: u64,
+    pub valid_for_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<HostTargetToken>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<TargetBridgeSelection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatch_nonce: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+}
+impl TargetBridgeRequest {
+    pub fn validate_for(&self, peer: &VoicePeer<'_>) -> Result<(), ProtocolError> {
+        let valid_target = |target: &HostTargetToken| {
+            target.host_instance == peer.client_instance
+                && id(&target.target_id)
+                && id(&target.controller_id)
+                && target.source_app.as_ref().is_some_and(|source| id(source))
+                && target.field_id.as_ref().is_none_or(|field| id(field))
+        };
+        if !id(&self.request_id)
+            || !id(&self.client_instance)
+            || !id(&self.server_instance)
+            || self.client_instance != peer.client_instance
+            || self.server_instance != peer.server_instance
+            || self.policy_epoch != peer.policy_epoch
+            || !peer.policy_applied
+        {
+            return Err(ProtocolError::InvalidEnvelope);
+        }
+        let valid = match &self.target_bridge {
+            TargetBridgeCommand::Status => true,
+            TargetBridgeCommand::Capture { draft } => valid_target(draft),
+            TargetBridgeCommand::Release { target_id } => id(target_id),
+            TargetBridgeCommand::Validate {
+                target,
+                purpose,
+                operation_id,
+            } => {
+                valid_target(target)
+                    && operation_id.as_ref().is_none_or(|operation| id(operation))
+                    && (*purpose != TargetBridgePurpose::Dispatch || operation_id.is_some())
+            }
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(ProtocolError::InvalidEnvelope)
+        }
     }
 }

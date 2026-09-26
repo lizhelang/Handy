@@ -1,0 +1,3 @@
+# The signed worker and model weights are build artifacts, not Git sources.
+*
+!.gitignore

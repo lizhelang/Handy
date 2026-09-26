@@ -150,6 +150,24 @@ struct RimeLiveSession {
 }
 
 impl RimeEngine {
+    /// 利用Rime Memory原有的近期事务回退路径；只在空组合且宿主已确认撤销时调用。
+    pub fn undo_recent_learning(&self) -> Result<()> {
+        let _guard = self
+            .evaluation_lock
+            .lock()
+            .map_err(|_| Error::LockPoisoned)?;
+        let mut slot = self.live_session.lock().map_err(|_| Error::LockPoisoned)?;
+        let live = slot.as_mut().ok_or(Error::Rime("no recent live session"))?;
+        if !live.input.is_empty() {
+            return Err(Error::Rime("cannot undo learning while composing"));
+        }
+        let process = required(self.api().process_key, "process_key")?;
+        // XK_BackSpace交由Memory::OnUnhandledKey撤销近期用户词典事务，不向宿主派发删除。
+        unsafe {
+            process(live.session_id, 0xff08, 0);
+        }
+        Ok(())
+    }
     pub fn open(config: RimeEngineConfig) -> Result<Self> {
         std::fs::create_dir_all(&config.user_data_dir)?;
         let (library, api) = RimeLibrary::load(&config)?;
@@ -247,24 +265,46 @@ impl RimeEngine {
             .evaluation_lock
             .lock()
             .map_err(|_| Error::LockPoisoned)?;
-        let address = rime_candidate_address(&candidate.id, &self.config.schema_id).ok_or(
+        let (effective_composing, effective_id) =
+            correction_address(&candidate.id, &self.config.schema_id)
+                .unwrap_or((composing.to_owned(), candidate.id.clone()));
+        let address = rime_candidate_address(&effective_id, &self.config.schema_id).ok_or(
             Error::Rime("candidate does not carry a selectable Rime address"),
         )?;
         let api = self.api();
         let mut live_session = self.live_session.lock().map_err(|_| Error::LockPoisoned)?;
         let live_session = self.ensure_live_session(api, &mut live_session)?;
 
-        self.clear_live_session_composition(api, live_session)?;
+        self.prepare_live_input(api, live_session, &effective_composing)?;
         match address {
             RimeCandidateAddress::CurrentPage { page, page_index } => {
                 let select_key = candidate_select_key(page_index).ok_or(Error::Rime(
                     "candidate page index is not selectable by digit",
                 ))?;
-                let key_sequence = selection_key_sequence(composing, page, select_key);
-                self.simulate_key_sequence(api, live_session.session_id, &key_sequence)?;
+                self.prepare_live_page(api, live_session, page)?;
+                let current = self.snapshot(live_session.session_id)?;
+                if current
+                    .candidates
+                    .get(page_index)
+                    .is_none_or(|c| c.text != candidate.text)
+                {
+                    return Err(Error::Rime("candidate identity expired"));
+                }
+                self.simulate_key_sequence(api, live_session.session_id, &select_key.to_string())?;
             }
             RimeCandidateAddress::Global { index } => {
-                self.simulate_key_sequence(api, live_session.session_id, composing)?;
+                self.prepare_live_page(api, live_session, 0)?;
+                let first = self.snapshot(live_session.session_id)?;
+                let page_size = first.page_size.max(1) as usize;
+                self.prepare_live_page(api, live_session, index / page_size)?;
+                let current = self.snapshot(live_session.session_id)?;
+                if current
+                    .candidates
+                    .get(index % page_size)
+                    .is_none_or(|c| c.text != candidate.text)
+                {
+                    return Err(Error::Rime("candidate identity expired"));
+                }
                 let select_candidate = required(api.select_candidate, "select_candidate")?;
                 if unsafe { select_candidate(live_session.session_id, index) } == FALSE {
                     return Err(Error::Rime("failed to select candidate"));
@@ -363,7 +403,7 @@ impl RimeEngine {
         }
 
         let snapshot = unsafe {
-            let snapshot = RimeSnapshot {
+            let mut snapshot = RimeSnapshot {
                 schema_id: schema_id.clone(),
                 preedit: c_string(context.composition.preedit),
                 page_no: context.menu.page_no,
@@ -373,6 +413,12 @@ impl RimeEngine {
                 candidates: copy_candidates(&schema_id, &context.menu),
                 commit: self.commit_text(session_id)?,
             };
+            let raw = required(api.get_input, "get_input")?;
+            let input = c_string(raw(session_id));
+            for candidate in &mut snapshot.candidates {
+                candidate.consumed_len =
+                    preedit_consumed_len(&input, &snapshot.preedit, &candidate.text);
+            }
             free_context(&mut context);
             snapshot
         };
@@ -510,6 +556,9 @@ impl RimeEngine {
 }
 
 impl ChineseEngine for RimeEngine {
+    fn undo_recent_learning(&self) -> bool {
+        RimeEngine::undo_recent_learning(self).is_ok()
+    }
     fn candidates(&self, composing: &str) -> Vec<Candidate> {
         self.candidates_up_to(composing, INITIAL_CANDIDATE_TARGET)
     }
@@ -595,7 +644,10 @@ impl RimeEngine {
                 let global_index = candidates.len();
                 let existing_id = candidate.id.clone();
                 candidate.id = if corrected {
-                    format!("rime-correction:{}:{global_index}", snapshot.schema_id)
+                    format!(
+                        "rime-correction:{}:{composing}:{}",
+                        snapshot.schema_id, existing_id
+                    )
                 } else if existing_id.starts_with("rime:") {
                     existing_id
                 } else {
@@ -647,6 +699,10 @@ fn candidate_consumed_len(
         return None;
     }
 
+    if let Some(consumed) = candidate.consumed_len {
+        return Some(consumed.min(composing.len()));
+    }
+
     let char_count = cjk_char_count(&candidate.text);
     if char_count == 0 {
         return None;
@@ -677,6 +733,55 @@ fn consumed_len_for_delimited_composition(composing: &str, char_count: usize) ->
         }
     }
     Some(composing.len())
+}
+
+/// 只使用引擎明确给出的音节边界，并校验它们能还原原输入；不凭汉字长度猜全拼。
+fn preedit_consumed_len(input: &str, preedit: &str, text: &str) -> Option<usize> {
+    let word_len = cjk_char_count(text);
+    let parts: Vec<_> = preedit
+        .split(|c: char| c.is_whitespace() || c == '\'')
+        .filter(|s| !s.is_empty())
+        .collect();
+    if word_len == 0
+        || word_len > parts.len()
+        || !input.is_ascii()
+        || parts
+            .iter()
+            .any(|p| !p.bytes().all(|b| b.is_ascii_alphabetic()))
+    {
+        return None;
+    }
+    let joined = parts.concat().to_lowercase();
+    if joined != input.replace('\'', "").to_lowercase() {
+        return None;
+    }
+    let letters: usize = parts.iter().take(word_len).map(|s| s.len()).sum();
+    let mut seen = 0;
+    for (i, b) in input.bytes().enumerate() {
+        if b != b'\'' {
+            seen += 1;
+        }
+        if seen == letters {
+            let mut end = i + 1;
+            while input.as_bytes().get(end) == Some(&b'\'') {
+                end += 1;
+            }
+            return Some(end);
+        }
+    }
+    None
+}
+
+fn correction_address(id: &str, schema: &str) -> Option<(String, String)> {
+    let suffix = id.strip_prefix(&format!("rime-correction:{schema}:"))?;
+    let (code, native) = suffix.split_once(':')?;
+    if code.is_empty()
+        || !code.bytes().all(|b| b.is_ascii_lowercase() || b == b'\'')
+        || rime_candidate_address(native, schema).is_none()
+    {
+        return None;
+    }
+    Some((code.to_owned(), native.to_owned()))
 }
 
 fn is_double_pinyin_schema(schema_id: &str) -> bool {

@@ -5,6 +5,48 @@ import OSLog
 import Security
 #endif
 
+/// 白名单诊断仅记录控制阶段、固定拒绝码与计数，永不写正文/拼音/窗口或目标身份。
+enum InputiaPersonalizationDiagnostics {
+  private static let log = Logger(subsystem: "com.inputia.personalization", category: "pipeline")
+  private static let lock = NSLock()
+  private static var previous: [String: String] = [:]
+  private static let phases: Set<String> = ["policy", "query", "schedule", "capture_guard", "capture_reply",
+    "target_capture", "target_validate", "target_transport", "personal_transport", "commit", "typed_result"]
+  private static let reasons: Set<String> = ["ok", "no_reply", "expired", "disabled", "not_active", "mode", "page", "expanded", "recall", "prediction_pending",
+    "unavailable", "missing_client", "missing_bundle", "invalid_selection", "missing_target", "target_identity", "activation", "composition", "selection_generation", "client_identity", "selection_changed", "remote_selection_mismatch", "history_only", "policy", "stale", "accepted",
+    "missing_selection", "missing_origin", "origin_mismatch", "text_mismatch", "invalid_start", "selection_not_committed", "profile", "handshake", "io", "timeout", "invalid_frame", "main_thread", "decode", "other_error", "unknown_code",
+    "accessibility_permission_required", "field_unobservable", "secure_input_enabled", "focused_application_mismatch", "secure_text_field", "field_focus_changed",
+    "target_dispatch_replayed", "target_entropy_unavailable", "target_expired", "target_history_only", "target_main_unavailable", "target_operation_missing", "target_owner_mismatch", "target_process_changed", "target_query_busy", "target_query_timeout", "target_registry_full", "target_retirement_pending", "target_retirement_timeout_restart_required", "target_retirement_unavailable", "target_sensitive_source", "target_source_changed", "target_source_missing", "target_unknown",
+    "personalization_disabled_or_changed", "personalization_policy_changed", "personalization_secure_input", "personalization_source_missing", "prediction_no_longer_available"]
+  static func record(_ phase: String, _ reason: String, flags: Int = 0, count: Int = 0) {
+    let phase = phases.contains(phase) ? phase : "unavailable"
+    let reason = reasons.contains(reason) ? reason : "unknown_code"
+    let value = "\(reason):\(flags):\(count)"
+    lock.lock()
+    let changed = previous[phase] != value
+    previous[phase] = value
+    lock.unlock()
+    guard changed else { return }
+    log.notice("phase=\(phase, privacy: .public) reason=\(reason, privacy: .public) flags=\(flags, privacy: .public) count=\(count, privacy: .public)")
+  }
+  #if INPUTIA_PAIRED_BUILD
+  static func errorReason(_ error: Error) -> String {
+    switch error {
+    case InputiaVoiceServiceError.profile: return "profile"
+    case InputiaVoiceServiceError.handshake: return "handshake"
+    case InputiaVoiceServiceError.policy: return "policy"
+    case InputiaConnectionError.mainThread: return "main_thread"
+    case InputiaConnectionError.endpoint: return "profile"
+    case InputiaConnectionError.io: return "io"
+    case InputiaConnectionError.timeout: return "timeout"
+    case InputiaConnectionError.invalidFrame: return "invalid_frame"
+    case is DecodingError: return "decode"
+    default: return "other_error"
+    }
+  }
+  #endif
+}
+
 /// 自动准备只允许启动一次；明确退出或观察到进程结束后，不循环拉起服务。
 struct InputiaVoiceServiceReadiness {
   private var attempted = false
@@ -49,11 +91,116 @@ enum InputiaVoiceInputLauncher {
   private static let voiceQueue = DispatchQueue(label: "Inputia.unified-voice")
   private static let readinessQueue = DispatchQueue(label: "Inputia.service-readiness")
   private static var readiness = InputiaVoiceServiceReadiness()
+  private static let readinessLaunches = DispatchGroup()
   private static var serviceTerminationObserver: NSObjectProtocol?
+
+  private static let personalizationQueue = DispatchQueue(label: "Inputia.personalization")
+  static func personalization(_ command: InputiaPersonalCommand, deadline: TimeInterval,
+    expectedServer: String? = nil, completion: @escaping (InputiaPersonalReply?) -> Void) {
+    personalizationQueue.async {
+      var reply: InputiaPersonalReply?
+      if ProcessInfo.processInfo.systemUptime < deadline {
+        do {
+          let connection = try openAuthenticatedConnection()
+          defer { connection.closeTypedCaptureConnection() }
+          if ProcessInfo.processInfo.systemUptime < deadline,
+            expectedServer == nil || expectedServer == connection.server.instance_id {
+            reply = try connection.personalization(command)
+          }
+          InputiaPersonalizationDiagnostics.record("personal_transport", reply == nil ? "stale" : "ok")
+        } catch { InputiaPersonalizationDiagnostics.record("personal_transport", InputiaPersonalizationDiagnostics.errorReason(error)) }
+      } else { InputiaPersonalizationDiagnostics.record("personal_transport", "expired") }
+      let result = reply
+      DispatchQueue.main.async { completion(result) }
+    }
+  }
+
+  private static let typedCaptureQueue = DispatchQueue(label: "Inputia.typed-capture")
+  /// 不启动服务；连接、握手和策略刷新仅发生在后台。过期事件丢弃不重放。
+  static func typedCapture(_ command: InputiaTypedCaptureCommand, deadline: TimeInterval,
+    expectedServer: String? = nil, completion: @escaping (InputiaTypedCaptureReply?) -> Void) {
+    typedCaptureQueue.async {
+      var result: InputiaTypedCaptureReply?
+      if ProcessInfo.processInfo.systemUptime < deadline {
+        do {
+          let connection = try openAuthenticatedConnection()
+          defer { connection.closeTypedCaptureConnection() }
+          if ProcessInfo.processInfo.systemUptime < deadline,
+            expectedServer == nil || expectedServer == connection.server.instance_id {
+            result = try connection.typedCapture(command)
+          }
+        } catch { /* 不保留正文，不重试，不启动服务。 */ }
+      }
+      let reply = result
+      DispatchQueue.main.async { completion(reply) }
+    }
+  }
+
+  private static let targetQueue = DispatchQueue(label: "Inputia.target-broker")
+  private static var permissionConnection: InputiaVoiceServiceConnection?
+  private static var targetConnection: InputiaVoiceServiceConnection?
+  static func probeServicePermission() -> Bool {
+    ensureUnifiedServiceReady()
+    let started = ProcessInfo.processInfo.systemUptime
+    do {
+      if permissionConnection == nil { permissionConnection = try openAuthenticatedConnection() }
+      guard let connection = permissionConnection else { return false }
+      let reply = try connection.targetBridge(.init(kind: "status"))
+      if !reply.ready {
+        InputiaPermissionLifecycle.shared.observeService(server: reply.server_instance, epoch: reply.permission_epoch,
+          deadline: ProcessInfo.processInfo.systemUptime, ready: false)
+        return false
+      }
+      guard ProcessInfo.processInfo.systemUptime - started < 0.75, ProcessInfo.processInfo.systemUptime < reply.deadline else { return false }
+      InputiaPermissionLifecycle.shared.observeService(server: reply.server_instance, epoch: reply.permission_epoch,
+        deadline: reply.deadline, ready: reply.ready)
+      return reply.ready && ProcessInfo.processInfo.systemUptime < reply.deadline
+    } catch { permissionConnection?.close(); permissionConnection = nil; return false }
+  }
+  static var didReleaseTarget: ((String) -> Void)?
+  static func releaseTarget(_ id: String) {
+    DispatchQueue.main.async { didReleaseTarget?(id) }
+    targetBridge(.init(kind: "release", target_id: id)) { _ in }
+  }
+  static func targetBridge(_ command: InputiaTargetBridgeCommand,
+    completion: @escaping (InputiaTargetBridgeReply?) -> Void) {
+    let epoch = InputiaPermissionLifecycle.shared.epoch
+    targetQueue.async {
+      var result: InputiaTargetBridgeReply?
+      do {
+        guard command.kind == "release" ? InputiaPermissionLifecycle.shared.allowsServiceConnection : InputiaPermissionLifecycle.shared.permits(epoch) else { throw InputiaVoiceServiceError.policy }
+        if targetConnection == nil { targetConnection = try openAuthenticatedConnection() }
+        guard let connection = targetConnection else { throw InputiaVoiceServiceError.policy }
+        let reply = try connection.targetBridge(command)
+        if command.kind == "capture" || command.kind == "validate" {
+          // flags: bit0 ready, bit1同服务租约, bit2权限epoch有效, bit3未过期。
+          let flags = (reply.ready ? 1 : 0)
+            | (InputiaPermissionLifecycle.shared.matchesService(server: reply.server_instance, epoch: reply.permission_epoch) ? 2 : 0)
+            | (InputiaPermissionLifecycle.shared.permits(epoch) ? 4 : 0)
+            | (ProcessInfo.processInfo.systemUptime < reply.deadline ? 8 : 0)
+          InputiaPersonalizationDiagnostics.record(command.kind == "capture" ? "target_capture" : "target_validate", reply.code ?? "ok", flags: flags)
+        }
+        if reply.ready, InputiaPermissionLifecycle.shared.matchesService(server: reply.server_instance, epoch: reply.permission_epoch), InputiaPermissionLifecycle.shared.permits(epoch), ProcessInfo.processInfo.systemUptime < reply.deadline { result = reply }
+        else if command.kind == "capture", let abandoned = reply.target {
+          _ = try? connection.targetBridge(.init(kind: "release", target_id: abandoned.target_id))
+        }
+      } catch {
+        InputiaPersonalizationDiagnostics.record("target_transport", InputiaPersonalizationDiagnostics.errorReason(error))
+        targetConnection?.close(); targetConnection = nil
+      }
+      let value = result
+      DispatchQueue.main.async {
+        let allowed = InputiaPermissionLifecycle.shared.permits(epoch)
+        if !allowed, command.kind == "capture", let abandoned = value?.target { releaseTarget(abandoned.target_id) }
+        completion(allowed ? value : nil)
+      }
+    }
+  }
 
   /// 输入法启用时异步准备同一签名配对服务，仅隐藏启动，不发送任何录音命令。
   static func ensureUnifiedServiceReady() {
     readinessQueue.async {
+      guard InputiaPermissionLifecycle.shared.allowsServiceConnection else { return }
       do {
         let profile = InputiaProfile.current
         try profile.validateCandidatePaths()
@@ -72,7 +219,11 @@ enum InputiaVoiceInputLauncher {
         let running = !NSRunningApplication.runningApplications(withBundleIdentifier: identity.identifier).isEmpty
         guard readiness.requestStart(isRunning: running) else { return }
         let app = try verifiedInstalledService(identity: identity)
+        guard InputiaPermissionLifecycle.shared.allowsServiceConnection,
+          InputiaPermissionLifecycle.shared.backgroundMaintenanceAllowsWork() else { return }
+        readinessLaunches.enter()
         openHiddenService(appPath: app.path) { error in
+          defer { readinessLaunches.leave() }
           if error != nil { NSLog("inputia_service_prepare_failed automatic_retry=false") }
           else { NSLog("inputia_service_hidden_start_requested recording_command_sent=false") }
         }
@@ -128,23 +279,68 @@ enum InputiaVoiceInputLauncher {
   private static var sharedTermsConnection: InputiaVoiceServiceConnection?
   private struct Endpoint: Decodable { let profile_id: String; let protocol_major: Int; let server_instance: String; let socket_path: String }
 
+  /// All IPC ownership is released on its owning queues. Never wait for a socket on main.
+  static func invalidatePermissionWork(completion: @escaping () -> Void = {}) {
+    InputiaSharedTermsMemory.shared.clear()
+    let retired = DispatchGroup()
+    retired.enter()
+    shortcutQueue.async {
+      defer { retired.leave() }
+      shortcutTimer?.cancel(); shortcutTimer = nil
+      shortcutConnection?.close(); shortcutConnection = nil
+      shortcutLease = nil; shortcutLeaseEpoch &+= 1
+      shortcutHasActiveOwner = false; shortcutProviderHadTarget = nil
+      shortcutCycleBusy = false
+    }
+    retired.enter()
+    sharedTermsQueue.async {
+      defer { retired.leave() }
+      sharedTermsConnection?.close(); sharedTermsConnection = nil
+    }
+    retired.enter()
+    voiceQueue.async {
+      defer { retired.leave() }
+      unifiedConnection?.close(); unifiedConnection = nil; unifiedSession = nil
+      shortcutSession = nil; shortcutTarget = nil; shortcutServer = nil; shortcutTerms = nil
+      shortcutDeliver = nil; shortcutStatus = nil
+      lastUnifiedPhase = nil
+      unifiedFetchGate = InputiaVoiceFirstFetchGate()
+    }
+    // Include a launch/verification operation that was already queued before the gate closed.
+    retired.enter()
+    readinessQueue.async { readinessLaunches.notify(queue: readinessQueue) { retired.leave() } }
+    retired.enter()
+    InputiaPermissionLifecycle.shared.retireProbe {
+      permissionConnection?.close(); permissionConnection = nil; retired.leave()
+    }
+    retired.enter()
+    targetQueue.async { targetConnection?.close(); targetConnection = nil; retired.leave() }
+    retired.notify(queue: .main, execute: completion)
+  }
+
   /// provider 和新会话复核在主线程；定时器、认证、数据库和 socket 均在后台。
   static func startShortcutListening(
     targetProvider: @escaping () -> InputiaVoiceTarget?,
     sharedTermsReceiver: @escaping (InputiaSharedTermsSnapshot, UInt64) -> Void,
     acceptStart: @escaping (InputiaHostShortcutTrigger, @escaping (Bool) -> Void) -> Void
   ) {
+    let permissionEpoch = InputiaPermissionLifecycle.shared.epoch
     shortcutQueue.async {
+      guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { return }
       guard shortcutTimer == nil else { return }
       let timer = DispatchSource.makeTimerSource(queue: shortcutQueue)
       timer.schedule(deadline: .now(), repeating: .milliseconds(200), leeway: .milliseconds(30))
       timer.setEventHandler {
-        guard !shortcutCycleBusy, ProcessInfo.processInfo.systemUptime >= shortcutRetryAfter else { return }
+        guard InputiaPermissionLifecycle.shared.permits(permissionEpoch), !shortcutCycleBusy, ProcessInfo.processInfo.systemUptime >= shortcutRetryAfter else { return }
         shortcutCycleBusy = true
         DispatchQueue.main.async {
+          guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else {
+            shortcutQueue.async { shortcutCycleBusy = false }; return
+          }
           let target = targetProvider()
           if target == nil { InputiaSharedTermsMemory.shared.clear() }
           shortcutQueue.async {
+            guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { shortcutCycleBusy = false; return }
             do {
               if shortcutProviderHadTarget != (target != nil) {
                 shortcutProviderHadTarget = target != nil
@@ -181,6 +377,7 @@ enum InputiaVoiceInputLauncher {
                     lease_epoch: previous.lease_epoch, target: previous.target,
                     issued_at_unix_ms: now, expires_at_unix_ms: now + 1000)
                   let leaseDeadline = leaseStartedAt + 1
+                  guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { throw InputiaVoiceServiceError.policy }
                   try connection.registerShortcutLease(renewed)
                   if newTarget { shortcutDiagnostic.notice("target_registered field_observable=\(target.field_id != nil)") }
                   shortcutLease = renewed
@@ -200,14 +397,20 @@ enum InputiaVoiceInputLauncher {
                           sharedTermsConnection = try openAuthenticatedConnection()
                           return
                         }
-                        guard InputiaSharedTermsMemory.shared.ticket() == ticket else { return }
+                        guard InputiaPermissionLifecycle.shared.permits(permissionEpoch), InputiaSharedTermsMemory.shared.ticket() == ticket else { return }
                         guard let termsConnection = sharedTermsConnection,
                           InputiaVoiceServiceConnection.sharedTermsConnectionMatches(
                             server: termsConnection.server.instance_id, primaryServer: server,
                             version: termsConnection.locallyAppliedVersion, primaryVersion: version)
                         else { throw InputiaVoiceServiceError.policy }
-                        if let snapshot = try termsConnection.fetchSharedTerms(lease: renewed, leaseDeadline: leaseDeadline) {
-                          DispatchQueue.main.async { sharedTermsReceiver(snapshot, ticket) }
+                        let validation = try termsConnection.targetBridge(.init(kind: "validate", target: renewed.target, purpose: "shared_terms"))
+                        guard validation.ready, InputiaPermissionLifecycle.shared.matchesService(server: validation.server_instance, epoch: validation.permission_epoch),
+                          ProcessInfo.processInfo.systemUptime < validation.deadline else { return }
+                        if let snapshot = try termsConnection.fetchSharedTerms(lease: renewed, leaseDeadline: min(leaseDeadline, validation.deadline)) {
+                          DispatchQueue.main.async {
+                            guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { return }
+                            sharedTermsReceiver(snapshot, ticket)
+                          }
                         }
                       } catch {
                         sharedTermsConnection?.close()
@@ -222,6 +425,9 @@ enum InputiaVoiceInputLauncher {
               }
               let finished: (Bool) -> Void = { accepted in
                 shortcutQueue.async {
+                  guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else {
+                    shortcutCycleBusy = false; return
+                  }
                   if trigger.starts_session && !accepted {
                     do {
                       if try connection.rejectUnconsumedShortcut(trigger.trigger_id) {
@@ -242,7 +448,10 @@ enum InputiaVoiceInputLauncher {
                 guard let lease = shortcutLease, trigger.lease_id == lease.lease_id,
                   trigger.lease_epoch == lease.lease_epoch, trigger.target == lease.target,
                   target == lease.target else { finished(false); return }
-                DispatchQueue.main.async { acceptStart(trigger, finished) }
+                DispatchQueue.main.async {
+                  guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { finished(false); return }
+                  acceptStart(trigger, finished)
+                }
               } else {
                 // 已有会话的停止不依赖当前光标；真正使用的是首次开始时保存的回调。
                 sendUnifiedShortcutTrigger(trigger, deliver: { _, ack in ack("pending_target") },
@@ -267,6 +476,7 @@ enum InputiaVoiceInputLauncher {
   }
 
   private static func openAuthenticatedConnection() throws -> InputiaVoiceServiceConnection {
+    guard InputiaPermissionLifecycle.shared.allowsServiceConnection, InputiaPermissionLifecycle.shared.backgroundMaintenanceAllowsWork() else { throw InputiaVoiceServiceError.policy }
     let profile = InputiaProfile.current
     try profile.validateCandidatePaths()
     let endpoint = try JSONDecoder().decode(Endpoint.self,
@@ -294,6 +504,7 @@ enum InputiaVoiceInputLauncher {
       unifiedSession = nil
     }
     shortcutSession = nil
+    if let target = shortcutTarget { releaseTarget(target.target_id) }
     shortcutTarget = nil
     shortcutServer = nil
     shortcutTerms = nil
@@ -307,7 +518,9 @@ enum InputiaVoiceInputLauncher {
     deliver: @escaping (InputiaVoiceDelivery, @escaping (String) -> Void) -> Void,
     status: @escaping (String) -> Void,
     completion: @escaping (Bool) -> Void) {
+    let permissionEpoch = InputiaPermissionLifecycle.shared.epoch
     voiceQueue.async {
+      guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { completion(false); return }
       var touchedConnection = false
       var resumePolling = trigger.starts_session
       do {
@@ -366,6 +579,12 @@ enum InputiaVoiceInputLauncher {
         }
         guard let connection = unifiedConnection, let terms = shortcutTerms else {
           throw InputiaVoiceServiceError.policy
+        }
+        guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { throw InputiaVoiceServiceError.policy }
+        if trigger.starts_session {
+          let validation = try connection.targetBridge(.init(kind: "validate", target: trigger.target, purpose: "start"))
+          guard validation.ready, InputiaPermissionLifecycle.shared.matchesService(server: validation.server_instance, epoch: validation.permission_epoch),
+            ProcessInfo.processInfo.systemUptime < validation.deadline else { throw InputiaVoiceServiceError.policy }
         }
         let reply = try connection.request(sessionID: trigger.session_id, requestID: trigger.trigger_id,
           command: .hostShortcut(target: trigger.target,
@@ -437,7 +656,13 @@ enum InputiaVoiceInputLauncher {
   static func triggerUnifiedVoice(target: InputiaVoiceTarget?,
     deliver: @escaping (InputiaVoiceDelivery, @escaping (String) -> Void) -> Void,
     completion: @escaping (String) -> Void) {
+    let permissionEpoch = InputiaPermissionLifecycle.shared.epoch
     voiceQueue.async {
+      var retainedTarget = false
+      defer { if !retainedTarget, let target { releaseTarget(target.target_id) } }
+      guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else {
+        DispatchQueue.main.async { completion("输入法权限不可用，语音已暂停。") }; return
+      }
       var stage = "candidate_profile"
       do {
         let profile = InputiaProfile.current
@@ -467,12 +692,17 @@ enum InputiaVoiceInputLauncher {
         try connection.synchronizePolicy(using: state)
         guard let version = connection.locallyAppliedVersion else { throw InputiaVoiceServiceError.policy }
         let session = UUID().uuidString
+        guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { connection.close(); throw InputiaVoiceServiceError.policy }
         stage = "start_request"
+        let validation = try connection.targetBridge(.init(kind: "validate", target: target, purpose: "start"))
+        guard validation.ready, InputiaPermissionLifecycle.shared.matchesService(server: validation.server_instance, epoch: validation.permission_epoch),
+          ProcessInfo.processInfo.systemUptime < validation.deadline else { connection.close(); throw InputiaVoiceServiceError.policy }
         let reply = try connection.request(sessionID: session, requestID: UUID().uuidString,
           command: .start(target: target, postProcess: false, terms: version))
         guard reply.status == "session" else { connection.close(); throw InputiaVoiceServiceError.handshake }
         unifiedConnection = connection
         unifiedSession = session
+        retainedTarget = true
         unifiedFetchGate = InputiaVoiceFirstFetchGate()
         lastUnifiedPhase = nil
         DispatchQueue.main.async { completion("正在准备，再次点击停止") }
@@ -489,7 +719,9 @@ enum InputiaVoiceInputLauncher {
     target: InputiaVoiceTarget,
     deliver: @escaping (InputiaVoiceDelivery, @escaping (String) -> Void) -> Void,
     completion: @escaping (String) -> Void) {
+    let permissionEpoch = InputiaPermissionLifecycle.shared.epoch
     voiceQueue.asyncAfter(deadline: .now() + 0.25) {
+      guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { return }
       guard unifiedSession == session, unifiedConnection === connection, !unifiedFetchGate.attempted else { return }
       var fetchConnection: InputiaVoiceServiceConnection?
       do {
@@ -508,6 +740,7 @@ enum InputiaVoiceInputLauncher {
             refreshed = try refreshBeforeFirstFetch(connection: connection, session: session, target: target, previous: view)
           } catch {
             // 结束本地等待，但保留 shortcutSession/target 与持久 Prepared 结果；不重放。
+            releaseTarget(target.target_id)
             finishFailedPreFetch(connection)
             NSLog("inputia_voice_pre_fetch_refresh_failed fetch_attempted=false")
             DispatchQueue.main.async { completion("转写已保存，插入前策略同步未完成；未提取或重放结果。") }
@@ -519,13 +752,27 @@ enum InputiaVoiceInputLauncher {
           unifiedConnection = outputConnection
           connection.close()
           // 只有唯一fetch成功才会取得正文；失联/重复请求绝不换路或再次fetch。
-          guard let delivery = try outputConnection.fetchDelivery(view: refreshed.1, target: target) else {
+          guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { outputConnection.close(); return }
+          guard var delivery = try outputConnection.fetchDelivery(view: refreshed.1, target: target) else {
+            releaseTarget(target.target_id)
             outputConnection.close(); unifiedConnection = nil; unifiedSession = nil
             clearShortcutOwnership(sessionID: session)
             DispatchQueue.main.async { completion("结果已有输出状态，未重复插入。请在 Inputia 查看历史。") }
             return
           }
+          let permit = try outputConnection.targetBridge(.init(kind: "validate", target: target,
+            purpose: "dispatch", operation_id: delivery.operation_id))
+          guard permit.ready, let nonce = permit.dispatch_nonce, !nonce.isEmpty,
+            InputiaPermissionLifecycle.shared.matchesService(server: permit.server_instance, epoch: permit.permission_epoch),
+            ProcessInfo.processInfo.systemUptime < permit.deadline else {
+            try outputConnection.acknowledgeDelivery(delivery, receipt: "pending_target")
+            throw InputiaVoiceServiceError.policy
+          }
+          delivery.dispatchNonce = nonce
+          delivery.dispatchDeadline = min(delivery.dispatchDeadline, permit.deadline)
+          let permittedDelivery = delivery
           DispatchQueue.main.async {
+            let delivery = permittedDelivery
             let acknowledge: (String) -> Void = { receipt in
               voiceQueue.async {
                 guard unifiedSession == session, unifiedConnection === outputConnection else { return }
@@ -539,22 +786,25 @@ enum InputiaVoiceInputLauncher {
                   NSLog("inputia_unified_voice_output_receipt_unknown automatic_replay=false")
                   DispatchQueue.main.async { completion("插入回执未知，未重放。请核对输入框和历史。") }
                 }
+                releaseTarget(target.target_id)
                 outputConnection.close(); unifiedConnection = nil; unifiedSession = nil
                 clearShortcutOwnership(sessionID: session)
               }
             }
-            guard ProcessInfo.processInfo.systemUptime < delivery.dispatchDeadline else {
+            guard InputiaPermissionLifecycle.shared.permits(permissionEpoch), ProcessInfo.processInfo.systemUptime < delivery.dispatchDeadline else {
               acknowledge("pending_target"); return
             }
             deliver(delivery, acknowledge)
           }
         } else {
+          releaseTarget(target.target_id)
           NSLog("inputia_unified_voice_session_terminal phase=%@", view.phase)
           connection.close(); unifiedConnection = nil; unifiedSession = nil
           clearShortcutOwnership(sessionID: session)
           DispatchQueue.main.async { completion(view.phase == "pending_target" ? "转写已保存到历史记录，结果待插入。" : "语音会话已结束。") }
         }
       } catch {
+        releaseTarget(target.target_id)
         (fetchConnection ?? connection).close(); unifiedConnection = nil; unifiedSession = nil
         NSLog("inputia_unified_voice_receipt_unknown automatic_replay=false")
         DispatchQueue.main.async { completion("语音回执未知，未重放请求。请在 Inputia 查看状态和历史。") }

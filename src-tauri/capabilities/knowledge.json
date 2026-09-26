@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "knowledge",
+  "description": "Allow the control center to copy an external AI connection prompt.",
+  "windows": ["main"],
+  "permissions": ["clipboard-manager:allow-write-text"]
+}

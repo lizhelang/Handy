@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "default_model": {
+    "id": "laya-multilingual-mlx",
+    "repository": "aac6fef/laya-multilingual-mlx",
+    "runtime": "mlx",
+    "architecture": "typed_decision",
+    "precision": "float16",
+    "parameters": 322000000,
+    "platform": "apple_silicon",
+    "status": "local_fixture_verified",
+    "revision": "052592a15d198d9ad47da779604259b10b47b7aa",
+    "bytes": 643835426,
+    "sha256": "7fc5834af4d8fdfb268d272a9d1a66e5819a0daac98241651c4c888cc43adff1",
+    "all_files_verified": true,
+    "fixture_path": "/tmp/laya-multilingual-mlx",
+    "warm_latency_ms": 12,
+    "cold_latency_ms": 636,
+    "license": "Apache-2.0"
+  },
+  "comparison_only": [
+    {
+      "id": "cloud-jev",
+      "runtime": "remote",
+      "status": "comparison_only",
+      "default_enabled": false
+    },
+    {
+      "id": "local-jev-qwen-pytorch",
+      "runtime": "pytorch",
+      "platform": "cuda_or_apple_gpu",
+      "status": "comparison_only",
+      "default_enabled": false
+    }
+  ]
+}

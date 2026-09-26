@@ -2,7 +2,7 @@ use crate::input::{self, EnigoState};
 #[cfg(target_os = "linux")]
 use crate::settings::TypingTool;
 use crate::settings::{get_settings, AutoSubmitKey, ClipboardHandling, PasteMethod};
-use enigo::{Direction, Enigo, Key, Keyboard};
+use enigo::{Enigo, Key};
 use log::info;
 use std::process::Command;
 #[cfg(target_os = "linux")]
@@ -18,6 +18,7 @@ fn with_enigo<T>(
     app_handle: &AppHandle,
     f: impl FnOnce(&mut Enigo) -> Result<T, String>,
 ) -> Result<T, String> {
+    let permission_epoch = crate::input_permission::capture_epoch()?;
     let enigo_state = app_handle
         .try_state::<EnigoState>()
         .ok_or("Enigo state not initialized")?;
@@ -25,7 +26,8 @@ fn with_enigo<T>(
         .0
         .lock()
         .map_err(|e| format!("Failed to lock Enigo: {}", e))?;
-    f(&mut enigo)
+    crate::input_permission::check_epoch(permission_epoch)?;
+    f(enigo.as_mut().ok_or("input_device_retired")?)
 }
 
 fn write_text_to_clipboard(app_handle: &AppHandle, text: &str) -> Result<(), String> {
@@ -725,46 +727,12 @@ fn paste_direct(
 }
 
 pub(crate) fn send_return_key(enigo: &mut Enigo, key_type: AutoSubmitKey) -> Result<(), String> {
-    match key_type {
-        AutoSubmitKey::Enter => {
-            enigo
-                .key(Key::Return, Direction::Press)
-                .map_err(|e| format!("Failed to press Return key: {}", e))?;
-            enigo
-                .key(Key::Return, Direction::Release)
-                .map_err(|e| format!("Failed to release Return key: {}", e))?;
-        }
-        AutoSubmitKey::CtrlEnter => {
-            enigo
-                .key(Key::Control, Direction::Press)
-                .map_err(|e| format!("Failed to press Control key: {}", e))?;
-            enigo
-                .key(Key::Return, Direction::Press)
-                .map_err(|e| format!("Failed to press Return key: {}", e))?;
-            enigo
-                .key(Key::Return, Direction::Release)
-                .map_err(|e| format!("Failed to release Return key: {}", e))?;
-            enigo
-                .key(Key::Control, Direction::Release)
-                .map_err(|e| format!("Failed to release Control key: {}", e))?;
-        }
-        AutoSubmitKey::CmdEnter => {
-            enigo
-                .key(Key::Meta, Direction::Press)
-                .map_err(|e| format!("Failed to press Meta/Cmd key: {}", e))?;
-            enigo
-                .key(Key::Return, Direction::Press)
-                .map_err(|e| format!("Failed to press Return key: {}", e))?;
-            enigo
-                .key(Key::Return, Direction::Release)
-                .map_err(|e| format!("Failed to release Return key: {}", e))?;
-            enigo
-                .key(Key::Meta, Direction::Release)
-                .map_err(|e| format!("Failed to release Meta/Cmd key: {}", e))?;
-        }
-    }
-
-    Ok(())
+    let keys = match key_type {
+        AutoSubmitKey::Enter => vec![Key::Return],
+        AutoSubmitKey::CtrlEnter => vec![Key::Control, Key::Return],
+        AutoSubmitKey::CmdEnter => vec![Key::Meta, Key::Return],
+    };
+    input::guarded_keys(enigo, &keys, 0)
 }
 
 fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool {
@@ -778,6 +746,15 @@ pub fn paste_history_text(
     validate: &mut dyn FnMut() -> Result<(), String>,
 ) -> crate::paste_tx::HistoryPasteOutcome {
     use crate::paste_tx::HistoryPasteOutcome;
+    let permission_epoch = match crate::input_permission::capture_epoch() {
+        Ok(v) => v,
+        Err(e) => return HistoryPasteOutcome::NotDispatched(e),
+    };
+    let mut permission_validate = || {
+        crate::input_permission::check_epoch(permission_epoch)?;
+        validate()
+    };
+    let validate: &mut dyn FnMut() -> Result<(), String> = &mut permission_validate;
     let settings = get_settings(app);
     let Some(enigo_state) = app.try_state::<EnigoState>() else {
         return HistoryPasteOutcome::NotDispatched("Enigo state not initialized".into());
@@ -786,20 +763,17 @@ pub fn paste_history_text(
     let Ok(mut enigo) = enigo_state.0.try_lock() else {
         return HistoryPasteOutcome::NotDispatched("input device busy".into());
     };
+    let Some(enigo) = enigo.as_mut() else {
+        return HistoryPasteOutcome::NotDispatched("input_device_retired".into());
+    };
     match settings.paste_method {
-        PasteMethod::Direct => crate::paste_tx::guarded_dispatch(validate, || {
-            input::paste_text_direct(&mut enigo, text)
-        }),
+        PasteMethod::Direct => {
+            crate::paste_tx::guarded_dispatch(validate, || input::paste_text_direct(enigo, text))
+        }
         PasteMethod::CtrlV | PasteMethod::CtrlShiftV | PasteMethod::ShiftInsert => {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             {
-                crate::paste_tx::paste_history(
-                    text,
-                    app,
-                    &settings.paste_method,
-                    &mut enigo,
-                    validate,
-                )
+                crate::paste_tx::paste_history(text, app, &settings.paste_method, enigo, validate)
             }
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             {
@@ -815,6 +789,8 @@ pub fn paste_history_text(
 }
 
 pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
+    let permission_epoch = crate::input_permission::capture_epoch()?;
+    let _permission_scope = crate::input_permission::RequestScope::enter(permission_epoch)?;
     let settings = get_settings(&app_handle);
     let paste_method = settings.paste_method;
     let paste_delay_ms = settings.paste_delay_ms;

@@ -929,13 +929,23 @@ impl AudioRecordingManager {
             self.stop_microphone_stream();
         }
 
+        // A timed-out close retains its worker. Do not discard that ownership
+        // and open a second microphone while the old OS stream is still alive.
+        if let Some(recorder) = self.recorder.lock().unwrap().as_mut() {
+            recorder
+                .close()
+                .map_err(|e| anyhow::anyhow!("Cannot replace microphone worker: {e}"))?;
+        }
         let previous_recorder = self.recorder.lock().unwrap().replace(replacement);
         if was_open {
             if let Err(change_error) = self.start_microphone_stream() {
                 // Ensure a partially opened replacement cannot retain capture
                 // resources before restoring the known-good detector.
                 if let Some(recorder) = self.recorder.lock().unwrap().as_mut() {
-                    let _ = recorder.close();
+                    if let Some(previous) = previous_recorder.as_ref() {
+                        recorder.restore_vad_configuration_from(previous);
+                    }
+                    recorder.close().map_err(|e| anyhow::anyhow!("Microphone replacement is still shutting down after {change_error}: {e}"))?;
                 }
                 *self.recorder.lock().unwrap() = previous_recorder;
 

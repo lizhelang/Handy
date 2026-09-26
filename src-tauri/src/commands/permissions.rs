@@ -68,3 +68,25 @@ mod tests {
             .all(|path| path.ends_with("InputiaInputMethod.app")));
     }
 }
+
+#[tauri::command]
+pub async fn inputia_permission_status(app: AppHandle) -> serde_json::Value {
+    crate::input_permission::snapshot(&app)
+}
+#[tauri::command]
+pub async fn inputia_permission_recheck(app: AppHandle) -> serde_json::Value {
+    crate::input_permission::request_recheck(&app);
+    crate::input_permission::snapshot(&app)
+}
+#[tauri::command]
+pub async fn inputia_permission_prepare_maintenance(
+    app: AppHandle,
+) -> Result<serde_json::Value, String> {
+    crate::input_permission::prepare_maintenance(&app)?;
+    Ok(crate::input_permission::snapshot(&app))
+}
+#[tauri::command]
+pub async fn inputia_permission_resume(app: AppHandle) -> Result<serde_json::Value, String> {
+    crate::input_permission::resume(&app)?;
+    Ok(crate::input_permission::snapshot(&app))
+}

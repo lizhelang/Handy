@@ -47,3 +47,9 @@ result
 
 # Python bytecode (scripts/)
 __pycache__/
+
+# 本地推理安装产物由下载/打包脚本准备，不提交模型权重或运行库。
+/src-tauri/resources/local-decision/inputia-decision-worker/
+/src-tauri/resources/local-decision/laya-multilingual-mlx/
+/worker.spec
+/inputia-decision-worker.spec

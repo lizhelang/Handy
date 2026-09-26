@@ -2,10 +2,11 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Inputia Candidate",
   "identifier": "com.pais.handy.UnifiedCandidate",
-  "version": "0.10.0",
+  "version": "0.10.3",
   "bundle": {
     "createUpdaterArtifacts": false,
     "targets": ["app"],
+    "resources": ["resources/local-decision/**/*"],
     "macOS": {
       "minimumSystemVersion": "13.0",
       "infoPlist": "UnifiedCandidateInfo.plist",

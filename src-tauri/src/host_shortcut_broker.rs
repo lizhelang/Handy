@@ -242,10 +242,16 @@ impl HostShortcutBroker {
             .map(|(_, active)| active.lease.clone())
             .or_else(|| policy_epoch.and_then(|epoch| Self::ready_lease_for(&state, epoch)))
         else {
-            if policy_epoch.is_none() || current_source != CurrentInputSource::Other {
-                debug!("Input source is Inputia or unknown and no ready host target lease exists");
+            if policy_epoch.is_none() {
+                // Policy service is down: do not start a new local paste session.
+                let _ = current_source;
+                debug!("Voice policy unavailable and no active host session; holding shortcut");
                 return ShortcutRouting::HostPending;
             }
+            // Ready policy but no host lease: fall back to local start/stop + paste.
+            // Blocking here deadlocks Option+Space when AX cannot observe the focused
+            // field (common in Electron) while Inputia remains selected.
+            let _ = current_source;
             debug!("No ready Inputia host target lease for voice shortcut; using legacy path");
             return ShortcutRouting::Legacy;
         };
@@ -805,7 +811,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_source_without_lease_does_not_fall_back_to_paste() {
+    fn unknown_source_without_lease_falls_back_to_legacy_start() {
         let broker = HostShortcutBroker::default();
         assert_eq!(
             route_with_source(
@@ -814,7 +820,7 @@ mod tests {
                 ShortcutActivation::Toggle,
                 CurrentInputSource::Unknown
             ),
-            ShortcutRouting::HostPending
+            ShortcutRouting::Legacy
         );
     }
 
@@ -828,7 +834,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_inputia_without_lease_reports_host_pending() {
+    fn selected_inputia_without_lease_falls_back_to_legacy_start() {
         let broker = HostShortcutBroker::default();
         assert_eq!(
             route_with_source(
@@ -837,7 +843,7 @@ mod tests {
                 ShortcutActivation::Toggle,
                 CurrentInputSource::InputiaCandidate,
             ),
-            ShortcutRouting::HostPending
+            ShortcutRouting::Legacy
         );
         broker.note_connected("host-one");
         assert_eq!(
@@ -847,7 +853,7 @@ mod tests {
                 ShortcutActivation::Toggle,
                 CurrentInputSource::InputiaCandidate,
             ),
-            ShortcutRouting::HostPending
+            ShortcutRouting::Legacy
         );
         assert!(broker.poll("host-one", 0).is_none());
     }

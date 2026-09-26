@@ -98,6 +98,7 @@ impl HandyPasteProvider {
 }
 
 struct MacPending {
+    permission_epoch: u64,
     state: Arc<Mutex<TxState>>,
     snapshot: ClipboardSnapshot,
     change_count: NSInteger,
@@ -257,7 +258,10 @@ fn settle(
 
     // Auto-submit only once the target demonstrably read the transcript;
     // pressing Enter after an unconfirmed paste could submit stale content.
-    if p.auto_submit && receipt_seen {
+    if p.auto_submit
+        && receipt_seen
+        && crate::input_permission::check_epoch(p.permission_epoch).is_ok()
+    {
         match enigo {
             Some(e) => {
                 let _ = send_return_key(e, p.auto_submit_key);
@@ -265,7 +269,9 @@ fn settle(
             None => {
                 if let Some(enigo_state) = app_handle.try_state::<EnigoState>() {
                     if let Ok(mut e) = enigo_state.0.lock() {
-                        let _ = send_return_key(&mut e, p.auto_submit_key);
+                        if let Some(e) = e.as_mut() {
+                            let _ = send_return_key(e, p.auto_submit_key);
+                        }
                     }
                 }
             }
@@ -448,6 +454,15 @@ fn run_inner(
     completion: PasteCompletion,
     validate: &mut dyn FnMut() -> Result<(), String>,
 ) -> HistoryPasteOutcome {
+    let permission_epoch = match crate::input_permission::capture_epoch() {
+        Ok(epoch) => epoch,
+        Err(error) => return HistoryPasteOutcome::NotDispatched(error),
+    };
+    let mut permission_validate = || {
+        crate::input_permission::check_epoch(permission_epoch)?;
+        validate()
+    };
+    let validate: &mut dyn FnMut() -> Result<(), String> = &mut permission_validate;
     let PasteCompletion {
         auto_submit,
         auto_submit_key,
@@ -518,6 +533,7 @@ fn run_inner(
     }
 
     let pending = Arc::new(Mutex::new(MacPending {
+        permission_epoch,
         state,
         snapshot,
         change_count,

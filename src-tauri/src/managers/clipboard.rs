@@ -32,6 +32,49 @@ const TEXT_PREVIEW_MAX_CHARS: usize = 200;
 const SEARCH_RESULT_LIMIT: i64 = 100;
 const FILE_PREVIEW_MAX_PATHS: usize = 3;
 
+// The monitor keeps ownership of a queued read until its closure/result is dropped.
+#[cfg(any(target_os = "macos", test))]
+struct ClipboardMonitorRead {
+    in_flight: Arc<AtomicBool>,
+    deadline: std::time::Instant,
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl ClipboardMonitorRead {
+    fn acquire(in_flight: &Arc<AtomicBool>, deadline: std::time::Instant) -> Option<Self> {
+        in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()?;
+        Some(Self {
+            in_flight: in_flight.clone(),
+            deadline,
+        })
+    }
+
+    fn may_start(&self, now: std::time::Instant) -> bool {
+        now < self.deadline
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl Drop for ClipboardMonitorRead {
+    fn drop(&mut self) {
+        self.in_flight.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn read_changed_clipboard<T, E>(
+    last_change_count: Option<isize>,
+    change_count: isize,
+    read: impl FnOnce() -> std::result::Result<T, E>,
+) -> std::result::Result<Option<T>, E> {
+    if last_change_count == Some(change_count) {
+        return Ok(None);
+    }
+    read().map(Some)
+}
+
 /// Database migrations for clipboard history.
 static MIGRATIONS: &[M] = &[
     M::up(
@@ -134,6 +177,18 @@ pub struct ClipboardManager {
     images_dir: PathBuf,
     monitoring_started: Arc<AtomicBool>,
     last_seen_hash: Arc<Mutex<Option<String>>>,
+    #[cfg(target_os = "macos")]
+    monitor_read_in_flight: Arc<AtomicBool>,
+    #[cfg(target_os = "macos")]
+    monitor_change_count: Arc<Mutex<Option<isize>>>,
+}
+
+#[cfg(target_os = "macos")]
+enum ClipboardMonitorSnapshot {
+    Files(Vec<String>),
+    Image(Image<'static>),
+    Text(String),
+    Empty,
 }
 
 #[cfg(target_os = "macos")]
@@ -456,6 +511,10 @@ impl ClipboardManager {
             images_dir,
             monitoring_started: Arc::new(AtomicBool::new(false)),
             last_seen_hash: Arc::new(Mutex::new(None)),
+            #[cfg(target_os = "macos")]
+            monitor_read_in_flight: Arc::new(AtomicBool::new(false)),
+            #[cfg(target_os = "macos")]
+            monitor_change_count: Arc::new(Mutex::new(None)),
         };
 
         // Initialize database
@@ -616,6 +675,9 @@ impl ClipboardManager {
         loop {
             if self.monitoring_enabled() {
                 self.sync_current_clipboard_for_monitor("poll clipboard state");
+            } else if let Ok(mut count) = self.monitor_change_count.lock() {
+                // Re-enabling capture should inspect the current clipboard once.
+                *count = None;
             }
 
             std::thread::sleep(Duration::from_millis(750));
@@ -677,15 +739,114 @@ impl ClipboardManager {
 
     #[cfg(target_os = "macos")]
     fn sync_current_clipboard_for_monitor(&self, context: &str) {
-        let context = context.to_string();
-        let result =
-            self.run_on_main_thread_sync(&context, |manager| manager.sync_current_clipboard());
-
-        match result {
-            Some(Ok(())) => {}
-            Some(Err(e)) => error!("Failed to {}: {}", context, e),
-            None => error!("Clipboard monitor failed while trying to {}", context),
+        if !self.monitoring_enabled() {
+            return;
         }
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let Some(permit) = ClipboardMonitorRead::acquire(&self.monitor_read_in_flight, deadline)
+        else {
+            return;
+        };
+        let last_change_count = self
+            .monitor_change_count
+            .lock()
+            .ok()
+            .and_then(|count| *count);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let manager = self.clone();
+        if let Err(err) = self.app_handle.run_on_main_thread(move || {
+            // A receiver timeout cannot cancel a queued AppKit closure. Keep the permit
+            // in this closure and skip expired work before touching the pasteboard.
+            if !permit.may_start(std::time::Instant::now()) {
+                return;
+            }
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                manager.read_monitor_clipboard_snapshot(last_change_count)
+            }));
+            // The worker owns the permit while encoding/writing. If it timed out,
+            // the failed send drops it only after this main-thread read has ended.
+            let _ = sender.send((permit, result));
+        }) {
+            error!("Failed to schedule clipboard monitor {}: {}", context, err);
+            return;
+        }
+        match receiver.recv_timeout(Duration::from_secs(2)) {
+            Ok((_permit, Ok(Ok(Some((change_count, snapshot)))))) => {
+                if !self.monitoring_enabled() {
+                    return;
+                }
+                let result = match snapshot {
+                    ClipboardMonitorSnapshot::Files(paths) => {
+                        self.process_file_paths_change(&paths)
+                    }
+                    ClipboardMonitorSnapshot::Image(image) => {
+                        self.process_tauri_image_change(&image)
+                    }
+                    ClipboardMonitorSnapshot::Text(text) => self.process_tauri_text_change(&text),
+                    ClipboardMonitorSnapshot::Empty => Ok(()),
+                };
+                match result {
+                    Ok(()) => {
+                        if let Ok(mut count) = self.monitor_change_count.lock() {
+                            *count = Some(change_count);
+                        }
+                    }
+                    Err(err) => error!("Failed to process clipboard monitor {}: {}", context, err),
+                }
+            }
+            Ok((_permit, Ok(Ok(None)))) => {}
+            Ok((_permit, Ok(Err(err)))) => {
+                error!("Failed to read clipboard monitor {}: {}", context, err)
+            }
+            Ok((_permit, Err(_))) => error!("Clipboard monitor panicked during {}", context),
+            Err(err) => debug!(
+                "Clipboard monitor {} did not finish in time: {}",
+                context, err
+            ),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn read_monitor_clipboard_snapshot(
+        &self,
+        last_change_count: Option<isize>,
+    ) -> Result<Option<(isize, ClipboardMonitorSnapshot)>> {
+        if MainThreadMarker::new().is_none() {
+            return Err(anyhow!(
+                "Refusing to read macOS clipboard off the main thread"
+            ));
+        }
+        let pasteboard = objc2_app_kit::NSPasteboard::generalPasteboard();
+        let change_count = pasteboard.changeCount();
+        let snapshot = read_changed_clipboard(
+            last_change_count,
+            change_count,
+            || -> Result<ClipboardMonitorSnapshot> {
+                let files = ClipboardContext::new()
+                    .map_err(|e| anyhow!("Failed to access clipboard files: {}", e))?
+                    .get_files()
+                    .unwrap_or_default();
+                if !files.is_empty() {
+                    return Ok(ClipboardMonitorSnapshot::Files(files));
+                }
+                let clipboard = self.app_handle.clipboard();
+                if let Ok(image) = clipboard.read_image() {
+                    return Ok(ClipboardMonitorSnapshot::Image(image.to_owned()));
+                }
+                if let Ok(text) = clipboard.read_text() {
+                    if !text.is_empty() {
+                        return Ok(ClipboardMonitorSnapshot::Text(text));
+                    }
+                }
+                Ok(ClipboardMonitorSnapshot::Empty)
+            },
+        )?;
+        // A producer may change the board during a promised-data read. Retry later
+        // rather than marking a mixed snapshot as the current generation.
+        if pasteboard.changeCount() != change_count {
+            return Ok(None);
+        }
+        Ok(snapshot.map(|snapshot| (change_count, snapshot)))
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -1897,6 +2058,103 @@ impl ClipboardHandler for ClipboardChangeHandler {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn monitor_unchanged_generation_does_not_read_or_encode_payload() {
+        let result = super::read_changed_clipboard::<(), ()>(Some(42), 42, || {
+            panic!("unchanged clipboard must not read or encode its payload")
+        });
+        assert_eq!(result, Ok(None));
+        assert_eq!(
+            super::read_changed_clipboard(None, 42, || Ok::<_, ()>(7)),
+            Ok(Some(7))
+        );
+        assert_eq!(
+            super::read_changed_clipboard(Some(42), 43, || Ok::<_, ()>(8)),
+            Ok(Some(8))
+        );
+    }
+
+    #[test]
+    fn monitor_timeout_does_not_admit_another_queued_read() {
+        use std::sync::{atomic::AtomicBool, Arc};
+        use std::time::{Duration, Instant};
+        let in_flight = Arc::new(AtomicBool::new(false));
+        let deadline = Instant::now();
+        let queued = super::ClipboardMonitorRead::acquire(&in_flight, deadline).unwrap();
+        for _ in 0..100 {
+            assert!(super::ClipboardMonitorRead::acquire(&in_flight, deadline).is_none());
+        }
+        assert!(!queued.may_start(deadline + Duration::from_secs(2)));
+        drop(queued);
+        assert!(super::ClipboardMonitorRead::acquire(&in_flight, deadline).is_some());
+    }
+
+    #[test]
+    fn monitor_dropped_timeout_receiver_leaves_one_expired_closure() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        use std::time::{Duration, Instant};
+        let in_flight = Arc::new(AtomicBool::new(false));
+        let touched_clipboard = Arc::new(AtomicBool::new(false));
+        let deadline = Instant::now();
+        let permit = super::ClipboardMonitorRead::acquire(&in_flight, deadline).unwrap();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let touched = touched_clipboard.clone();
+        let queued = move || {
+            if !permit.may_start(deadline + Duration::from_secs(2)) {
+                return;
+            }
+            touched.store(true, Ordering::Release);
+            let _ = sender.send(permit);
+        };
+        assert!(matches!(
+            receiver.recv_timeout(Duration::ZERO),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(receiver);
+        for _ in 0..100 {
+            assert!(super::ClipboardMonitorRead::acquire(&in_flight, deadline).is_none());
+        }
+        queued();
+        assert!(!touched_clipboard.load(Ordering::Acquire));
+        assert!(super::ClipboardMonitorRead::acquire(&in_flight, deadline).is_some());
+    }
+
+    #[test]
+    fn monitor_timed_out_running_read_releases_after_failed_send() {
+        use std::sync::{atomic::AtomicBool, Arc};
+        use std::time::{Duration, Instant};
+        let in_flight = Arc::new(AtomicBool::new(false));
+        let now = Instant::now();
+        let permit =
+            super::ClipboardMonitorRead::acquire(&in_flight, now + Duration::from_secs(2)).unwrap();
+        assert!(permit.may_start(now));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        assert!(receiver.recv_timeout(Duration::ZERO).is_err());
+        drop(receiver);
+        assert!(super::ClipboardMonitorRead::acquire(&in_flight, now).is_none());
+        drop(sender.send(permit));
+        assert!(super::ClipboardMonitorRead::acquire(&in_flight, now).is_some());
+    }
+
+    #[test]
+    fn monitor_started_read_keeps_gate_until_result_is_consumed() {
+        use std::sync::{atomic::AtomicBool, Arc};
+        use std::time::{Duration, Instant};
+        let in_flight = Arc::new(AtomicBool::new(false));
+        let now = Instant::now();
+        let started =
+            super::ClipboardMonitorRead::acquire(&in_flight, now + Duration::from_secs(2)).unwrap();
+        assert!(started.may_start(now));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        sender.send(started).unwrap();
+        assert!(super::ClipboardMonitorRead::acquire(&in_flight, now).is_none());
+        drop(receiver.recv().unwrap());
+        assert!(super::ClipboardMonitorRead::acquire(&in_flight, now).is_some());
+    }
+
     #[test]
     fn unified_files_never_fall_back_to_text_on_invalid_payload_or_native_error() {
         assert!(super::restore_files_strict::<()>("[broken", |_| panic!(

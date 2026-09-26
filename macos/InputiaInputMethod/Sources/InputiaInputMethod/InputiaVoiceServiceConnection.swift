@@ -233,6 +233,113 @@ final class InputiaVoiceSharedState: InputiaSharedStateBarrierApplying {
   }
 }
 
+struct InputiaTargetBridgeCommand: Encodable {
+  let kind: String
+  var draft: InputiaVoiceTarget? = nil
+  var target: InputiaVoiceTarget? = nil
+  var purpose: String? = nil
+  var operation_id: String? = nil
+  var target_id: String? = nil
+}
+struct InputiaTargetBridgeSelection: Decodable { let location: Int; let length: Int }
+struct InputiaTargetBridgeReply: Decodable {
+  let status: String
+  let request_id: String
+  let ready: Bool
+  let server_instance: String
+  let permission_epoch: UInt64
+  let valid_for_ms: UInt64
+  let target: InputiaVoiceTarget?
+  let selection: InputiaTargetBridgeSelection?
+  let dispatch_nonce: String?
+  let code: String?
+  var deadline: TimeInterval = 0
+  private enum CodingKeys: String, CodingKey {
+    case status, request_id, ready, server_instance, permission_epoch, valid_for_ms, target, selection, dispatch_nonce, code
+  }
+}
+private struct InputiaTargetBridgeRequest: Encodable {
+  let request_id: String
+  let client_instance: String
+  let server_instance: String
+  let policy_epoch: UInt64
+  let target_bridge: InputiaTargetBridgeCommand
+}
+
+struct InputiaTypedCaptureCommand: Encodable {
+  let kind: String
+  var capture_epoch: UInt64? = nil
+  var event_id: String? = nil
+  var segment_id: String? = nil
+  var text: String? = nil
+  var draft: InputiaVoiceTarget? = nil
+}
+struct InputiaTypedCaptureReply: Decodable {
+  let status: String
+  let request_id: String
+  let server_instance: String
+  let enabled: Bool
+  let epoch: UInt64
+  let saved: Bool
+  let code: String?
+}
+private struct InputiaTypedCaptureRequest: Encodable {
+  let request_id: String
+  let client_instance: String
+  let server_instance: String
+  let policy_epoch: UInt64
+  let typed_capture: InputiaTypedCaptureCommand
+}
+
+struct InputiaPersonalCandidate: Codable, Equatable {
+  let id: String
+  let text: String
+  let base_rank: Int
+  let consumed_len: Int
+  var match_type: String? = nil
+}
+struct InputiaPersonalPrediction: Codable, Equatable { let id: String; let text: String }
+struct InputiaPersonalResult: Decodable {
+  let ordered_ids: [String]?
+  let predictions: [InputiaPersonalPrediction]?
+  let context_id: String?
+  let admitted: Bool?
+  let prediction_id: String?
+}
+struct InputiaPersonalCommand: Encodable {
+  let kind: String
+  var target: InputiaVoiceTarget? = nil
+  var learning_epoch: UInt64? = nil
+  var input_code: String? = nil
+  var context: String? = nil
+  var context_id: String? = nil
+  var candidates: [InputiaPersonalCandidate]? = nil
+  var limit: Int? = nil
+  var event_id: String? = nil
+  var text: String? = nil
+  var previous: String? = nil
+  var explicit_selection: Bool? = nil
+  var original_rank: Int? = nil
+  var operation: String? = nil
+  var prediction_id: String? = nil
+}
+struct InputiaPersonalReply: Decodable {
+  let status: String
+  let request_id: String
+  let server_instance: String
+  let enabled: Bool
+  let epoch: UInt64
+  let result: InputiaPersonalResult?
+  let code: String?
+}
+private struct InputiaPersonalRequest: Encodable {
+  let request_id: String
+  let client_instance: String
+  let server_instance: String
+  let policy_epoch: UInt64
+  let personalization: InputiaPersonalCommand
+}
+
 struct InputiaVoiceTarget: Codable, Equatable {
   let target_id: String
   let host_instance: String
@@ -377,6 +484,7 @@ struct InputiaVoiceDelivery: Codable {
   let target_id: String
   let text: String
   var dispatchDeadline: TimeInterval = 0
+  var dispatchNonce: String? = nil
   private enum CodingKeys: String, CodingKey {
     case operation_id, session_id, item_id, revision, policy_epoch, target_id, text
   }
@@ -435,7 +543,7 @@ final class InputiaVoiceServiceConnection {
         try PeerAuthenticator.authenticate(socketFD: descriptor, manifest: manifest, expectedRole: .handy)
       }
       let hello = InputiaVoiceHello(protocol_major: 1, protocol_minor: 0, instance_id: processInstance,
-        profile_id: trust.profileID, policy_epoch: previousEpoch, capabilities: ["voice_sessions_v1", "shared_terms_v1"])
+        profile_id: trust.profileID, policy_epoch: previousEpoch, capabilities: ["voice_sessions_v1", "shared_terms_v1", "ime_target_broker_v1", "typed_capture_v1", "personalization_v1"])
       try transport.write(hello)
       let reply = try transport.read(InputiaVoiceHelloReply.self)
       guard reply.status == "accepted", let server = reply.server,
@@ -480,6 +588,52 @@ final class InputiaVoiceServiceConnection {
   func close() {
     locallyAppliedVersion = nil; connection.close()
     InputiaSharedTermsMemory.shared.clear()
+  }
+
+  /// 短期键入连接不拥有全局词库缓存，不影响现有候选租约。
+  func closeTypedCaptureConnection() { locallyAppliedVersion = nil; connection.close() }
+
+  func personalization(_ command: InputiaPersonalCommand) throws -> InputiaPersonalReply {
+    guard !Thread.isMainThread, let version = locallyAppliedVersion,
+      server.capabilities.contains("personalization_v1") else { throw InputiaVoiceServiceError.policy }
+    if let target = command.target, target.host_instance != Self.processInstance { throw InputiaVoiceServiceError.policy }
+    let id = UUID().uuidString
+    try connection.write(InputiaPersonalRequest(request_id: id, client_instance: Self.processInstance,
+      server_instance: server.instance_id, policy_epoch: version.policy_epoch, personalization: command))
+    let reply = try connection.read(InputiaPersonalReply.self)
+    guard reply.status == "personalization", reply.request_id == id,
+      reply.server_instance == server.instance_id else { throw InputiaVoiceServiceError.handshake }
+    return reply
+  }
+
+  func typedCapture(_ command: InputiaTypedCaptureCommand) throws -> InputiaTypedCaptureReply {
+    guard !Thread.isMainThread, let version = locallyAppliedVersion,
+      server.capabilities.contains("typed_capture_v1") else { throw InputiaVoiceServiceError.policy }
+    if let draft = command.draft, draft.host_instance != Self.processInstance { throw InputiaVoiceServiceError.policy }
+    let id = UUID().uuidString
+    try connection.write(InputiaTypedCaptureRequest(request_id: id, client_instance: Self.processInstance,
+      server_instance: server.instance_id, policy_epoch: version.policy_epoch, typed_capture: command))
+    let reply = try connection.read(InputiaTypedCaptureReply.self)
+    guard reply.status == "typed_capture", reply.request_id == id,
+      reply.server_instance == server.instance_id else { throw InputiaVoiceServiceError.handshake }
+    return reply
+  }
+
+  func targetBridge(_ command: InputiaTargetBridgeCommand) throws -> InputiaTargetBridgeReply {
+    guard !Thread.isMainThread, let version = locallyAppliedVersion,
+      server.capabilities.contains("ime_target_broker_v1") else { throw InputiaVoiceServiceError.policy }
+    let requestID = UUID().uuidString
+    let started = ProcessInfo.processInfo.systemUptime
+    do {
+      try connection.write(InputiaTargetBridgeRequest(request_id: requestID, client_instance: Self.processInstance,
+        server_instance: server.instance_id, policy_epoch: version.policy_epoch, target_bridge: command))
+      var reply = try connection.read(InputiaTargetBridgeReply.self)
+      let maximumAge: UInt64 = command.kind == "capture" ? 120_000 : (command.kind == "status" ? 1_000 : 250)
+      guard reply.status == "target_bridge", reply.request_id == requestID,
+        reply.server_instance == server.instance_id, reply.valid_for_ms <= maximumAge else { throw InputiaVoiceServiceError.handshake }
+      reply.deadline = started + Double(reply.valid_for_ms) / 1000
+      return reply
+    } catch { close(); throw error }
   }
 
   func fetchSharedTerms(lease: InputiaHostShortcutLease, leaseDeadline: TimeInterval) throws -> InputiaSharedTermsSnapshot? {

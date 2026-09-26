@@ -1,0 +1,231 @@
+{
+  "candidates": [
+    {
+      "base_rank": 0,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:0:0:0",
+      "match_type": "exact",
+      "text": "管"
+    },
+    {
+      "base_rank": 1,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:1:0:1",
+      "match_type": "exact",
+      "text": "关"
+    },
+    {
+      "base_rank": 2,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:2:0:2",
+      "match_type": "exact",
+      "text": "官"
+    },
+    {
+      "base_rank": 3,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:3:0:3",
+      "match_type": "exact",
+      "text": "观"
+    },
+    {
+      "base_rank": 4,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:4:0:4",
+      "match_type": "exact",
+      "text": "馆"
+    },
+    {
+      "base_rank": 5,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:5:1:0",
+      "match_type": "exact",
+      "text": "灌"
+    },
+    {
+      "base_rank": 6,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:6:1:1",
+      "match_type": "exact",
+      "text": "冠"
+    },
+    {
+      "base_rank": 7,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:7:1:2",
+      "match_type": "exact",
+      "text": "罐"
+    },
+    {
+      "base_rank": 8,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:8:1:3",
+      "match_type": "exact",
+      "text": "惯"
+    },
+    {
+      "base_rank": 9,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:9:1:4",
+      "match_type": "exact",
+      "text": "贯"
+    },
+    {
+      "base_rank": 10,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:10:2:0",
+      "match_type": "exact",
+      "text": "棺"
+    },
+    {
+      "base_rank": 11,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:11:2:1",
+      "match_type": "exact",
+      "text": "莞"
+    },
+    {
+      "base_rank": 12,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:12:2:2",
+      "match_type": "exact",
+      "text": "関"
+    },
+    {
+      "base_rank": 13,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:13:2:3",
+      "match_type": "exact",
+      "text": "倌"
+    },
+    {
+      "base_rank": 14,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:14:2:4",
+      "match_type": "exact",
+      "text": "斡"
+    },
+    {
+      "base_rank": 15,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:15:3:0",
+      "match_type": "exact",
+      "text": "涫"
+    },
+    {
+      "base_rank": 16,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:16:3:1",
+      "match_type": "exact",
+      "text": "脘"
+    },
+    {
+      "base_rank": 17,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:17:3:2",
+      "match_type": "exact",
+      "text": "朊"
+    },
+    {
+      "base_rank": 18,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:18:3:3",
+      "match_type": "exact",
+      "text": "鹳"
+    },
+    {
+      "base_rank": 19,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:19:3:4",
+      "match_type": "exact",
+      "text": "掼"
+    },
+    {
+      "base_rank": 20,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:20:4:0",
+      "match_type": "exact",
+      "text": "琯"
+    },
+    {
+      "base_rank": 21,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:21:4:1",
+      "match_type": "exact",
+      "text": "観"
+    },
+    {
+      "base_rank": 22,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:22:4:2",
+      "match_type": "exact",
+      "text": "鳏"
+    },
+    {
+      "base_rank": 23,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:23:4:3",
+      "match_type": "exact",
+      "text": "逭"
+    },
+    {
+      "base_rank": 24,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:24:4:4",
+      "match_type": "exact",
+      "text": "盥"
+    },
+    {
+      "base_rank": 25,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:25:5:0",
+      "match_type": "exact",
+      "text": "瓘"
+    },
+    {
+      "base_rank": 26,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:26:5:1",
+      "match_type": "exact",
+      "text": "婠"
+    },
+    {
+      "base_rank": 27,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:27:5:2",
+      "match_type": "exact",
+      "text": "覌"
+    },
+    {
+      "base_rank": 28,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:28:5:3",
+      "match_type": "exact",
+      "text": "卝"
+    },
+    {
+      "base_rank": 29,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:29:5:4",
+      "match_type": "exact",
+      "text": "錧"
+    },
+    {
+      "base_rank": 30,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:30:6:0",
+      "match_type": "exact",
+      "text": "矝"
+    },
+    {
+      "base_rank": 31,
+      "consumed_len": 2,
+      "id": "rime:double_pinyin_flypy:31:6:1",
+      "match_type": "exact",
+      "text": "闗"
+    }
+  ],
+  "composing": "gr",
+  "ok": true,
+  "page": 0
+}

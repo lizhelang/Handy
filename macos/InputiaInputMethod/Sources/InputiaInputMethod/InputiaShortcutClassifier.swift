@@ -65,6 +65,35 @@ struct InputiaShortcutClassifier {
       observeGlobalKeyUp(keyCode: keyCode)
     }
 
+    mutating func observePhysicalShiftKeyUp(
+      shortcut: String,
+      modifiers: NSEvent.ModifierFlags
+    ) -> Bool {
+      let shouldToggle = shortcut == "shift"
+        && armed
+        && !invalidated
+        && activeNonModifierKeyCodes.isEmpty
+        && !modifiers.contains(.command)
+        && !modifiers.contains(.control)
+        && !modifiers.contains(.option)
+      armed = false
+      invalidated = false
+      lastModifiers = modifiers
+      return shouldToggle
+    }
+
+    mutating func observeInputMethodFlagsChanged(
+      shortcut: String,
+      modifiers: NSEvent.ModifierFlags
+    ) -> ShiftInputModeGestureResult {
+      // IMK 可能只交付普通键 keyDown，不能用历史 keyDown 推断当前仍按住。
+      // 当前 Shift 手势期间的新按键仍会取消资格，保留大写输入和组合键行为。
+      if !lastModifiers.contains(.shift) && modifiers.contains(.shift) {
+        activeNonModifierKeyCodes.removeAll(keepingCapacity: true)
+      }
+      return observeFlagsChanged(shortcut: shortcut, modifiers: modifiers, allowToggle: true)
+    }
+
     mutating func observeFlagsChanged(
       shortcut: String,
       modifiers: NSEvent.ModifierFlags,
@@ -116,6 +145,16 @@ struct InputiaShortcutClassifier {
   }
 
   static func shiftInputModeGestureSelfCheckResults() -> [(String, Bool)] {
+    var imeMissingKeyUp = ShiftInputModeGestureState()
+    imeMissingKeyUp.observeLocalKeyDown(keyCode: 0, modifiers: [])
+    _ = imeMissingKeyUp.observeInputMethodFlagsChanged(shortcut: "shift", modifiers: [.shift])
+    let imeFirstToggle = imeMissingKeyUp.observeInputMethodFlagsChanged(shortcut: "shift", modifiers: []) == .toggle
+    imeMissingKeyUp.observeLocalKeyDown(keyCode: 11, modifiers: [])
+    _ = imeMissingKeyUp.observeInputMethodFlagsChanged(shortcut: "shift", modifiers: [.shift])
+    let imeReturnToggle = imeMissingKeyUp.observeInputMethodFlagsChanged(shortcut: "shift", modifiers: []) == .toggle
+    _ = imeMissingKeyUp.observeInputMethodFlagsChanged(shortcut: "shift", modifiers: [.shift])
+    imeMissingKeyUp.observeLocalKeyDown(keyCode: 0, modifiers: [.shift])
+    let imeUppercaseRejectsToggle = imeMissingKeyUp.observeInputMethodFlagsChanged(shortcut: "shift", modifiers: []) == .none
     let keyCodeV: UInt16 = 9
     var independent = ShiftInputModeGestureState()
     let independentDown = independent.observeFlagsChanged(
@@ -138,6 +177,17 @@ struct InputiaShortcutClassifier {
       modifiers: [],
       allowToggle: true
     ) == .toggle
+
+    var physicalRelease = ShiftInputModeGestureState()
+    _ = physicalRelease.observeFlagsChanged(
+      shortcut: "shift",
+      modifiers: [.shift],
+      allowToggle: true
+    )
+    let physicalReleaseToggles = physicalRelease.observePhysicalShiftKeyUp(
+      shortcut: "shift",
+      modifiers: []
+    )
 
     var modifierReleasedBeforeShift = ShiftInputModeGestureState()
     _ = modifierReleasedBeforeShift.observeFlagsChanged(
@@ -313,6 +363,8 @@ struct InputiaShortcutClassifier {
     let physicalHoldStillRejects = realHold.observeFlagsChanged(shortcut: "shift", modifiers: [], allowToggle: true) == .none
 
     return [
+      ("shiftGestureIMKMissingKeyUpAllowsBothDirections", imeFirstToggle && imeReturnToggle),
+      ("shiftGestureIMKUppercaseDoesNotToggle", imeUppercaseRejectsToggle),
       ("shiftGesturePhysicalReleaseRecoversMissingKeyUp", physicalReleaseRecovers),
       ("shiftGesturePhysicalHoldStillRejectsAfterEarlierKeyUp", physicalHoldStillRejects),
       ("shiftGestureNewSessionRecoversMissingKeyUp", newSessionRecoversFromMissingKeyUp),
@@ -325,6 +377,7 @@ struct InputiaShortcutClassifier {
       ("shiftGestureInterveningKeyInvalidatesLocalRelease", interveningKeyRejected),
       ("shiftGestureIndependentFirstToggles", independentDown && independentUp),
       ("shiftGestureIndependentSecondTogglesWithoutTimeWindow", independentSecondDown && independentSecondUp),
+      ("shiftGesturePhysicalKeyUpToggles", physicalReleaseToggles),
       (
         "shiftGestureRejectsModifierReleasedBeforeShift",
         modifierJoin && modifierLeavesFirst && modifierReleaseRejected
@@ -449,6 +502,30 @@ struct InputiaShortcutClassifier {
       return false
     }
     return keyCode == keyCodeSpace
+  }
+
+  /// 微信输入法式的临时英文组合：中文模式下按住 Shift 输入字母时，
+  /// 先形成大写英文组合串，直到空格/回车再提交。
+  static func isShiftEnglishCompositionCharacter(
+    characters: String?,
+    charactersIgnoringModifiers: String?,
+    modifiers: NSEvent.ModifierFlags
+  ) -> Bool {
+    guard modifiers.contains(.shift),
+      !modifiers.contains(.command),
+      !modifiers.contains(.control),
+      !modifiers.contains(.option),
+      let characters,
+      characters.count == 1,
+      let ignoring = charactersIgnoringModifiers,
+      ignoring.count == 1,
+      let scalar = characters.unicodeScalars.first,
+      let ignoringScalar = ignoring.unicodeScalars.first
+    else {
+      return false
+    }
+    return scalar.value >= 65 && scalar.value <= 90
+      && ignoringScalar.value >= 97 && ignoringScalar.value <= 122
   }
 
   static func isDisplayedRawCompositionSelection(

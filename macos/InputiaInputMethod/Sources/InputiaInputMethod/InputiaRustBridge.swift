@@ -1,5 +1,8 @@
 import Foundation
 
+@_silgen_name("inputia_session_set_context_unverified")
+private func inputia_session_set_context_unverified(_ session: UnsafeMutableRawPointer?, _ bundleId: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
 private let keyBackspace: Int32 = 1
 private let keyEscape: Int32 = 2
 private let keySpace: Int32 = 3
@@ -116,6 +119,14 @@ private func inputia_session_set_app_context(
 ) -> UnsafeMutablePointer<CChar>?
 
 #if INPUTIA_PAIRED_BUILD
+@_silgen_name("inputia_session_undo_recent_learning")
+private func inputia_session_undo_recent_learning(_ session: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("inputia_session_candidate_pool")
+private func inputia_session_candidate_pool(_ session: UnsafeMutableRawPointer?, _ limit: Int) -> UnsafeMutablePointer<CChar>?
+@_silgen_name("inputia_session_choose_candidate_id")
+private func inputia_session_choose_candidate_id(_ session: UnsafeMutableRawPointer?, _ composing: UnsafePointer<CChar>, _ id: UnsafePointer<CChar>, _ expectedText: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("inputia_session_shared_candidate_order")
 private func inputia_session_shared_candidate_order(_ session: UnsafeMutableRawPointer?, _ terms: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 #endif
@@ -138,6 +149,7 @@ struct InputiaBridgeOutcome {
   let composing: String
   let page: Int
   let candidates: [String]
+  let candidateIDs: [String]
 
   static let error = InputiaBridgeOutcome(
     ok: false,
@@ -156,7 +168,8 @@ struct InputiaBridgeOutcome {
     mode: String,
     composing: String,
     page: Int,
-    candidates: [String]
+    candidates: [String],
+    candidateIDs: [String] = []
   ) {
     self.ok = ok
     self.consumed = consumed
@@ -165,6 +178,20 @@ struct InputiaBridgeOutcome {
     self.composing = composing
     self.page = page
     self.candidates = candidates
+    self.candidateIDs = candidateIDs
+  }
+
+  /// stale ID/预期文本校验失败时，保留当前组合与映射，不能接受错误包的空composing。
+  static func failedSelection(preserving previous: InputiaBridgeOutcome) -> InputiaBridgeOutcome {
+    InputiaBridgeOutcome(ok: false, consumed: true, commit: nil, mode: previous.mode,
+      composing: previous.composing, page: previous.page, candidates: previous.candidates,
+      candidateIDs: previous.candidateIDs)
+  }
+
+  static func decodedSelection(_ dictionary: [String: Any]?, preserving previous: InputiaBridgeOutcome) -> InputiaBridgeOutcome {
+    guard let dictionary else { return .failedSelection(preserving: previous) }
+    let result = InputiaBridgeOutcome(dictionary: dictionary)
+    return result.ok ? result : .failedSelection(preserving: previous)
   }
 
   init(dictionary: [String: Any]) {
@@ -175,7 +202,9 @@ struct InputiaBridgeOutcome {
     composing = dictionary["composing"] as? String ?? ""
     page = dictionary["page"] as? Int ?? 0
     let rawCandidates = dictionary["visible_candidates"] as? [[String: Any]] ?? []
-    candidates = rawCandidates.compactMap { $0["text"] as? String }
+    let visible = rawCandidates.filter { $0["text"] is String }
+    candidates = visible.compactMap { $0["text"] as? String }
+    candidateIDs = visible.map { $0["id"] as? String ?? "" }
   }
 }
 
@@ -259,6 +288,40 @@ final class InputiaRustBridge {
   }
 
   #if INPUTIA_PAIRED_BUILD
+  /// 只回滚Rime近期学习事务，不向宿主发送退格，也不改当前组合快照。
+  func undoRecentNativeLearning() -> Bool {
+    guard let session, let raw = inputia_session_undo_recent_learning(session) else { return false }
+    defer { inputia_string_free(raw) }
+    guard let result = Self.parseJsonString(String(cString: raw)), result["ok"] as? Bool == true else { return false }
+    return result["requested"] as? Bool == true
+  }
+
+  struct PersonalCandidatePool: Decodable {
+    let ok: Bool
+    let composing: String
+    let page: Int
+    let candidates: [InputiaPersonalCandidate]
+  }
+  func personalCandidatePool(limit: Int = 32) -> PersonalCandidatePool? {
+    guard let session, let raw = inputia_session_candidate_pool(session, min(64, max(1, limit))) else { return nil }
+    defer { inputia_string_free(raw) }
+    guard let pool = try? JSONDecoder().decode(PersonalCandidatePool.self, from: Data(String(cString: raw).utf8)),
+      pool.ok, pool.composing == latestOutcome.composing, pool.page == latestOutcome.page else { return nil }
+    return pool
+  }
+  func choosePersonalCandidate(id: String, text: String, composing: String) -> InputiaBridgeOutcome {
+    guard latestOutcome.composing == composing else { return .failedSelection(preserving: latestOutcome) }
+    let raw = composing.withCString { code in id.withCString { candidate in text.withCString { expected in
+      inputia_session_choose_candidate_id(session, code, candidate, expected)
+    } } }
+    guard let raw else { return .failedSelection(preserving: latestOutcome) }
+    defer { inputia_string_free(raw) }
+    let selection = InputiaBridgeOutcome.decodedSelection(Self.parseJsonString(String(cString: raw)), preserving: latestOutcome)
+    guard selection.ok else { return selection }
+    latestOutcome = selection
+    return selection
+  }
+
   func sharedCandidateOrder(terms: [String]) -> InputiaSharedCandidateOrder? {
     let before = latestOutcome
     guard let session, let data = try? JSONEncoder().encode(terms),
@@ -339,6 +402,13 @@ final class InputiaRustBridge {
 
   func pageUp() -> InputiaBridgeOutcome {
     handleSpecial(keyPageUp)
+  }
+
+  func setUnverifiedAppContext(bundleId: String) -> Bool {
+    guard let session else { return false }
+    guard let raw = bundleId.withCString({ inputia_session_set_context_unverified(session, $0) }) else { return false }
+    defer { inputia_string_free(raw) }
+    return parseJson(raw)?["ok"] as? Bool == true
   }
 
   func setAppContext(bundleId: String, windowTitle: String? = nil) -> Bool {

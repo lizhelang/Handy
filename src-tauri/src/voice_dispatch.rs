@@ -219,6 +219,16 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
         request: VoiceRequest,
     ) -> Result<VoiceSessionView, DispatchError> {
         self.authorize(context, &request)?;
+        let permission_epoch = if request.strict_start_identity().is_some()
+            && matches!(&context.proof, PeerProof::Authenticated(_))
+        {
+            Some(
+                crate::input_permission::capture_epoch()
+                    .map_err(|_| DispatchError::Unauthorized)?,
+            )
+        } else {
+            None
+        };
         if matches!(request.command, VoiceCommand::Status) {
             return self.status(context, &request.session_id);
         }
@@ -260,6 +270,9 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
             return self.status(context, &request.session_id);
         }
         let is_start = request.strict_start_identity().is_some();
+        if let Some(epoch) = permission_epoch {
+            crate::input_permission::check_epoch(epoch).map_err(|_| DispatchError::Unauthorized)?;
+        }
         let receiver = self.coordinator.control(request);
         drop(order);
         match receiver.recv_timeout(self.reply_timeout) {
@@ -290,6 +303,9 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
         request: VoiceOutputRequest,
     ) -> Result<(VoiceOutputReply, Option<(OutputIntent, OutputPermit)>), DispatchError> {
         self.authorize_output_fetch(context, &request)?;
+        if matches!(&context.proof, PeerProof::Authenticated(_)) {
+            crate::input_permission::capture_epoch().map_err(|_| DispatchError::Unauthorized)?;
+        }
         if !matches!(request.output, VoiceOutputCommand::Fetch {}) {
             return Err(DispatchError::Unauthorized);
         }

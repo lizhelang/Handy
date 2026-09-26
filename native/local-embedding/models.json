@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "interim_model": {
+    "id": "laya-multilingual-encoder-mean",
+    "source_repository": "aac6fef/laya-multilingual-mlx",
+    "source_revision": "052592a15d198d9ad47da779604259b10b47b7aa",
+    "runtime": "laya-mlx",
+    "dimensions": 768,
+    "status": "local_fixture_verified",
+    "purpose": "temporary_embedding_fallback",
+    "warning": "decision encoder mean pooling; not BGE-M3"
+  },
+  "default_model": {
+    "id": "laya-multilingual-encoder-mean",
+    "source_repository": "aac6fef/laya-multilingual-mlx",
+    "source_revision": "052592a15d198d9ad47da779604259b10b47b7aa",
+    "runtime": "laya-mlx",
+    "dimensions": 768,
+    "status": "local_fixture_verified",
+    "purpose": "current_macos_default_embedding_fallback",
+    "warning": "decision encoder mean pooling; not BGE-M3"
+  },
+  "optional_bge_model": {
+    "id": "bge-m3-mlx-4bit",
+    "repository": "TyKaoz/bge-m3-4bit",
+    "revision": "21c7550f1154689f10f3eca2dcb4265c612950c4",
+    "runtime": "mlx-embeddings",
+    "precision": "4bit",
+    "dimensions": 1024,
+    "model_bytes": 319903668,
+    "model_sha256": "c2ba80aaf1bbcd20cf286a91b00ec7313ef20fcd1597b9101bbaf114dbedebd",
+    "license": "Apache-2.0",
+    "status": "manifest_pinned_weights_not_downloaded"
+  }
+}

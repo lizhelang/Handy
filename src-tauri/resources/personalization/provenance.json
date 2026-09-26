@@ -1,0 +1,10 @@
+{
+  "source": "https://github.com/rime/rime-essay",
+  "license": "LGPL-3.0",
+  "distribution": "https://github.com/rime/squirrel/releases/tag/1.1.2",
+  "original_sha256": "aee0abc0e4f09c23e9f2f5645791a29f8479d7e4e4be2723f5a9405cb565c885",
+  "derived_sha256": "12e8cbdc933142da7f9e9e625a81f37dc73a101ab2709cae3ec6352155317fe6",
+  "transform": "OpenCC t2s; retain 2..32-character phrases; sum simplified duplicates; lexicographic order",
+  "reproduce": "python3 scripts/prepare-personalization-lexicon.py --rime-data <fixed RimeData directory>",
+  "entries": 356723
+}

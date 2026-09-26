@@ -2,6 +2,7 @@ pub mod audio;
 pub mod clipboard;
 pub mod history;
 pub mod integration;
+pub mod knowledge;
 pub mod models;
 pub mod permissions;
 pub mod transcription;
@@ -142,34 +143,23 @@ pub fn check_apple_intelligence_available() -> bool {
 /// On macOS, this will return an error if accessibility permissions are not granted.
 #[specta::specta]
 #[tauri::command]
-pub fn initialize_enigo(app: AppHandle) -> Result<(), String> {
-    use crate::input::EnigoState;
-
-    // Check if already initialized
-    if app.try_state::<EnigoState>().is_some() {
-        log::debug!("Enigo already initialized");
-        return Ok(());
+pub async fn initialize_enigo(app: AppHandle) -> Result<(), String> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        return crate::input::initialize_enigo(
+            &app,
+            crate::input_permission::initializing_epoch()?,
+        );
     }
-
-    // Try to initialize
-    match EnigoState::new() {
-        Ok(enigo_state) => {
-            app.manage(enigo_state);
-            log::info!("Enigo initialized successfully after permission grant");
-            Ok(())
+    #[cfg(target_os = "macos")]
+    crate::input_permission::request_initialize(&app);
+    for _ in 0..40 {
+        if crate::input_permission::capture_epoch().is_ok() {
+            return Ok(());
         }
-        Err(e) => {
-            if cfg!(target_os = "macos") {
-                log::warn!(
-                    "Failed to initialize Enigo: {} (accessibility permissions may not be granted)",
-                    e
-                );
-            } else {
-                log::warn!("Failed to initialize Enigo: {}", e);
-            }
-            Err(format!("Failed to initialize input system: {}", e))
-        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
+    Err("input_permission_initialization_not_ready".into())
 }
 
 /// Marker state to track if shortcuts have been initialized.
@@ -180,20 +170,19 @@ pub struct ShortcutsInitialized;
 /// This is idempotent - calling it multiple times is safe.
 #[specta::specta]
 #[tauri::command]
-pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
-    // Check if already initialized
-    if app.try_state::<ShortcutsInitialized>().is_some() {
-        log::debug!("Shortcuts already initialized");
+pub async fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        if app.try_state::<ShortcutsInitialized>().is_none() {
+            crate::shortcut::init_shortcuts(&app)?;
+            app.manage(ShortcutsInitialized);
+        }
         return Ok(());
     }
-
-    // Initialize shortcuts
-    crate::shortcut::init_shortcuts(&app);
-
-    // Mark as initialized before reconciling the macOS Secure Input fallback.
-    app.manage(ShortcutsInitialized);
-    crate::secure_input::reconcile_fallback(&app);
-
-    log::info!("Shortcuts initialized successfully");
-    Ok(())
+    if crate::input_permission::capture_epoch().is_ok() {
+        app.manage(ShortcutsInitialized);
+        crate::secure_input::reconcile_fallback(&app);
+        return Ok(());
+    }
+    initialize_enigo(app).await
 }

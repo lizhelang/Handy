@@ -9,6 +9,7 @@ import {
 } from "tauri-plugin-macos-permissions-api";
 import { ModelStateEvent, RecordingErrorEvent } from "./lib/types/events";
 import "./App.css";
+import { KnowledgePage } from "./components/knowledge/KnowledgePage";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
 import SecureInputWarning from "./components/SecureInputWarning";
 import Footer from "./components/footer";
@@ -36,6 +37,8 @@ function App() {
   );
   // Track if this is a returning user who just needs to grant permissions
   // (vs a new user who needs full onboarding including model selection)
+  const [knowledgeOnly, setKnowledgeOnly] = useState(false);
+  const knowledgeOnlyRef = useRef(false);
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [currentSection, setCurrentSection] =
     useState<SidebarSection>("general");
@@ -81,7 +84,11 @@ function App() {
 
   // Initialize Enigo, shortcuts, and refresh audio devices when main app loads
   useEffect(() => {
-    if (onboardingStep === "done" && !hasCompletedPostOnboardingInit.current) {
+    if (
+      !knowledgeOnly &&
+      onboardingStep === "done" &&
+      !hasCompletedPostOnboardingInit.current
+    ) {
       hasCompletedPostOnboardingInit.current = true;
       Promise.all([
         commands.initializeEnigo(),
@@ -92,7 +99,12 @@ function App() {
       refreshAudioDevices();
       refreshOutputDevices();
     }
-  }, [onboardingStep, refreshAudioDevices, refreshOutputDevices]);
+  }, [
+    knowledgeOnly,
+    onboardingStep,
+    refreshAudioDevices,
+    refreshOutputDevices,
+  ]);
 
   // Handle keyboard shortcuts for debug mode toggle
   useEffect(() => {
@@ -262,12 +274,14 @@ function App() {
   };
 
   const handleAccessibilityComplete = () => {
+    if (knowledgeOnlyRef.current) return;
     // Returning users already have models, skip to main app
     // New users need to select a model
     setOnboardingStep(isReturningUser ? "done" : "model");
   };
 
   const handleModelSelected = () => {
+    if (knowledgeOnlyRef.current) return;
     // Transition to main app - user has started a download
     setOnboardingStep("done");
   };
@@ -303,7 +317,26 @@ function App() {
   // stable wrapper around this node, so crossing between onboarding steps and
   // the main app never remounts it (which would drop any in-flight toast).
   let content: ReactNode;
-  if (onboardingStep === "accessibility") {
+  if (knowledgeOnly) {
+    content = (
+      <div dir={direction} className="h-screen flex flex-col cursor-default">
+        <div className="shrink-0 border-b border-mid-gray/20 p-3">
+          <button
+            className="rounded-lg border border-mid-gray/30 px-3 py-2 text-sm hover:bg-mid-gray/10"
+            onClick={() => {
+              knowledgeOnlyRef.current = false;
+              setKnowledgeOnly(false);
+            }}
+          >
+            {t("knowledge.backToInput")}
+          </button>
+        </div>
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          <KnowledgePage />
+        </main>
+      </div>
+    );
+  } else if (onboardingStep === "accessibility") {
     content = (
       <AccessibilityOnboarding onComplete={handleAccessibilityComplete} />
     );
@@ -345,6 +378,22 @@ function App() {
     <>
       {toaster}
       {content}
+      {!knowledgeOnly && onboardingStep !== "done" && (
+        <div
+          dir={direction}
+          className="fixed bottom-4 right-4 z-50 rounded-xl border border-mid-gray/30 bg-background p-2 shadow-sm"
+        >
+          <button
+            className="rounded-lg px-3 py-2 text-sm hover:bg-mid-gray/10"
+            onClick={() => {
+              knowledgeOnlyRef.current = true;
+              setKnowledgeOnly(true);
+            }}
+          >
+            {t("knowledge.useOnly")}
+          </button>
+        </div>
+      )}
     </>
   );
 }

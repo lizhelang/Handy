@@ -45,6 +45,7 @@ use super::handler::handle_shortcut_event;
 /// Commands that can be sent to the hotkey manager thread
 enum ManagerCommand {
     Register {
+        epoch: u64,
         binding_id: String,
         hotkey_string: String,
         response: Sender<Result<(), String>>,
@@ -53,11 +54,18 @@ enum ManagerCommand {
         binding_id: String,
         response: Sender<Result<(), String>>,
     },
+    Health {
+        response: Sender<Result<(), String>>,
+    },
     Shutdown,
 }
 
 /// State for the handy-keys shortcut manager
 pub struct HandyKeysState {
+    healthy: Arc<AtomicBool>,
+    ready: Mutex<Receiver<Result<(), String>>>,
+    recording_thread: Mutex<Option<JoinHandle<()>>>,
+    epoch: u64,
     /// Channel to send commands to the manager thread (wrapped in Mutex for Sync)
     command_sender: Mutex<Sender<ManagerCommand>>,
     /// Handle to the manager thread (wrapped in Mutex for Sync, allows proper join on drop)
@@ -70,6 +78,22 @@ pub struct HandyKeysState {
     recording_binding_id: Mutex<Option<String>>,
     /// Flag to stop recording loop
     recording_running: Arc<AtomicBool>,
+}
+
+#[derive(Default)]
+pub struct HandyKeysSlot(Mutex<Option<Arc<HandyKeysState>>>);
+
+pub fn current(app: &AppHandle) -> Result<Arc<HandyKeysState>, String> {
+    let slot = app.try_state::<HandyKeysSlot>().ok_or("快捷键尚未初始化")?;
+    let worker = slot.0.try_lock().map_err(|_| "快捷键生命周期忙碌")?;
+    worker.clone().ok_or_else(|| "快捷键尚未初始化".into())
+}
+
+pub fn retire_current(app: &AppHandle) -> Result<(), String> {
+    if app.try_state::<HandyKeysSlot>().is_none() {
+        return Ok(());
+    }
+    current(app)?.retire()
 }
 
 /// Key event sent to frontend during recording mode
@@ -88,15 +112,28 @@ pub struct FrontendKeyEvent {
 impl HandyKeysState {
     /// Create a new HandyKeysState
     pub fn new(app: AppHandle) -> Result<Self, String> {
+        let epoch = crate::input_permission::initializing_epoch()?;
+        handy_keys::set_permission_check(crate::input_permission::callback_allowed);
+        let healthy = Arc::new(AtomicBool::new(true));
+        let worker_healthy = healthy.clone();
+        let (ready_tx, ready_rx) = mpsc::channel();
         let (cmd_tx, cmd_rx) = mpsc::channel::<ManagerCommand>();
 
         // Start the manager thread
         let app_clone = app.clone();
         let thread_handle = thread::spawn(move || {
-            Self::manager_thread(cmd_rx, app_clone);
+            Self::manager_thread(cmd_rx, app_clone, epoch, &worker_healthy, ready_tx);
+            if worker_healthy.swap(false, Ordering::AcqRel) {
+                crate::input_permission::mark_shortcuts_failed(epoch, "快捷键原生监听器意外退出");
+                crate::input_permission::close_gate("快捷键原生监听器意外退出");
+            }
         });
 
         Ok(Self {
+            healthy,
+            ready: Mutex::new(ready_rx),
+            recording_thread: Mutex::new(None),
+            epoch,
             command_sender: Mutex::new(cmd_tx),
             thread_handle: Mutex::new(Some(thread_handle)),
             recording_listener: Mutex::new(None),
@@ -107,25 +144,45 @@ impl HandyKeysState {
     }
 
     /// The main manager thread - owns the HotkeyManager and processes commands
-    fn manager_thread(cmd_rx: Receiver<ManagerCommand>, app: AppHandle) {
+    fn manager_thread(
+        cmd_rx: Receiver<ManagerCommand>,
+        app: AppHandle,
+        epoch: u64,
+        healthy: &AtomicBool,
+        ready: Sender<Result<(), String>>,
+    ) {
         info!("handy-keys manager thread started");
 
         // Create the HotkeyManager in this thread
         let manager = match HotkeyManager::new_with_blocking() {
             Ok(m) => m,
             Err(e) => {
+                let _ = ready.send(Err(format!("Failed to create HotkeyManager: {e}")));
                 error!("Failed to create HotkeyManager: {}", e);
                 return;
             }
         };
+
+        let _ = ready.send(Ok(()));
 
         // Maps binding IDs to HotkeyIds and hotkey strings
         let mut binding_to_hotkey: HashMap<String, HotkeyId> = HashMap::new();
         let mut hotkey_to_binding: HashMap<HotkeyId, (String, String)> = HashMap::new(); // (binding_id, hotkey_string)
 
         loop {
+            if !healthy.load(Ordering::Acquire)
+                || !manager.is_healthy()
+                || crate::input_permission::initializing_epoch() != Ok(epoch)
+            {
+                break;
+            }
             // Check for hotkey events (non-blocking)
             while let Some(event) = manager.try_recv() {
+                if !handy_keys::events_allowed()
+                    || crate::input_permission::check_epoch(epoch).is_err()
+                {
+                    continue;
+                }
                 if let Some((binding_id, hotkey_string)) = hotkey_to_binding.get(&event.id) {
                     debug!(
                         "handy-keys event: binding={}, hotkey={}, state={:?}",
@@ -140,10 +197,20 @@ impl HandyKeysState {
             match cmd_rx.recv_timeout(std::time::Duration::from_millis(10)) {
                 Ok(cmd) => match cmd {
                     ManagerCommand::Register {
+                        epoch: request_epoch,
                         binding_id,
                         hotkey_string,
                         response,
                     } => {
+                        if !super::lifecycle_guard::registration_current(
+                            request_epoch,
+                            epoch,
+                            healthy.load(Ordering::Acquire),
+                            crate::input_permission::initializing_epoch(),
+                        ) {
+                            let _ = response.send(Err("快捷键注册请求已过期".into()));
+                            continue;
+                        }
                         let result = Self::do_register(
                             &manager,
                             &mut binding_to_hotkey,
@@ -163,6 +230,14 @@ impl HandyKeysState {
                             &mut hotkey_to_binding,
                             &binding_id,
                         );
+                        let _ = response.send(result);
+                    }
+                    ManagerCommand::Health { response } => {
+                        let result = if manager.is_healthy() && healthy.load(Ordering::Acquire) {
+                            Ok(())
+                        } else {
+                            Err("快捷键原生监听器不可用".into())
+                        };
                         let _ = response.send(result);
                     }
                     ManagerCommand::Shutdown => {
@@ -238,44 +313,109 @@ impl HandyKeysState {
         Ok(())
     }
 
-    /// Register a shortcut binding
-    pub fn register(&self, binding: &ShortcutBinding) -> Result<(), String> {
+    fn fault(&self, reason: &str) -> String {
+        self.healthy.store(false, Ordering::Release);
+        handy_keys::set_blocking_enabled(false);
+        crate::input_permission::mark_shortcuts_failed(self.epoch, reason);
+        crate::input_permission::close_gate(reason);
+        reason.to_owned()
+    }
+
+    pub fn health_ready(&self, epoch: u64) -> Result<(), String> {
+        if self.epoch != epoch || !self.healthy.load(Ordering::Acquire) {
+            return Err("快捷键监听器不可用或已过期".into());
+        }
         let (tx, rx) = mpsc::channel();
         self.command_sender
-            .lock()
+            .try_lock()
+            .map_err(|_| "快捷键健康检查忙碌")?
+            .send(ManagerCommand::Health { response: tx })
+            .map_err(|_| "快捷键健康检查通道掉线")?;
+        super::lifecycle_guard::receipt(rx, std::time::Duration::from_millis(500))?
+    }
+
+    pub fn await_ready(&self) -> Result<(), String> {
+        self.ready
+            .try_lock()
+            .map_err(|_| "快捷键初始化仍在进行")?
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .map_err(|_| self.fault("快捷键监听器启动超时或已退出"))?
+    }
+
+    pub fn retire(&self) -> Result<(), String> {
+        handy_keys::set_blocking_enabled(false);
+        self.healthy.store(false, Ordering::Release);
+        self.stop_recording()?;
+        if let Ok(sender) = self.command_sender.try_lock() {
+            let _ = sender.send(ManagerCommand::Shutdown);
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        loop {
+            let mut thread = self
+                .thread_handle
+                .try_lock()
+                .map_err(|_| "快捷键线程状态忙碌")?;
+            if thread.as_ref().is_none_or(|h| h.is_finished())
+                && handy_keys::active_listener_count() == 0
+            {
+                if let Some(handle) = thread.take() {
+                    let _ = handle.join();
+                }
+                return Ok(());
+            }
+            drop(thread);
+            if std::time::Instant::now() >= deadline {
+                return Err("旧快捷键监听器尚未退出，不能创建第二套".into());
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// Register a shortcut binding
+    pub fn register(&self, binding: &ShortcutBinding) -> Result<(), String> {
+        let epoch = crate::input_permission::initializing_epoch()?;
+        if epoch != self.epoch || !self.healthy.load(Ordering::Acquire) {
+            return Err("快捷键监听器不可用".into());
+        }
+        let (tx, rx) = mpsc::channel();
+        self.command_sender
+            .try_lock()
             .map_err(|_| "Failed to lock command_sender")?
             .send(ManagerCommand::Register {
+                epoch,
                 binding_id: binding.id.clone(),
                 hotkey_string: binding.current_binding.clone(),
                 response: tx,
             })
-            .map_err(|_| "Failed to send register command")?;
+            .map_err(|_| self.fault("快捷键注册通道掉线"))?;
 
-        rx.recv()
-            .map_err(|_| "Failed to receive register response")?
+        super::lifecycle_guard::receipt(rx, std::time::Duration::from_millis(500))
+            .map_err(|_| self.fault("快捷键注册回执超时或通道掉线，结果未知"))?
     }
 
     /// Unregister a shortcut binding
     pub fn unregister(&self, binding: &ShortcutBinding) -> Result<(), String> {
         let (tx, rx) = mpsc::channel();
         self.command_sender
-            .lock()
+            .try_lock()
             .map_err(|_| "Failed to lock command_sender")?
             .send(ManagerCommand::Unregister {
                 binding_id: binding.id.clone(),
                 response: tx,
             })
-            .map_err(|_| "Failed to send unregister command")?;
+            .map_err(|_| self.fault("快捷键注销通道掉线"))?;
 
-        rx.recv()
-            .map_err(|_| "Failed to receive unregister response")?
+        super::lifecycle_guard::receipt(rx, std::time::Duration::from_millis(500))
+            .map_err(|_| self.fault("快捷键注销回执超时或通道掉线，结果未知"))?
     }
 
     /// Start recording mode for a specific binding
     pub fn start_recording(&self, app: &AppHandle, binding_id: String) -> Result<(), String> {
+        crate::input_permission::check_epoch(self.epoch)?;
         if self.is_recording.load(Ordering::SeqCst) {
             return Err("Already recording".into());
         }
+        self.stop_recording()?;
 
         // Create a new keyboard listener for recording
         let listener = KeyboardListener::new()
@@ -302,21 +442,26 @@ impl HandyKeysState {
         // Start a thread to emit key events to the frontend
         let app_clone = app.clone();
         let recording_running = Arc::clone(&self.recording_running);
-        thread::spawn(move || {
-            Self::recording_loop(app_clone, recording_running);
-        });
+        let epoch = self.epoch;
+        *self
+            .recording_thread
+            .try_lock()
+            .map_err(|_| "快捷键录制线程忙碌")? = Some(thread::spawn(move || {
+            Self::recording_loop(app_clone, recording_running, epoch);
+        }));
 
         debug!("Started handy-keys recording mode");
         Ok(())
     }
 
     /// Recording loop - emits key events to frontend during recording
-    fn recording_loop(app: AppHandle, running: Arc<AtomicBool>) {
-        while running.load(Ordering::SeqCst) {
+    fn recording_loop(app: AppHandle, running: Arc<AtomicBool>, epoch: u64) {
+        while running.load(Ordering::SeqCst) && crate::input_permission::check_epoch(epoch).is_ok()
+        {
             let event = {
-                let state = match app.try_state::<HandyKeysState>() {
-                    Some(s) => s,
-                    None => break,
+                let state = match current(&app) {
+                    Ok(s) => s,
+                    Err(_) => break,
                 };
                 let listener = state.recording_listener.lock().ok();
                 listener.as_ref().and_then(|l| l.as_ref()?.try_recv())
@@ -334,6 +479,9 @@ impl HandyKeysState {
                         .unwrap_or_default(),
                 };
 
+                if crate::input_permission::check_epoch(epoch).is_err() {
+                    break;
+                }
                 // Emit to frontend
                 if let Err(e) = app.emit("handy-keys-event", &frontend_event) {
                     error!("Failed to emit key event: {}", e);
@@ -356,6 +504,11 @@ impl HandyKeysState {
                 .recording_listener
                 .lock()
                 .map_err(|_| "Failed to lock recording_listener")?;
+            if let Some(listener) = recording.as_mut() {
+                if !listener.stop_and_wait(std::time::Duration::from_millis(150)) {
+                    return Err("旧录制监听器尚未退出".into());
+                }
+            }
             *recording = None;
         }
         {
@@ -366,6 +519,22 @@ impl HandyKeysState {
             *binding = None;
         }
 
+        let mut worker = self
+            .recording_thread
+            .try_lock()
+            .map_err(|_| "快捷键录制线程忙碌")?;
+        if let Some(handle) = worker.as_ref() {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(100);
+            while !handle.is_finished() && std::time::Instant::now() < deadline {
+                thread::sleep(std::time::Duration::from_millis(5));
+            }
+            if !handle.is_finished() {
+                return Err("旧快捷键录制线程尚未退出".into());
+            }
+        }
+        if let Some(handle) = worker.take() {
+            let _ = handle.join();
+        }
         debug!("Stopped handy-keys recording mode");
         Ok(())
     }
@@ -385,7 +554,9 @@ impl Drop for HandyKeysState {
         // Wait for the manager thread to finish
         if let Ok(mut handle) = self.thread_handle.lock() {
             if let Some(h) = handle.take() {
-                let _ = h.join();
+                if h.is_finished() {
+                    let _ = h.join();
+                }
             }
         }
     }
@@ -435,49 +606,49 @@ pub fn validate_shortcut(raw: &str) -> Result<(), String> {
 
 /// Initialize handy-keys shortcuts
 pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
-    let state = HandyKeysState::new(app.clone())?;
-
-    let default_bindings = settings::get_default_settings().bindings;
+    app.manage(HandyKeysSlot::default());
+    let slot = app.state::<HandyKeysSlot>();
+    let mut owned = slot.0.try_lock().map_err(|_| "快捷键生命周期忙碌")?;
+    if let Some(old) = owned.as_ref() {
+        old.retire()?;
+    }
+    if handy_keys::active_listener_count() != 0 {
+        return Err("旧原生键盘线程尚未退出".into());
+    }
+    handy_keys::set_blocking_enabled(false);
+    let state = Arc::new(HandyKeysState::new(app.clone())?);
+    *owned = Some(state.clone());
+    state.await_ready()?;
     let user_settings = settings::load_or_create_app_settings(app);
-
-    // Register all bindings enabled by the current feature settings.
-    for (id, default_binding) in default_bindings {
+    for (id, default_binding) in settings::get_default_settings().bindings {
         if !super::binding_enabled(&user_settings, &id) {
             continue;
         }
-
         let binding = user_settings
             .bindings
             .get(&id)
             .cloned()
             .unwrap_or(default_binding);
-
-        if let Err(e) = state.register(&binding) {
-            error!(
-                "Failed to register handy-keys shortcut {} during init: {}",
-                id, e
-            );
-        }
+        state.register(&binding)?;
     }
-
-    app.manage(state);
+    if crate::input_permission::initializing_epoch() != Ok(state.epoch) {
+        return Err(state.fault("快捷键初始化已过期"));
+    }
+    state.health_ready(state.epoch)?;
+    handy_keys::set_blocking_enabled(true);
     info!("handy-keys shortcuts initialized");
     Ok(())
 }
 
 /// Register a shortcut
 pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
-    let state = app
-        .try_state::<HandyKeysState>()
-        .ok_or("HandyKeysState not initialized")?;
+    let state = current(app)?;
     state.register(&binding)
 }
 
 /// Unregister a shortcut
 pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
-    let state = app
-        .try_state::<HandyKeysState>()
-        .ok_or("HandyKeysState not initialized")?;
+    let state = current(app)?;
     state.unregister(&binding)
 }
 
@@ -485,6 +656,7 @@ pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<
 #[tauri::command]
 #[specta::specta]
 pub fn start_handy_keys_recording(app: AppHandle, binding_id: String) -> Result<(), String> {
+    crate::input_permission::capture_epoch()?;
     let settings = get_settings(&app);
     if settings.keyboard_implementation != settings::KeyboardImplementation::HandyKeys {
         return Err("handy-keys is not the active keyboard implementation".into());
@@ -500,9 +672,7 @@ pub fn start_handy_keys_recording(app: AppHandle, binding_id: String) -> Result<
         return Err("secure-input-active".into());
     }
 
-    let state = app
-        .try_state::<HandyKeysState>()
-        .ok_or("HandyKeysState not initialized")?;
+    let state = current(&app)?;
 
     // Suspend every registered shortcut so a combo that overlaps an existing
     // binding can't fire it (or have its keys swallowed) mid-capture.
@@ -524,14 +694,14 @@ pub fn stop_handy_keys_recording(app: AppHandle) -> Result<(), String> {
         return Err("handy-keys is not the active keyboard implementation".into());
     }
 
-    let state = app
-        .try_state::<HandyKeysState>()
-        .ok_or("HandyKeysState not initialized")?;
+    let state = current(&app)?;
 
     // Restore shortcuts from settings regardless of how recording ended.
     // A commit has already registered the new binding via change_binding;
     // re-registering it here fails cleanly and is ignored.
     let result = state.stop_recording();
-    super::resume_all_shortcuts(&app);
+    if result.is_ok() && crate::input_permission::check_epoch(state.epoch).is_ok() {
+        super::resume_all_shortcuts(&app);
+    }
     result
 }

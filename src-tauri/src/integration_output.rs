@@ -129,3 +129,11 @@ pub fn platform_composition_clear() -> bool {
 pub fn platform_composition_clear() -> bool {
     false
 }
+
+/// 维护屏障在主线程调用；同时释放未成为current的旧浮窗目标。
+pub fn invalidate_all_targets() {
+    #[cfg(target_os = "macos")]
+    TARGETS.with(|slot| {
+        slot.borrow_mut().take();
+    });
+}

@@ -2,6 +2,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import {
   ClipboardList,
+  Library,
   Cog,
   Cpu,
   FlaskConical,
@@ -10,6 +11,7 @@ import {
   Keyboard,
   Sparkles,
 } from "lucide-react";
+import { KnowledgePage } from "./knowledge/KnowledgePage";
 import InputiaWordmark from "./icons/InputiaWordmark";
 import { UnifiedHistoryPage } from "./history/UnifiedHistoryPage";
 import { useSettings } from "../hooks/useSettings";
@@ -51,6 +53,12 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.history",
     icon: History,
     component: UnifiedHistoryPage,
+    enabled: () => true,
+  },
+  knowledge: {
+    labelKey: "knowledge.title",
+    icon: Library,
+    component: KnowledgePage,
     enabled: () => true,
   },
   clipboard: {

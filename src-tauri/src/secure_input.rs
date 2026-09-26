@@ -539,7 +539,8 @@ mod imp {
         };
 
         let settings = settings::get_settings(app);
-        let eligible = state.is_sustained()
+        let eligible = crate::input_permission::capture_epoch().is_ok()
+            && state.is_sustained()
             && app
                 .try_state::<crate::commands::ShortcutsInitialized>()
                 .is_some()

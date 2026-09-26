@@ -1,26 +1,10 @@
 import Cocoa
 import InputMethodKit
 import Carbon
-import ApplicationServices
 import OSLog
 
 // 只记录手势阶段和布尔状态，不记录普通键值、正文、应用名或窗口标题。
 private let shiftDiagnostic = Logger(subsystem: "com.inputia.shift", category: "gesture")
-
-private struct InputiaAppContext: Equatable {
-  let bundleId: String
-  let windowTitle: String?
-}
-
-private enum InputiaSecureDirectPolicy {
-  private static let secureBundleIds: Set<String> = [
-    "com.apple.SecurityAgent",
-  ]
-
-  static func shouldUseSecureDirectMode(context: InputiaAppContext) -> Bool {
-    secureBundleIds.contains(context.bundleId)
-  }
-}
 
 private let fallbackBundleIdentifier = "com.inputia.inputmethod.Inputia"
 private let connectionName = "com.inputia.inputmethod.Inputia_Connection"
@@ -41,6 +25,8 @@ private struct InputiaExpandedCandidateEntry {
   let text: String
   let page: Int
   let pageIndex: Int
+  var candidateID: String? = nil
+  var originalRank: Int? = nil
 }
 
 private func inputiaDebugLog(_ message: String) {
@@ -80,6 +66,14 @@ final class NSManualApplication: NSApplication {}
 final class InputiaApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   var terminateWhenSettingsWindowCloses = false
 
+  func applicationWillTerminate(_ notification: Notification) {
+    #if INPUTIA_PAIRED_BUILD
+    InputiaPermissionLifecycle.shared.stop()
+    InputiaVoiceInputLauncher.invalidatePermissionWork()
+    #endif
+    InputiaHost.removeGlobalMonitors()
+  }
+
   func windowWillClose(_ notification: Notification) {
     if terminateWhenSettingsWindowCloses {
       NSApp.terminate(nil)
@@ -91,14 +85,84 @@ enum InputiaHost {
   static var candidatePanel: InputiaCandidatePanel?
   static var settingsWindowController: InputiaSettingsWindowController?
   static weak var activeInputController: InputiaInputController?
-  static var modifierMonitor: Any?
-  static var keyMonitor: Any?
-  static var mouseMonitor: Any?
+  static let inputControllers = NSHashTable<InputiaInputController>.weakObjects()
+  static func removeGlobalMonitors() {}
+  static func installGlobalMonitors() {}
+
 }
 
 @objc(InputiaInputController)
 final class InputiaInputController: IMKInputController {
   #if INPUTIA_PAIRED_BUILD
+  private let personalization = InputiaPersonalization()
+  private var personalCandidates: [InputiaPersonalCandidate] = []
+  private var personalPredictions: [InputiaPersonalPrediction] = []
+  private var personalCode = ""
+  private var personalRefreshGeneration: UInt64 = 0
+  private var personalExpectedSelection: NSRange?
+  private var personalPredictionPending = false
+  private var personalEscapeConsumed = false
+  private struct PersonalSelection {
+    let target: InputiaVoiceTarget
+    let code: String
+    let candidate: InputiaPersonalCandidate
+    let explicit: Bool
+  }
+  private struct PersonalUndo {
+    let receipt: InputiaPersonalization.Receipt
+    let nativeLearning: Bool
+    let target: InputiaVoiceTarget
+    let inserted: String
+    let start: Int
+    let after: NSRange
+    let time: TimeInterval
+    let client: ObjectIdentifier
+  }
+  private var pendingPersonalSelection: PersonalSelection?
+  private var personalUndo: PersonalUndo?
+  private var permissionEpoch: UInt64 = UInt64.max
+  private var typedEventOrigin: InputiaVoiceTargetSnapshot.Snapshot?
+  private var typedCompositionOrigin: InputiaVoiceTargetSnapshot.Snapshot?
+  private var typedRetainedOrigins: [String: TimeInterval] = [:]
+  private var voicePermissionEpochs: [String: UInt64] = [:]
+  func removeRetiredVoiceTarget(_ id: String) {
+    voiceTargetSnapshots.removeValue(forKey: id)
+    voicePermissionEpochs.removeValue(forKey: id)
+    if shortcutPreparedSnapshot?.targetID == id {
+      shortcutPreparedSnapshot = nil; sharedTargetReady = false; sharedPreparedClientIdentity = nil
+    }
+  }
+  private func discardPreparedVoiceTarget() {
+    let old = shortcutPreparedSnapshot
+    shortcutPreparedSnapshot = nil; sharedTargetReady = false; sharedPreparedClientIdentity = nil
+    if let old, voiceTargetSnapshots[old.targetID] == nil,
+      typedEventOrigin?.targetID != old.targetID, typedCompositionOrigin?.targetID != old.targetID,
+      typedRetainedOrigins[old.targetID] == nil {
+      InputiaVoiceInputLauncher.releaseTarget(old.targetID)
+    }
+  }
+  func synchronizePermissionEpoch() {
+    let current = InputiaPermissionLifecycle.shared.epoch
+    guard permissionEpoch != current else { return }
+    permissionEpoch = current
+    discardTypedCompositionOrigin()
+    voiceActivationGeneration &+= 1
+    for snapshot in voiceTargetSnapshots.values { InputiaVoiceInputLauncher.releaseTarget(snapshot.targetID) }
+    if let snapshot = shortcutPreparedSnapshot { InputiaVoiceInputLauncher.releaseTarget(snapshot.targetID) }
+    voiceTargetSnapshots.removeAll()
+    voicePermissionEpochs.removeAll()
+    attemptedVoiceOutputOperations.removeAll()
+    shortcutPreparedSnapshot = nil
+    voicePreCaptureRetryDeadline = nil
+    sharedTargetReady = false
+    sharedPreparedClientIdentity = nil
+    sharedEnglishSelection.cancel(); sharedChineseSelection.cancel()
+    clearSharedChineseCandidates()
+    sharedEnglishRefreshQueued = false
+    InputiaSharedTermsMemory.shared.clear()
+    cachedAppContext = nil; pushedAppContext = nil
+
+  }
   private let voiceControllerID = UUID().uuidString
   private var voiceActivationGeneration: UInt64 = 0
   private var voiceStatus = ""
@@ -109,6 +173,7 @@ final class InputiaInputController: IMKInputController {
   private var voiceTargetSnapshots: [String: InputiaVoiceTargetSnapshot.Snapshot] = [:]
   private var attemptedVoiceOutputOperations = Set<String>()
   private var shortcutPreparedSnapshot: InputiaVoiceTargetSnapshot.Snapshot?
+  private var voicePreCaptureRetryDeadline: TimeInterval?
   private var shortcutReadinessReason = ""
   private var sharedEnglishCandidates: [String: String] = [:]
   private var sharedTargetReady = false
@@ -120,7 +185,12 @@ final class InputiaInputController: IMKInputController {
   #endif
   private let bridge = InputiaRustBridge.makeDefault()
   private var latestCandidates: [String] = []
-  private var latestComposing = ""
+  private var localCompositionGeneration: UInt64 = 0
+  private var localSelectionGeneration: UInt64 = 0
+  private var targetCapturePending = false
+  private var latestComposing = "" {
+    didSet { if oldValue != latestComposing { localCompositionGeneration &+= 1 } }
+  }
   private var expandedCandidates: [String] = []
   private var expandedCandidateEntries: [InputiaExpandedCandidateEntry] = []
   private var expandedActiveRowIndex = 0
@@ -135,6 +205,7 @@ final class InputiaInputController: IMKInputController {
   private var englishCompletionCandidates: [String] = []
   private var englishCompletionRect = NSRect.zero
   private var chineseCandidateRect = NSRect.zero
+  private var shiftEnglishComposition = ""
   private var candidatePanelExpanded = false
   private var shiftInputModeGesture = InputiaShortcutClassifier.ShiftInputModeGestureState()
   private weak var gestureInputClient: AnyObject?
@@ -153,8 +224,35 @@ final class InputiaInputController: IMKInputController {
       return false
     }
 
+    #if INPUTIA_PAIRED_BUILD
+    synchronizePermissionEpoch()
+    #endif
     if shouldUseSecureDirectMode(client) {
+      #if INPUTIA_PAIRED_BUILD
+      discardTypedCompositionOrigin()
+      #endif
       return false
+    }
+    #if INPUTIA_PAIRED_BUILD
+    if event.type == .keyDown {
+      observePersonalKey(event, client: client)
+      // 既有快捷键预捕获先于本次插入；不拿文本发送时的新字段为旧字背书。
+      typedEventOrigin = shortcutPreparedSnapshot
+      let boundary = [UInt16(51), 53, 115, 116, 117, 119, 121, 123, 124, 125, 126].contains(event.keyCode)
+        || !event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+      refreshTypedCompositionOrigin(client: client, boundary: boundary)
+      if boundary { MainActor.assumeIsolated { InputiaTypedCapture.shared.resetSegment() } }
+      localSelectionGeneration &+= 1
+      discardPreparedVoiceTarget()
+    }
+    #endif
+    defer {
+      #if INPUTIA_PAIRED_BUILD
+      if let origin = typedEventOrigin {
+        typedEventOrigin = nil
+        releaseTypedOriginIfUnowned(origin.targetID)
+      }
+      #endif
     }
     cancelShiftGestureIfClientChanged(client)
     updateAppContext(client: client)
@@ -166,6 +264,13 @@ final class InputiaInputController: IMKInputController {
       return handleKeyDown(event, client: client)
     case .keyUp:
       shiftInputModeGesture.observeLocalKeyUp(keyCode: event.keyCode)
+      if [56, 60].contains(event.keyCode),
+        shiftInputModeGesture.observePhysicalShiftKeyUp(
+          shortcut: bridge.inputModeToggleShortcut(),
+          modifiers: event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        ) {
+        return toggleInputModeFromShift(client: client, source: "physical-keyup")
+      }
       // 仅更新手势状态，不消费宿主的按键松开，也不送入 Rime。
       return false
     default:
@@ -322,6 +427,10 @@ final class InputiaInputController: IMKInputController {
   }
 
   @objc private func syncHandyMemory() {
+    #if INPUTIA_PAIRED_BUILD
+    synchronizePermissionEpoch()
+    guard InputiaPermissionLifecycle.shared.isReady else { return }
+    #endif
     let result = InputiaHandyMemorySync.sync(
       importer: bridge,
       includeHistory: true,
@@ -361,9 +470,22 @@ final class InputiaInputController: IMKInputController {
   }
 
   override func candidateSelected(_ candidateString: NSAttributedString!) {
+    #if INPUTIA_PAIRED_BUILD
+    synchronizePermissionEpoch()
+    #endif
     guard let selected = candidateString?.string else {
       return
     }
+    #if INPUTIA_PAIRED_BUILD
+    if let prediction = personalPredictions.first(where: { $0.text == selected }), let client = client() {
+      _ = acceptPersonalPrediction(prediction, client: client)
+      return
+    }
+    if let candidate = personalCandidates.first(where: { $0.text == selected }), let client = client() {
+      _ = choosePersonal(candidate, explicit: true, client: client)
+      return
+    }
+    #endif
     #if INPUTIA_PAIRED_BUILD
     if sharedChineseOrder != nil, !candidatePanelExpanded,
       let index = latestCandidates.firstIndex(of: selected), let client = client() {
@@ -392,15 +514,20 @@ final class InputiaInputController: IMKInputController {
     guard let index = latestCandidates.firstIndex(of: selected) else {
       return
     }
-    _ = apply(bridge.chooseCandidate(atZeroBasedIndex: index), client: client())
+    if let client = client() {
+      _ = chooseNativeWithLearning(index: index, explicit: true, client: client)
+    }
   }
 
   override func commitComposition(_ sender: Any!) {
+    #if INPUTIA_PAIRED_BUILD
+    synchronizePermissionEpoch()
+    #endif
     guard let client = (sender as? IMKTextInput) ?? client() else {
       return
     }
     let context = appContext(for: client)
-    if bridge.isSensitiveApp(bundleId: context.bundleId, windowTitle: context.windowTitle) {
+    if IsSecureEventInputEnabled() || InputiaSecureDirectPolicy.shouldUseSecureDirectMode(context: context) {
       clearInputState(client: client)
       return
     }
@@ -438,10 +565,27 @@ final class InputiaInputController: IMKInputController {
   }
 
   override func activateServer(_ sender: Any!) {
+    InputiaHost.inputControllers.add(self)
     #if INPUTIA_PAIRED_BUILD
+    discardTypedCompositionOrigin()
+    personalization.changed = { [weak self] in self?.clearPersonalDisplay() }
+    personalization.policyChanged = { [weak self] in
+      guard let self, InputiaHost.activeInputController === self, let client = self.client() else { return }
+      self.schedulePersonalization(client: client)
+    }
+    personalization.start()
+    MainActor.assumeIsolated {
+      InputiaTypedCapture.shared.invalidOrigin = { [weak self] id in
+        guard self?.typedCompositionOrigin?.targetID == id else { return }
+        self?.discardTypedCompositionOrigin()
+      }
+      InputiaTypedCapture.shared.activate()
+    }
+    synchronizePermissionEpoch()
     InputiaVoiceInputLauncher.ensureUnifiedServiceReady()
     sharedTargetReady = false
     InputiaSharedTermsMemory.shared.clear()
+    voicePreCaptureRetryDeadline = nil
     voiceActivationGeneration &+= 1
     #endif
     resetShiftInputModeSession(reason: "activate")
@@ -451,14 +595,18 @@ final class InputiaInputController: IMKInputController {
         return
       }
       updateAppContext(client: client, forceRefresh: true)
-      resetToChineseModeOnActivationIfNeeded(client: client)
     }
   }
 
   override func deactivateServer(_ sender: Any!) {
     #if INPUTIA_PAIRED_BUILD
+    personalization.stop()
+    MainActor.assumeIsolated { InputiaTypedCapture.shared.deactivate() }
+    discardTypedCompositionOrigin()
+    discardPreparedVoiceTarget()
     sharedTargetReady = false
     InputiaSharedTermsMemory.shared.clear()
+    voicePreCaptureRetryDeadline = nil
     voiceActivationGeneration &+= 1
     #endif
     resetShiftInputModeSession(reason: "deactivate")
@@ -468,58 +616,15 @@ final class InputiaInputController: IMKInputController {
     }
   }
 
-  func handleGlobalFlagsChanged(_ event: NSEvent) {
-    guard isCurrentInputiaSourceSelected() else {
-      resetShiftInputModeSession(reason: "globalSourceChanged")
-      return
-    }
-
-    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-    let shortcut = bridge.inputModeToggleShortcut()
-    shiftDiagnostic.notice("phase=global-flags shift=\(modifiers.contains(.shift)) armed=\(self.shiftInputModeGesture.isArmedForDebug)")
-
-    inputiaDebugLog(
-      "globalFlagsChanged keyCode=\(event.keyCode) current=\(modifiers.rawValue) shortcut=\(shortcut) armed=\(shiftInputModeGesture.isArmedForDebug)"
-    )
-
-    _ = shiftInputModeGesture.observeFlagsChanged(
-      shortcut: shortcut,
-      modifiers: modifiers,
-      allowToggle: false
-    )
-  }
-
-  func handleGlobalKeyEvent(_ event: NSEvent) {
-    guard isCurrentInputiaSourceSelected() else {
-      resetShiftInputModeSession(reason: "globalKeySourceChanged")
-      return
-    }
-    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-    switch event.type {
-    case .keyDown:
-      shiftInputModeGesture.observeGlobalKeyDown(keyCode: event.keyCode, modifiers: modifiers)
-    case .keyUp:
-      shiftInputModeGesture.observeGlobalKeyUp(keyCode: event.keyCode)
-    default:
-      break
-    }
-  }
-
-  func handleGlobalMouseEvent(_ event: NSEvent) {
-    _ = event
-    resetShiftInputModeSession(reason: "globalMouseEvent")
-  }
-
   private func handleFlagsChanged(_ event: NSEvent, client: IMKTextInput) -> Bool {
     reloadSettingsIfDue(client: client)
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     let shortcut = bridge.inputModeToggleShortcut()
-    if modifiers.contains(.shift), !shiftInputModeGesture.hasShiftBaselineForDebug {
-      // IMK/全局监听可能漏收 keyUp。只在新 Shift 周期核对已记录键的当前状态，
-      // 不扫描文本/窗口、不使用时间阈值；本周期曾参与的组合仍保持否决。
-      shiftInputModeGesture.reconcileHeldKeys {
-        CGEventSource.keyState(.combinedSessionState, key: $0)
-      }
+    let shiftDown = modifiers.contains(.shift) && !shiftInputModeGesture.hasShiftBaselineForDebug
+    if shiftDown, bridge.latestOutcome.mode == "Chinese", !latestComposing.isEmpty {
+      commitPendingChineseAsEnglish(client: client)
+      shiftInputModeGesture.cancelPendingGesture()
+      return true
     }
     shiftDiagnostic.notice("phase=local-flags shift=\(modifiers.contains(.shift)) armed=\(self.shiftInputModeGesture.isArmedForDebug) held=\(self.shiftInputModeGesture.hasHeldKeysForDebug) baseline=\(self.shiftInputModeGesture.hasShiftBaselineForDebug) configured=\(shortcut == "shift") blocked=\(!modifiers.intersection([.control, .option, .command]).isEmpty)")
 
@@ -527,15 +632,23 @@ final class InputiaInputController: IMKInputController {
       "flagsChanged keyCode=\(event.keyCode) current=\(modifiers.rawValue) shortcut=\(shortcut) armed=\(shiftInputModeGesture.isArmedForDebug)"
     )
 
-    if shiftInputModeGesture.observeFlagsChanged(
+    if shiftInputModeGesture.observeInputMethodFlagsChanged(
       shortcut: shortcut,
-      modifiers: modifiers,
-      allowToggle: true
+      modifiers: modifiers
     ) == .toggle {
       return toggleInputModeFromShift(client: client, source: "local")
     }
 
     return false
+  }
+
+  private func commitPendingChineseAsEnglish(client: IMKTextInput) {
+    let raw = bridge.latestOutcome.composing
+    guard !raw.isEmpty else { return }
+    let outcome = bridge.escape()
+    _ = apply(outcome, client: client)
+    client.insertText(raw, replacementRange: emptyReplacementRange)
+    inputiaDebugLog("shiftCommitChinesePinyinAsEnglish length=\(raw.count)")
   }
 
   private func toggleInputModeFromShift(client: IMKTextInput?, source: String) -> Bool {
@@ -571,22 +684,29 @@ final class InputiaInputController: IMKInputController {
     gestureInputClient = currentClient
   }
 
-  private func resetToChineseModeOnActivationIfNeeded(client: IMKTextInput) {
-    guard latestComposing.isEmpty, bridge.latestOutcome.mode == "English" else {
-      return
-    }
-    clearEnglishCompletion()
-    let outcome = bridge.setChineseMode()
-    inputiaDebugLog("activateResetChinese bundle=\(client.bundleIdentifier() ?? "unknown")")
-    _ = apply(outcome, client: client)
-  }
-
   private func handleKeyDown(_ event: NSEvent, client: IMKTextInput) -> Bool {
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    let isShiftEnglishCharacter = InputiaShortcutClassifier.isShiftEnglishCompositionCharacter(
+      characters: event.characters,
+      charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+      modifiers: modifiers
+    )
+    let deferredShiftToggle = shiftInputModeGesture.isArmedForDebug
+      && !isShiftEnglishCharacter
+      && !modifiers.contains(.command)
+      && !modifiers.contains(.control)
+      && !modifiers.contains(.option)
     shiftInputModeGesture.observeLocalKeyDown(keyCode: event.keyCode, modifiers: modifiers)
     inputiaDebugLog(
       "keyDown modifiers=\(modifiers.rawValue)"
     )
+    if deferredShiftToggle {
+      // Some IMK clients omit the Shift flagsChanged/keyUp release. Consume
+      // the pending tap on the next ordinary key, then let that same key pass
+      // through the newly selected English mode.
+      cancelShiftInputModeGesture(reason: "deferredReleaseBeforeKey")
+      _ = toggleInputModeFromShift(client: client, source: "deferred-keydown")
+    }
     if isScriptToggleShortcut(event, modifiers: modifiers) {
       cancelShiftInputModeGesture(reason: "scriptToggle")
       clearEnglishCompletion()
@@ -617,6 +737,30 @@ final class InputiaInputController: IMKInputController {
       clearEnglishCompletion()
       return apply(bridge.toggleInputMode(), client: client)
     }
+    if bridge.latestOutcome.mode == "Chinese",
+      InputiaShortcutClassifier.isShiftEnglishCompositionCharacter(
+        characters: event.characters,
+        charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+        modifiers: modifiers
+      ),
+      let text = event.characters
+    {
+      if !latestComposing.isEmpty, shiftEnglishComposition.isEmpty {
+        _ = apply(bridge.enter(), client: client)
+      }
+      clearEnglishCompletion()
+      shiftEnglishComposition.append(text)
+      latestComposing = shiftEnglishComposition
+      latestCandidates = [
+        shiftEnglishComposition,
+        String(text),
+        shiftEnglishComposition.lowercased(),
+      ]
+      setMarkedComposition(shiftEnglishComposition, client: client)
+      updateCandidateWindow(client: client)
+      inputiaDebugLog("shiftEnglishComposition text=\(shiftEnglishComposition)")
+      return true
+    }
     if let navigation = InputiaShortcutClassifier.candidateNavigation(
       keyCode: event.keyCode,
       modifiers: modifiers,
@@ -634,11 +778,33 @@ final class InputiaInputController: IMKInputController {
 
     switch event.keyCode {
     case keyCodeDelete:
+      if !shiftEnglishComposition.isEmpty {
+        shiftEnglishComposition.removeLast()
+        latestComposing = shiftEnglishComposition
+        latestCandidates = shiftEnglishComposition.isEmpty
+          ? []
+          : [shiftEnglishComposition, String(shiftEnglishComposition.last!), shiftEnglishComposition.lowercased()]
+        if shiftEnglishComposition.isEmpty {
+          clearMarkedText(client)
+          InputiaHost.candidatePanel?.hide()
+        } else {
+          setMarkedComposition(shiftEnglishComposition, client: client)
+          updateCandidateWindow(client: client)
+        }
+        return true
+      }
       let outcome = bridge.backspace()
       let handled = apply(outcome, client: client)
       updateEnglishCompletionAfterBackspace(outcome: outcome, client: client)
       return handled
     case keyCodeEscape:
+      if !shiftEnglishComposition.isEmpty {
+        clearShiftEnglishComposition(client: client)
+        return true
+      }
+      #if INPUTIA_PAIRED_BUILD
+      if personalEscapeConsumed { personalEscapeConsumed = false; return true }
+      #endif
       if latestComposing.isEmpty && !englishCompletionCandidates.isEmpty {
         clearEnglishCompletion()
         return true
@@ -650,6 +816,10 @@ final class InputiaInputController: IMKInputController {
     case keyCodePageUp:
       return handleCandidatePageUp(client: client)
     case keyCodeReturn, keyCodeKeypadEnter:
+      if !shiftEnglishComposition.isEmpty {
+        commitShiftEnglishComposition(client: client)
+        return true
+      }
       guard !latestComposing.isEmpty else {
         clearEnglishCompletion()
         return false
@@ -668,6 +838,18 @@ final class InputiaInputController: IMKInputController {
       }
       return shouldPassThroughNewline ? false : handled
     case keyCodeSpace:
+      if !shiftEnglishComposition.isEmpty {
+        commitShiftEnglishComposition(client: client)
+        return true
+      }
+      #if INPUTIA_PAIRED_BUILD
+      if latestComposing.isEmpty && !personalPredictions.isEmpty {
+        personalization.reset(); return false
+      }
+      if !personalCandidates.isEmpty, !candidatePanelExpanded, let first = personalCandidates.first {
+        return choosePersonal(first, explicit: false, client: client)
+      }
+      #endif
       if candidatePanelExpanded, expandedActiveRowIndex > 0 {
         return commitExpandedCandidate(columnIndex: 0, client: client)
       }
@@ -676,6 +858,9 @@ final class InputiaInputController: IMKInputController {
         return enqueueSharedChineseSelection(displayed: 0, client: client)
       }
       #endif
+      if !latestComposing.isEmpty && !latestCandidates.isEmpty {
+        return chooseNativeWithLearning(index: 0, explicit: false, client: client)
+      }
       let outcome = bridge.space()
       let handled = apply(outcome, client: client)
       if outcome.mode == "English" && !outcome.consumed {
@@ -683,15 +868,41 @@ final class InputiaInputController: IMKInputController {
       }
       return handled
     case keyCodeTab:
+      if !shiftEnglishComposition.isEmpty {
+        commitShiftEnglishComposition(client: client)
+        return true
+      }
+      #if INPUTIA_PAIRED_BUILD
+      if latestComposing.isEmpty, let first = personalPredictions.first {
+        return acceptPersonalPrediction(first, client: client)
+      }
+      #endif
       return commitFirstEnglishCompletion(client: client)
     default:
       break
+    }
+
+    if !shiftEnglishComposition.isEmpty {
+      commitShiftEnglishComposition(client: client)
     }
 
     guard let text = event.characters, !text.isEmpty else {
       return false
     }
 
+    #if INPUTIA_PAIRED_BUILD
+    if !personalCandidates.isEmpty, !candidatePanelExpanded,
+      !modifiers.contains(.shift), text.count == 1, let digit = Int(text),
+      digit > 0, digit <= 9 {
+      guard digit <= min(latestCandidates.count, personalCandidates.count) else { return true }
+      return choosePersonal(personalCandidates[digit - 1], explicit: true, client: client)
+    }
+    if personalCandidates.isEmpty, !latestComposing.isEmpty, !candidatePanelExpanded,
+      !modifiers.contains(.shift), sharedChineseOrder == nil,
+      text.count == 1, let digit = Int(text), digit > 0, digit <= latestCandidates.count {
+      return chooseNativeWithLearning(index: digit - 1, explicit: true, client: client)
+    }
+    #endif
     if isDisplayedRawCompositionSelection(event, modifiers: modifiers) {
       return apply(bridge.enter(), client: client)
     }
@@ -768,6 +979,9 @@ final class InputiaInputController: IMKInputController {
     }
 
     if outcome.composing.isEmpty {
+      #if INPUTIA_PAIRED_BUILD
+      if !previousComposing.isEmpty { MainActor.assumeIsolated { InputiaTypedCapture.shared.resetSegment() } }
+      #endif
       candidatePanelExpanded = false
       InputiaHost.candidatePanel?.hide()
     } else {
@@ -779,7 +993,8 @@ final class InputiaInputController: IMKInputController {
 
     #if INPUTIA_PAIRED_BUILD
     if outcome.mode == "Chinese", !outcome.composing.isEmpty {
-      scheduleSharedEnglishRefresh(client: client)
+      schedulePersonalization(client: client)
+      if !personalization.allowed { scheduleSharedEnglishRefresh(client: client) }
     }
     #endif
     return outcome.consumed
@@ -787,6 +1002,8 @@ final class InputiaInputController: IMKInputController {
 
   private func syncHostState(with outcome: InputiaBridgeOutcome) {
     #if INPUTIA_PAIRED_BUILD
+    personalRefreshGeneration &+= 1
+    personalization.invalidateView()
     sharedChineseOrder = nil
     sharedChineseSelection.cancel()
     #endif
@@ -804,15 +1021,316 @@ final class InputiaInputController: IMKInputController {
     }
   }
 
+  private func chooseNativeWithLearning(index: Int, explicit: Bool, client: IMKTextInput) -> Bool {
+    #if INPUTIA_PAIRED_BUILD
+    let before = bridge.latestOutcome
+    if before.candidates.indices.contains(index), before.candidateIDs.indices.contains(index),
+      !before.candidateIDs[index].isEmpty, let pool = bridge.personalCandidatePool(),
+      let candidate = pool.candidates.first(where: { $0.id == before.candidateIDs[index] && $0.text == before.candidates[index] }) {
+      return choosePersonal(candidate, explicit: explicit, client: client)
+    }
+    #endif
+    return apply(bridge.chooseCandidate(atZeroBasedIndex: index), client: client)
+  }
+
   private func insertCommittedText(
     _ text: String,
     client: IMKTextInput,
     replacementRange: NSRange = emptyReplacementRange
   ) {
+    #if INPUTIA_PAIRED_BUILD
+    let origin = typedOriginBeforeInsertion(client)
+    let before = client.selectedRange()
+    let marked = client.markedRange()
+    let start = replacementRange.location != NSNotFound ? replacementRange.location
+      : (marked.location != NSNotFound ? marked.location : before.location)
+    #endif
     client.insertText(text, replacementRange: replacementRange)
+    #if INPUTIA_PAIRED_BUILD
+    recordTypedCommit(text, client: client, start: start, origin: origin)
+    recordPersonalCommit(text, client: client, start: start, origin: origin)
+    #endif
   }
 
   #if INPUTIA_PAIRED_BUILD
+  /// 只观察 Inputia 自己已完成的插入，不读取宿主全文、不监听其他输入。
+  private func clearPersonalDisplay() {
+    let rankedExpansion = expandedCandidateEntries.contains { $0.candidateID != nil }
+    let visible = !personalCandidates.isEmpty || !personalPredictions.isEmpty || rankedExpansion
+    personalCandidates = []; personalPredictions = []; personalCode = ""
+    if rankedExpansion {
+      expandedCandidateEntries = []; expandedCandidates = []; expandedActiveRowIndex = 0
+      candidatePanelExpanded = false
+    }
+    guard visible else { return }
+    if !latestComposing.isEmpty {
+      latestCandidates = bridge.latestOutcome.candidates
+      if let client = client() { updateCandidateWindow(client: client) }
+    } else { InputiaHost.candidatePanel?.hide() }
+  }
+
+  private func observePersonalKey(_ event: NSEvent, client: IMKTextInput) {
+    personalEscapeConsumed = event.keyCode == keyCodeEscape && !personalPredictions.isEmpty
+    // 只有明确Cmd+Z、紧邻自己的插入、原范围正文仍完全相符，才核对撤销回执。
+    let undo = event.keyCode == 6 && event.modifierFlags.contains(.command)
+      && !event.modifierFlags.contains(.shift)
+    let undoOrigin = typedCompositionOrigin
+    if undo, let record = personalUndo, let undoOrigin, undoOrigin.inputiaTarget == record.target,
+      undoOrigin.isCurrentForTypedOrigin(client: client, controllerID: voiceControllerID,
+        activationGeneration: voiceActivationGeneration),
+      ProcessInfo.processInfo.systemUptime - record.time < 2,
+      record.client == ObjectIdentifier(client as AnyObject), client.selectedRange() == record.after,
+      record.inserted.utf16.count <= 128,
+      client.attributedSubstring(from: NSRange(location: record.start, length: record.inserted.utf16.count))?.string == record.inserted {
+      personalUndo = nil
+      DispatchQueue.main.async { [weak self] in
+        guard let self, InputiaHost.activeInputController === self, let current = self.client(),
+          ObjectIdentifier(current as AnyObject) == record.client,
+          current.selectedRange() == NSRange(location: record.start, length: 0),
+          undoOrigin.isCurrentForTypedOrigin(client: current, controllerID: self.voiceControllerID,
+            activationGeneration: self.voiceActivationGeneration),
+          self.latestComposing.isEmpty,
+          current.attributedSubstring(from: NSRange(location: record.start, length: record.inserted.utf16.count))?.string != record.inserted else { return }
+        if record.nativeLearning { _ = self.bridge.undoRecentNativeLearning() }
+        self.personalization.undo(record.receipt)
+      }
+    } else { personalUndo = nil }
+    if latestComposing.isEmpty, let expected = personalExpectedSelection, client.selectedRange() != expected {
+      personalization.reset(); personalExpectedSelection = nil
+    }
+    let boundary = [UInt16(51), 53, 115, 116, 117, 119, 121, 123, 124, 125, 126].contains(event.keyCode)
+      || !event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+    if boundary && !undo { personalization.reset(); personalExpectedSelection = nil }
+    if !personalPredictions.isEmpty && event.keyCode != keyCodeTab {
+      personalization.invalidateView()
+      if event.keyCode == keyCodeSpace || event.keyCode == keyCodeReturn || event.keyCode == keyCodeKeypadEnter {
+        personalization.reset()
+      }
+    }
+  }
+
+  private func schedulePersonalization(client: IMKTextInput) {
+    let scheduleReason: String
+    if !personalization.allowed { scheduleReason = "disabled" }
+    else if InputiaHost.activeInputController !== self { scheduleReason = "not_active" }
+    else if bridge.latestOutcome.mode != "Chinese" { scheduleReason = "mode" }
+    else if bridge.latestOutcome.page != 0 { scheduleReason = "page" }
+    else if candidatePanelExpanded { scheduleReason = "expanded" }
+    else if !recallCandidates.isEmpty { scheduleReason = "recall" }
+    else if personalPredictionPending { scheduleReason = "prediction_pending" }
+    else { scheduleReason = "ok" }
+    InputiaPersonalizationDiagnostics.record("schedule", scheduleReason)
+    guard personalization.allowed, InputiaHost.activeInputController === self,
+      bridge.latestOutcome.mode == "Chinese", bridge.latestOutcome.page == 0, !candidatePanelExpanded,
+      recallCandidates.isEmpty, !personalPredictionPending else { return }
+    let version = personalRefreshGeneration
+    let code = latestComposing
+    let page = bridge.latestOutcome.page
+    let candidateIDs = bridge.latestOutcome.candidateIDs
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+      guard let self, version == self.personalRefreshGeneration, self.latestComposing == code,
+        InputiaPersonalContext.matchesFirstPage(page: self.bridge.latestOutcome.page, expectedPage: page,
+          ids: self.bridge.latestOutcome.candidateIDs, expectedIDs: candidateIDs),
+        InputiaHost.activeInputController === self, let current = self.client(),
+        ObjectIdentifier(current as AnyObject) == ObjectIdentifier(client as AnyObject),
+        let target = self.typedOriginBeforeInsertion(client), self.personalization.allowed,
+        !self.candidatePanelExpanded else { return }
+      self.personalization.bind(target)
+      if code.isEmpty && self.personalization.context.text.isEmpty { return }
+      let pool = code.isEmpty ? [] : (self.bridge.personalCandidatePool(limit: 32)?.candidates ?? [])
+      guard code.isEmpty || !pool.isEmpty else { return }
+      let selection = client.selectedRange()
+      self.personalization.query(target: target, code: code, candidates: pool) { [weak self] view in
+        guard let self, version == self.personalRefreshGeneration, self.latestComposing == code,
+          InputiaPersonalContext.matchesFirstPage(page: self.bridge.latestOutcome.page, expectedPage: page,
+            ids: self.bridge.latestOutcome.candidateIDs, expectedIDs: candidateIDs),
+          self.bridge.latestOutcome.mode == "Chinese", !self.candidatePanelExpanded,
+          InputiaHost.activeInputController === self, let live = self.client(),
+          ObjectIdentifier(live as AnyObject) == ObjectIdentifier(client as AnyObject),
+          live.selectedRange() == selection, self.typedCompositionOrigin?.inputiaTarget == target,
+          self.typedCompositionOrigin?.isCurrentForTypedOrigin(client: live,
+            controllerID: self.voiceControllerID, activationGeneration: self.voiceActivationGeneration) == true else { return }
+        self.sharedChineseOrder = nil
+        if code.isEmpty {
+          self.personalPredictions = view.predictions
+          self.personalCandidates = []
+          self.personalExpectedSelection = selection
+          if view.predictions.isEmpty { InputiaHost.candidatePanel?.hide() }
+          else {
+            var rect = NSRect.zero
+            live.attributes(forCharacterIndex: selection.location, lineHeightRectangle: &rect)
+            InputiaHost.candidatePanel?.show(candidates: view.predictions.map(\.text), near: rect)
+          }
+        } else {
+          var seen = Set<String>()
+          self.personalCandidates = view.candidates.filter { seen.insert($0.text).inserted }
+          self.personalPredictions = []; self.personalCode = code
+          self.latestCandidates = Array(self.personalCandidates.prefix(max(1, self.bridge.latestOutcome.candidates.count))).map(\.text)
+          self.updateCandidateWindow(client: live)
+        }
+      }
+    }
+  }
+
+  private func choosePersonal(_ candidate: InputiaPersonalCandidate, explicit: Bool, client: IMKTextInput) -> Bool {
+    let code = latestComposing
+    guard !code.isEmpty, bridge.latestOutcome.composing == code else { return false }
+    let origin = typedOriginBeforeInsertion(client)
+    personalRefreshGeneration &+= 1
+    if let origin, personalization.allowed,
+      let consumedCode = InputiaPersonalContext.consumedCode(code, length: candidate.consumed_len) {
+      pendingPersonalSelection = PersonalSelection(target: origin,
+        code: consumedCode, candidate: candidate, explicit: explicit)
+    }
+    defer { pendingPersonalSelection = nil }
+    let outcome = bridge.choosePersonalCandidate(id: candidate.id, text: candidate.text, composing: code)
+    guard outcome.ok else { personalization.invalidateView(); return true }
+    return apply(outcome, client: client)
+  }
+
+  private func recordPersonalCommit(_ text: String, client: IMKTextInput, start: Int, origin: InputiaVoiceTarget?) {
+    let commitReason: String
+    if pendingPersonalSelection == nil { commitReason = "missing_selection" }
+    else if origin == nil { commitReason = "missing_origin" }
+    else if origin != pendingPersonalSelection?.target { commitReason = "origin_mismatch" }
+    else if pendingPersonalSelection?.candidate.text != text { commitReason = "text_mismatch" }
+    else if start == NSNotFound { commitReason = "invalid_start" }
+    else if client.selectedRange() != NSRange(location: start + text.utf16.count, length: 0) { commitReason = "selection_not_committed" }
+    else { commitReason = "ok" }
+    InputiaPersonalizationDiagnostics.record("commit", commitReason, flags: personalization.allowed ? 1 : 0)
+    guard commitReason == "ok", let selection = pendingPersonalSelection, let origin else {
+      personalization.reset(); personalUndo = nil; return
+    }
+    personalExpectedSelection = client.selectedRange()
+    let receipt = personalization.accepted(target: origin, code: selection.code, text: text,
+      explicit: selection.explicit, rank: selection.candidate.base_rank) { [weak self] in
+      guard let self, let live = self.client() else { return }
+      self.schedulePersonalization(client: live)
+    }
+    if let receipt {
+      personalUndo = PersonalUndo(receipt: receipt,
+        nativeLearning: InputiaPersonalContext.hasNativeLearning(candidateID: selection.candidate.id),
+        target: origin, inserted: text, start: start,
+        after: client.selectedRange(), time: ProcessInfo.processInfo.systemUptime,
+        client: ObjectIdentifier(client as AnyObject))
+    }
+  }
+
+  private func acceptPersonalPrediction(_ prediction: InputiaPersonalPrediction, client: IMKTextInput) -> Bool {
+    if personalPredictionPending { return true }
+    guard latestComposing.isEmpty,
+      personalPredictions.contains(prediction), personalization.allowed,
+      let view = personalization.view, view.code.isEmpty,
+      let origin = typedCompositionOrigin, origin.inputiaTarget == view.target,
+      origin.isCurrentForTypedOrigin(client: client, controllerID: voiceControllerID,
+        activationGeneration: voiceActivationGeneration),
+      let selection = InputiaVoiceTargetSnapshot.validRange(client.selectedRange()), selection.length == 0 else { return false }
+    personalPredictionPending = true
+    let generation = localSelectionGeneration
+    let activation = voiceActivationGeneration
+    let epoch = personalization.epoch
+    // 先由学习服务核对当前epoch与当前预测列表；不是仅靠AX租约或事后反馈拒绝。
+    personalization.admit(prediction, from: view) { [weak self] admitted in
+      guard let self else { return }
+      guard let admitted, self.personalization.admissionIsCurrent(admitted),
+        self.personalization.epoch == epoch, self.localSelectionGeneration == generation,
+        self.voiceActivationGeneration == activation, self.latestComposing.isEmpty,
+        self.typedCompositionOrigin === origin else {
+        self.personalPredictionPending = false; return
+      }
+      InputiaVoiceInputLauncher.targetBridge(.init(kind: "validate", target: origin.inputiaTarget, purpose: "personalization")) { [weak self] reply in
+        guard let self else { return }; self.personalPredictionPending = false
+        guard let reply, reply.ready, self.personalization.admissionIsCurrent(admitted),
+          ProcessInfo.processInfo.systemUptime < reply.deadline,
+          InputiaHost.activeInputController === self, self.voiceActivationGeneration == activation,
+          self.localSelectionGeneration == generation, self.latestComposing.isEmpty,
+          self.typedCompositionOrigin === origin, let current = self.client(),
+          ObjectIdentifier(current as AnyObject) == ObjectIdentifier(client as AnyObject),
+          current.selectedRange() == selection,
+          origin.isCurrentForTypedOrigin(client: current, controllerID: self.voiceControllerID, activationGeneration: activation) else { return }
+        self.personalization.invalidateView()
+        self.pendingPersonalSelection = PersonalSelection(target: origin.inputiaTarget, code: "",
+          candidate: InputiaPersonalCandidate(id: prediction.id, text: prediction.text, base_rank: 0, consumed_len: 0), explicit: true)
+        self.insertCommittedText(prediction.text, client: current)
+        self.pendingPersonalSelection = nil
+      }
+    }
+    return true
+  }
+
+  private func releaseTypedOriginIfUnowned(_ id: String) {
+    guard typedRetainedOrigins[id] == nil, typedEventOrigin?.targetID != id,
+      typedCompositionOrigin?.targetID != id, shortcutPreparedSnapshot?.targetID != id, voiceTargetSnapshots[id] == nil else { return }
+    InputiaVoiceInputLauncher.releaseTarget(id)
+  }
+
+  private func discardTypedCompositionOrigin() {
+    personalization.reset(); personalUndo = nil
+    let old = typedCompositionOrigin
+    typedCompositionOrigin = nil
+    MainActor.assumeIsolated { InputiaTypedCapture.shared.resetSegment() }
+    if let old { releaseTypedOriginIfUnowned(old.targetID) }
+  }
+
+  private func refreshTypedCompositionOrigin(client: IMKTextInput, boundary: Bool) {
+    let old = typedCompositionOrigin
+    let existingAllowed = old?.isCurrentForTypedOrigin(client: client, controllerID: voiceControllerID,
+      activationGeneration: voiceActivationGeneration) == true
+    let candidate = [shortcutPreparedSnapshot, typedEventOrigin].compactMap { $0 }.first {
+      $0.inputiaTarget.field_id != nil && $0.isCurrentForShortcut(client: client, controllerID: voiceControllerID,
+        activationGeneration: voiceActivationGeneration, isSensitiveApp: { _, _ in false }, windowTitle: { _ in .unavailable })
+    }
+    typedCompositionOrigin = InputiaTypedOriginLifetime.retain(old, existingAllowed: existingAllowed,
+      candidate: candidate, boundary: boundary)
+    if old?.targetID != typedCompositionOrigin?.targetID, let old {
+      MainActor.assumeIsolated { InputiaTypedCapture.shared.resetSegment() }
+      releaseTypedOriginIfUnowned(old.targetID)
+    }
+  }
+
+  private func typedOriginBeforeInsertion(_ client: IMKTextInput) -> InputiaVoiceTarget? {
+    refreshTypedCompositionOrigin(client: client, boundary: false)
+    if let snapshot = typedCompositionOrigin,
+      snapshot.isCurrentForTypedOrigin(client: client, controllerID: voiceControllerID,
+        activationGeneration: voiceActivationGeneration) { return snapshot.inputiaTarget }
+    for snapshot in [shortcutPreparedSnapshot, typedEventOrigin].compactMap({ $0 }) {
+      if snapshot.inputiaTarget.field_id != nil,
+        snapshot.isCurrentForShortcut(client: client, controllerID: voiceControllerID,
+          activationGeneration: voiceActivationGeneration, isSensitiveApp: { _, _ in false },
+          windowTitle: { _ in .unavailable }) {
+        return snapshot.inputiaTarget
+      }
+    }
+    // 后台预捕获只能供下一次提交使用；本次没有原字段证明便不收录。
+    _ = shortcutRegistrationTarget()
+    return nil
+  }
+
+  private func recordTypedCommit(_ text: String, client: IMKTextInput, start: Int, origin: InputiaVoiceTarget?) {
+    guard Thread.isMainThread else { return }
+    guard InputiaHost.activeInputController === self, let draft = origin, draft.field_id != nil,
+      draft.controller_id == voiceControllerID, draft.activation_generation == voiceActivationGeneration,
+      !IsSecureEventInputEnabled(), isCurrentInputiaSourceSelected(),
+      let bundle = client.bundleIdentifier(), draft.source_app == bundle, start != NSNotFound,
+      let end = InputiaVoiceTargetSnapshot.validRange(client.selectedRange()), end.length == 0,
+      end.location >= start, end.location - start == text.utf16.count else {
+      MainActor.assumeIsolated { InputiaTypedCapture.shared.resetSegment() }
+      return
+    }
+    let identity = "\(ObjectIdentifier(client as AnyObject)):\(voiceControllerID):\(voiceActivationGeneration):\(bundle):\(draft.target_id)"
+    let expiry = ProcessInfo.processInfo.systemUptime + 3
+    typedRetainedOrigins[draft.target_id] = expiry
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+      guard let self, self.typedRetainedOrigins[draft.target_id] == expiry else { return }
+      self.typedRetainedOrigins.removeValue(forKey: draft.target_id)
+      self.releaseTypedOriginIfUnowned(draft.target_id)
+    }
+    MainActor.assumeIsolated {
+      InputiaTypedCapture.shared.committed(text: text, draft: draft, identity: identity,
+        start: start, end: end.location)
+    }
+  }
+
   private func reportShortcutReadiness(_ reason: String) {
     guard reason != shortcutReadinessReason else { return }
     shortcutReadinessReason = reason
@@ -824,43 +1342,55 @@ final class InputiaInputController: IMKInputController {
     guard InputiaHost.activeInputController === self, isCurrentInputiaSourceSelected() else {
       reportShortcutReadiness("inactive_source"); return nil
     }
-    guard AXIsProcessTrusted() else { reportShortcutReadiness("accessibility_permission_required"); return nil }
+    synchronizePermissionEpoch()
+    guard InputiaPermissionLifecycle.shared.isReady else { reportShortcutReadiness("accessibility_permission_required"); return nil }
     guard !IsSecureEventInputEnabled() else { reportShortcutReadiness("secure_input_enabled"); return nil }
     guard let client = client() else { reportShortcutReadiness("missing_imk_client"); return nil }
     if let snapshot = shortcutPreparedSnapshot, snapshot.activationGeneration == voiceActivationGeneration,
       sharedPreparedClientIdentity == ObjectIdentifier(client as AnyObject),
-      snapshot.reusableForShortcut {
+      snapshot.reusableForShortcut, snapshot.compositionGeneration == localCompositionGeneration,
+      snapshot.localSelectionGeneration == localSelectionGeneration,
+      snapshot.isCurrentForShortcut(client: client, controllerID: voiceControllerID,
+        activationGeneration: voiceActivationGeneration, isSensitiveApp: { _, _ in false }, windowTitle: { _ in .unavailable }) {
       reportShortcutReadiness("ready")
       sharedTargetReady = true
       return snapshot.inputiaTarget
     }
-    guard let target = prepareUnifiedVoiceTarget(client: client) else {
-      reportShortcutReadiness(voiceTargetPreparationFailure)
-      shortcutPreparedSnapshot = nil
-      return nil
+    discardPreparedVoiceTarget()
+    // 仅限制后台预捕获；显式录音与派发前仍独立重新验证当前字段。
+    guard InputiaVoiceTargetSnapshot.shouldAttemptPreCapture(
+      now: ProcessInfo.processInfo.systemUptime, retryDeadline: voicePreCaptureRetryDeadline
+    ) else { return nil }
+    guard !targetCapturePending else { return nil }
+    targetCapturePending = true
+    prepareUnifiedVoiceTarget(client: client) { [weak self] target in
+      guard let self else { return }
+      self.targetCapturePending = false
+      guard let target, let snapshot = self.voiceTargetSnapshots.removeValue(forKey: target.target_id) else {
+        if let target { InputiaVoiceInputLauncher.releaseTarget(target.target_id) }
+        self.voicePreCaptureRetryDeadline = InputiaVoiceTargetSnapshot.preCaptureRetryDeadline(after: ProcessInfo.processInfo.systemUptime)
+        return
+      }
+      self.shortcutPreparedSnapshot = snapshot
+      self.sharedPreparedClientIdentity = ObjectIdentifier(client as AnyObject)
+      self.sharedTargetReady = true
     }
-    guard let snapshot = voiceTargetSnapshots.removeValue(forKey: target.target_id) else {
-      reportShortcutReadiness(target.field_id == nil ? InputiaVoiceTargetSnapshot.lastCaptureFailureReason : "missing_snapshot")
-      shortcutPreparedSnapshot = nil
-      return nil
-    }
-    shortcutPreparedSnapshot = snapshot
-    sharedPreparedClientIdentity = ObjectIdentifier(client as AnyObject)
-    reportShortcutReadiness("ready")
-    sharedTargetReady = true
-    return target
+    return nil
   }
 
   func acceptUnifiedShortcut(_ trigger: InputiaHostShortcutTrigger, completion: @escaping (Bool) -> Void) {
-    guard trigger.starts_session, InputiaHost.activeInputController === self,
+    synchronizePermissionEpoch()
+    guard InputiaPermissionLifecycle.shared.isReady, trigger.starts_session, InputiaHost.activeInputController === self,
       isCurrentInputiaSourceSelected(), let snapshot = shortcutPreparedSnapshot,
-      snapshot.inputiaTarget == trigger.target,
+      snapshot.inputiaTarget == trigger.target, snapshot.compositionGeneration == localCompositionGeneration,
+      snapshot.localSelectionGeneration == localSelectionGeneration,
       snapshot.isCurrentForShortcut(client: client(), controllerID: voiceControllerID,
         activationGeneration: voiceActivationGeneration,
         isSensitiveApp: { self.bridge.isSensitiveApp(bundleId: $0, windowTitle: $1) },
-        windowTitle: { self.activeWindowTitle(forBundleId: $0) })
+        windowTitle: { self.checkedWindowTitle(forBundleId: $0) })
     else { completion(false); return }
     voiceTargetSnapshots[snapshot.targetID] = snapshot
+    voicePermissionEpochs[snapshot.targetID] = permissionEpoch
     InputiaVoiceInputLauncher.sendUnifiedShortcutTrigger(trigger, deliver: { [weak self] delivery, ack in
       guard let self else { ack("pending_target"); return }
       self.deliverUnifiedVoice(delivery, acknowledge: ack)
@@ -868,7 +1398,7 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func currentSharedTerms(client: IMKTextInput) -> InputiaSharedTermsSnapshot? {
-    guard sharedTargetReady, InputiaHost.activeInputController === self,
+    guard InputiaPermissionLifecycle.shared.permits(permissionEpoch), sharedTargetReady, InputiaHost.activeInputController === self,
       sharedPreparedClientIdentity == ObjectIdentifier(client as AnyObject),
       let snapshot = shortcutPreparedSnapshot, snapshot.reusableForShortcut,
       snapshot.controllerID == voiceControllerID,
@@ -878,11 +1408,11 @@ final class InputiaInputController: IMKInputController {
 
   /// 只在异步主线程任务调用；键盘回调不得等待实时 AX/窗口隐私检查。
   private func liveSharedTerms(client: IMKTextInput) -> InputiaSharedTermsSnapshot? {
-    guard !IsSecureEventInputEnabled(), let snapshot = shortcutPreparedSnapshot,
+    guard InputiaPermissionLifecycle.shared.permits(permissionEpoch), !IsSecureEventInputEnabled(), let snapshot = shortcutPreparedSnapshot,
       snapshot.isCurrentForShortcut(client: client, controllerID: voiceControllerID,
         activationGeneration: voiceActivationGeneration,
         isSensitiveApp: { self.bridge.isSensitiveApp(bundleId: $0, windowTitle: $1) },
-        windowTitle: { self.activeWindowTitle(forBundleId: $0) }) else { return nil }
+        windowTitle: { self.checkedWindowTitle(forBundleId: $0) }) else { return nil }
     return currentSharedTerms(client: client)
   }
 
@@ -935,7 +1465,10 @@ final class InputiaInputController: IMKInputController {
         targetID: current.target.target_id, cacheIdentity: current.identity,
         clientIdentity: ObjectIdentifier(client as AnyObject), activation: self.voiceActivationGeneration),
         gateAllowed: true) else { InputiaSharedTermsMemory.shared.clear(); return }
+      let origin = self.typedOriginBeforeInsertion(client)
+      let typedStart = client.selectedRange().location
       client.insertText(suffix, replacementRange: emptyReplacementRange)
+      self.recordTypedCommit(suffix, client: client, start: typedStart, origin: origin)
       self.clearEnglishCompletion()
     }
     return true
@@ -950,6 +1483,7 @@ final class InputiaInputController: IMKInputController {
 
   private func clearSharedChineseCandidates() {
     sharedChineseSelection.cancel()
+    if !personalCandidates.isEmpty { sharedChineseOrder = nil; return }
     guard sharedChineseOrder != nil else { return }
     sharedChineseOrder = nil
     let current = bridge.latestOutcome
@@ -961,6 +1495,7 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func refreshSharedChineseCandidates(client: IMKTextInput) {
+    guard personalCandidates.isEmpty, !personalization.allowed else { return }
     clearSharedChineseCandidates()
     guard !candidatePanelExpanded, let shared = liveSharedTerms(client: client) else {
       InputiaSharedTermsMemory.shared.clear(); return
@@ -1003,7 +1538,7 @@ final class InputiaInputController: IMKInputController {
           clientIdentity: ObjectIdentifier(client as AnyObject), activation: self.voiceActivationGeneration), gateAllowed: true)
       else { self.sharedChineseSelection.cancel(); InputiaSharedTermsMemory.shared.clear(); return }
       // 原索引交回 Rime，自身不插字符串；保留部分消费、剩余组合及既有用户选择学习。
-      _ = self.apply(self.bridge.chooseCandidate(atZeroBasedIndex: originalIndex), client: client)
+      _ = self.chooseNativeWithLearning(index: originalIndex, explicit: true, client: client)
     }
     return true
   }
@@ -1020,7 +1555,7 @@ final class InputiaInputController: IMKInputController {
       snapshot.isCurrentForShortcut(client: currentClient, controllerID: voiceControllerID,
         activationGeneration: voiceActivationGeneration,
         isSensitiveApp: { self.bridge.isSensitiveApp(bundleId: $0, windowTitle: $1) },
-        windowTitle: { self.activeWindowTitle(forBundleId: $0) }),
+        windowTitle: { self.checkedWindowTitle(forBundleId: $0) }),
       InputiaSharedTermsMemory.shared.install(terms, ticket: ticket) else {
       if InputiaSharedTermsMemory.shared.ticket() == ticket { InputiaSharedTermsMemory.shared.clear() }
       return
@@ -1046,77 +1581,89 @@ final class InputiaInputController: IMKInputController {
     else { InputiaHost.candidatePanel?.show(candidates: englishCompletionCandidates, near: englishCompletionRect) }
   }
 
-  private func prepareUnifiedVoiceTarget(client: IMKTextInput?) -> InputiaVoiceTarget? {
-    var target: InputiaVoiceTarget?
-    voiceTargetCaptureNotice = nil
-    voiceTargetPreparationFailure = "unknown"
+  private func prepareUnifiedVoiceTarget(client: IMKTextInput?, completion: @escaping (InputiaVoiceTarget?) -> Void) {
     pruneVoiceTargetSnapshots()
-    guard let client else { voiceTargetPreparationFailure = "missing_imk_client"; return nil }
-    guard !IsSecureEventInputEnabled() else { voiceTargetPreparationFailure = "secure_input_enabled"; return nil }
-    guard let bundle = client.bundleIdentifier() else { voiceTargetPreparationFailure = "missing_client_bundle"; return nil }
-    guard !bridge.isSensitiveApp(bundleId: bundle, windowTitle: appContext(for: client, forceRefresh: true).windowTitle)
-    else { voiceTargetPreparationFailure = "sensitive_app"; return nil }
-    do {
-      let targetID = UUID().uuidString
-      if let snapshot = InputiaVoiceTargetSnapshot.capture(
-        client: client,
-        targetID: targetID,
-        hostInstance: InputiaVoiceServiceConnection.processInstance,
-        controllerID: voiceControllerID,
-        activationGeneration: voiceActivationGeneration,
-        compositionGeneration: latestComposing.isEmpty ? 0 : 1,
-        sourceApp: bundle
-      ) {
-        voiceTargetSnapshots[snapshot.targetID] = snapshot
-        target = snapshot.inputiaTarget
-      } else {
-        let reason = InputiaVoiceTargetSnapshot.lastCaptureFailureReason
-        voiceTargetPreparationFailure = reason
-        let notice = voiceTargetCaptureStatus(reason: reason)
-        // 已知安全控件或App身份冲突不能降级为仅保存历史的录音。
-        if InputiaVoiceTargetSnapshot.allowsHistoryOnlyCapture(reason: reason) {
-          target = InputiaVoiceTarget(
-          target_id: targetID,
-          host_instance: InputiaVoiceServiceConnection.processInstance,
-          controller_id: voiceControllerID,
-          activation_generation: voiceActivationGeneration,
-          field_id: nil,
-          selection_generation: 0,
-          composition_generation: latestComposing.isEmpty ? 0 : 1,
-          source_app: bundle
-          )
-        }
-        voiceTargetCaptureNotice = notice
-        voiceStatus = notice
+    synchronizePermissionEpoch()
+    let initialReason: String
+    if !InputiaPermissionLifecycle.shared.isReady { initialReason = "policy" }
+    else if IsSecureEventInputEnabled() { initialReason = "secure_input_enabled" }
+    else if client == nil { initialReason = "missing_client" }
+    else if client?.bundleIdentifier() == nil { initialReason = "missing_bundle" }
+    else if client.map({ InputiaVoiceTargetSnapshot.validRange($0.selectedRange()) == nil }) == true { initialReason = "invalid_selection" }
+    else { initialReason = "ok" }
+    InputiaPersonalizationDiagnostics.record("capture_guard", initialReason)
+    guard InputiaPermissionLifecycle.shared.isReady, !IsSecureEventInputEnabled(), let client,
+      let bundle = client.bundleIdentifier(), let selection = InputiaVoiceTargetSnapshot.validRange(client.selectedRange()) else { completion(nil); return }
+    let epoch = permissionEpoch
+    let activation = voiceActivationGeneration
+    let composition = localCompositionGeneration
+    let localSelection = localSelectionGeneration
+    let draft = InputiaVoiceTarget(target_id: UUID().uuidString, host_instance: InputiaVoiceServiceConnection.processInstance,
+      controller_id: voiceControllerID, activation_generation: activation, field_id: nil,
+      selection_generation: localSelection, composition_generation: composition, source_app: bundle)
+    InputiaVoiceInputLauncher.targetBridge(.init(kind: "capture", draft: draft)) { [weak self] reply in
+      guard let self else { completion(nil); return }
+      let current = self.client()
+      let captureReason: String
+      if reply == nil { captureReason = "no_reply" }
+      else if reply?.target == nil { captureReason = "missing_target" }
+      else if reply?.target?.host_instance != draft.host_instance || reply?.target?.controller_id != draft.controller_id
+        || reply?.target?.activation_generation != activation || reply?.target?.composition_generation != composition
+        || reply?.target?.source_app != bundle { captureReason = "target_identity" }
+      else if InputiaHost.activeInputController !== self || !isCurrentInputiaSourceSelected() { captureReason = "not_active" }
+      else if !InputiaPermissionLifecycle.shared.permits(epoch) { captureReason = "policy" }
+      else if self.voiceActivationGeneration != activation { captureReason = "activation" }
+      else if self.localCompositionGeneration != composition { captureReason = "composition" }
+      else if self.localSelectionGeneration != localSelection { captureReason = "selection_generation" }
+      else if current == nil { captureReason = "missing_client" }
+      else if current.map({ ObjectIdentifier($0 as AnyObject) != ObjectIdentifier(client as AnyObject) }) == true { captureReason = "client_identity" }
+      else if current?.selectedRange() != selection { captureReason = "selection_changed" }
+      else if ProcessInfo.processInfo.systemUptime >= (reply?.deadline ?? 0) { captureReason = "expired" }
+      else { captureReason = "ok" }
+      if captureReason != "ok" { InputiaPersonalizationDiagnostics.record("capture_reply", captureReason) }
+      guard captureReason == "ok", let reply, let target = reply.target, let current else {
+        if let id = reply?.target?.target_id { InputiaVoiceInputLauncher.releaseTarget(id) }
+        completion(nil); return
       }
+      guard target.field_id != nil else {
+        InputiaPersonalizationDiagnostics.record("capture_reply", "history_only")
+        completion(target); return
+      }
+      guard let remoteSelection = reply.selection, remoteSelection.location == selection.location,
+        remoteSelection.length == selection.length else {
+        InputiaPersonalizationDiagnostics.record("capture_reply", "remote_selection_mismatch")
+        InputiaVoiceInputLauncher.releaseTarget(target.target_id); completion(nil); return
+      }
+      InputiaPersonalizationDiagnostics.record("capture_reply", "ok")
+      let snapshot = InputiaVoiceTargetSnapshot.Snapshot(target: target, client: current, selection: selection,
+        compositionGeneration: composition, localSelectionGeneration: localSelection, deadline: reply.deadline, permissionEpoch: epoch)
+      self.voiceTargetSnapshots[target.target_id] = snapshot
+      self.voicePermissionEpochs[target.target_id] = epoch
+      completion(target)
     }
-    return target
   }
 
   private func startUnifiedVoice(client: IMKTextInput?) {
-    let target = prepareUnifiedVoiceTarget(client: client)
-    InputiaVoiceInputLauncher.triggerUnifiedVoice(target: target, deliver: { [weak self] delivery, acknowledge in
-      guard let self else {
-        acknowledge("pending_target")
-        return
-      }
-      self.deliverUnifiedVoice(delivery, acknowledge: acknowledge)
-    }) { [weak self] message in
-      guard let self else { return }
-      if let notice = self.voiceTargetCaptureNotice {
-        self.voiceStatus = "\(message)；\(notice)"
-      } else {
-        self.voiceStatus = message
-      }
+    prepareUnifiedVoiceTarget(client: client) { [weak self] target in
+      guard let self else { if let target { InputiaVoiceInputLauncher.releaseTarget(target.target_id) }; return }
+      InputiaVoiceInputLauncher.triggerUnifiedVoice(target: target, deliver: { [weak self] delivery, acknowledge in
+        guard let self else { acknowledge("pending_target"); return }
+        self.deliverUnifiedVoice(delivery, acknowledge: acknowledge)
+      }) { [weak self] message in self?.voiceStatus = message }
     }
   }
 
   private func deliverUnifiedVoice(_ delivery: InputiaVoiceDelivery, acknowledge: @escaping (String) -> Void) {
-    guard let snapshot = voiceTargetSnapshots[delivery.target_id] else {
+    guard let snapshot = voiceTargetSnapshots[delivery.target_id], let nonce = delivery.dispatchNonce, !nonce.isEmpty,
+      localCompositionGeneration == snapshot.compositionGeneration, localSelectionGeneration == snapshot.localSelectionGeneration,
+      InputiaHost.activeInputController === self, isCurrentInputiaSourceSelected() else { acknowledge("pending_target"); return }
+    synchronizePermissionEpoch()
+    guard let epoch = voicePermissionEpochs[delivery.target_id], InputiaPermissionLifecycle.shared.permits(epoch),
+      let snapshot = voiceTargetSnapshots[delivery.target_id] else {
       acknowledge("pending_target")
       return
     }
-    defer { voiceTargetSnapshots.removeValue(forKey: delivery.target_id) }
+    defer { voiceTargetSnapshots.removeValue(forKey: delivery.target_id); voicePermissionEpochs.removeValue(forKey: delivery.target_id); InputiaVoiceInputLauncher.releaseTarget(delivery.target_id) }
     guard !attemptedVoiceOutputOperations.contains(delivery.operation_id) else {
       acknowledge("uncertain")
       return
@@ -1131,7 +1678,7 @@ final class InputiaInputController: IMKInputController {
         self?.bridge.isSensitiveApp(bundleId: bundleID, windowTitle: windowTitle) ?? true
       },
       windowTitle: { [weak self] bundleID in
-        self?.activeWindowTitle(forBundleId: bundleID)
+        self?.checkedWindowTitle(forBundleId: bundleID) ?? .unavailable
       }
     )
     guard case .dispatch(let client) = decision else {
@@ -1142,7 +1689,9 @@ final class InputiaInputController: IMKInputController {
       acknowledge("pending_target")
       return
     }
+    guard InputiaPermissionLifecycle.shared.permits(epoch) else { acknowledge("pending_target"); return }
     attemptedVoiceOutputOperations.insert(delivery.operation_id)
+    personalization.reset(); personalUndo = nil
     client.insertText(delivery.text, replacementRange: emptyReplacementRange)
     acknowledge("dispatched")
   }
@@ -1164,7 +1713,9 @@ final class InputiaInputController: IMKInputController {
 
   private func pruneVoiceTargetSnapshots() {
     let now = ProcessInfo.processInfo.systemUptime
-    voiceTargetSnapshots = voiceTargetSnapshots.filter { now - $0.value.createdAt <= 120 }
+    let expired = voiceTargetSnapshots.filter { now - $0.value.createdAt > 120 }.map { $0.key }
+    for id in expired { removeRetiredVoiceTarget(id); InputiaVoiceInputLauncher.releaseTarget(id) }
+    voicePermissionEpochs = voicePermissionEpochs.filter { voiceTargetSnapshots[$0.key] != nil }
     if voiceTargetSnapshots.count > 16 {
       voiceTargetSnapshots.removeAll()
     }
@@ -1227,6 +1778,8 @@ final class InputiaInputController: IMKInputController {
 
   private func handleCandidatePageDown(client: IMKTextInput) -> Bool {
     #if INPUTIA_PAIRED_BUILD
+    personalRefreshGeneration &+= 1
+    personalization.invalidateView()
     clearSharedChineseCandidates()
     #endif
     guard !latestComposing.isEmpty else {
@@ -1246,6 +1799,8 @@ final class InputiaInputController: IMKInputController {
 
   private func handleCandidatePageUp(client: IMKTextInput) -> Bool {
     #if INPUTIA_PAIRED_BUILD
+    personalRefreshGeneration &+= 1
+    personalization.invalidateView()
     clearSharedChineseCandidates()
     #endif
     guard !latestComposing.isEmpty else {
@@ -1270,6 +1825,17 @@ final class InputiaInputController: IMKInputController {
       expandedActiveRowIndex = 0
       return
     }
+    #if INPUTIA_PAIRED_BUILD
+    if !personalCandidates.isEmpty, personalCode == latestComposing {
+      expandedCandidateEntries = personalCandidates.prefix(targetCount).enumerated().map {
+        InputiaExpandedCandidateEntry(text: $0.element.text, page: 0, pageIndex: $0.offset,
+          candidateID: $0.element.id, originalRank: $0.element.base_rank)
+      }
+      expandedCandidates = expandedCandidateEntries.map(\.text)
+      clampExpandedActiveRow()
+      return
+    }
+    #endif
     expandedCandidateEntries = collectExpandedCandidateEntries(targetCount: targetCount)
     expandedCandidates = expandedCandidateEntries.map(\.text)
     clampExpandedActiveRow()
@@ -1399,10 +1965,19 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func commitExpandedCandidate(_ entry: InputiaExpandedCandidateEntry, client: IMKTextInput?) -> Bool {
+    #if INPUTIA_PAIRED_BUILD
+    if let id = entry.candidateID {
+      guard InputiaPersonalContext.retainsPersonalIdentity(id, available: personalCandidates.map(\.id)),
+        let client, let candidate = personalCandidates.first(where: { $0.id == id && $0.text == entry.text }),
+        personalCode == latestComposing else { return true }
+      return choosePersonal(candidate, explicit: true, client: client)
+    }
+    #endif
     guard moveBridgeToPage(entry.page) else {
       return false
     }
-    return apply(bridge.chooseCandidate(atZeroBasedIndex: entry.pageIndex), client: client)
+    guard let client else { return false }
+    return chooseNativeWithLearning(index: entry.pageIndex, explicit: true, client: client)
   }
 
   private func moveBridgeToPage(_ targetPage: Int) -> Bool {
@@ -1504,7 +2079,7 @@ final class InputiaInputController: IMKInputController {
 
   private func showClipboardRecall(client: IMKTextInput) -> Bool {
     let context = appContext(for: client)
-    guard bridge.shouldReadClipboard(bundleId: context.bundleId, windowTitle: context.windowTitle) else {
+    guard context.windowTitleAvailable, bridge.shouldReadClipboard(bundleId: context.bundleId, windowTitle: context.windowTitle) else {
       inputiaDebugLog("clipboardRecallSkipped reason=privacy")
       clearClipboardRecall()
       return false
@@ -1682,9 +2257,18 @@ final class InputiaInputController: IMKInputController {
       clearEnglishCompletion()
       return false
     }
+    #if INPUTIA_PAIRED_BUILD
+    let origin = typedOriginBeforeInsertion(client)
+    let typedStart = client.selectedRange().location
+    #endif
     client.insertText(suffix, replacementRange: emptyReplacementRange)
+    #if INPUTIA_PAIRED_BUILD
+    recordTypedCommit(suffix, client: client, start: typedStart, origin: origin)
+    #endif
     let context = appContext(for: client)
-    _ = bridge.learnTyped(text: candidate, bundleId: context.bundleId, windowTitle: context.windowTitle)
+    if context.windowTitleAvailable {
+      _ = bridge.learnTyped(text: candidate, bundleId: context.bundleId, windowTitle: context.windowTitle)
+    }
     inputiaDebugLog("englishCompletionCommit")
     clearEnglishCompletion()
     return true
@@ -1709,7 +2293,9 @@ final class InputiaInputController: IMKInputController {
     let word = englishCompletionPrefix
     if isLearnableEnglishWord(word) {
       let context = appContext(for: client)
-      _ = bridge.learnTyped(text: word, bundleId: context.bundleId, windowTitle: context.windowTitle)
+      if context.windowTitleAvailable {
+        _ = bridge.learnTyped(text: word, bundleId: context.bundleId, windowTitle: context.windowTitle)
+      }
       inputiaDebugLog("englishWordLearned")
     }
     clearEnglishCompletion()
@@ -1735,6 +2321,22 @@ final class InputiaInputController: IMKInputController {
     hideEnglishCompletionCandidates()
   }
 
+  private func clearShiftEnglishComposition(client: IMKTextInput?) {
+    shiftEnglishComposition = ""
+    if let client { clearMarkedText(client) }
+    latestComposing = ""
+    latestCandidates = []
+    InputiaHost.candidatePanel?.hide()
+  }
+
+  private func commitShiftEnglishComposition(client: IMKTextInput) {
+    let text = shiftEnglishComposition
+    guard !text.isEmpty else { return }
+    clearShiftEnglishComposition(client: client)
+    client.insertText(text, replacementRange: emptyReplacementRange)
+    inputiaDebugLog("shiftEnglishCompositionCommit text=\(text)")
+  }
+
   private func isLearnableEnglishWord(_ word: String) -> Bool {
     word.count >= 2 && word.unicodeScalars.contains { scalar in
       (65...90).contains(scalar.value) || (97...122).contains(scalar.value)
@@ -1752,6 +2354,10 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func clearInputState(client: IMKTextInput? = nil) {
+    #if INPUTIA_PAIRED_BUILD
+    discardTypedCompositionOrigin()
+    #endif
+    shiftEnglishComposition = ""
     if !latestComposing.isEmpty, let client {
       clearMarkedText(client)
     }
@@ -1799,6 +2405,11 @@ final class InputiaInputController: IMKInputController {
   private func updateAppContext(client: IMKTextInput, forceRefresh: Bool = false) {
     reloadSettingsIfDue(client: client, force: forceRefresh)
     let context = appContext(for: client, forceRefresh: forceRefresh)
+    guard context.windowTitleAvailable else {
+      _ = bridge.setUnverifiedAppContext(bundleId: context.bundleId)
+      pushedAppContext = nil
+      return
+    }
     inputiaDebugLog("contextRefreshed")
     if let pushedAppContext, pushedAppContext != context {
       resetShiftInputModeSession(reason: "contextChanged")
@@ -1813,12 +2424,12 @@ final class InputiaInputController: IMKInputController {
   private func shouldUseSecureDirectMode(_ client: IMKTextInput) -> Bool {
     reloadSettingsIfDue(client: client)
     let context = appContext(for: client)
-    guard InputiaSecureDirectPolicy.shouldUseSecureDirectMode(context: context) else {
+    guard IsSecureEventInputEnabled() || InputiaSecureDirectPolicy.shouldUseSecureDirectMode(context: context) else {
       return false
     }
     clearInputState(client: client)
     inputiaDebugLog("secureDirectPassthrough")
-    if pushedAppContext != context {
+    if context.windowTitleAvailable && pushedAppContext != context {
       _ = bridge.setAppContext(bundleId: context.bundleId, windowTitle: context.windowTitle)
       pushedAppContext = context
     }
@@ -1832,15 +2443,16 @@ final class InputiaInputController: IMKInputController {
       !forceRefresh,
       let cachedAppContext,
       cachedAppContext.bundleId == bundleId,
-      now.timeIntervalSince(cachedAppContextTime) < appContextRefreshInterval
+      now.timeIntervalSince(cachedAppContextTime) < (cachedAppContext.windowTitleAvailable ? appContextRefreshInterval : 0.1)
     {
       return cachedAppContext
     }
 
-    let context = InputiaAppContext(
-      bundleId: bundleId,
-      windowTitle: activeWindowTitle(forBundleId: bundleId)
-    )
+    let context: InputiaAppContext
+    switch checkedWindowTitle(forBundleId: bundleId) {
+    case .ready(let title): context = InputiaAppContext(bundleId: bundleId, windowTitle: title)
+    case .unavailable: context = InputiaAppContext(bundleId: bundleId, windowTitle: nil, windowTitleAvailable: false)
+    }
     cachedAppContext = context
     cachedAppContextTime = now
     return context
@@ -1874,38 +2486,8 @@ final class InputiaInputController: IMKInputController {
     }
   }
 
-  private func activeWindowTitle(forBundleId bundleId: String) -> String? {
-    guard
-      let frontmost = NSWorkspace.shared.frontmostApplication,
-      frontmost.bundleIdentifier == bundleId
-    else {
-      return nil
-    }
-    let processIdentifier = frontmost.processIdentifier
-    guard
-      let windowList = CGWindowListCopyWindowInfo(
-        [.optionOnScreenOnly, .excludeDesktopElements],
-        kCGNullWindowID
-      ) as? [[String: Any]]
-    else {
-      return nil
-    }
-    for window in windowList {
-      let ownerPid = (window[kCGWindowOwnerPID as String] as? pid_t)
-        ?? (window[kCGWindowOwnerPID as String] as? Int).map(pid_t.init)
-      guard
-        ownerPid == processIdentifier,
-        let title = window[kCGWindowName as String] as? String
-      else {
-        continue
-      }
-      let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
-      if !normalized.isEmpty {
-        return normalized
-      }
-    }
-    return nil
-  }
+  private func checkedWindowTitle(forBundleId bundleId: String) -> InputiaWindowTitleQuery.Result { .unavailable }
+
 }
 
 @main
@@ -1942,26 +2524,33 @@ struct InputiaInputMethodApp {
       InputiaSharedTermsMemory.shared.didClear = {
         InputiaHost.activeInputController?.clearSharedEnglishCandidates()
       }
-      InputiaVoiceInputLauncher.startShortcutListening(targetProvider: {
-        InputiaHost.activeInputController?.shortcutRegistrationTarget()
-      }, sharedTermsReceiver: { terms, ticket in
-        InputiaHost.activeInputController?.acceptSharedTerms(terms, ticket: ticket)
-      }, acceptStart: { trigger, completion in
-        guard let controller = InputiaHost.activeInputController else { completion(false); return }
-        controller.acceptUnifiedShortcut(trigger, completion: completion)
-      })
+      InputiaVoiceInputLauncher.didReleaseTarget = { id in
+        for controller in InputiaHost.inputControllers.allObjects { controller.removeRetiredVoiceTarget(id) }
+      }
+      InputiaPermissionLifecycle.shared.configureProbe { InputiaVoiceInputLauncher.probeServicePermission() }
+      InputiaPermissionLifecycle.shared.start(root: InputiaProfile.current.root.deletingLastPathComponent()) { completed in
+        for controller in InputiaHost.inputControllers.allObjects { controller.synchronizePermissionEpoch() }
+        InputiaHost.removeGlobalMonitors()
+        let epoch = InputiaPermissionLifecycle.shared.epoch
+        InputiaVoiceInputLauncher.invalidatePermissionWork {
+          defer { completed() }
+          guard InputiaPermissionLifecycle.shared.permits(epoch) else { return }
+          InputiaHost.installGlobalMonitors()
+          InputiaVoiceInputLauncher.ensureUnifiedServiceReady()
+          InputiaVoiceInputLauncher.startShortcutListening(targetProvider: {
+            InputiaHost.activeInputController?.shortcutRegistrationTarget()
+          }, sharedTermsReceiver: { terms, ticket in
+            InputiaHost.activeInputController?.acceptSharedTerms(terms, ticket: ticket)
+          }, acceptStart: { trigger, completion in
+            guard let controller = InputiaHost.activeInputController else { completion(false); return }
+            controller.acceptUnifiedShortcut(trigger, completion: completion)
+          })
+        }
+      }
       #endif
-      InputiaHost.modifierMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { event in
-        InputiaHost.activeInputController?.handleGlobalFlagsChanged(event)
-      }
-      InputiaHost.keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
-        InputiaHost.activeInputController?.handleGlobalKeyEvent(event)
-      }
-      InputiaHost.mouseMonitor = NSEvent.addGlobalMonitorForEvents(
-        matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
-      ) { event in
-        InputiaHost.activeInputController?.handleGlobalMouseEvent(event)
-      }
+      #if !INPUTIA_PAIRED_BUILD
+      InputiaHost.installGlobalMonitors()
+      #endif
       NSLog("Inputia baseline IMK server started: bundle=\(resolvedBundleIdentifier), connection=\(resolvedConnectionName)")
 
       let app = NSApplication.shared

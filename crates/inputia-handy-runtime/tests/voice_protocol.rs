@@ -427,3 +427,58 @@ fn output_reply_shapes_match_swift_decoder_expectations() {
     assert_eq!(raw["state"], "dispatched_only");
     assert!(raw.get("delivery").is_none());
 }
+
+#[test]
+fn target_bridge_requires_authenticated_envelope_and_operation_bound_dispatch() {
+    let value = serde_json::json!({
+        "request_id":"target-1", "client_instance":"host-1", "server_instance":"server-1", "policy_epoch":7,
+        "target_bridge":{"kind":"capture", "draft":{
+            "target_id":"draft", "host_instance":"host-1", "controller_id":"controller-1", "activation_generation":1,
+            "field_id":null, "selection_generation":2, "composition_generation":3, "source_app":"synthetic.editor"
+        }}
+    });
+    let VoiceWireRequest::TargetBridge(request) = serde_json::from_value(value.clone()).unwrap()
+    else {
+        panic!("wrong variant")
+    };
+    request.validate_for(&peer()).unwrap();
+    for bad_peer in [
+        VoicePeer {
+            client_instance: "other",
+            ..peer()
+        },
+        VoicePeer {
+            server_instance: "other",
+            ..peer()
+        },
+        VoicePeer {
+            policy_epoch: 8,
+            ..peer()
+        },
+        VoicePeer {
+            policy_applied: false,
+            ..peer()
+        },
+    ] {
+        assert!(request.validate_for(&bad_peer).is_err());
+    }
+    let TargetBridgeCommand::Capture { draft } = request.target_bridge.clone() else {
+        unreachable!()
+    };
+    let mut validation = request;
+    validation.target_bridge = TargetBridgeCommand::Validate {
+        target: draft.clone(),
+        purpose: TargetBridgePurpose::Dispatch,
+        operation_id: None,
+    };
+    assert!(validation.validate_for(&peer()).is_err());
+    validation.target_bridge = TargetBridgeCommand::Validate {
+        target: draft,
+        purpose: TargetBridgePurpose::Dispatch,
+        operation_id: Some("operation".into()),
+    };
+    validation.validate_for(&peer()).unwrap();
+    let mut injected = value;
+    injected["target_bridge"]["pid"] = serde_json::json!(42);
+    assert!(serde_json::from_value::<VoiceWireRequest>(injected).is_err());
+}

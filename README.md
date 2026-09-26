@@ -1,4 +1,10 @@
-# Handy
+# Inputia
+
+> 当前本机产品名称是 Inputia。Handy 是上游项目名称和内部兼容标识；本仓库的现行安装、历史、知识库和输入法说明以 [当前开发状态](docs/CURRENT_STATUS.md) 为准。
+
+本机正式版构建与双组件更新流程见 [Inputia 1.0.0 发布说明](docs/verification/2026-09-27-inputia-release.md)。
+
+本 README 仍保留上游 Handy 的跨平台开发说明。涉及本机 Inputia 候选、统一历史、录音/图片附件、知识库和输入法的内容，请先阅读 [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md)。
 
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/invite/WVBeWsNXK4)
 

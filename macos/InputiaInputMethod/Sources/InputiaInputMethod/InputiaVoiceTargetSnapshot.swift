@@ -1,395 +1,124 @@
-import ApplicationServices
 import Cocoa
 import InputMethodKit
+import Carbon
 
 #if INPUTIA_PAIRED_BUILD
 enum InputiaVoiceTargetSnapshot {
-  private static let diagnosticQueue = DispatchQueue(label: "Inputia.voice-target-diagnostics")
-  private static var diagnosticEvents: [[String: Any]] = []
-  static func allowsHistoryOnlyCapture(reason: String) -> Bool {
-    ["accessibility_permission_required", "field_unobservable", "selection_unobservable",
-     "field_observer_unavailable", "unsupported_focused_role"].contains(reason)
+  static let failedPreCaptureBackoffSeconds: TimeInterval = 2
+  static var lastCaptureFailureReason = "service_unavailable"
+  static func allowsHistoryOnlyCapture(reason: String) -> Bool { reason == "field_unobservable" }
+  static func remainingQueryTimeout(now: TimeInterval, deadline: TimeInterval) -> Float? {
+    now < deadline ? Float(min(0.05, deadline - now)) : nil
   }
-  private(set) static var lastCaptureFailureReason = "unknown"
-  enum DispatchDecision {
-    case dispatch(IMKTextInput)
-    case pending
-  }
-
+  enum DispatchDecision { case dispatch(IMKTextInput), pending }
   final class Snapshot {
-    let fieldID: String
-    let targetID: String
-    let hostInstance: String
-    let controllerID: String
-    let activationGeneration: UInt64
-    let selectionGeneration: UInt64
-    let compositionGeneration: UInt64
-    let sourceApp: String?
     let inputiaTarget: InputiaVoiceTarget
-    let createdAt: TimeInterval
+    var targetID: String { inputiaTarget.target_id }
+    var controllerID: String { inputiaTarget.controller_id }
+    var activationGeneration: UInt64 { inputiaTarget.activation_generation }
+    let compositionGeneration: UInt64
+    let localSelectionGeneration: UInt64
+    let createdAt = ProcessInfo.processInfo.systemUptime
+    let expiresAt: TimeInterval
+    let permissionEpoch: UInt64
     private weak var clientObject: AnyObject?
-    private let clientIdentity: ObjectIdentifier
-    private let initialSelectedRange: NSRange?
-    private let initialAXSelectedRange: CFRange?
-    private let focusedApplication: AXUIElement
-    private let focusedElement: AXUIElement
-    private let observation: Observation
-
-    fileprivate init(
-      fieldID: String,
-      targetID: String,
-      hostInstance: String,
-      controllerID: String,
-      activationGeneration: UInt64,
-      selectionGeneration: UInt64,
-      compositionGeneration: UInt64,
-      sourceApp: String?,
-      client: IMKTextInput,
-      initialSelectedRange: NSRange?,
-      initialAXSelectedRange: CFRange?,
-      focusedApplication: AXUIElement,
-      focusedElement: AXUIElement,
-      observation: Observation
-    ) {
-      self.fieldID = fieldID
-      self.targetID = targetID
-      self.hostInstance = hostInstance
-      self.controllerID = controllerID
-      self.activationGeneration = activationGeneration
-      self.selectionGeneration = selectionGeneration
-      self.compositionGeneration = compositionGeneration
-      self.sourceApp = sourceApp
-      self.createdAt = ProcessInfo.processInfo.systemUptime
-      self.clientObject = client as AnyObject
-      self.clientIdentity = ObjectIdentifier(client as AnyObject)
-      self.initialSelectedRange = initialSelectedRange
-      self.initialAXSelectedRange = initialAXSelectedRange
-      self.focusedApplication = focusedApplication
-      self.focusedElement = focusedElement
-      self.observation = observation
-      self.inputiaTarget = InputiaVoiceTarget(
-        target_id: targetID,
-        host_instance: hostInstance,
-        controller_id: controllerID,
-        activation_generation: activationGeneration,
-        field_id: fieldID,
-        selection_generation: selectionGeneration,
-        composition_generation: compositionGeneration,
-        source_app: sourceApp
-      )
+    private let identity: ObjectIdentifier
+    private let selectedRange: NSRange
+    init(target: InputiaVoiceTarget, client: IMKTextInput, selection: NSRange,
+      compositionGeneration: UInt64, localSelectionGeneration: UInt64, deadline: TimeInterval, permissionEpoch: UInt64) {
+      inputiaTarget = target; clientObject = client as AnyObject; identity = ObjectIdentifier(client as AnyObject)
+      selectedRange = selection; self.compositionGeneration = compositionGeneration
+      self.localSelectionGeneration = localSelectionGeneration
+      expiresAt = deadline; self.permissionEpoch = permissionEpoch
     }
-
     var reusableForShortcut: Bool {
-      !observation.invalidated && ProcessInfo.processInfo.systemUptime - createdAt < 60
+      ProcessInfo.processInfo.systemUptime < expiresAt && InputiaPermissionLifecycle.shared.permits(permissionEpoch)
     }
-
-    func isCurrentForShortcut(
-      client: IMKTextInput?, controllerID: String, activationGeneration: UInt64,
-      isSensitiveApp: (String, String?) -> Bool, windowTitle: (String) -> String?
-    ) -> Bool {
-      currentClient(client: client, controllerID: controllerID, activationGeneration: activationGeneration,
-        isSensitiveApp: isSensitiveApp, windowTitle: windowTitle) != nil
+    func isCurrentForShortcut(client: IMKTextInput?, controllerID: String, activationGeneration: UInt64,
+      isSensitiveApp: (String, String?) -> Bool, windowTitle: (String) -> InputiaWindowTitleQuery.Result) -> Bool {
+      guard Thread.isMainThread, reusableForShortcut, controllerID == self.controllerID,
+        activationGeneration == self.activationGeneration, !IsSecureEventInputEnabled(),
+        let client, let original = clientObject, ObjectIdentifier(client as AnyObject) == identity,
+        ObjectIdentifier(original) == identity, client.bundleIdentifier() == inputiaTarget.source_app,
+        Self.selectionMatches(selectedRange, client.selectedRange()) else { return false }
+      return true
     }
-
-    private func currentClient(
-      client: IMKTextInput?, controllerID currentControllerID: String,
-      activationGeneration currentActivationGeneration: UInt64,
-      isSensitiveApp: (String, String?) -> Bool, windowTitle: (String) -> String?
-    ) -> IMKTextInput? {
-      guard Thread.isMainThread,
-        currentControllerID == controllerID, currentActivationGeneration == activationGeneration,
-        !IsSecureEventInputEnabled(), let client, let originalClient = clientObject,
-        ObjectIdentifier(client as AnyObject) == clientIdentity,
-        ObjectIdentifier(originalClient) == clientIdentity, !observation.invalidated,
-        let sourceApp, client.bundleIdentifier() == sourceApp,
-        !isSensitiveApp(sourceApp, windowTitle(sourceApp)),
-        rangesMatch(captured: initialSelectedRange, current: validRange(client.selectedRange())),
-        rangesMatch(captured: initialAXSelectedRange, current: InputiaVoiceTargetSnapshot.selectedRange(from: focusedElement)),
-        let focus = InputiaVoiceTargetSnapshot.currentFocus(),
-        CFEqual(focus.application, focusedApplication), CFEqual(focus.element, focusedElement),
-        !InputiaVoiceTargetSnapshot.isSecureTextElement(focus.element)
-      else { return nil }
-      return client
+    /// 键入来源仅放宽自身编辑导致的选区变化；原 AX 字段/焦点仍由服务验证。
+    func isCurrentForTypedOrigin(client: IMKTextInput?, controllerID: String, activationGeneration: UInt64) -> Bool {
+      guard Thread.isMainThread, reusableForShortcut, inputiaTarget.field_id != nil,
+        controllerID == self.controllerID, activationGeneration == self.activationGeneration,
+        !IsSecureEventInputEnabled(), let client, let original = clientObject,
+        ObjectIdentifier(client as AnyObject) == identity, ObjectIdentifier(original) == identity,
+        client.bundleIdentifier() == inputiaTarget.source_app else { return false }
+      return true
     }
-
-    func dispatchDecision(
-      delivery: InputiaVoiceDelivery,
-      client: IMKTextInput?,
-      controllerID currentControllerID: String,
-      activationGeneration currentActivationGeneration: UInt64,
-      latestComposing: String,
-      isSensitiveApp: (String, String?) -> Bool,
-      windowTitle: (String) -> String?
-    ) -> DispatchDecision {
+    private static func selectionMatches(_ captured: NSRange, _ current: NSRange) -> Bool {
+      captured.location != NSNotFound && current == captured
+    }
+    func dispatchDecision(delivery: InputiaVoiceDelivery, client: IMKTextInput?, controllerID: String,
+      activationGeneration: UInt64, latestComposing: String,
+      isSensitiveApp: (String, String?) -> Bool, windowTitle: (String) -> InputiaWindowTitleQuery.Result) -> DispatchDecision {
       guard delivery.target_id == targetID, latestComposing.isEmpty,
-            let client = currentClient(client: client, controllerID: currentControllerID,
-              activationGeneration: currentActivationGeneration, isSensitiveApp: isSensitiveApp, windowTitle: windowTitle),
-            markedRangeIsClear(client.markedRange())
-      else {
-        return .pending
-      }
+        isCurrentForShortcut(client: client, controllerID: controllerID, activationGeneration: activationGeneration,
+          isSensitiveApp: isSensitiveApp, windowTitle: windowTitle), let client,
+        client.markedRange().location == NSNotFound || client.markedRange().length == 0 else { return .pending }
       return .dispatch(client)
     }
   }
-
-  static func capture(
-    client: IMKTextInput,
-    targetID: String,
-    hostInstance: String,
-    controllerID: String,
-    activationGeneration: UInt64,
-    compositionGeneration: UInt64,
-    sourceApp: String
-  ) -> Snapshot? {
-    guard Thread.isMainThread else { return failCapture("not_main_thread") }
-    guard AXIsProcessTrusted() else { return failCapture("accessibility_permission_required") }
-    guard !IsSecureEventInputEnabled() else { return failCapture("secure_input_enabled") }
-    guard let focus = currentFocus() else { return failCapture("field_unobservable") }
-    guard focusedApplicationMatchesSource(focus.application, sourceApp: sourceApp) else {
-      return failCapture("focused_application_mismatch")
-    }
-    guard isEditableTextElement(focus.element) else { return failCapture("unsupported_focused_role") }
-    guard !isSecureTextElement(focus.element) else { return failCapture("secure_text_field") }
-    let imkSelectedRange = validRange(client.selectedRange())
-    let axRange = selectedRange(from: focus.element)
-    guard imkSelectedRange != nil || axRange != nil else {
-      return failCapture("selection_unobservable")
-    }
-    guard let observation = Observation(application: focus.application, element: focus.element) else {
-      return failCapture("field_observer_unavailable")
-    }
-    return Snapshot(
-      fieldID: UUID().uuidString,
-      targetID: targetID,
-      hostInstance: hostInstance,
-      controllerID: controllerID,
-      activationGeneration: activationGeneration,
-      selectionGeneration: imkSelectedRange.map(rangeSignature) ?? axRange.map(rangeSignature) ?? 0,
-      compositionGeneration: compositionGeneration,
-      sourceApp: sourceApp,
-      client: client,
-      initialSelectedRange: imkSelectedRange,
-      initialAXSelectedRange: axRange,
-      focusedApplication: focus.application,
-      focusedElement: focus.element,
-      observation: observation
-    )
-  }
-
-  private static func failCapture(_ reason: String) -> Snapshot? {
-    lastCaptureFailureReason = reason
-    NSLog("inputia_unified_voice_target_capture_failed reason=%@", reason)
-    // IMK进程的stderr可能指向/dev/null；只保留有界错误码，不记录文本或窗口标题。
-    diagnosticQueue.async {
-      let profile = InputiaProfile.current
-      guard profile.isCandidate else { return }
-      do {
-        try profile.validateCandidatePaths()
-        diagnosticEvents.append(["reason": reason, "time": Date().timeIntervalSince1970,
-          "pid": ProcessInfo.processInfo.processIdentifier])
-        diagnosticEvents = Array(diagnosticEvents.suffix(16))
-        let url = profile.root.appendingPathComponent("voice-target-diagnostics.json")
-        try JSONSerialization.data(withJSONObject: diagnosticEvents, options: [.sortedKeys]).write(to: url, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-      } catch {
-        NSLog("inputia_unified_voice_target_diagnostic_write_failed")
-      }
-    }
-    return nil
-  }
-
-  final class Observation {
-    private var observer: AXObserver?
-    private let state = ObservationState()
-    private var refcon: UnsafeMutableRawPointer {
-      Unmanaged.passUnretained(state).toOpaque()
-    }
-    var invalidated: Bool { state.invalidated }
-
-    init?(application: AXUIElement, element: AXUIElement) {
-      var pid: pid_t = 0
-      guard AXUIElementGetPid(application, &pid) == .success else {
-        return nil
-      }
-      var createdObserver: AXObserver?
-      guard AXObserverCreate(pid, InputiaVoiceTargetSnapshot.observerCallback, &createdObserver) == .success,
-            let createdObserver
-      else {
-        return nil
-      }
-      observer = createdObserver
-      let source = AXObserverGetRunLoopSource(createdObserver)
-      CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-      guard add(createdObserver, application, kAXFocusedUIElementChangedNotification as CFString),
-            add(createdObserver, element, kAXSelectedTextChangedNotification as CFString),
-            add(createdObserver, element, kAXValueChangedNotification as CFString),
-            add(createdObserver, element, kAXUIElementDestroyedNotification as CFString)
-      else {
-        CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-        observer = nil
-        return nil
-      }
-    }
-
-    deinit {
-      guard let observer else {
-        return
-      }
-      CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
-    }
-
-    private func add(_ observer: AXObserver, _ element: AXUIElement, _ notification: CFString) -> Bool {
-      AXObserverAddNotification(observer, element, notification, refcon) == .success
-    }
-  }
-
-  private final class ObservationState {
-    var invalidated = false
-  }
-
-  private static let observerCallback: AXObserverCallback = { _, _, _, refcon in
-    guard let refcon else {
-      return
-    }
-    Unmanaged<ObservationState>.fromOpaque(refcon).takeUnretainedValue().invalidated = true
-  }
-
-  static func isWithinDispatchDeadline(_ delivery: InputiaVoiceDelivery) -> Bool {
-    ProcessInfo.processInfo.systemUptime < delivery.dispatchDeadline
-  }
-
-  static func validRange(_ range: NSRange) -> NSRange? {
-    guard range.location != NSNotFound else {
-      return nil
-    }
-    return range
-  }
-
+  static func isWithinDispatchDeadline(_ delivery: InputiaVoiceDelivery) -> Bool { ProcessInfo.processInfo.systemUptime < delivery.dispatchDeadline }
+  static func preCaptureRetryDeadline(after failureTime: TimeInterval) -> TimeInterval { failureTime + failedPreCaptureBackoffSeconds }
+  static func shouldAttemptPreCapture(now: TimeInterval, retryDeadline: TimeInterval?) -> Bool { now >= (retryDeadline ?? 0) }
+  static func validRange(_ range: NSRange) -> NSRange? { range.location == NSNotFound ? nil : range }
   static func rangeSignature(_ range: NSRange) -> UInt64 {
     (UInt64(UInt32(truncatingIfNeeded: range.location)) << 32) | UInt64(UInt32(truncatingIfNeeded: range.length))
   }
-
-  static func rangeSignature(_ range: CFRange) -> UInt64 {
-    (UInt64(UInt32(truncatingIfNeeded: range.location)) << 32) | UInt64(UInt32(truncatingIfNeeded: range.length))
-  }
-
-  private static func rangesMatch(captured: NSRange?, current: NSRange?) -> Bool {
-    switch (captured, current) {
-    case (.none, .none):
-      return true
-    case (.some(let lhs), .some(let rhs)):
-      return lhs.location == rhs.location && lhs.length == rhs.length
-    default:
-      return false
-    }
-  }
-
-  private static func rangesMatch(captured: CFRange?, current: CFRange?) -> Bool {
-    switch (captured, current) {
-    case (.none, .none):
-      return true
-    case (.some(let lhs), .some(let rhs)):
-      return lhs.location == rhs.location && lhs.length == rhs.length
-    default:
-      return false
-    }
-  }
-
-  private static func markedRangeIsClear(_ range: NSRange) -> Bool {
-    range.location == NSNotFound || range.length == 0
-  }
-
-  private static func currentFocus() -> (application: AXUIElement, element: AXUIElement)? {
-    let system = AXUIElementCreateSystemWide()
-    guard let application = copyElementAttribute(system, kAXFocusedApplicationAttribute as CFString) else {
-      return nil
-    }
-    AXUIElementSetMessagingTimeout(application, 0.05)
-    guard let element = copyElementAttribute(application, kAXFocusedUIElementAttribute as CFString) else {
-      return nil
-    }
-    AXUIElementSetMessagingTimeout(element, 0.05)
-    return (application, element)
-  }
-
-  private static func copyElementAttribute(_ element: AXUIElement, _ attribute: CFString) -> AXUIElement? {
-    var value: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
-          let value,
-          CFGetTypeID(value) == AXUIElementGetTypeID()
-    else {
-      return nil
-    }
-    return (value as! AXUIElement)
-  }
-
-  private static func focusedApplicationMatchesSource(_ application: AXUIElement, sourceApp: String) -> Bool {
-    var pid: pid_t = 0
-    guard AXUIElementGetPid(application, &pid) == .success,
-          let frontmost = NSWorkspace.shared.frontmostApplication,
-          frontmost.processIdentifier == pid,
-          frontmost.bundleIdentifier == sourceApp
-    else {
-      return false
-    }
-    return true
-  }
-
-  private static func selectedRange(from element: AXUIElement) -> CFRange? {
-    var value: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value) == .success,
-          let rawValue = value,
-          CFGetTypeID(rawValue) == AXValueGetTypeID()
-    else {
-      return nil
-    }
-    let axValue = rawValue as! AXValue
-    guard AXValueGetType(axValue) == .cfRange else {
-      return nil
-    }
-    var range = CFRange()
-    guard AXValueGetValue(axValue, .cfRange, &range), range.location != kCFNotFound else {
-      return nil
-    }
-    return range
-  }
-
-  private static func isSecureTextElement(_ element: AXUIElement) -> Bool {
-    guard let subrole = stringAttribute(element, kAXSubroleAttribute as CFString) else {
-      return false
-    }
-    return subrole == (kAXSecureTextFieldSubrole as String)
-  }
-
-  private static func isEditableTextElement(_ element: AXUIElement) -> Bool {
-    guard let role = stringAttribute(element, kAXRoleAttribute as CFString) else {
-      return false
-    }
-    let textRoles = [
-      kAXTextFieldRole as String,
-      kAXTextAreaRole as String,
-      kAXComboBoxRole as String,
-    ]
-    guard textRoles.contains(role) else {
-      return false
-    }
-    return boolAttribute(element, kAXIsEditableAttribute as CFString) != false
-  }
-
-  private static func boolAttribute(_ element: AXUIElement, _ attribute: CFString) -> Bool? {
-    var value: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else {
-      return nil
-    }
-    return value as? Bool
-  }
-
-  private static func stringAttribute(_ element: AXUIElement, _ attribute: CFString) -> String? {
-    var value: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else {
-      return nil
-    }
-    return value as? String
-  }
+  static func rangeSignature(_ range: CFRange) -> UInt64 { rangeSignature(NSRange(location: range.location, length: range.length)) }
 }
 #endif
+
+/// 仅一个后台窗口枚举任务；超时不会允许继续积压任务，也不复用旧窗口标题。
+final class InputiaWindowTitleQuery {
+  enum Result { case ready(String?), unavailable }
+  private let lock = NSLock()
+  private let queue = DispatchQueue(label: "Inputia.window-title", qos: .userInitiated)
+  private var busy = false
+
+  func read(timeout: TimeInterval = 0.025, lookup: @escaping () -> Result) -> Result {
+    lock.lock()
+    guard !busy else { lock.unlock(); return .unavailable }
+    busy = true
+    lock.unlock()
+    let reply = Reply()
+    queue.async {
+      let value = lookup()
+      reply.lock.lock(); reply.value = value; reply.lock.unlock()
+      self.lock.lock(); self.busy = false; self.lock.unlock()
+      reply.done.signal()
+    }
+    guard reply.done.wait(timeout: .now() + timeout) == .success else { return .unavailable }
+    reply.lock.lock(); defer { reply.lock.unlock() }
+    return reply.value
+  }
+
+  private final class Reply {
+    let lock = NSLock()
+    let done = DispatchSemaphore(value: 0)
+    var value: Result = .unavailable
+  }
+}
+
+struct InputiaAppContext: Equatable {
+  let bundleId: String
+  let windowTitle: String?
+  var windowTitleAvailable = true
+}
+
+enum InputiaSecureDirectPolicy {
+  private static let secureBundleIds: Set<String> = [
+    "com.apple.SecurityAgent",
+  ]
+
+  static func shouldUseSecureDirectMode(context: InputiaAppContext) -> Bool {
+    secureBundleIds.contains(context.bundleId)
+  }
+}

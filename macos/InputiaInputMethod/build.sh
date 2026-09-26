@@ -7,6 +7,18 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$ROOT_DIR/build-artifact-lock.sh"
 IS_CANDIDATE="${INPUTIA_UNIFIED_CANDIDATE:-0}"
 RUN_ID="${INPUTIA_PROFILE_RUN_ID:-}"
+IS_RELEASE="${INPUTIA_RELEASE:-0}"
+if [[ "$IS_RELEASE" != "0" && "$IS_RELEASE" != "1" ]]; then
+  echo "INPUTIA_RELEASE must be 0 or 1" >&2
+  exit 2
+fi
+# 正式版继续使用已授权的配对身份和数据域，不通过改名绕过认证。
+if [[ "$IS_RELEASE" == "1" ]]; then
+  if [[ "$IS_CANDIDATE" != "1" || -z "${INPUTIA_PAIR_BUILD_METADATA:-}" || -z "${INPUTIA_CODESIGN_IDENTITY:-}" || "$INPUTIA_CODESIGN_IDENTITY" == "-" ]]; then
+    echo "release requires paired candidate mode, public build metadata and a persistent signing certificate" >&2
+    exit 2
+  fi
+fi
 if [[ "$IS_CANDIDATE" != "0" && "$IS_CANDIDATE" != "1" ]]; then
   echo "INPUTIA_UNIFIED_CANDIDATE must be 0 or 1" >&2
   exit 2
@@ -185,6 +197,7 @@ localize_candidate_resources() {
       zh-Hans) candidate_name="Inputia（测试版）" ;;
       zh-Hant) candidate_name="Inputia（測試版）" ;;
     esac
+    [[ "$IS_RELEASE" == "1" ]] && candidate_name="Inputia"
     for key in CFBundleDisplayName CFBundleName "$candidate_id" "$candidate_id.Hans"; do
       /usr/libexec/PlistBuddy -c "Delete :$key" "$strings_file" >/dev/null 2>&1 || true
       /usr/libexec/PlistBuddy -c "Add :$key string $candidate_name" "$strings_file"
@@ -226,6 +239,7 @@ if [[ "${INPUTIA_BUILD_CANDIDATE_LOCALIZATION_SELF_CHECK:-0}" == "1" ]]; then
       zh-Hans) expected_name="Inputia（测试版）" ;;
       zh-Hant) expected_name="Inputia（測試版）" ;;
     esac
+    [[ "$IS_RELEASE" == "1" ]] && expected_name="Inputia"
     for suffix in "" ".Hans"; do
       observed_name="$(/usr/libexec/PlistBuddy -c "Print :$candidate_host_id$suffix" "$strings_file")"
       if [[ "$observed_name" != "$expected_name" ]]; then
@@ -351,11 +365,31 @@ fi
   -target "$TARGET_TRIPLE" \
   -o "$BUILD_DIR/unified-input-profile-self-check"
 
+/usr/bin/swiftc -parse-as-library \
+  "$ROOT_DIR/Tools/InputiaTypedCaptureSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaTypedCapture.swift" \
+  -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-typed-capture-self-check"
+"$BUILD_DIR/inputia-typed-capture-self-check"
+
+/usr/bin/swiftc -parse-as-library \
+  "$ROOT_DIR/Tools/InputiaPersonalizationSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPersonalization.swift" \
+  -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-personalization-self-check"
+"$BUILD_DIR/inputia-personalization-self-check"
+
+/usr/bin/swiftc -parse-as-library -D INPUTIA_PAIRED_BUILD \
+  "$ROOT_DIR/Tools/InputiaPersonalizationFlowSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPersonalization.swift" \
+  -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-personalization-flow-self-check"
+"$BUILD_DIR/inputia-personalization-flow-self-check"
+
 /usr/bin/swiftc \
   "$ROOT_DIR/Sources/InputiaInputMethod/main.swift" \
   "${HOST_SWIFT_DEFINES[@]}" \
   "${PAIR_SWIFT_SOURCES[@]}" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRuntimeDiagnostics.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaTypedCapture.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPersonalization.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHostTextPolicy.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
@@ -363,6 +397,7 @@ fi
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaShortcutClassifier.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExpandedCandidateGridNavigation.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceInputLauncher.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPermissionLifecycle.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceTargetSnapshot.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaFramedConnection.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
@@ -379,6 +414,8 @@ fi
   -framework Security \
   -o "$MACOS_DIR/InputiaInputMethod"
 
+/usr/bin/python3 "$ROOT_DIR/Tools/check_ime_permission_boundary.py" --binary "$MACOS_DIR/InputiaInputMethod"
+
 cp "$ROOT_DIR/Info.plist" "$CONTENTS_DIR/Info.plist"
 if [[ "$IS_CANDIDATE" == "1" ]]; then
   candidate_host_id="com.inputia.inputmethod.Inputia.UnifiedCandidate"
@@ -386,7 +423,7 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $candidate_host_id" "$host_plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia候选" "$host_plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia候选" "$host_plist"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 64" "$host_plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 73" "$host_plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.0" "$host_plist"
   /usr/libexec/PlistBuddy -c "Set :InputMethodConnectionName ${candidate_host_id}_Connection" "$host_plist"
   /usr/libexec/PlistBuddy -c "Set :TISInputSourceID $candidate_host_id" "$host_plist"
@@ -396,6 +433,13 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   /usr/libexec/PlistBuddy -c "Set :ComponentInputModeDict:tsVisibleInputModeOrderedArrayKey:0 $candidate_host_id.Hans" "$host_plist"
   /usr/libexec/PlistBuddy -c "Add :InputiaDevelopmentCandidate bool true" "$host_plist"
   /usr/libexec/PlistBuddy -c "Add :InputiaProfileRunID string $RUN_ID" "$host_plist"
+  if [[ "$IS_RELEASE" == "1" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia" "$host_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia" "$host_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 74" "$host_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.0" "$host_plist"
+    /usr/libexec/PlistBuddy -c "Add :InputiaReleaseChannel string stable" "$host_plist"
+  fi
 fi
 cp -R "$ROOT_DIR/Resources/." "$RESOURCES_DIR/"
 if [[ "$IS_CANDIDATE" == "1" ]]; then
@@ -458,9 +502,20 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   -framework AppKit \
   -o "$BUILD_DIR/inputia-handy-memory-sync-self-check"
 
+/usr/bin/swiftc -parse-as-library \
+  "$ROOT_DIR/Tools/InputiaCandidateIdentitySelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
+  "${CAPI_LINK_ARGS[@]}" \
+  -target "$TARGET_TRIPLE" -framework AppKit \
+  -o "$BUILD_DIR/inputia-candidate-identity-self-check"
+"$BUILD_DIR/inputia-candidate-identity-self-check"
+
 /usr/bin/swiftc \
   "$ROOT_DIR/Tools/InputiaVoiceInputLauncherSelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceInputLauncher.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPermissionLifecycle.swift" \
   -target "$TARGET_TRIPLE" \
   -framework AppKit \
   -o "$BUILD_DIR/inputia-voice-input-launcher-self-check"
@@ -476,6 +531,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "${HOST_SWIFT_DEFINES[@]}" \
   "$ROOT_DIR/Tools/InputiaVoiceTargetSnapshotSelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceTargetSnapshot.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPermissionLifecycle.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaFramedConnection.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
@@ -486,6 +542,19 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   -framework ApplicationServices \
   -framework Security \
   -o "$BUILD_DIR/inputia-voice-target-snapshot-self-check"
+
+# 合成权限测试：不查询或修改系统权限，不访问用户文本。
+/usr/bin/swiftc "$ROOT_DIR/Tools/InputiaPermissionLifecycleSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPermissionLifecycle.swift" \
+  -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-permission-lifecycle-self-check"
+"$BUILD_DIR/inputia-permission-lifecycle-self-check"
+
+# 有界后台查询自检：模拟挂起任务，不访问真实窗口。
+/usr/bin/swiftc "$ROOT_DIR/Tools/InputiaWindowTitleQuerySelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceTargetSnapshot.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPermissionLifecycle.swift" \
+  -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-window-title-query-self-check"
+"$BUILD_DIR/inputia-window-title-query-self-check"
 
 # 配对协议/短词缓存使用合成socket自检；不启动GUI、麦克风或读取用户词库。
 for check in InputiaVoiceServiceSelfCheck InputiaSharedTermsSelfCheck; do
@@ -544,10 +613,17 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.inputia.settings.UnifiedCandidate" "$settings_plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia候选设置" "$settings_plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia候选设置" "$settings_plist"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 64" "$settings_plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 73" "$settings_plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.0" "$settings_plist"
   /usr/libexec/PlistBuddy -c "Add :InputiaDevelopmentCandidate bool true" "$settings_plist"
   /usr/libexec/PlistBuddy -c "Add :InputiaProfileRunID string $RUN_ID" "$settings_plist"
+  if [[ "$IS_RELEASE" == "1" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia设置" "$settings_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia设置" "$settings_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 74" "$settings_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.0" "$settings_plist"
+    /usr/libexec/PlistBuddy -c "Add :InputiaReleaseChannel string stable" "$settings_plist"
+  fi
 fi
 cp "$RESOURCES_DIR/Inputia.icns" "$SETTINGS_RESOURCES_DIR/Inputia.icns"
 /usr/bin/plutil -lint "$SETTINGS_CONTENTS_DIR/Info.plist"

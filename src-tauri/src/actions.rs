@@ -18,6 +18,9 @@ use crate::utils::{
 };
 use crate::TranscriptionCoordinator;
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
+use inputia_handy_runtime::decision::{
+    DecisionLimits, DecisionQuestion, DecisionRequest, DecisionResponse,
+};
 use log::{debug, error, warn};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -34,6 +37,7 @@ async fn prepare_owned_voice_result(
     start: inputia_handy_runtime::voice_protocol::VoiceRequest,
     history_id: i64,
     text: String,
+    permission_epoch: u64,
 ) -> Result<(), String> {
     let service = app
         .try_state::<Arc<crate::managers::integration::IntegrationManager>>()
@@ -42,7 +46,9 @@ async fn prepare_owned_voice_result(
         .clone();
     let task_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        crate::input_permission::check_epoch(permission_epoch)?;
         let output = service.prepare_saved_voice_result(start.clone(), history_id, text)?;
+        crate::input_permission::check_epoch(permission_epoch)?;
         let coordinator = task_app
             .try_state::<TranscriptionCoordinator>()
             .ok_or("语音协调器不可用")?;
@@ -526,7 +532,12 @@ pub(crate) async fn process_transcription_output(
         && settings
             .active_post_process_provider()
             .is_some_and(|provider| provider.id == LOCAL_POST_PROCESS_PROVIDER_ID);
-    if !local_provider_selected {
+    let allow_custom_word_correction = if local_provider_selected {
+        false
+    } else {
+        local_decision_allows_custom_words(final_text.clone(), settings.custom_words.clone()).await
+    };
+    if allow_custom_word_correction {
         if let Some(corrected_text) =
             crate::custom_words_model::correct_custom_words(app, &settings, &final_text).await
         {
@@ -562,6 +573,66 @@ pub(crate) async fn process_transcription_output(
         post_processed_text,
         post_process_prompt,
     }
+}
+
+/// 本地判断模型只负责决定是否值得运行已有的受限自定义词纠错器。
+/// 没有显式配置 worker、worker 失败或响应不可信时返回 true，保持旧行为。
+async fn local_decision_allows_custom_words(text: String, custom_words: Vec<String>) -> bool {
+    if crate::decision_worker::DecisionWorker::configured().is_none() {
+        return true;
+    }
+    let request = DecisionRequest {
+        protocol_version: inputia_handy_runtime::decision::PROTOCOL_VERSION,
+        request_id: format!("route-{}", uuid_like_id()),
+        model_id: "laya-multilingual-mlx".into(),
+        state: serde_json::json!({ "text": text, "custom_words": custom_words }),
+        questions: [(
+            "route".into(),
+            DecisionQuestion::Choice {
+                instructions: "Choose the safest processing route. Choose keep unless an authorized custom term correction is clearly needed.".into(),
+                criteria: [
+                    ("keep".into(), "No change is needed".into()),
+                    ("custom_word".into(), "Only an authorized custom-word correction is needed".into()),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        )]
+        .into_iter()
+        .collect(),
+        limits: DecisionLimits {
+            deadline_ms: 180,
+            max_input_chars: 4_000,
+        },
+    };
+    let response: Option<DecisionResponse> = tokio::time::timeout(
+        Duration::from_millis(180),
+        tauri::async_runtime::spawn_blocking(move || crate::decision_worker::request(request)),
+    )
+    .await
+    .ok()
+    .and_then(|result| result.ok())
+    .flatten();
+    response
+        .and_then(|value| {
+            value.answers.get("route").and_then(|answer| match answer {
+                inputia_handy_runtime::decision::DecisionAnswer::Choice {
+                    selected,
+                    abstained,
+                    ..
+                } if !abstained => Some(selected == "custom_word"),
+                _ => None,
+            })
+        })
+        .unwrap_or(true)
+}
+
+fn uuid_like_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos().to_string())
+        .unwrap_or_else(|_| "0".into())
 }
 
 impl ShortcutAction for TranscribeAction {
@@ -813,6 +884,7 @@ impl ShortcutAction for TranscribeAction {
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process;
         let cancel_generation = rm.cancel_generation();
+        let input_permission_epoch = crate::input_permission::capture_epoch();
 
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone());
@@ -961,6 +1033,16 @@ impl ShortcutAction for TranscribeAction {
                                 error!("Failed to save history entry: {}", err);
                             }
 
+                            if let Err(error) = input_permission_epoch
+                                .as_ref()
+                                .map_err(Clone::clone)
+                                .and_then(|epoch| crate::input_permission::check_epoch(*epoch))
+                            {
+                                debug!("Discarding stale transcription output: {error}");
+                                utils::hide_recording_overlay(&ah);
+                                set_tray_state(&ah, TrayIconState::Idle);
+                                return;
+                            }
                             if let Some(start) = owned_voice {
                                 // 归属在Stop时冻结；准备失败也不能落入平台paste成为第二所有者。
                                 if !processed.final_text.is_empty() {
@@ -971,6 +1053,10 @@ impl ShortcutAction for TranscribeAction {
                                                 start,
                                                 entry.id,
                                                 processed.final_text,
+                                                *input_permission_epoch
+                                                    .as_ref()
+                                                    .map_err(Clone::clone)
+                                                    .unwrap_or(&0),
                                             )
                                             .await
                                         }
@@ -994,7 +1080,19 @@ impl ShortcutAction for TranscribeAction {
                                 let paste_time = Instant::now();
                                 let final_text = processed.final_text;
                                 let rm_for_paste = Arc::clone(&rm);
+                                let permission_epoch = input_permission_epoch;
                                 ah.run_on_main_thread(move || {
+                                    let _permission_scope = match permission_epoch
+                                        .and_then(crate::input_permission::RequestScope::enter)
+                                    {
+                                        Ok(scope) => scope,
+                                        Err(error) => {
+                                            debug!("Discarding stale queued paste: {error}");
+                                            utils::hide_recording_overlay(&ah_clone);
+                                            set_tray_state(&ah_clone, TrayIconState::Idle);
+                                            return;
+                                        }
+                                    };
                                     if rm_for_paste.was_cancelled_since(cancel_generation) {
                                         debug!("Transcription operation cancelled before paste");
                                         utils::hide_recording_overlay(&ah_clone);

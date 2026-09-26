@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""受控更新候选两组件：固定身份、维护屏障、事务回滚；不读写TCC授权。"""
+import argparse
+import fcntl
+import sqlite3
+import json
+import os
+from pathlib import Path
+import plistlib
+import re
+import shutil
+import signal
+import subprocess
+import tempfile
+import time
+import uuid
+
+ROOT = Path(__file__).resolve().parent
+REPO = ROOT.parent.parent
+
+
+def run(*args, timeout=30):
+    return subprocess.check_output([str(a) for a in args], stderr=subprocess.STDOUT, text=True, timeout=timeout)
+
+
+def canonical(path):
+    path = Path(path).absolute()
+    if path.resolve() != path or path.is_symlink():
+        raise ValueError(f"拒绝符号链接或非标准路径: {path}")
+    return path
+
+
+def atomic_json(path, data):
+    fd, temporary = tempfile.mkstemp(prefix='.permission-update-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            json.dump(data, stream); stream.flush(); os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary): os.unlink(temporary)
+
+
+def identity(path):
+    text = run('/usr/bin/codesign', '-d', '-r-', path)
+    requirement = next(line.split('designated => ', 1)[1] for line in text.splitlines() if 'designated => ' in line)
+    if 'certificate' not in requirement or 'cdhash' in requirement:
+        raise ValueError('更新必须保留稳定的证书身份，拒绝临时哈希签名')
+    run('/usr/bin/codesign', '--verify', '--deep', '--strict', path)
+    return requirement
+
+
+def process_ids(apps):
+    executables = set()
+    for app in apps:
+        with (app/'Contents/Info.plist').open('rb') as f: info = plistlib.load(f)
+        executables.add(str(app/'Contents/MacOS'/info['CFBundleExecutable']))
+    found = []
+    for line in run('/bin/ps', '-axo', 'pid=,comm=').splitlines():
+        bits = line.strip().split(None, 1)
+        if len(bits) == 2 and bits[1] in executables: found.append(int(bits[0]))
+    return found
+
+
+def stop_known(apps):
+    # 每个PID须仍运行与当前安装文件相同的映像，才发送终止信号。
+    for app in apps:
+        for pid in process_ids([app]):
+            run('/bin/bash', ROOT/'install-check.sh', '--running-identity', app, pid)
+            os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic()+5
+    while process_ids(apps):
+        if time.monotonic() >= deadline:
+            raise RuntimeError('组件尚未退出；停止更新，保留备份，不覆盖运行中的程序')
+        time.sleep(.1)
+
+
+def maintenance_ready(profile, live_pids, marker_epoch=None, now=None):
+    now = time.time() if now is None else now
+    covered = set()
+    live = set(live_pids)
+    for name in ['permission-health-background.json', 'permission-health-ime.json']:
+        try:
+            data = json.loads((profile/name).read_text())
+            # 已退出的组件不再提供新回执；仍运行的每个 PID 必须完整确认。
+            if data['pid'] not in live: continue
+            if now - data['updated_at_ms']/1000 > 5 or data['updated_at_ms']/1000 > now+1: return False
+            if marker_epoch is not None and data.get('maintenance_marker_epoch') != marker_epoch and data.get('marker_epoch') != marker_epoch:
+                return False
+            if data.get('state') not in ['maintenance', 'stopped'] and data.get('maintenance_state') != 'active': return False
+            covered.add(data['pid'])
+        except (OSError, ValueError, KeyError, TypeError): continue
+    return live.issubset(covered)
+
+
+def install_transaction(destinations, staged, backups, pair_path, new_pair, old_pair):
+    moved, installed = [], []
+    try:
+        for dst, src, backup in zip(destinations, staged, backups):
+            dst.rename(backup); moved.append((dst, backup))
+            src.rename(dst); installed.append(dst)
+        shutil.copy2(new_pair, pair_path.with_suffix('.update'))
+        os.replace(pair_path.with_suffix('.update'), pair_path)
+    except Exception:
+        for path in installed: shutil.rmtree(path)
+        for dst, backup in reversed(moved): backup.rename(dst)
+        shutil.copy2(old_pair, pair_path)
+        raise
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--run-id', required=True)
+    parser.add_argument('--control-app', required=True)
+    parser.add_argument('--inputia-app', required=True)
+    parser.add_argument('--pair-manifest', required=True)
+    parser.add_argument('--public-build', required=True)
+    parser.add_argument('--apply', action='store_true', help='默认只校验；此开关才执行更新')
+    args = parser.parse_args()
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', args.run_id): raise ValueError('invalid run ID')
+    profile = canonical(Path.home()/'Library/Application Support/HandyUnifiedCandidate'/args.run_id)
+    pair = profile/'pair-manifest.json'
+    # 同一profile不允许两个更新器交错替换包或配对清单。
+    lock_fd = os.open(profile/'.candidate-update.lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(lock_fd)
+        raise RuntimeError('另一个候选更新正在执行')
+    destinations = [canonical('/Applications/Inputia Candidate.app'), canonical(Path.home()/'Library/Input Methods/InputiaUnifiedCandidate.app')]
+    sources = [canonical(args.control_app), canonical(args.inputia_app)]
+    for old, new in zip(destinations, sources):
+        if old == new: raise ValueError('构建源不能是当前安装')
+        if identity(old) != identity(new): raise ValueError('更新签名身份改变；拒绝要求用户反复重新授权')
+    metadata = canonical(args.public_build); manifest = canonical(args.pair_manifest)
+    # 验证编译期公开元数据的归属/权限/内容；不使用清单本身提供的新信任根。
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('build_trust', REPO/'native/unified-pair-auth/build_trust.py')
+    trust_module = importlib.util.module_from_spec(spec); spec.loader.exec_module(trust_module)
+    trust_module.load(metadata, args.run_id)
+    with tempfile.TemporaryDirectory(prefix='inputia-update-verify-') as temporary:
+        verifier = Path(temporary)/'verify'
+        run('/usr/bin/swiftc', '-parse-as-library', REPO/'native/unified-pair-auth/UnifiedPairAuth.swift', ROOT/'Tools/CandidateUpdateVerify.swift', '-o', verifier, timeout=90)
+        print(run(verifier, metadata, pair, manifest, *sources, args.run_id).strip())
+        if not args.apply:
+            print('updatePreflight=true permissionRecordsUnchanged=true'); return
+        db_path = profile/'Handy/integration.db'
+        with sqlite3.connect(db_path.as_uri()+'?mode=ro', uri=True) as db:
+            active = db.execute("select count(*) from unified_voice_sessions where retired=0 and json_extract(view_json,'$.phase') in ('preparing','recording','processing')").fetchone()[0]
+        if active:
+            raise RuntimeError('语音会话正在进行，未更新程序或改变维护状态')
+        backup_base = Path.home()/'Library/Application Support/HandyUnifiedBuilds'
+        backup_base.mkdir(mode=0o700, parents=True, exist_ok=True)
+        backup = Path(tempfile.mkdtemp(prefix='permission-update-', dir=backup_base))
+        staged = [backup/'control-staged.app', backup/'ime-staged.app']
+        for src, dst in zip(sources, staged): shutil.copytree(src, dst, symlinks=True)
+        shutil.copy2(pair, backup/'pair-before.json')
+        shutil.copy2(manifest, backup/'pair-new.json')
+        print(run(verifier, metadata, pair, backup/'pair-new.json', *staged, args.run_id).strip())
+        marker = profile/'permission-maintenance.json'
+        token = str(uuid.uuid4())
+        atomic_json(marker, {'schema_version':1, 'active':True, 'epoch':token})
+        print(f'updateBackup={backup}', flush=True)
+        with (destinations[1]/'Contents/Info.plist').open('rb') as f: old_version = int(plistlib.load(f)['CFBundleVersion'])
+        pids = process_ids(destinations)
+        if old_version >= 67 and pids:
+            deadline = time.monotonic()+10
+            while not maintenance_ready(profile, pids, token):
+                if time.monotonic() >= deadline: raise RuntimeError('维护屏障未确认，未修改程序；保持暂停以便诊断')
+                time.sleep(.2)
+        # 首次从66升级时尚无维护协议，但仍必须先切离且确认所有旧进程退出。
+        tis = Path(temporary)/'tis'
+        run('/usr/bin/swiftc', '-parse-as-library', ROOT/'Tools/InputiaTISTool.swift', '-o', tis)
+        current = run(tis, '--dump-current-input-source')
+        previous_source = next(line[3:] for line in current.splitlines() if line.startswith('id='))
+        switched = run(tis, '--select-source-id', 'com.apple.keylayout.ABC')
+        if 'selectCurrentMatchesTarget=true' not in switched: raise RuntimeError('未确认切离输入法，停止更新')
+        stop_known(destinations)
+        install_transaction(destinations, staged, [backup/'control-before.app', backup/'ime-before.app'], pair, backup/'pair-new.json', backup/'pair-before.json')
+        try:
+            run(verifier, metadata, backup/'pair-before.json', pair, *destinations, args.run_id)
+            atomic_json(marker, {'schema_version':1, 'active':False, 'epoch':str(uuid.uuid4())})
+            run('/usr/bin/open', '-a', destinations[0], '--args', '--start-hidden')
+            run('/usr/bin/open', '-a', destinations[1])
+            deadline = time.monotonic()+10
+            while len(process_ids(destinations)) < 2:
+                if time.monotonic() >= deadline: raise RuntimeError('新组件未启动')
+                time.sleep(.2)
+            for app in destinations:
+                pids = process_ids([app])
+                if len(pids) != 1: raise RuntimeError('检测到重复组件进程')
+                print(run('/bin/bash', ROOT/'install-check.sh', '--running-identity', app, pids[0]).strip())
+            # 恢复原输入源；没有权限的语音功能仍由后端闭门，不更改系统授权。
+            restored = run(tis, '--select-source-id', previous_source)
+            if 'selectCurrentMatchesTarget=true' not in restored:
+                raise RuntimeError('原输入源恢复未得到确认')
+            print(restored.strip())
+        except Exception:
+            atomic_json(marker, {'schema_version':1, 'active':True, 'epoch':str(uuid.uuid4())})
+            stop_known(destinations)
+            for target, old in zip(destinations, [backup/'control-before.app', backup/'ime-before.app']):
+                target.rename(backup/(target.stem+'-failed.app')); shutil.copytree(old, target, symlinks=True)
+            shutil.copy2(backup/'pair-before.json', pair)
+            raise
+        print('candidateUpdate=true tccChanged=false previousRecordingsReplayed=false')
+
+
+if __name__ == '__main__':
+    main()

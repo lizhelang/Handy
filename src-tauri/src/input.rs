@@ -148,14 +148,81 @@ mod macos {
 
 /// Wrapper for Enigo to store in Tauri's managed state.
 /// Enigo is wrapped in a Mutex since it requires mutable access.
-pub struct EnigoState(pub Mutex<Enigo>);
+pub struct EnigoState(pub Mutex<Option<Enigo>>);
 
 impl EnigoState {
     pub fn new() -> Result<Self, String> {
-        let enigo = Enigo::new(&Settings::default())
-            .map_err(|e| format!("Failed to initialize Enigo: {}", e))?;
-        Ok(Self(Mutex::new(enigo)))
+        let enigo = Enigo::new(&Settings {
+            open_prompt_to_get_permissions: false,
+            ..Settings::default()
+        })
+        .map_err(|e| format!("Failed to initialize Enigo: {}", e))?;
+        Ok(Self(Mutex::new(Some(enigo))))
     }
+}
+
+/// Creation is only admitted after a passive check for this epoch.
+pub fn initialize_enigo(app: &AppHandle, epoch: u64) -> Result<(), String> {
+    if crate::input_permission::initializing_epoch()? != epoch {
+        return Err("stale_input_initialization".into());
+    }
+    if app.try_state::<EnigoState>().is_none() {
+        app.manage(EnigoState(Mutex::new(None)));
+    }
+    let state = app.state::<EnigoState>();
+    let mut slot = state.0.try_lock().map_err(|_| "input_device_busy")?;
+    if slot.is_none() {
+        let mut new = EnigoState::new()?
+            .0
+            .into_inner()
+            .map_err(|_| "input_device_poisoned")?;
+        if crate::input_permission::initializing_epoch()? != epoch {
+            return Err("stale_input_initialization".into());
+        }
+        *slot = new.take();
+    }
+    Ok(())
+}
+/// Runs on the lifecycle worker. No UI thread waits for a busy input device.
+pub fn retire_enigo(app: &AppHandle) -> Result<(), String> {
+    let Some(state) = app.try_state::<EnigoState>() else {
+        return Ok(());
+    };
+    let old = state
+        .0
+        .try_lock()
+        .map_err(|_| "input_device_busy_restart_required")?
+        .take();
+    drop(old);
+    Ok(())
+}
+
+/// Reject each new press/click after invalidation; releases of keys already
+/// pressed by this sequence remain best-effort cleanup, never proof of delivery.
+pub fn guarded_keys(enigo: &mut Enigo, keys: &[Key], hold_ms: u64) -> Result<(), String> {
+    let epoch = crate::input_permission::capture_epoch()?;
+    let mut pressed = Vec::new();
+    let result = (|| {
+        for key in keys.iter().take(keys.len().saturating_sub(1)) {
+            crate::input_permission::check_epoch(epoch)?;
+            enigo
+                .key(*key, enigo::Direction::Press)
+                .map_err(|e| e.to_string())?;
+            pressed.push(*key);
+        }
+        if let Some(key) = keys.last() {
+            crate::input_permission::check_epoch(epoch)?;
+            enigo
+                .key(*key, enigo::Direction::Click)
+                .map_err(|e| e.to_string())?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(hold_ms));
+        crate::input_permission::check_epoch(epoch)
+    })();
+    for key in pressed.into_iter().rev() {
+        let _ = enigo.key(key, enigo::Direction::Release);
+    }
+    result
 }
 
 /// Get the current mouse cursor position using the managed Enigo instance.
@@ -163,7 +230,7 @@ impl EnigoState {
 pub fn get_cursor_position(app_handle: &AppHandle) -> Option<(i32, i32)> {
     let enigo_state = app_handle.try_state::<EnigoState>()?;
     let enigo = enigo_state.0.lock().ok()?;
-    enigo.location().ok()
+    enigo.as_ref()?.location().ok()
 }
 
 /// Sends a Ctrl+V or Cmd+V paste command using platform-specific virtual key codes.
@@ -185,21 +252,7 @@ pub fn send_paste_ctrl_v(enigo: &mut Enigo, hold_ms: u64) -> Result<(), String> 
     #[cfg(target_os = "linux")]
     let (modifier_key, v_key_code) = (Key::Control, Key::Unicode('v'));
 
-    // Press modifier + V
-    enigo
-        .key(modifier_key, enigo::Direction::Press)
-        .map_err(|e| format!("Failed to press modifier key: {}", e))?;
-    enigo
-        .key(v_key_code, enigo::Direction::Click)
-        .map_err(|e| format!("Failed to click V key: {}", e))?;
-
-    std::thread::sleep(std::time::Duration::from_millis(hold_ms));
-
-    enigo
-        .key(modifier_key, enigo::Direction::Release)
-        .map_err(|e| format!("Failed to release modifier key: {}", e))?;
-
-    Ok(())
+    guarded_keys(enigo, &[modifier_key, v_key_code], hold_ms)
 }
 
 /// Sends a Ctrl+Shift+V paste command.
@@ -214,27 +267,7 @@ pub fn send_paste_ctrl_shift_v(enigo: &mut Enigo, hold_ms: u64) -> Result<(), St
     #[cfg(target_os = "linux")]
     let (modifier_key, v_key_code) = (Key::Control, Key::Unicode('v'));
 
-    // Press Ctrl/Cmd + Shift + V
-    enigo
-        .key(modifier_key, enigo::Direction::Press)
-        .map_err(|e| format!("Failed to press modifier key: {}", e))?;
-    enigo
-        .key(Key::Shift, enigo::Direction::Press)
-        .map_err(|e| format!("Failed to press Shift key: {}", e))?;
-    enigo
-        .key(v_key_code, enigo::Direction::Click)
-        .map_err(|e| format!("Failed to click V key: {}", e))?;
-
-    std::thread::sleep(std::time::Duration::from_millis(hold_ms));
-
-    enigo
-        .key(Key::Shift, enigo::Direction::Release)
-        .map_err(|e| format!("Failed to release Shift key: {}", e))?;
-    enigo
-        .key(modifier_key, enigo::Direction::Release)
-        .map_err(|e| format!("Failed to release modifier key: {}", e))?;
-
-    Ok(())
+    guarded_keys(enigo, &[modifier_key, Key::Shift, v_key_code], hold_ms)
 }
 
 /// Sends a Shift+Insert paste command (Windows and Linux only).
@@ -246,26 +279,14 @@ pub fn send_paste_shift_insert(enigo: &mut Enigo, hold_ms: u64) -> Result<(), St
     #[cfg(not(target_os = "windows"))]
     let insert_key_code = Key::Other(0x76); // XK_Insert (keycode 118 / 0x76, also used as fallback)
 
-    // Press Shift + Insert
-    enigo
-        .key(Key::Shift, enigo::Direction::Press)
-        .map_err(|e| format!("Failed to press Shift key: {}", e))?;
-    enigo
-        .key(insert_key_code, enigo::Direction::Click)
-        .map_err(|e| format!("Failed to click Insert key: {}", e))?;
-
-    std::thread::sleep(std::time::Duration::from_millis(hold_ms));
-
-    enigo
-        .key(Key::Shift, enigo::Direction::Release)
-        .map_err(|e| format!("Failed to release Shift key: {}", e))?;
-
-    Ok(())
+    guarded_keys(enigo, &[Key::Shift, insert_key_code], hold_ms)
 }
 
 /// Pastes text directly using the enigo text method.
 /// This tries to use system input methods if possible, otherwise simulates keystrokes one by one.
 pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {
+    let epoch = crate::input_permission::capture_epoch()?;
+    crate::input_permission::check_epoch(epoch)?;
     enigo
         .text(text)
         .map_err(|e| format!("Failed to send text directly: {}", e))?;

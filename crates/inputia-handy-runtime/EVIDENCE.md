@@ -57,3 +57,9 @@ completion_count_for_prefix_中国=1
 - 导入目标是 `/tmp` 下的 Inputia 记忆库，未写入现有 `history.db` / `clipboard.db`。
 - 合成数据库测试验证了源表行数导入前后不变。
 - 来自 `com.1password.1password` 的剪贴板文本不会进入 completion，敏感 App 默认不学习规则在 runtime 层仍然生效。
+
+## 2026-09-24：完整历史与附件迁移
+
+上面的 2026-07-06 记录是“只读导入到临时 Inputia memory”的早期阶段证据，不能代表当前历史查看器能力。当前统一历史已接入目标 `history.db` / `clipboard.db` 投影，因此语音和图片附件可以在 Inputia 历史页中预览。
+
+完整迁移结果和备份位置见 [`docs/verification/2026-09-24-handy-history-migration.md`](../../docs/verification/2026-09-24-handy-history-migration.md)。迁移脚本按源内容哈希去重、复制录音/图片附件并可重复执行；源 Handy 数据已从原位置移入备份，未删除源码目录。

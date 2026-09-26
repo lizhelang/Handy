@@ -137,6 +137,7 @@ struct LiveBackend {
 
 impl Backend for LiveBackend {
     fn resolve(&mut self, active: bool) -> Result<Option<Target>, String> {
+        let active = active && crate::input_permission::capture_epoch().is_ok();
         if self.fallback_active != Some(active) {
             if active {
                 crate::secure_input::register_cancel_fallback(&self.app);
@@ -171,6 +172,7 @@ impl Backend for LiveBackend {
     }
 
     fn register(&mut self, target: &Target) -> Result<(), String> {
+        crate::input_permission::capture_epoch()?;
         match target.backend {
             KeyboardImplementation::Tauri => {
                 tauri_impl::register_shortcut(&self.app, target.binding.clone())

@@ -19,6 +19,11 @@ use crate::audio_toolkit::{
     VoiceActivityDetector,
 };
 
+const STOP_TIMEOUT: Duration = Duration::from_secs(3);
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+const CLOSE_TIMEOUT: Duration = Duration::from_millis(100);
+const OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+
 enum Cmd {
     /// Begin capturing. Carries the send timestamp so the consumer can log how
     /// long the command sat in the channel, plus a one-shot acknowledgement
@@ -89,6 +94,8 @@ pub struct AudioRecorder {
     config_cache: Arc<Mutex<Option<(String, cpal::SupportedStreamConfig)>>>,
     /// Set by cpal when the active input stream can no longer capture.
     stream_error: Arc<AtomicBool>,
+    shutdown_requested: AtomicBool,
+    stop_flag: Arc<AtomicBool>,
 }
 
 impl AudioRecorder {
@@ -103,6 +110,8 @@ impl AudioRecorder {
             selected_channel: None,
             config_cache: Arc::new(Mutex::new(None)),
             stream_error: Arc::new(AtomicBool::new(false)),
+            shutdown_requested: AtomicBool::new(false),
+            stop_flag: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -161,10 +170,12 @@ impl AudioRecorder {
                 return Ok(()); // already open
             }
             log::warn!("Capture stream failed; rebuilding microphone stream");
-            let _ = self.close();
+            self.close()?;
         }
 
         self.stream_error.store(false, Ordering::Relaxed);
+        self.shutdown_requested.store(false, Ordering::Release);
+        self.stop_flag.store(false, Ordering::Relaxed);
 
         let (sample_tx, sample_rx) = mpsc::channel::<AudioChunk>();
         let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
@@ -188,8 +199,8 @@ impl AudioRecorder {
         let config_cache = Arc::clone(&self.config_cache);
         let stream_error = Arc::clone(&self.stream_error);
 
+        let stop_flag = Arc::clone(&self.stop_flag);
         let worker = std::thread::spawn(move || {
-            let stop_flag = Arc::new(AtomicBool::new(false));
             let stop_flag_for_stream = stop_flag.clone();
             let init_result = (|| -> Result<(cpal::Stream, u32), String> {
                 let config_started = Instant::now();
@@ -328,6 +339,7 @@ impl AudioRecorder {
                         audio_cb,
                         stop_flag,
                         stream_running_at,
+                        stream_error,
                     );
                     drop(stream);
                 }
@@ -342,15 +354,14 @@ impl AudioRecorder {
             }
         });
 
-        match init_rx.recv() {
-            Ok(Ok(())) => {
-                self.device = Some(device);
-                self.cmd_tx = Some(cmd_tx);
-                self.worker_handle = Some(worker);
-                Ok(())
-            }
+        // Retain ownership even if initialization stalls in an OS driver.
+        self.device = Some(device);
+        self.cmd_tx = Some(cmd_tx);
+        self.worker_handle = Some(worker);
+        match init_rx.recv_timeout(OPEN_TIMEOUT) {
+            Ok(Ok(())) => Ok(()),
             Ok(Err(error_message)) => {
-                let _ = worker.join();
+                let _ = self.close();
                 let kind = if is_microphone_access_denied(&error_message) {
                     std::io::ErrorKind::PermissionDenied
                 } else {
@@ -359,7 +370,7 @@ impl AudioRecorder {
                 Err(Box::new(Error::new(kind, error_message)))
             }
             Err(recv_error) => {
-                let _ = worker.join();
+                self.request_shutdown();
                 Err(Box::new(Error::other(format!(
                     "Failed to initialize microphone worker: {recv_error}"
                 ))))
@@ -375,6 +386,11 @@ impl AudioRecorder {
         &self,
         vad_policy: VadPolicy,
     ) -> Result<mpsc::Receiver<()>, Box<dyn std::error::Error>> {
+        if self.needs_reopen() {
+            return Err(Box::new(Error::other(
+                "Recorder worker is shutting down or failed",
+            )));
+        }
         let tx = self
             .cmd_tx
             .as_ref()
@@ -385,11 +401,37 @@ impl AudioRecorder {
     }
 
     pub fn stop(&self) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
-        let (resp_tx, resp_rx) = mpsc::channel();
-        if let Some(tx) = &self.cmd_tx {
-            tx.send(Cmd::Stop(resp_tx))?;
+        if self.shutdown_requested.load(Ordering::Acquire) {
+            return Err(Box::new(Error::other("Recorder worker is shutting down")));
         }
-        Ok(resp_rx.recv()?) // wait for the samples
+        let tx = self
+            .cmd_tx
+            .as_ref()
+            .ok_or_else(|| Error::other("Recorder is not open"))?;
+        let (resp_tx, resp_rx) = mpsc::channel();
+        if tx.send(Cmd::Stop(resp_tx)).is_err() {
+            self.request_shutdown();
+            return Err(Box::new(Error::other("Recorder worker disconnected")));
+        }
+        match resp_rx.recv_timeout(STOP_TIMEOUT) {
+            Ok(samples) => Ok(samples),
+            Err(error) => {
+                self.request_shutdown();
+                Err(Box::new(Error::other(format!(
+                    "Failed to stop recorder: {error}"
+                ))))
+            }
+        }
+    }
+
+    fn request_shutdown(&self) {
+        // Stop callback production immediately, even if the consumer is stuck.
+        self.stop_flag.store(true, Ordering::Relaxed);
+        if !self.shutdown_requested.swap(true, Ordering::AcqRel) {
+            if let Some(tx) = &self.cmd_tx {
+                let _ = tx.send(Cmd::Shutdown);
+            }
+        }
     }
 
     /// True when the active capture stream must be rebuilt.
@@ -397,20 +439,42 @@ impl AudioRecorder {
     /// cpal may report a device disconnect asynchronously without closing its
     /// callback channel, so also honor the error callback's explicit flag.
     pub fn needs_reopen(&self) -> bool {
-        self.stream_error.load(Ordering::Relaxed)
+        self.shutdown_requested.load(Ordering::Acquire)
+            || self.stream_error.load(Ordering::Relaxed)
             || self
                 .worker_handle
                 .as_ref()
                 .is_some_and(|handle| handle.is_finished())
     }
 
+    /// Preserve the previous configured detector while a failed replacement is
+    /// quarantined. Its running worker owns a separate clone; future open uses this.
+    pub(crate) fn restore_vad_configuration_from(&mut self, previous: &Self) {
+        self.vad = previous.vad.clone();
+    }
+
     pub fn close(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(tx) = self.cmd_tx.take() {
-            let _ = tx.send(Cmd::Shutdown);
+        self.request_shutdown();
+        let deadline = Instant::now() + CLOSE_TIMEOUT;
+        while self
+            .worker_handle
+            .as_ref()
+            .is_some_and(|handle| !handle.is_finished())
+        {
+            if Instant::now() >= deadline {
+                // Keep the handle: open() must not spawn another microphone
+                // worker until this one has actually released its OS stream.
+                return Err(Box::new(Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "Microphone worker is still shutting down; retry after it exits",
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(5));
         }
-        if let Some(h) = self.worker_handle.take() {
-            let _ = h.join();
+        if let Some(handle) = self.worker_handle.take() {
+            let _ = handle.join(); // is_finished guarantees this cannot wait on the driver.
         }
+        self.cmd_tx = None;
         self.device = None;
         Ok(())
     }
@@ -523,6 +587,12 @@ impl AudioRecorder {
     }
 }
 
+impl Drop for AudioRecorder {
+    fn drop(&mut self) {
+        self.request_shutdown();
+    }
+}
+
 /// Body of the cpal input callback, extracted for testing without a device.
 /// Converts the block to mono and forwards it. The block that first observes
 /// the stop flag was captured before the stop, so it is still forwarded —
@@ -620,6 +690,65 @@ mod tests {
     };
 
     #[test]
+    fn stop_timeout_quarantines_worker_and_sends_shutdown_once() {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let reply = match cmd_rx.recv().unwrap() {
+                Cmd::Stop(reply) => reply,
+                _ => panic!("expected stop"),
+            };
+            // A wedged consumer holds the reply channel open. The release
+            // deadline also lets the pre-fix regression finish instead of hang.
+            let _ = release_rx.recv_timeout(Duration::from_secs(4));
+            drop(reply);
+            cmd_rx
+                .try_iter()
+                .filter(|cmd| matches!(cmd, Cmd::Shutdown))
+                .count()
+        });
+        let mut recorder = AudioRecorder::new().unwrap();
+        recorder.cmd_tx = Some(cmd_tx);
+        let started = Instant::now();
+        assert!(recorder.stop().is_err());
+        let elapsed = started.elapsed();
+        let restart_rejected = recorder.start(super::VadPolicy::Disabled).is_err();
+        let _ = recorder.close();
+        let _ = recorder.close();
+        let _ = release_tx.send(());
+        let shutdowns = worker.join().unwrap();
+        assert!(
+            elapsed < Duration::from_millis(3500),
+            "stop waited {elapsed:?}"
+        );
+        assert!(restart_rejected, "faulted worker accepted Start");
+        assert_eq!(shutdowns, 1);
+    }
+
+    #[test]
+    fn close_retains_unfinished_worker_and_rejects_reopen() {
+        let (cmd_tx, _cmd_rx) = mpsc::channel();
+        let worker = thread::spawn(|| thread::sleep(Duration::from_millis(600)));
+        let mut recorder = AudioRecorder::new().unwrap();
+        recorder.cmd_tx = Some(cmd_tx);
+        recorder.worker_handle = Some(worker);
+        let started = Instant::now();
+        let close_failed = recorder.close().is_err();
+        let elapsed = started.elapsed();
+        let retained_worker = recorder.worker_handle.is_some();
+        // open must reject before device lookup, so this test never uses a mic.
+        let reopen_rejected = retained_worker && recorder.open(None).is_err();
+        if let Some(worker) = recorder.worker_handle.take() {
+            worker.join().unwrap();
+        }
+        assert!(
+            elapsed < Duration::from_millis(300),
+            "close waited {elapsed:?}"
+        );
+        assert!(close_failed && retained_worker && reopen_rejected);
+    }
+
+    #[test]
     fn unopened_recorder_does_not_need_reopen() {
         // No worker has been spawned yet, so there is nothing to reap. Guards
         // against inverting the "no worker" case, which would make every first
@@ -650,6 +779,7 @@ mod tests {
                 None,
                 Arc::new(AtomicBool::new(false)),
                 Instant::now(),
+                Arc::new(AtomicBool::new(false)),
             );
             let _ = done_tx.send(());
         });
@@ -661,6 +791,82 @@ mod tests {
         drop(sample_tx);
         worker.join().expect("join consumer");
         assert!(stopped.is_ok(), "shutdown waited for an audio sample");
+    }
+
+    fn stop_synthetic_consumer(send_eos: bool) {
+        let (sample_tx, sample_rx) = mpsc::channel();
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let fault = Arc::new(AtomicBool::new(false));
+        let worker_fault = Arc::clone(&fault);
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop_flag);
+        let worker = thread::spawn(move || {
+            run_consumer(
+                16_000,
+                None,
+                sample_rx,
+                cmd_rx,
+                None,
+                None,
+                worker_stop,
+                Instant::now(),
+                worker_fault,
+            );
+        });
+        cmd_tx
+            .send(Cmd::Start(
+                super::VadPolicy::Disabled,
+                Instant::now(),
+                ready_tx,
+            ))
+            .unwrap();
+        sample_tx
+            .send(AudioChunk::Samples(vec![0.25; 480]))
+            .unwrap();
+        ready_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let started = Instant::now();
+        cmd_tx.send(Cmd::Stop(reply_tx)).unwrap();
+        let producer = thread::spawn(move || {
+            // Bound the pre-fix case as well: it only stops when this sender
+            // disconnects, because incoming samples reset its old timeout.
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                if send_eos && stop_flag.load(Ordering::Relaxed) {
+                    let _ = sample_tx.send(AudioChunk::EndOfStream);
+                    return sample_tx;
+                }
+                if sample_tx.send(AudioChunk::Samples(vec![0.5; 480])).is_err() {
+                    return sample_tx;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            sample_tx
+        });
+        let result = reply_rx.recv_timeout(Duration::from_millis(2600));
+        let elapsed = started.elapsed();
+        let sample_tx = producer.join().unwrap();
+        let _ = cmd_tx.send(Cmd::Shutdown);
+        drop(sample_tx);
+        worker.join().unwrap();
+        let samples = result.expect("incoming chunks must not extend stop deadline");
+        assert!(
+            samples.iter().any(|&sample| sample == 0.25),
+            "captured audio was lost"
+        );
+        assert!(elapsed < Duration::from_millis(2500));
+        assert_eq!(fault.load(Ordering::Relaxed), !send_eos);
+    }
+
+    #[test]
+    fn missing_eos_has_absolute_deadline_and_preserves_audio() {
+        stop_synthetic_consumer(false);
+    }
+
+    #[test]
+    fn normal_eos_preserves_audio_without_faulting_worker() {
+        stop_synthetic_consumer(true);
     }
 
     #[test]
@@ -745,6 +951,7 @@ fn run_consumer(
     audio_cb: Option<AudioFrameCallback>,
     stop_flag: Arc<AtomicBool>,
     stream_running_at: Instant,
+    stream_error: Arc<AtomicBool>,
 ) {
     let frame_samples = vad.as_ref().map_or(
         (constants::WHISPER_SAMPLE_RATE * 30 / 1000) as usize,
@@ -897,8 +1104,13 @@ fn run_consumer(
                     // The cpal callback sees the stop flag, sends EndOfStream, and goes
                     // silent — guaranteeing every captured sample is in the channel
                     // ahead of the sentinel.
-                    loop {
-                        match sample_rx.recv_timeout(Duration::from_secs(2)) {
+                    let drain_deadline = Instant::now() + DRAIN_TIMEOUT;
+                    let drained = loop {
+                        let remaining = drain_deadline.saturating_duration_since(Instant::now());
+                        if remaining.is_zero() {
+                            break false;
+                        }
+                        match sample_rx.recv_timeout(remaining) {
                             Ok(AudioChunk::Samples(remaining)) => {
                                 frame_resampler.push(&remaining, &mut |frame: &[f32]| {
                                     handle_frame(
@@ -911,12 +1123,15 @@ fn run_consumer(
                                     )
                                 });
                             }
-                            Ok(AudioChunk::EndOfStream) => break,
+                            Ok(AudioChunk::EndOfStream) => break true,
                             Err(_) => {
                                 log::warn!("Timed out waiting for EndOfStream from audio callback");
-                                break;
+                                break false;
                             }
                         }
+                    };
+                    if !drained {
+                        stream_error.store(true, Ordering::Relaxed);
                     }
 
                     frame_resampler.finish(&mut |frame: &[f32]| {
@@ -952,6 +1167,11 @@ fn run_consumer(
                     }
 
                     let _ = reply_tx.send(std::mem::take(&mut processed_samples));
+                    if !drained {
+                        // Return all processed tail audio, but never reuse a
+                        // stream whose callback did not acknowledge the stop.
+                        return;
+                    }
 
                     // Resume the audio callback so the consumer loop can continue
                     // receiving chunks (important for always-on microphone mode).

@@ -12,7 +12,8 @@ use crate::settings::{self, ShortcutBinding};
 use super::handler::handle_shortcut_event;
 
 /// Initialize shortcuts using Tauri's global-shortcut plugin
-pub fn init_shortcuts(app: &AppHandle) {
+pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
+    crate::input_permission::initializing_epoch()?;
     let default_bindings = settings::get_default_settings().bindings;
     let user_settings = settings::load_or_create_app_settings(app);
 
@@ -27,10 +28,9 @@ pub fn init_shortcuts(app: &AppHandle) {
             .cloned()
             .unwrap_or(default_binding);
 
-        if let Err(e) = register_shortcut(app, binding) {
-            error!("Failed to register shortcut {} during init: {}", id, e);
-        }
+        register_shortcut(app, binding)?;
     }
+    Ok(())
 }
 
 /// Validate a shortcut string for the Tauri global-shortcut implementation.
@@ -65,6 +65,17 @@ pub fn validate_shortcut(raw: &str) -> Result<(), String> {
 
 /// Register a shortcut using Tauri's global-shortcut plugin
 pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
+    let epoch = crate::input_permission::initializing_epoch()?;
+    let handle = app.clone();
+    on_main(app, move || {
+        if crate::input_permission::initializing_epoch() != Ok(epoch) {
+            return Err("Carbon 注册请求已过期".into());
+        }
+        register_on_main(&handle, binding, epoch)
+    })
+}
+
+fn register_on_main(app: &AppHandle, binding: ShortcutBinding, epoch: u64) -> Result<(), String> {
     // Validate for Tauri requirements
     if let Err(e) = validate_shortcut(&binding.current_binding) {
         warn!(
@@ -99,7 +110,10 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
 
     app.global_shortcut()
         .on_shortcut(shortcut, move |app_handle, scut, event| {
-            if scut == &shortcut {
+            if ::handy_keys::events_allowed()
+                && crate::input_permission::check_epoch(epoch).is_ok()
+                && scut == &shortcut
+            {
                 let shortcut_string = scut.into_string();
                 let is_pressed = event.state == ShortcutState::Pressed;
                 // Mirrors the handy-keys event log line; the distinct prefix
@@ -131,6 +145,11 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
 
 /// Unregister a shortcut from Tauri's global-shortcut plugin
 pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
+    let handle = app.clone();
+    on_main(app, move || unregister_on_main(&handle, binding))
+}
+
+fn unregister_on_main(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
     let shortcut = match binding.current_binding.parse::<Shortcut>() {
         Ok(s) => s,
         Err(e) => {
@@ -153,4 +172,40 @@ pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<
     })?;
 
     Ok(())
+}
+
+/// Carbon work is dispatched with a bounded receipt; a timeout is unknown, not cancellation.
+fn on_main(
+    app: &AppHandle,
+    operation: impl FnOnce() -> Result<(), String> + Send + 'static,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if objc2::MainThreadMarker::new().is_some() {
+        return operation();
+    }
+    #[cfg(not(target_os = "macos"))]
+    return operation();
+    #[cfg(target_os = "macos")]
+    {
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.run_on_main_thread(move || {
+            let _ = tx.send(operation());
+        })
+        .map_err(|e| e.to_string())?;
+        rx.recv_timeout(std::time::Duration::from_millis(500))
+            .map_err(|_| {
+                crate::input_permission::close_gate("Carbon 注册或注销回执未知");
+                "Carbon 注册或注销回执未知".to_owned()
+            })?
+    }
+}
+
+pub fn retire_all(app: &AppHandle) -> Result<(), String> {
+    let handle = app.clone();
+    on_main(app, move || {
+        handle
+            .global_shortcut()
+            .unregister_all()
+            .map_err(|e| e.to_string())
+    })
 }

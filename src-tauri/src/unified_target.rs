@@ -29,6 +29,7 @@ type AxCallback = unsafe extern "C" fn(Ref, Ref, Ref, *mut c_void);
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
+    fn AXIsProcessTrusted() -> u8;
     fn AXUIElementCreateSystemWide() -> Ref;
     fn AXUIElementCreateApplication(pid: c_int) -> Ref;
     fn AXUIElementGetTypeID() -> usize;
@@ -38,7 +39,6 @@ unsafe extern "C" {
     fn AXValueGetTypeID() -> usize;
     fn AXValueGetType(value: Ref) -> u32;
     fn AXValueGetValue(value: Ref, kind: u32, result: *mut c_void) -> u8;
-    fn AXIsProcessTrusted() -> u8;
     fn AXObserverCreate(pid: c_int, callback: AxCallback, result: *mut Ref) -> c_int;
     fn AXObserverAddNotification(
         observer: Ref,
@@ -54,6 +54,9 @@ unsafe extern "C" {
     fn CFRelease(value: Ref);
     fn CFEqual(left: Ref, right: Ref) -> u8;
     fn CFGetTypeID(value: Ref) -> usize;
+    fn CFStringGetTypeID() -> usize;
+    fn CFStringGetLength(value: Ref) -> isize;
+    fn CFStringGetCString(value: Ref, buffer: *mut c_char, size: isize, encoding: u32) -> u8;
     fn CFStringCreateWithCString(allocator: Ref, text: *const c_char, encoding: u32) -> Ref;
     fn CFRunLoopGetMain() -> Ref;
     fn CFRunLoopAddSource(loop_ref: Ref, source: Ref, mode: Ref);
@@ -144,6 +147,29 @@ pub struct TargetSnapshot {
     pub edit_generation: u64,
 }
 
+thread_local! { static QUERY_DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) }; }
+/// A deadline bounds the total query sequence as well as the per-message AX timeout.
+pub fn with_query_budget<T>(budget: Duration, action: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Instant>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            QUERY_DEADLINE.with(|slot| slot.set(self.0));
+        }
+    }
+    let _restore = Restore(QUERY_DEADLINE.with(|slot| slot.replace(Some(Instant::now() + budget))));
+    action()
+}
+fn query_budget() -> Result<(), PendingReason> {
+    if QUERY_DEADLINE.with(|slot| {
+        slot.get()
+            .is_some_and(|deadline| Instant::now() >= deadline)
+    }) {
+        Err(PendingReason::Expired)
+    } else {
+        Ok(())
+    }
+}
+
 struct Owned(Ref);
 
 impl Owned {
@@ -156,17 +182,26 @@ impl Owned {
     }
 
     fn attribute(&self, name: &'static [u8]) -> Result<Self, PendingReason> {
+        query_budget()?;
         let key = cf_string(name)?;
         let mut value = ptr::null();
         let status = unsafe { AXUIElementCopyAttributeValue(self.0, key.0, &mut value) };
         if status != 0 {
+            // 仅记录固定属性名和系统错误码，不记录窗口、字段或正文内容。
+            log::debug!(
+                "unified_target_attribute_failed attribute={} status={}",
+                String::from_utf8_lossy(name).trim_end_matches('\0'),
+                status
+            );
             // 防御不符合 Copy 合同的失败返回，仍释放可能分配的值。
             if !value.is_null() {
                 unsafe { CFRelease(value) };
             }
             return Err(PendingReason::UnknownTarget);
         }
-        Self::from_created(value)
+        let value = Self::from_created(value)?;
+        query_budget()?;
+        Ok(value)
     }
 
     fn ax_attribute(&self, name: &'static [u8]) -> Result<Self, PendingReason> {
@@ -210,7 +245,9 @@ fn privacy_gate() -> Result<(), PendingReason> {
     if unsafe { IsSecureEventInputEnabled() } != 0 {
         return Err(PendingReason::SecureInput);
     }
-    if unsafe { AXIsProcessTrusted() } == 0 {
+    // Broker queries already carry a lifecycle permission proof; avoid synchronous TCC here.
+    // Standalone legacy callers retain their passive permission check.
+    if QUERY_DEADLINE.with(|slot| slot.get().is_none()) && unsafe { AXIsProcessTrusted() } == 0 {
         return Err(PendingReason::AccessibilityUnavailable);
     }
     Ok(())
@@ -244,9 +281,58 @@ fn pid(element: &Owned) -> Result<u32, PendingReason> {
 
 fn focused_app() -> Result<Owned, PendingReason> {
     let system = Owned::from_created(unsafe { AXUIElementCreateSystemWide() })?;
-    // 不对 system-wide 对象设 timeout：SDK 规定这会修改整个进程的 AX 默认值。
+    // Broker owns passive AX access in this process; bound the system-wide call too.
+    if unsafe { AXUIElementSetMessagingTimeout(system.0, 0.05) } != 0 {
+        return Err(PendingReason::UnknownTarget);
+    }
+    // This also establishes the process AX messaging default; child objects retain explicit limits.
     // 同步 AX 请求只用于启动/提交阶段；不应从输入法 handleEvent 调用。
     system.ax_attribute(b"AXFocusedApplication\0")
+}
+
+/// Derive the source from the actual foreground AX application, never a client PID.
+pub fn foreground_source(source: &str) -> Result<(ProcessInstance, String), PendingReason> {
+    main_thread()?;
+    query_budget()?;
+    privacy_gate()?;
+    let focused = focused_app()?;
+    let actual_pid = pid(&focused)?;
+    let application =
+        NSRunningApplication::runningApplicationWithProcessIdentifier(actual_pid as i32)
+            .ok_or(PendingReason::UnknownTarget)?;
+    if application
+        .bundleIdentifier()
+        .map(|bundle| bundle.to_string())
+        .as_deref()
+        != Some(source)
+    {
+        return Err(PendingReason::FocusChanged);
+    }
+    let window = focused.ax_attribute(b"AXFocusedWindow\0")?;
+    let title = window.attribute(b"AXTitle\0")?;
+    if unsafe { CFGetTypeID(title.0) != CFStringGetTypeID() || CFStringGetLength(title.0) > 16_384 }
+    {
+        return Err(PendingReason::UnknownTarget);
+    }
+    let mut bytes = [0u8; 65_537];
+    if unsafe {
+        CFStringGetCString(
+            title.0,
+            bytes.as_mut_ptr().cast(),
+            bytes.len() as isize,
+            0x0800_0100,
+        )
+    } == 0
+    {
+        return Err(PendingReason::UnknownTarget);
+    }
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .ok_or(PendingReason::UnknownTarget)?;
+    let title = std::str::from_utf8(&bytes[..end]).map_err(|_| PendingReason::UnknownTarget)?;
+    query_budget()?;
+    Ok((process_instance(actual_pid)?, title.to_owned()))
 }
 
 fn selection(element: &Owned) -> Result<Selection, PendingReason> {
@@ -366,7 +452,10 @@ impl Observation {
             self.focus_generation
                 .set(self.focus_generation.get().saturating_add(1));
         }
-        if self.invalid.get().is_none() {
+        if self.invalid.get().is_none()
+            || (self.invalid.get() == Some(PendingReason::Edited)
+                && reason != PendingReason::Edited)
+        {
             self.invalid.set(Some(reason));
         }
     }
@@ -560,6 +649,19 @@ impl TargetRegistry {
 
     /// 必须在实际派发前同一个主线程任务里再次调用；不得把结果缓存后异步派发。
     pub fn validate(&self, id: &str) -> Result<TargetSnapshot, PendingReason> {
+        self.validate_identity(id, false)
+    }
+
+    /// 键入后的来源证明允许正文/选区变化，但必须仍是原字段、窗口和进程。
+    pub fn validate_typed_field(&self, id: &str) -> Result<TargetSnapshot, PendingReason> {
+        self.validate_identity(id, true)
+    }
+
+    fn validate_identity(
+        &self,
+        id: &str,
+        allow_edits: bool,
+    ) -> Result<TargetSnapshot, PendingReason> {
         main_thread()?;
         privacy_gate()?;
         let lease = self.leases.get(id).ok_or(PendingReason::UnknownTarget)?;
@@ -567,7 +669,9 @@ impl TargetRegistry {
             return Err(PendingReason::Expired);
         }
         if let Some(reason) = lease.state.invalid.get() {
-            return Err(reason);
+            if !allow_edits || reason != PendingReason::Edited {
+                return Err(reason);
+            }
         }
         if lease.state.activation.invalid.load(Ordering::SeqCst) {
             lease.state.invalidate(PendingReason::FocusChanged);
@@ -576,6 +680,9 @@ impl TargetRegistry {
         if process_instance(lease.snapshot.process.pid)? != lease.snapshot.process {
             lease.state.invalidate(PendingReason::ProcessChanged);
             return Err(PendingReason::ProcessChanged);
+        }
+        if allow_edits && lease.state.focus_generation.get() != lease.snapshot.focus_generation {
+            return Err(PendingReason::FocusChanged);
         }
         let app = focused_app()?;
         let actual_pid = pid(&app)?;
@@ -595,14 +702,16 @@ impl TargetRegistry {
             return Err(PendingReason::FocusChanged);
         }
         check_control(&field)?;
-        if selection(&field)? != lease.snapshot.selection {
+        if !allow_edits && selection(&field)? != lease.snapshot.selection {
             lease.state.invalidate(PendingReason::Edited);
             return Err(PendingReason::Edited);
         }
         // AX 查询可能让主 RunLoop 处理回调；检查过程中失效不得被返回的旧快照掩盖。
         privacy_gate()?;
         if let Some(reason) = lease.state.invalid.get() {
-            return Err(reason);
+            if !allow_edits || reason != PendingReason::Edited {
+                return Err(reason);
+            }
         }
         if lease.state.activation.invalid.load(Ordering::SeqCst) {
             return Err(PendingReason::FocusChanged);

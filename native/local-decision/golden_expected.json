@@ -1,0 +1,6 @@
+{
+  "route-custom-word": { "question": "route", "expected": "custom_word" },
+  "route-keep": { "question": "route", "expected": "keep" },
+  "knowledge-procedure": { "question": "intent", "expected": "procedure" },
+  "sensitive-credential": { "question": "sensitive", "expected": true }
+}

@@ -1,5 +1,7 @@
 # Inputia 测试版使用与恢复说明
 
+> 当前状态更新：完整的 Handy 历史迁移已经在 2026-09-24 完成。请先看 [当前开发状态](../../CURRENT_STATUS.md) 和 [迁移验证记录](../../verification/2026-09-24-handy-history-migration.md)。本页下面的旧验证边界保留为当时记录。
+
 本说明适用于本机已并存安装的候选版本，不是正式发布或完整验收声明。
 
 ## 入口
@@ -32,4 +34,4 @@
 
 每次替换候选都会在 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds` 的专用批次目录保留旧包和配对清单；具体路径见对应安装记录。恢复必须匹配控制中心、输入法和签名配对，不能只复制任意旧应用包。优先保留最新数据，不能通过恢复过期数据库快照宣称兼容回滚成功。
 
-本轮不替换 `/Applications/Handy.app` 或 `/Library/Input Methods/InputiaInputMethod.app`。卸载、迁移唯一真实数据、正式发布和远程推送均不属于已执行操作。
+旧 `/Applications/Handy.app` 和旧 `com.pais.handy` 数据域已从原位置移入迁移备份；当前使用 `/Applications/Inputia Candidate.app` 和候选输入法组件。源码目录不属于应用卸载范围。永久清除迁移备份仍未执行。

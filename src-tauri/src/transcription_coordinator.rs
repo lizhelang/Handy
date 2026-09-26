@@ -178,10 +178,15 @@ enum Effect {
 /// Commands processed sequentially by the coordinator thread.
 enum Command {
     Input(InputEvent),
+    PermissionInput {
+        input: InputEvent,
+        epoch: Result<u64, String>,
+    },
     LegacyContinuation(InputEvent),
     GlobalCancel,
     ProcessingFinished,
     Voice {
+        permission_epoch: Option<Result<u64, String>>,
         request: Box<VoiceRequest>,
         reply: Sender<Result<VoiceSessionView, String>>,
         deadline: Instant,
@@ -191,6 +196,7 @@ enum Command {
         reply: Sender<Result<VoiceSessionView, String>>,
     },
     VoiceResultPrepared {
+        permission_epoch: Result<u64, String>,
         start: Box<VoiceRequest>,
         item_id: String,
         operation_id: String,
@@ -1136,6 +1142,9 @@ impl TranscriptionCoordinator {
     ) -> mpsc::Receiver<Result<VoiceSessionView, String>> {
         let (reply, receiver) = mpsc::channel();
         if let Err(error) = self.tx.send(Command::Voice {
+            permission_epoch: request
+                .strict_start_identity()
+                .map(|_| crate::input_permission::capture_epoch()),
             request: Box::new(request),
             reply,
             deadline: Instant::now() + VOICE_START_QUEUE_TIMEOUT,
@@ -1173,6 +1182,7 @@ impl TranscriptionCoordinator {
     ) -> mpsc::Receiver<Result<VoiceSessionView, String>> {
         let (reply, receiver) = mpsc::channel();
         if let Err(error) = self.tx.send(Command::VoiceResultPrepared {
+            permission_epoch: crate::input_permission::capture_epoch(),
             start: Box::new(start),
             item_id,
             operation_id,
@@ -1266,15 +1276,18 @@ impl TranscriptionCoordinator {
     ) {
         if self
             .tx
-            .send(Command::Input(InputEvent {
-                binding_id: binding_id.to_string(),
-                hotkey_string: hotkey_string.to_string(),
-                is_pressed,
-                mode,
-                hold_threshold,
-                external,
-                owned: false,
-            }))
+            .send(Command::PermissionInput {
+                epoch: crate::input_permission::capture_epoch(),
+                input: InputEvent {
+                    binding_id: binding_id.to_string(),
+                    hotkey_string: hotkey_string.to_string(),
+                    is_pressed,
+                    mode,
+                    hold_threshold,
+                    external,
+                    owned: false,
+                },
+            })
             .is_err()
         {
             warn!("Transcription coordinator channel closed");
@@ -1340,6 +1353,13 @@ fn dispatch_command(
     execute: &mut impl FnMut(&mut CoordinatorState, Effect),
 ) {
     match command {
+        Command::PermissionInput { input, epoch } => {
+            if epoch.and_then(crate::input_permission::check_epoch).is_ok() {
+                if let Some(effect) = state.on_input(input, now) {
+                    execute(state, effect);
+                }
+            }
+        }
         Command::Input(input) => {
             if let Some(effect) = state.on_input(input, now) {
                 execute(state, effect);
@@ -1364,10 +1384,17 @@ fn dispatch_command(
             }
         }
         Command::Voice {
+            permission_epoch,
             request,
             reply,
             deadline,
         } => {
+            if let Some(epoch) = permission_epoch {
+                if let Err(error) = epoch.and_then(crate::input_permission::check_epoch) {
+                    let _ = reply.send(Err(error));
+                    return;
+                }
+            }
             let session_id = request.session_id.clone();
             let (result, effect) = state.on_voice_before_deadline(*request, deadline, now);
             if let Some(Effect::Start { ref binding_id, .. }) = effect {
@@ -1387,11 +1414,16 @@ fn dispatch_command(
             let _ = reply.send(state.voice_view(&session_id));
         }
         Command::VoiceResultPrepared {
+            permission_epoch,
             start,
             item_id,
             operation_id,
             reply,
         } => {
+            if let Err(error) = permission_epoch.and_then(crate::input_permission::check_epoch) {
+                let _ = reply.send(Err(error));
+                return;
+            }
             let _ = reply.send(state.on_voice_result_prepared(&start, item_id, operation_id));
         }
         Command::RecordingRequested {

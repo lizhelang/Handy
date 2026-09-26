@@ -48,6 +48,8 @@ pub struct Candidate {
     pub source: CandidateSource,
     pub base_score: i32,
     pub memory_score: i32,
+    /// 引擎提供的原始输入消耗长度；未知时不猜测词的拼音。
+    pub consumed_len: Option<usize>,
 }
 
 impl Candidate {
@@ -59,6 +61,7 @@ impl Candidate {
             source: CandidateSource::Engine,
             base_score: 0,
             memory_score: 0,
+            consumed_len: None,
         }
     }
 
@@ -134,6 +137,11 @@ pub trait ChineseEngine {
 
     fn candidate_consumed_len(&self, _composing: &str, _candidate: &Candidate) -> Option<usize> {
         None
+    }
+
+    /// 宿主已确认撤销最后一次提交时，通知引擎撤销其近期学习。
+    fn undo_recent_learning(&self) -> bool {
+        false
     }
 }
 
@@ -946,6 +954,79 @@ impl<E: ChineseEngine> InputiaCore<E> {
             page: self.page,
             visible_candidates: self.visible_candidates().to_vec(),
         }
+    }
+
+    /// 有界扩展候选召回，保留当前页及已经展示的顺序；返回值包含引擎原候选身份。
+    pub fn candidate_pool(&mut self, limit: usize) -> Vec<(Candidate, usize)> {
+        if self.composing.is_empty() || self.mode != InputMode::Chinese {
+            return Vec::new();
+        }
+        let limit = limit.clamp(1, 64);
+        if self.candidates.len() < limit {
+            let expanded = self.engine.candidates_up_to(&self.composing, limit);
+            for candidate in expanded {
+                if !self
+                    .candidates
+                    .iter()
+                    .any(|old| old.id == candidate.id || old.text == candidate.text)
+                {
+                    self.candidates.push(candidate);
+                }
+            }
+        }
+        self.candidates
+            .iter()
+            .take(limit)
+            .cloned()
+            .map(|candidate| {
+                let consumed = self
+                    .engine
+                    .candidate_consumed_len(&self.composing, &candidate)
+                    .unwrap_or(0)
+                    .min(self.composing.len());
+                (candidate, consumed)
+            })
+            .collect()
+    }
+
+    pub fn undo_recent_learning(&self) -> bool {
+        self.composing.is_empty() && self.engine.undo_recent_learning()
+    }
+
+    /// 使用稳定身份选择已经召回的引擎候选；过期或引擎拒绝时不插入兜底字符串。
+    pub fn choose_candidate_id(
+        &mut self,
+        composing: &str,
+        id: &str,
+        text: &str,
+    ) -> Option<InputOutcome> {
+        if self.mode != InputMode::Chinese || self.composing != composing || composing.is_empty() {
+            return None;
+        }
+        let index = self
+            .candidates
+            .iter()
+            .position(|c| c.id == id && c.text == text)?;
+        let candidate = self.candidates[index].clone();
+        let page_size = self.settings.candidate_page_size.max(1);
+        let selection = self.engine.select_candidate(
+            composing,
+            index / page_size,
+            index % page_size,
+            &candidate,
+        )?;
+        if selection.commit != text {
+            return None;
+        }
+        if selection.composing.is_empty() {
+            self.clear_composition();
+        } else {
+            self.composing = selection.composing;
+            self.candidates = selection.candidates;
+            self.page = 0;
+            self.ensure_candidates_for_page(0);
+        }
+        Some(self.outcome(true, Some(selection.commit)))
     }
 
     fn refresh_candidates(&mut self) {
