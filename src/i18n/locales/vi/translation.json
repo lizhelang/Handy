@@ -154,6 +154,7 @@
     "cancel": "Hủy",
     "cancelDownload": "Hủy tải xuống",
     "legacy": "Cũ",
+    "compatibilityCorrection": "Compatibility correction",
     "errors": {
       "checkStatus": "Failed to check model status",
       "loadModel": "Failed to load model",

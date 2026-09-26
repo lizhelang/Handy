@@ -12,6 +12,7 @@ mod helpers;
 mod input;
 mod llm_client;
 mod managers;
+mod native_hotwords;
 mod overlay;
 pub mod portable;
 mod settings;

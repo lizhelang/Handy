@@ -154,6 +154,7 @@
       "streaming": "말하는 동안 실시간으로 음성 인식 결과를 표시"
     },
     "legacy": "레거시",
+    "compatibilityCorrection": "Compatibility correction",
     "errors": {
       "checkStatus": "Failed to check model status",
       "loadModel": "Failed to load model",

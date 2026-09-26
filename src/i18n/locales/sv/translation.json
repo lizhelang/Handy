@@ -154,6 +154,7 @@
       "streaming": "Visar transkription i realtid medan du talar"
     },
     "legacy": "Äldre",
+    "compatibilityCorrection": "Compatibility correction",
     "errors": {
       "checkStatus": "Failed to check model status",
       "loadModel": "Failed to load model",

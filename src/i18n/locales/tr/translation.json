@@ -154,6 +154,7 @@
     "cancel": "İptal",
     "cancelDownload": "İndirmeyi iptal et",
     "legacy": "Eski",
+    "compatibilityCorrection": "Compatibility correction",
     "errors": {
       "checkStatus": "Failed to check model status",
       "loadModel": "Failed to load model",

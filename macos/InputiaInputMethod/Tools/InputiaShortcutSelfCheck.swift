@@ -94,6 +94,22 @@ struct InputiaShortcutSelfCheck {
         )
       ),
       (
+        "shiftLetterPassesUppercaseEnglish",
+        InputiaShortcutClassifier.isDirectUppercaseEnglish(
+          characters: "A",
+          charactersIgnoringModifiers: "a",
+          modifiers: [.shift]
+        )
+      ),
+      (
+        "shiftLetterWithControlDoesNotPass",
+        !InputiaShortcutClassifier.isDirectUppercaseEnglish(
+          characters: "A",
+          charactersIgnoringModifiers: "a",
+          modifiers: [.shift, .control]
+        )
+      ),
+      (
         "controlSpaceInputModeTogglesWhenConfigured",
         InputiaShortcutClassifier.isControlSpaceInputModeToggle(
           keyCode: keyCodeSpace,

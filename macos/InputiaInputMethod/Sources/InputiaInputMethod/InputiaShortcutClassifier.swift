@@ -109,6 +109,30 @@ struct InputiaShortcutClassifier {
     return keyCode == keyCodeSpace
   }
 
+  /// Shift+letter in Chinese mode must pass the uppercase ASCII character
+  /// through instead of feeding it into the pinyin composition buffer.
+  static func isDirectUppercaseEnglish(
+    characters: String?,
+    charactersIgnoringModifiers: String?,
+    modifiers: NSEvent.ModifierFlags
+  ) -> Bool {
+    guard modifiers.contains(.shift),
+      !modifiers.contains(.command),
+      !modifiers.contains(.control),
+      !modifiers.contains(.option),
+      let characters,
+      characters.count == 1,
+      let ignoring = charactersIgnoringModifiers,
+      ignoring.count == 1,
+      let scalar = characters.unicodeScalars.first,
+      let ignoringScalar = ignoring.unicodeScalars.first
+    else {
+      return false
+    }
+    return scalar.value >= 65 && scalar.value <= 90
+      && ignoringScalar.value >= 97 && ignoringScalar.value <= 122
+  }
+
   static func isDisplayedRawCompositionSelection(
     characters: String?,
     charactersIgnoringModifiers: String?,

@@ -99,6 +99,7 @@ final class InputiaInputController: IMKInputController {
   private var recallCandidates: [String] = []
   private var englishCompletionPrefix = ""
   private var englishCompletionCandidates: [String] = []
+  private var shiftEnglishComposition = ""
   private var candidatePanelExpanded = false
   private var lastModifiers = NSEvent.ModifierFlags()
   private var lastGlobalModifiers = NSEvent.ModifierFlags()
@@ -305,7 +306,6 @@ final class InputiaInputController: IMKInputController {
         return
       }
       updateAppContext(client: client, forceRefresh: true)
-      resetToChineseModeOnActivationIfNeeded(client: client)
     }
   }
 
@@ -411,16 +411,6 @@ final class InputiaInputController: IMKInputController {
     return apply(bridge.toggleInputMode(), client: client)
   }
 
-  private func resetToChineseModeOnActivationIfNeeded(client: IMKTextInput) {
-    guard latestComposing.isEmpty, bridge.latestOutcome.mode == "English" else {
-      return
-    }
-    clearEnglishCompletion()
-    let outcome = bridge.setChineseMode()
-    inputiaDebugLog("activateResetChinese bundle=\(client.bundleIdentifier() ?? "unknown")")
-    _ = apply(outcome, client: client)
-  }
-
   private func handleKeyDown(_ event: NSEvent, client: IMKTextInput) -> Bool {
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     inputiaDebugLog(
@@ -456,6 +446,41 @@ final class InputiaInputController: IMKInputController {
       clearEnglishCompletion()
       return apply(bridge.toggleInputMode(), client: client)
     }
+    if bridge.latestOutcome.mode == "Chinese",
+      InputiaShortcutClassifier.isDirectUppercaseEnglish(
+        characters: event.characters,
+        charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+        modifiers: modifiers
+      ),
+      let text = event.characters
+    {
+      if !latestComposing.isEmpty, shiftEnglishComposition.isEmpty {
+        _ = apply(bridge.enter(), client: client)
+      }
+      clearEnglishCompletion()
+      shiftEnglishComposition.append(text)
+      latestComposing = shiftEnglishComposition
+      latestCandidates = [
+        shiftEnglishComposition,
+        String(text),
+        shiftEnglishComposition.lowercased(),
+      ]
+      setMarkedComposition(shiftEnglishComposition, client: client)
+      updateCandidateWindow(client: client)
+      inputiaDebugLog("shiftEnglishComposition text=\(shiftEnglishComposition)")
+      return true
+    }
+    if !shiftEnglishComposition.isEmpty,
+      let navigation = InputiaShortcutClassifier.candidateNavigation(
+        keyCode: event.keyCode,
+        modifiers: modifiers,
+        hasComposing: true
+      )
+    {
+      _ = navigation
+      commitShiftEnglishComposition(client: client)
+      return true
+    }
     if let navigation = InputiaShortcutClassifier.candidateNavigation(
       keyCode: event.keyCode,
       modifiers: modifiers,
@@ -473,11 +498,30 @@ final class InputiaInputController: IMKInputController {
 
     switch event.keyCode {
     case keyCodeDelete:
+      if !shiftEnglishComposition.isEmpty {
+        shiftEnglishComposition.removeLast()
+        latestComposing = shiftEnglishComposition
+        latestCandidates = shiftEnglishComposition.isEmpty
+          ? []
+          : [shiftEnglishComposition, String(shiftEnglishComposition.last!), shiftEnglishComposition.lowercased()]
+        if shiftEnglishComposition.isEmpty {
+          clearMarkedText(client)
+          InputiaHost.candidatePanel?.hide()
+        } else {
+          setMarkedComposition(shiftEnglishComposition, client: client)
+          updateCandidateWindow(client: client)
+        }
+        return true
+      }
       let outcome = bridge.backspace()
       let handled = apply(outcome, client: client)
       updateEnglishCompletionAfterBackspace(outcome: outcome, client: client)
       return handled
     case keyCodeEscape:
+      if !shiftEnglishComposition.isEmpty {
+        clearShiftEnglishComposition(client: client)
+        return true
+      }
       if latestComposing.isEmpty && !englishCompletionCandidates.isEmpty {
         clearEnglishCompletion()
         return true
@@ -489,6 +533,10 @@ final class InputiaInputController: IMKInputController {
     case keyCodePageUp:
       return handleCandidatePageUp(client: client)
     case keyCodeReturn, keyCodeKeypadEnter:
+      if !shiftEnglishComposition.isEmpty {
+        commitShiftEnglishComposition(client: client)
+        return true
+      }
       guard !latestComposing.isEmpty else {
         clearEnglishCompletion()
         return false
@@ -507,6 +555,10 @@ final class InputiaInputController: IMKInputController {
       }
       return shouldPassThroughNewline ? false : handled
     case keyCodeSpace:
+      if !shiftEnglishComposition.isEmpty {
+        commitShiftEnglishComposition(client: client)
+        return true
+      }
       if candidatePanelExpanded, expandedActiveRowIndex > 0 {
         return commitExpandedCandidate(columnIndex: 0, client: client)
       }
@@ -517,9 +569,17 @@ final class InputiaInputController: IMKInputController {
       }
       return handled
     case keyCodeTab:
+      if !shiftEnglishComposition.isEmpty {
+        commitShiftEnglishComposition(client: client)
+        return true
+      }
       return commitFirstEnglishCompletion(client: client)
     default:
       break
+    }
+
+    if !shiftEnglishComposition.isEmpty {
+      commitShiftEnglishComposition(client: client)
     }
 
     guard let text = event.characters, !text.isEmpty else {
@@ -1159,6 +1219,24 @@ final class InputiaInputController: IMKInputController {
     hideEnglishCompletionCandidates()
   }
 
+  private func clearShiftEnglishComposition(client: IMKTextInput?) {
+    shiftEnglishComposition = ""
+    if let client {
+      clearMarkedText(client)
+    }
+    latestComposing = ""
+    latestCandidates = []
+    InputiaHost.candidatePanel?.hide()
+  }
+
+  private func commitShiftEnglishComposition(client: IMKTextInput) {
+    let text = shiftEnglishComposition
+    guard !text.isEmpty else { return }
+    clearShiftEnglishComposition(client: client)
+    client.insertText(text, replacementRange: emptyReplacementRange)
+    inputiaDebugLog("shiftEnglishCompositionCommit text=\(text)")
+  }
+
   private func isLearnableEnglishWord(_ word: String) -> Bool {
     word.count >= 2 && word.unicodeScalars.contains { scalar in
       (65...90).contains(scalar.value) || (97...122).contains(scalar.value)
@@ -1176,6 +1254,7 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func clearInputState(client: IMKTextInput? = nil) {
+    shiftEnglishComposition = ""
     if !latestComposing.isEmpty, let client {
       clearMarkedText(client)
     }

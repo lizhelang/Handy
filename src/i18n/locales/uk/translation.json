@@ -154,6 +154,7 @@
     "cancel": "Скасувати",
     "cancelDownload": "Скасувати завантаження",
     "legacy": "Застаріле",
+    "compatibilityCorrection": "Compatibility correction",
     "errors": {
       "checkStatus": "Failed to check model status",
       "loadModel": "Failed to load model",

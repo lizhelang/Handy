@@ -154,6 +154,7 @@
     "cancel": "Cancelar",
     "cancelDownload": "Cancelar download",
     "legacy": "Legado",
+    "compatibilityCorrection": "Compatibility correction",
     "errors": {
       "checkStatus": "Failed to check model status",
       "loadModel": "Failed to load model",

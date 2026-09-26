@@ -124,6 +124,7 @@
   "modelSelector": {
     "custom": "Aangepast",
     "legacy": "Klassiek",
+    "compatibilityCorrection": "Compatibility correction",
     "streaming": "Streaming",
     "active": "Actief",
     "switching": "Wisselen...",
