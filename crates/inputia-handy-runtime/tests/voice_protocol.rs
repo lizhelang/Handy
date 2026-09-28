@@ -19,6 +19,7 @@ fn shared_terms_wire_preserves_explicit_hotword_priority_and_lease_identity() {
             learning_generation: 3,
         },
         terms,
+        explicit_terms: explicit_hotword_terms(&custom_words),
         max_age_ms: 500,
     };
     let bytes = serde_json::to_vec(&reply).unwrap();
@@ -515,4 +516,17 @@ fn target_bridge_requires_authenticated_envelope_and_operation_bound_dispatch() 
     let mut injected = value;
     injected["target_bridge"]["pid"] = serde_json::json!(42);
     assert!(serde_json::from_value::<VoiceWireRequest>(injected).is_err());
+}
+
+#[test]
+fn explicit_terms_allow_emails_and_mixed_words_without_learned_provenance() {
+    let terms = explicit_hotword_terms(&[
+        " lll@example.com ".into(),
+        "compute服务器".into(),
+        "额度".into(),
+        "lll@example.com".into(),
+        "bad\nterm".into(),
+        "x".repeat(129),
+    ]);
+    assert_eq!(terms, ["lll@example.com", "compute服务器", "额度"]);
 }

@@ -355,6 +355,10 @@ final class InputiaRustBridge {
     consume(inputia_session_set_input_mode(session, inputModeChinese))
   }
 
+  var usesNaturalDoublePinyin: Bool {
+    (Self.loadSettingsDictionary(path: settingsPath)?["schema_id"] as? String) == "double_pinyin"
+  }
+
   @discardableResult
   func reloadSettingsIfNeeded() -> Bool {
     let currentModificationDate = Self.modificationDate(for: settingsPath)

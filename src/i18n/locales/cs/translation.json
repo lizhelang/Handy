@@ -453,7 +453,7 @@
       },
       "customWords": {
         "title": "Manage Hotwords",
-        "description": "Add names, specialized terms, or frequently used words. Typing prioritizes matching hotwords; speech recognition uses them as preferred references. Results still depend on the dictionary, context, pronunciation, and selected model.",
+        "description": "For hotwords starting with English letters, enter exactly the first three letters. For hotwords starting with Chinese characters, enter the full pinyin or Natural Code double-pinyin code of the first two characters. The full hotword appears first at that prefix; continuing to type removes the prefix completion. Speech recognition uses hotwords as preferred references; results still depend on context, pronunciation, and the model.",
         "placeholder": "Přidat slovo",
         "add": "Přidat",
         "remove": "Odebrat {{word}}",

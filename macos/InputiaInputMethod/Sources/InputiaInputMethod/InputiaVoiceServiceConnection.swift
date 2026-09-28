@@ -52,10 +52,15 @@ struct InputiaSharedTermsSnapshot {
   let target: InputiaVoiceTarget
   let version: InputiaVoiceTermsVersion
   let terms: [String]
+  var explicitTerms: [String] = []
   let expiresAt: TimeInterval
   func englishCandidates(prefix: String) -> [String] {
     guard prefix.count >= 2 else { return [] }
-    return terms.filter { term in
+    let explicit = InputiaHotwordPrefix.candidates(explicitTerms, code: prefix).filter {
+      $0.count > prefix.count && $0.lowercased().hasPrefix(prefix.lowercased())
+    }
+    return explicit + terms.filter { term in
+      !explicitTerms.contains(term) &&
       term.count > prefix.count && term.count <= 32 && term.lowercased().hasPrefix(prefix.lowercased())
         && term.unicodeScalars.allSatisfy { scalar in
           (48...57).contains(scalar.value) || (65...90).contains(scalar.value)
@@ -63,6 +68,44 @@ struct InputiaSharedTermsSnapshot {
         }
         && term.unicodeScalars.contains { (65...90).contains($0.value) || (97...122).contains($0.value) }
     }
+  }
+}
+
+/// 显式热词前缀匹配；只改变展示，不构造 Rime 候选身份。
+enum InputiaHotwordPrefix {
+  static func candidates(_ terms: [String], code: String, naturalDoublePinyin: Bool = true) -> [String] {
+    let normalized = code.lowercased().filter { $0 != " " && $0 != "'" }
+    guard !normalized.isEmpty else { return [] }
+    return terms.filter { term in
+      let first = Array(term.prefix(3))
+      if first.count == 3, first.allSatisfy({ $0.isASCII && $0.isLetter }), normalized.count == 3 {
+        return String(first).lowercased() == normalized
+      }
+      let chinese = Array(term.prefix(2))
+      guard chinese.count == 2, chinese.allSatisfy({ character in
+        character.unicodeScalars.allSatisfy { (0x3400...0x9fff).contains($0.value) }
+      }), let latin = String(chinese).applyingTransform(.toLatin, reverse: false) else { return false }
+      let umlauts = latin.lowercased().replacingOccurrences(of: "[üǖǘǚǜ]", with: "v", options: .regularExpression)
+      guard let unaccented = umlauts.applyingTransform(.stripDiacritics, reverse: false) else { return false }
+      let syllables = unaccented.split(separator: " ").map(String.init)
+      guard syllables.count == 2 else { return false }
+      return normalized == syllables.joined() || (naturalDoublePinyin && normalized == syllables.map(naturalCode).joined())
+    }
+  }
+  static func naturalCode(_ syllable: String) -> String {
+    var value = syllable.replacingOccurrences(of: "ü", with: "v")
+    // 与自然码 schema 的顺序变换保持一致，保留零声母音节的规则。
+    let rules = [("^([aoe])([ioun])$", "$1$1$2"), ("^([aoe])(ng)?$", "$1$1$2"),
+      ("iu$", "Q"), ("[iu]a$", "W"), ("[uv]an$", "R"), ("[uv]e$", "T"),
+      ("ing$|uai$", "Y"), ("^sh", "U"), ("^ch", "I"), ("^zh", "V"),
+      ("uo$", "O"), ("[uv]n$", "P"), ("i?ong$", "S"), ("[iu]ang$", "D"),
+      ("(.)en$", "$1F"), ("(.)eng$", "$1G"), ("(.)ang$", "$1H"), ("ian$", "M"),
+      ("(.)an$", "$1J"), ("iao$", "C"), ("(.)ao$", "$1K"), ("(.)ai$", "$1L"),
+      ("(.)ei$", "$1Z"), ("ie$", "X"), ("ui$", "V"), ("(.)ou$", "$1B"), ("in$", "N")]
+    for (pattern, replacement) in rules {
+      value = value.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
+    }
+    return value.lowercased()
   }
 }
 
@@ -160,6 +203,7 @@ private struct InputiaSharedTermsReply: Decodable {
   let lease_epoch: UInt64?
   let version: InputiaVoiceTermsVersion?
   let terms: [String]?
+  let explicit_terms: [String]?
   let max_age_ms: UInt64?
   let code: String?
 }
@@ -660,12 +704,16 @@ final class InputiaVoiceServiceConnection {
         terms.allSatisfy({ !$0.isEmpty && $0.count <= 32 && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) }),
         let maxAge = reply.max_age_ms, maxAge > 0, maxAge <= 1000
       else { throw InputiaVoiceServiceError.handshake }
+      let explicit = reply.explicit_terms ?? []
+      guard explicit.count <= 256, explicit.reduce(0, { $0 + $1.utf8.count }) <= 16 * 1024,
+        explicit.allSatisfy({ !$0.isEmpty && $0.count <= 128 && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) })
+      else { throw InputiaVoiceServiceError.handshake }
       let deadline = min(sentAt + Double(maxAge) / 1000, leaseDeadline)
       guard ProcessInfo.processInfo.systemUptime < deadline else {
         InputiaSharedTermsMemory.shared.clear(); return nil
       }
       return InputiaSharedTermsSnapshot(identity: "\(server.instance_id):\(requestID):\(lease.lease_id):\(lease.lease_epoch)",
-        target: lease.target, version: version, terms: terms, expiresAt: deadline)
+        target: lease.target, version: version, terms: terms, explicitTerms: explicit, expiresAt: deadline)
     } catch { close(); throw error }
   }
 

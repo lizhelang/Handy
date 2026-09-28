@@ -449,6 +449,30 @@ impl SharedTermsRequest {
     }
 }
 
+/// 用户显式词汇的有界副本；允许邮箱与混合词，不把自动学习词提升为显式来源。
+pub fn explicit_hotword_terms(words: &[String]) -> Vec<String> {
+    let mut terms = Vec::new();
+    let mut bytes = 0;
+    for word in words {
+        let word = word.trim();
+        if word.is_empty()
+            || word.chars().count() > 128
+            || word.contains("<|")
+            || word.contains("|>")
+            || word.chars().any(char::is_control)
+            || terms.iter().any(|item| item == word)
+        {
+            continue;
+        }
+        if terms.len() >= 256 || bytes + word.len() > 16 * 1024 {
+            break;
+        }
+        bytes += word.len();
+        terms.push(word.to_owned());
+    }
+    terms
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SharedTermsReply {
@@ -458,6 +482,8 @@ pub enum SharedTermsReply {
         lease_epoch: u64,
         version: VoiceTermsVersion,
         terms: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        explicit_terms: Vec<String>,
         max_age_ms: u64,
     },
     Rejected {

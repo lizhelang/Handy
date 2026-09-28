@@ -267,6 +267,11 @@ impl VoiceConnection {
                             inputia_handy_runtime::voice_protocol::TargetBridgePurpose::SharedTerms,
                         )
                         .map_err(|_| VoiceReplyError::Unauthorized)?;
+                        let custom_words = crate::settings::get_settings(app).custom_words;
+                        let explicit_terms =
+                            inputia_handy_runtime::voice_protocol::explicit_hotword_terms(
+                                &custom_words,
+                            );
                         let snapshot = history
                             .session_hotwords(
                                 PrivacyPolicy {
@@ -284,7 +289,11 @@ impl VoiceConnection {
                                     secure_input: false,
                                     transient_or_concealed: false,
                                 },
-                                crate::settings::get_settings(app).custom_words,
+                                explicit_terms
+                                    .iter()
+                                    .filter(|term| term.chars().count() <= 32)
+                                    .cloned()
+                                    .collect(),
                                 HotwordBudget::default(),
                             )
                             .map_err(|_| VoiceReplyError::Unknown)?;
@@ -313,6 +322,9 @@ impl VoiceConnection {
                             inputia_handy_runtime::voice_protocol::TargetBridgePurpose::SharedTerms,
                         )
                         .map_err(|_| VoiceReplyError::Unauthorized)?;
+                        if crate::settings::get_settings(app).custom_words != custom_words {
+                            return Err(VoiceReplyError::Unauthorized);
+                        }
                         Ok(SharedTermsReply::SharedTerms {
                             request_id: request.request_id,
                             lease_id: lease.lease_id,
@@ -321,6 +333,7 @@ impl VoiceConnection {
                                 policy_epoch: snapshot.policy_epoch,
                                 learning_generation: snapshot.learning_generation,
                             },
+                            explicit_terms,
                             terms: snapshot.terms,
                             max_age_ms,
                         })

@@ -31,6 +31,26 @@ private final class ClearedState: InputiaSharedStateBarrierApplying {
       selection_generation: 1, composition_generation: 1, source_app: "synthetic.test")
   }
   static func main() {
+    let words = ["lll@example.com", "compute服务器", "AEA", "额度", "南信大", "绿洲"]
+    func hotwords(_ code: String) -> [String] { InputiaHotwordPrefix.candidates(words, code: code) }
+    precondition(hotwords("lll") == ["lll@example.com"])
+    precondition(hotwords("llll").isEmpty && hotwords("lllll").isEmpty)
+    precondition(hotwords(String("llll".dropLast())) == ["lll@example.com"])
+    precondition(hotwords("com") == ["compute服务器"] && hotwords("comp").isEmpty)
+    precondition(hotwords("aea") == ["AEA"])
+    precondition(hotwords("edu") == ["额度"] && hotwords("eedu") == ["额度"])
+    precondition(hotwords("nanxin") == ["南信大"] && hotwords("njxn") == ["南信大"])
+    precondition(hotwords("nanxinda").isEmpty && hotwords("njxnda").isEmpty)
+    precondition(hotwords("lvzhou") == ["绿洲"] && hotwords("lvvb") == ["绿洲"])
+    precondition(InputiaHotwordPrefix.candidates(words, code: "eedu", naturalDoublePinyin: false).isEmpty)
+    precondition(InputiaHotwordPrefix.candidates([], code: "lll").isEmpty)
+    let explicitSnapshot = InputiaSharedTermsSnapshot(identity: "explicit", target: target(),
+      version: .init(policy_epoch: 1, learning_generation: 1), terms: ["compute服务器", "composer", "lll@example.com"],
+      explicitTerms: words, expiresAt: 10)
+    precondition(explicitSnapshot.englishCandidates(prefix: "lll") == ["lll@example.com"])
+    precondition(explicitSnapshot.englishCandidates(prefix: "llll").isEmpty)
+    precondition(explicitSnapshot.englishCandidates(prefix: "com") == ["compute服务器", "composer"])
+    precondition(explicitSnapshot.englishCandidates(prefix: "comp") == ["composer"])
     let orderJSON = Data(#"{"ok":true,"mode":"Chinese","composing":"nihao","page":0,"indices":[1,0,2]}"#.utf8)
     let order = InputiaSharedCandidateOrder.decode(orderJSON, mode: "Chinese", composing: "nihao", page: 0, count: 3)!
     precondition(order.originalIndex(displayed: 0) == 1 && order.originalIndex(displayed: 1) == 0)

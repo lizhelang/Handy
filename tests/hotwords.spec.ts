@@ -85,7 +85,16 @@ test("hotwords is the second sidebar entry and edits existing custom_words", asy
     region.getByRole("button", { name: "删除 原有术语" }),
   ).toBeVisible();
   await expect(
-    region.getByText(/打字匹配到热词时优先展示，语音识别优先参考/),
+    region.getByText(/英文开头的热词输入恰好前三个字母/),
+  ).toBeVisible();
+  await expect(
+    region.getByText(/前两个字的完整全拼或自然码双拼编码/),
+  ).toBeVisible();
+  await expect(region.getByText(/继续输入会撤下前缀补全/)).toBeVisible();
+  await expect(
+    region.getByText(
+      /语音识别优先参考热词，实际结果仍取决于上下文、发音及所用模型/,
+    ),
   ).toBeVisible();
   await region.getByRole("textbox", { name: "输入热词" }).fill(" 新术语 ");
   await region

@@ -181,6 +181,8 @@ final class InputiaInputController: IMKInputController {
   private var sharedEnglishRefreshQueued = false
   private var sharedEnglishSelection = InputiaSharedEnglishSelectionState()
   private var sharedChineseSelection = InputiaSharedEnglishSelectionState()
+  private var hotwordOverlay: (code: String, words: [String], base: [String], identity: String, target: InputiaVoiceTarget)?
+  private var hotwordSelection = InputiaSharedEnglishSelectionState()
   private var sharedChineseOrder: (order: InputiaSharedCandidateOrder, candidates: [String], identity: String, target: InputiaVoiceTarget)?
   #endif
   private let bridge = InputiaRustBridge.makeDefault()
@@ -477,6 +479,10 @@ final class InputiaInputController: IMKInputController {
       return
     }
     #if INPUTIA_PAIRED_BUILD
+    if hotwordOverlay != nil, !candidatePanelExpanded,
+      let index = latestCandidates.firstIndex(of: selected), let client = client() {
+      _ = selectHotwordOverlay(displayed: index, client: client); return
+    }
     if let prediction = personalPredictions.first(where: { $0.text == selected }), let client = client() {
       _ = acceptPersonalPrediction(prediction, client: client)
       return
@@ -843,6 +849,7 @@ final class InputiaInputController: IMKInputController {
         return true
       }
       #if INPUTIA_PAIRED_BUILD
+      if hotwordOverlay != nil { return selectHotwordOverlay(displayed: 0, client: client) }
       if latestComposing.isEmpty && !personalPredictions.isEmpty {
         personalization.reset(); return false
       }
@@ -873,6 +880,7 @@ final class InputiaInputController: IMKInputController {
         return true
       }
       #if INPUTIA_PAIRED_BUILD
+      if hotwordOverlay != nil { return selectHotwordOverlay(displayed: 0, client: client) }
       if latestComposing.isEmpty, let first = personalPredictions.first {
         return acceptPersonalPrediction(first, client: client)
       }
@@ -891,6 +899,10 @@ final class InputiaInputController: IMKInputController {
     }
 
     #if INPUTIA_PAIRED_BUILD
+    if hotwordOverlay != nil, !candidatePanelExpanded, !modifiers.contains(.shift),
+      text.count == 1, let digit = Int(text), (1...9).contains(digit) {
+      return selectHotwordOverlay(displayed: digit - 1, client: client)
+    }
     if !personalCandidates.isEmpty, !candidatePanelExpanded,
       !modifiers.contains(.shift), text.count == 1, let digit = Int(text),
       digit > 0, digit <= 9 {
@@ -994,7 +1006,7 @@ final class InputiaInputController: IMKInputController {
     #if INPUTIA_PAIRED_BUILD
     if outcome.mode == "Chinese", !outcome.composing.isEmpty {
       schedulePersonalization(client: client)
-      if !personalization.allowed { scheduleSharedEnglishRefresh(client: client) }
+      scheduleSharedEnglishRefresh(client: client)
     }
     #endif
     return outcome.consumed
@@ -1004,6 +1016,8 @@ final class InputiaInputController: IMKInputController {
     #if INPUTIA_PAIRED_BUILD
     personalRefreshGeneration &+= 1
     personalization.invalidateView()
+    hotwordOverlay = nil
+    hotwordSelection.cancel()
     sharedChineseOrder = nil
     sharedChineseSelection.cancel()
     #endif
@@ -1055,6 +1069,7 @@ final class InputiaInputController: IMKInputController {
   #if INPUTIA_PAIRED_BUILD
   /// 只观察 Inputia 自己已完成的插入，不读取宿主全文、不监听其他输入。
   private func clearPersonalDisplay() {
+    clearHotwordOverlay()
     let rankedExpansion = expandedCandidateEntries.contains { $0.candidateID != nil }
     let visible = !personalCandidates.isEmpty || !personalPredictions.isEmpty || rankedExpansion
     personalCandidates = []; personalPredictions = []; personalCode = ""
@@ -1150,6 +1165,7 @@ final class InputiaInputController: IMKInputController {
           live.selectedRange() == selection, self.typedCompositionOrigin?.inputiaTarget == target,
           self.typedCompositionOrigin?.isCurrentForTypedOrigin(client: live,
             controllerID: self.voiceControllerID, activationGeneration: self.voiceActivationGeneration) == true else { return }
+        self.clearHotwordOverlay()
         self.sharedChineseOrder = nil
         if code.isEmpty {
           self.personalPredictions = view.predictions
@@ -1166,6 +1182,7 @@ final class InputiaInputController: IMKInputController {
           self.personalCandidates = view.candidates.filter { seen.insert($0.text).inserted }
           self.personalPredictions = []; self.personalCode = code
           self.latestCandidates = Array(self.personalCandidates.prefix(max(1, self.bridge.latestOutcome.candidates.count))).map(\.text)
+          self.refreshHotwordPrefix(client: live)
           self.updateCandidateWindow(client: live)
         }
       }
@@ -1438,20 +1455,22 @@ final class InputiaInputController: IMKInputController {
     guard !sharedEnglishSelection.hasPending else { return true }
     guard let snapshot = shortcutPreparedSnapshot,
       let shared = currentSharedTerms(client: client), shared.identity == identity,
-      shared.terms.contains(candidate) else {
+      shared.englishCandidates(prefix: englishCompletionPrefix).contains(candidate) else {
       clearSharedEnglishCandidates()
       return true
     }
     let prefix = englishCompletionPrefix
+    let selection = client.selectedRange()
     guard let intent = sharedEnglishSelection.begin(.init(prefix: prefix, targetID: snapshot.targetID,
       cacheIdentity: identity, clientIdentity: ObjectIdentifier(client as AnyObject), activation: voiceActivationGeneration)) else { return true }
     DispatchQueue.main.async { [weak self] in
       guard let self, self.sharedEnglishSelection.isPending(intent) else { return }
       guard let liveClient = self.client(), ObjectIdentifier(liveClient as AnyObject) == ObjectIdentifier(client as AnyObject),
+        liveClient.selectedRange() == selection,
         self.englishCompletionPrefix == prefix, self.bridge.latestOutcome.mode == "English",
         self.latestComposing.isEmpty, self.shortcutPreparedSnapshot === snapshot,
         let current = self.liveSharedTerms(client: client), current.identity == identity,
-        current.terms.contains(candidate), let suffix = self.completionSuffix(for: candidate), !suffix.isEmpty,
+        current.englishCandidates(prefix: prefix).contains(candidate), let suffix = self.completionSuffix(for: candidate), !suffix.isEmpty,
         self.sharedEnglishSelection.isPending(intent),
         self.bridge.latestOutcome.mode == "English", self.latestComposing.isEmpty,
         !IsSecureEventInputEnabled(),
@@ -1474,6 +1493,78 @@ final class InputiaInputController: IMKInputController {
     return true
   }
 
+  private func clearHotwordOverlay() {
+    hotwordSelection.cancel()
+    guard let overlay = hotwordOverlay else { return }
+    hotwordOverlay = nil
+    if latestComposing == overlay.code {
+      latestCandidates = overlay.base
+      if !candidatePanelExpanded {
+        if latestCandidates.isEmpty { InputiaHost.candidatePanel?.hide() }
+        else { InputiaHost.candidatePanel?.show(candidates: latestCandidates, near: chineseCandidateRect) }
+      }
+    }
+  }
+
+  @discardableResult private func refreshHotwordPrefix(client: IMKTextInput) -> Bool {
+    clearHotwordOverlay()
+    let current = bridge.latestOutcome
+    guard current.mode == "Chinese", !current.composing.isEmpty, !candidatePanelExpanded,
+      shiftEnglishComposition.isEmpty, let shared = liveSharedTerms(client: client) else { return false }
+    let words = Array(InputiaHotwordPrefix.candidates(shared.explicitTerms, code: current.composing, naturalDoublePinyin: bridge.usesNaturalDoublePinyin).prefix(3))
+    guard !words.isEmpty, currentSharedTerms(client: client)?.identity == shared.identity else { return false }
+    let base = latestCandidates
+    hotwordOverlay = (current.composing, words, base, shared.identity, shared.target)
+    // 基础候选身份和消费长度不变，额外候选只由显式热词文本拥有。
+    latestCandidates = Array((words + base).prefix(9))
+    updateCandidateWindow(client: client)
+    return true
+  }
+
+  private func selectHotwordOverlay(displayed: Int, client: IMKTextInput) -> Bool {
+    guard let overlay = hotwordOverlay, latestComposing == overlay.code,
+      displayed >= 0, displayed < latestCandidates.count else { return true }
+    if displayed >= overlay.words.count {
+      let index = displayed - overlay.words.count
+      clearHotwordOverlay()
+      if personalCandidates.indices.contains(index) {
+        return choosePersonal(personalCandidates[index], explicit: true, client: client)
+      }
+      if sharedChineseOrder != nil { return enqueueSharedChineseSelection(displayed: index, client: client) }
+      return chooseNativeWithLearning(index: index, explicit: true, client: client)
+    }
+    guard !hotwordSelection.hasPending, let snapshot = shortcutPreparedSnapshot else { return true }
+    let word = overlay.words[displayed]
+    let before = bridge.latestOutcome
+    let selection = client.selectedRange()
+    let activation = voiceActivationGeneration
+    guard let intent = hotwordSelection.begin(.init(prefix: overlay.code, targetID: overlay.target.target_id,
+      cacheIdentity: overlay.identity, clientIdentity: ObjectIdentifier(client as AnyObject), activation: activation)) else { return true }
+    DispatchQueue.main.async { [weak self] in
+      guard let self, self.hotwordSelection.isPending(intent) else { return }
+      let current = self.bridge.latestOutcome
+      guard let live = self.client(), ObjectIdentifier(live as AnyObject) == ObjectIdentifier(client as AnyObject),
+        live.selectedRange() == selection, self.shortcutPreparedSnapshot === snapshot,
+        current.mode == before.mode, current.composing == before.composing, current.page == before.page,
+        current.candidateIDs == before.candidateIDs, self.hotwordOverlay?.identity == overlay.identity,
+        self.hotwordOverlay?.words == overlay.words,
+        let shared = self.liveSharedTerms(client: live), shared.identity == overlay.identity,
+        shared.target == overlay.target, InputiaHotwordPrefix.candidates(shared.explicitTerms, code: current.composing, naturalDoublePinyin: self.bridge.usesNaturalDoublePinyin).contains(word),
+        !IsSecureEventInputEnabled(), self.currentSharedTerms(client: live)?.identity == overlay.identity,
+        self.hotwordSelection.consume(intent, context: .init(prefix: current.composing, targetID: shared.target.target_id,
+          cacheIdentity: shared.identity, clientIdentity: ObjectIdentifier(live as AnyObject), activation: self.voiceActivationGeneration), gateAllowed: true)
+      else { self.hotwordSelection.cancel(); self.clearHotwordOverlay(); return }
+      // 取消拼音组合，再用 IMK marked range 提交完整词；绝不伪造 Rime ID。
+      let replacement = InputiaHostTextPolicy.commitReplacementRange(previousComposing: current.composing, markedRange: live.markedRange())
+      let cancelled = self.bridge.escape()
+      guard cancelled.ok, cancelled.composing.isEmpty, cancelled.commit == nil else { return }
+      self.syncHostState(with: cancelled)
+      self.insertCommittedText(word, client: live, replacementRange: replacement)
+      InputiaHost.candidatePanel?.hide()
+    }
+    return true
+  }
+
   private func sharedChineseCoreMatches(_ value: (order: InputiaSharedCandidateOrder, candidates: [String], identity: String, target: InputiaVoiceTarget)) -> Bool {
     let current = bridge.latestOutcome
     return value.order.matches(mode: current.mode, composing: current.composing, page: current.page,
@@ -1482,6 +1573,7 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func clearSharedChineseCandidates() {
+    clearHotwordOverlay()
     sharedChineseSelection.cancel()
     if !personalCandidates.isEmpty { sharedChineseOrder = nil; return }
     guard sharedChineseOrder != nil else { return }
@@ -1495,6 +1587,8 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func refreshSharedChineseCandidates(client: IMKTextInput) {
+    clearHotwordOverlay()
+    if refreshHotwordPrefix(client: client) { return }
     guard personalCandidates.isEmpty, !personalization.allowed else { return }
     clearSharedChineseCandidates()
     guard !candidatePanelExpanded, let shared = liveSharedTerms(client: client) else {
