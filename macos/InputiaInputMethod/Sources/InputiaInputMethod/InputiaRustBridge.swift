@@ -216,6 +216,7 @@ final class InputiaRustBridge {
   private var settingsModificationDate: Date?
   private var cachedInputModeToggleShortcut = "shift"
   private var cachedScriptToggleShortcut = "control_shift_s"
+  private(set) var usesNaturalDoublePinyin = false
   private(set) var latestOutcome = InputiaBridgeOutcome.error
 
   private init(settingsPath: String, startInChineseMode: Bool = false) {
@@ -224,6 +225,7 @@ final class InputiaRustBridge {
     settingsModificationDate = Self.modificationDate(for: settingsPath)
     cachedInputModeToggleShortcut = Self.inputModeToggleShortcut(in: settingsPath)
     cachedScriptToggleShortcut = Self.scriptToggleShortcut(in: settingsPath)
+    usesNaturalDoublePinyin = (Self.loadSettingsDictionary(path: settingsPath)?["schema_id"] as? String) == "double_pinyin"
     session = Self.openSettingsSession(settingsPath: settingsPath)
     if startInChineseMode {
       _ = setChineseMode()
@@ -353,10 +355,6 @@ final class InputiaRustBridge {
 
   func setChineseMode() -> InputiaBridgeOutcome {
     consume(inputia_session_set_input_mode(session, inputModeChinese))
-  }
-
-  var usesNaturalDoublePinyin: Bool {
-    (Self.loadSettingsDictionary(path: settingsPath)?["schema_id"] as? String) == "double_pinyin"
   }
 
   @discardableResult
@@ -735,6 +733,7 @@ final class InputiaRustBridge {
     settingsModificationDate = newModificationDate
     cachedInputModeToggleShortcut = Self.inputModeToggleShortcut(in: settingsPath)
     cachedScriptToggleShortcut = Self.scriptToggleShortcut(in: settingsPath)
+    usesNaturalDoublePinyin = (Self.loadSettingsDictionary(path: settingsPath)?["schema_id"] as? String) == "double_pinyin"
 
     switch previousMode {
     case "Chinese":

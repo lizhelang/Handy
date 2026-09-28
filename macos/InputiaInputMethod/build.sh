@@ -390,6 +390,7 @@ fi
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRuntimeDiagnostics.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaTypedCapture.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPersonalization.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExplicitHotwords.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHostTextPolicy.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
@@ -436,8 +437,8 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   if [[ "$IS_RELEASE" == "1" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia" "$host_plist"
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia" "$host_plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 78" "$host_plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.4" "$host_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 79" "$host_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.5" "$host_plist"
     /usr/libexec/PlistBuddy -c "Add :InputiaReleaseChannel string stable" "$host_plist"
   fi
 fi
@@ -557,11 +558,12 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
 "$BUILD_DIR/inputia-window-title-query-self-check"
 
 # 配对协议/短词缓存使用合成socket自检；不启动GUI、麦克风或读取用户词库。
-for check in InputiaVoiceServiceSelfCheck InputiaSharedTermsSelfCheck; do
+for check in InputiaVoiceServiceSelfCheck InputiaSharedTermsSelfCheck InputiaExplicitHotwordsSelfCheck; do
   /usr/bin/swiftc \
     -parse-as-library -D INPUTIA_PAIRED_BUILD -D INPUTIA_CONNECTION_SELF_CHECK \
     -target "$TARGET_TRIPLE" \
     "$ROOT_DIR/Tools/$check.swift" \
+    "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExplicitHotwords.swift" \
     "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
     "$ROOT_DIR/Sources/InputiaInputMethod/InputiaFramedConnection.swift" \
     "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
@@ -620,8 +622,8 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   if [[ "$IS_RELEASE" == "1" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia设置" "$settings_plist"
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia设置" "$settings_plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 78" "$settings_plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.4" "$settings_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 79" "$settings_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.5" "$settings_plist"
     /usr/libexec/PlistBuddy -c "Add :InputiaReleaseChannel string stable" "$settings_plist"
   fi
 fi
