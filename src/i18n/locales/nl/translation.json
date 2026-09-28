@@ -465,11 +465,11 @@
       },
       "voiceActivityDetection": {
         "title": "Spraakactiviteitsdetectie (VAD)",
-        "description": "Filter stilte uit opnames. Streaming-modellen gebruiken een langere VAD-uitloop; het uitschakelen van VAD neemt de ruwe audio op."
+        "description": "Detect speech activity without cutting audio. Recognition and saved recordings use the complete audio between start and stop."
       },
       "vadBackend": {
         "title": "VAD-backend",
-        "description": "Kies de detector die stilte filtert. Earshot is experimenteel; schakel terug naar Silero als spraak wordt afgekapt of ruis behouden blijft.",
+        "description": "Choose the speech activity detector. Detection does not remove audio segments. Earshot is experimental.",
         "options": {
           "silero": "Silero",
           "earshot": "Earshot"

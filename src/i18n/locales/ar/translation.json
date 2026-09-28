@@ -442,11 +442,11 @@
       },
       "voiceActivityDetection": {
         "title": "كشف النشاط الصوتي",
-        "description": "تصفية الصمت من التسجيلات. النماذج التي تدعم البث تستخدم فترة VAD أطول؛ وتعطيل VAD يسجّل الصوت الخام."
+        "description": "Detect speech activity without cutting audio. Recognition and saved recordings use the complete audio between start and stop."
       },
       "vadBackend": {
         "title": "محرك كشف النشاط الصوتي",
-        "description": "اختر الكاشف المستخدم لتصفية الصمت. Earshot تجريبي؛ ارجع إلى Silero إذا تم اقتطاع الكلام أو الاحتفاظ بالضوضاء.",
+        "description": "Choose the speech activity detector. Detection does not remove audio segments. Earshot is experimental.",
         "options": {
           "silero": "Silero",
           "earshot": "Earshot"

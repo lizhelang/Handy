@@ -465,11 +465,11 @@
       },
       "voiceActivityDetection": {
         "title": "זיהוי פעילות קולית",
-        "description": "סינון שקט מההקלטות. מודלים התומכים בסטרימינג משתמשים בזנב VAD ארוך יותר; ביטול VAD מקליט אודיו גולמי."
+        "description": "Detect speech activity without cutting audio. Recognition and saved recordings use the complete audio between start and stop."
       },
       "vadBackend": {
         "title": "מנוע זיהוי פעילות קולית",
-        "description": "בחרו את הגלאי המשמש לסינון שקט. Earshot ניסיוני; חזרו ל-Silero אם הדיבור נחתך או שרעש נשמר.",
+        "description": "Choose the speech activity detector. Detection does not remove audio segments. Earshot is experimental.",
         "options": {
           "silero": "Silero",
           "earshot": "Earshot"

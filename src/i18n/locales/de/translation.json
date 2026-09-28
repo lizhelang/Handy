@@ -465,11 +465,11 @@
       },
       "voiceActivityDetection": {
         "title": "Sprachaktivitätserkennung (VAD)",
-        "description": "Filtert Stille aus Aufnahmen. Streamingfähige Modelle verwenden ein längeres VAD-Ende; das Deaktivieren von VAD nimmt Rohaudio auf."
+        "description": "Detect speech activity without cutting audio. Recognition and saved recordings use the complete audio between start and stop."
       },
       "vadBackend": {
         "title": "VAD-Backend",
-        "description": "Wählt den Detektor zum Herausfiltern von Stille. Earshot ist experimentell; wechseln Sie zurück zu Silero, wenn Sprache abgeschnitten oder Rauschen beibehalten wird.",
+        "description": "Choose the speech activity detector. Detection does not remove audio segments. Earshot is experimental.",
         "options": {
           "silero": "Silero",
           "earshot": "Earshot"

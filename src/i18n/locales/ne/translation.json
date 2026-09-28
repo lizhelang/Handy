@@ -465,11 +465,11 @@
       },
       "voiceActivityDetection": {
         "title": "भ्वाइस एक्टिभिटी डिटेक्सन",
-        "description": "रेकर्डिङबाट मौनता हटाउँछ। स्ट्रिमिङ-सक्षम मोडेलहरूले लामो VAD टेल प्रयोग गर्छन्; VAD अफ गर्दा कच्चा अडियो रेकर्ड हुन्छ।"
+        "description": "Detect speech activity without cutting audio. Recognition and saved recordings use the complete audio between start and stop."
       },
       "vadBackend": {
         "title": "भ्वाइस एक्टिभिटी ब्याकएन्ड",
-        "description": "मौनता फिल्टर गर्न प्रयोग हुने डिटेक्टर छान्नुहोस्। Earshot प्रयोगात्मक हो; बोली काटिएमा वा आवाज रहिरहेमा Silero मा फर्कनुहोस्।",
+        "description": "Choose the speech activity detector. Detection does not remove audio segments. Earshot is experimental.",
         "options": {
           "silero": "Silero",
           "earshot": "Earshot"

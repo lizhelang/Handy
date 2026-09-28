@@ -38,14 +38,14 @@ enum AudioChunk {
     EndOfStream,
 }
 
-/// How 16 kHz mono frames should be filtered for one recording session.
+/// 单次录音的VAD诊断策略；所有策略均完整保留16kHz单声道帧。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VadPolicy {
-    /// Bypass VAD and forward every frame.
+    /// 不运行VAD，连续传递每个原始重采样帧。
     Disabled,
-    /// Current offline-tuned VAD profile.
+    /// 离线识别的VAD诊断配置，不裁切录音。
     Offline,
-    /// VAD profile with a longer post-speech tail for streaming-capable models.
+    /// 流式识别的VAD诊断配置，回调同样不裁切音频。
     Streaming,
 }
 
@@ -72,9 +72,17 @@ impl VadConfig {
     }
 }
 
-/// Callback invoked with each 16 kHz mono frame that passes the active capture
-/// policy while recording. Used to feed a live streaming transcription as audio arrives.
+/// 每个16kHz原始重采样帧仅传递一次；包含停顿、轻声和未确认语音尾部。
+/// 最终录音和流式回调使用相同的连续音频。
 pub type AudioFrameCallback = Arc<dyn Fn(&[f32]) + Send + Sync + 'static>;
+
+#[derive(Default)]
+struct CapturedFrameStats {
+    raw_samples: usize,
+    vad_speech_frames: usize,
+    vad_noise_frames: usize,
+    vad_error_frames: usize,
+}
 
 pub struct AudioRecorder {
     device: Option<Device>,
@@ -143,8 +151,8 @@ impl AudioRecorder {
         self
     }
 
-    /// Register a callback that receives real-time 16 kHz frames after the active
-    /// VAD policy has been applied. Frames arrive in real time, in order, on the
+    /// 注册连续16kHz原始重采样帧回调，VAD仅用于诊断，不删帧或重放。
+    /// Frames arrive in real time, in order, on the
     /// recorder's consumer thread — keep the callback cheap (e.g. forward to a
     /// channel) so it never stalls capture.
     pub fn with_audio_callback<F>(mut self, cb: F) -> Self
@@ -689,6 +697,169 @@ mod tests {
         time::{Duration, Instant},
     };
 
+    struct CountingScriptedVad {
+        script: std::collections::VecDeque<bool>,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl crate::audio_toolkit::VoiceActivityDetector for CountingScriptedVad {
+        fn push_frame<'a>(
+            &'a mut self,
+            frame: &'a [f32],
+        ) -> anyhow::Result<crate::audio_toolkit::vad::VadFrame<'a>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(if self.script.pop_front().unwrap_or(false) {
+                crate::audio_toolkit::vad::VadFrame::Speech(frame)
+            } else {
+                crate::audio_toolkit::vad::VadFrame::Noise
+            })
+        }
+        fn frame_samples(&self) -> usize {
+            4
+        }
+    }
+
+    fn capture_scripted_pcm(
+        policy: super::VadPolicy,
+        pcm: &[f32],
+        script: &[bool],
+    ) -> (Vec<f32>, Vec<f32>, usize) {
+        use crate::audio_toolkit::vad::SmoothedVad;
+        use std::sync::{atomic::AtomicUsize, Mutex};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let detector = SmoothedVad::new(
+            Box::new(CountingScriptedVad {
+                script: script.iter().copied().collect(),
+                calls: calls.clone(),
+            }),
+            3,
+            2,
+            2,
+        );
+        let vad = super::VadConfig {
+            detector: Arc::new(Mutex::new(Box::new(detector))),
+            frame_samples: 4,
+            offline_hangover_frames: 2,
+            streaming_hangover_frames: 2,
+        };
+        let callback_pcm = Arc::new(Mutex::new(Vec::<f32>::new()));
+        let callback_output = callback_pcm.clone();
+        let callback: super::AudioFrameCallback = Arc::new(move |frame| {
+            callback_output.lock().unwrap().extend_from_slice(frame);
+        });
+        let (sample_tx, sample_rx) = mpsc::channel();
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let worker_stop = stop_flag.clone();
+        let fault = Arc::new(AtomicBool::new(false));
+        let worker_fault = fault.clone();
+        let worker = thread::spawn(move || {
+            run_consumer(
+                16_000,
+                Some(vad),
+                sample_rx,
+                cmd_rx,
+                None,
+                Some(callback),
+                worker_stop,
+                Instant::now(),
+                worker_fault,
+            )
+        });
+        cmd_tx
+            .send(Cmd::Start(policy, Instant::now(), ready_tx))
+            .unwrap();
+        // 首块不足一帧；后续不规则块同时检验重采样pending及stop排空边界。
+        sample_tx
+            .send(AudioChunk::Samples(pcm[..3].to_vec()))
+            .unwrap();
+        ready_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        for chunk in pcm[3..].chunks(7) {
+            sample_tx.send(AudioChunk::Samples(chunk.to_vec())).unwrap();
+        }
+        cmd_tx.send(Cmd::Stop(reply_tx)).unwrap();
+        let eos_sender = sample_tx.clone();
+        let producer = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while !stop_flag.load(Ordering::Relaxed) && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(1));
+            }
+            eos_sender.send(AudioChunk::EndOfStream).unwrap();
+        });
+        let result = reply_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        producer.join().unwrap();
+        cmd_tx.send(Cmd::Shutdown).unwrap();
+        drop(sample_tx);
+        worker.join().unwrap();
+        assert!(!fault.load(Ordering::Relaxed));
+        let delivered = callback_pcm.lock().unwrap().clone();
+        (result, delivered, calls.load(Ordering::Relaxed))
+    }
+
+    #[test]
+    fn continuous_pcm_preserves_internal_noise_short_gap_and_unconfirmed_tail_for_all_policies() {
+        use super::VadPolicy;
+        // 短停顿后恢复语音曾重放第4帧；最后单个voiced帧不满足onset，曾消失。
+        let script = [
+            true, true, false, false, false, true, true, false, false, false, false, false, true,
+        ];
+        let pcm: Vec<_> = (1..=script.len() * 4).map(|sample| sample as f32).collect();
+        for policy in [
+            VadPolicy::Offline,
+            VadPolicy::Streaming,
+            VadPolicy::Disabled,
+        ] {
+            let (recorded, callback, calls) = capture_scripted_pcm(policy, &pcm, &script);
+            assert_eq!(recorded, pcm, "final PCM changed for {policy:?}");
+            assert_eq!(
+                callback, recorded,
+                "callback timeline changed for {policy:?}"
+            );
+            assert_eq!(
+                calls,
+                if policy == VadPolicy::Disabled {
+                    0
+                } else {
+                    script.len()
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn continuous_pcm_keeps_all_noise_and_partial_stop_tail_without_vad_gate() {
+        use super::VadPolicy;
+        let pcm: Vec<_> = (1..=53).map(|sample| sample as f32).collect();
+        let mut expected = pcm.clone();
+        expected.resize(56, 0.0);
+        let mut script = [false; 14];
+        script[13] = true;
+        for policy in [
+            VadPolicy::Offline,
+            VadPolicy::Streaming,
+            VadPolicy::Disabled,
+        ] {
+            let (recorded, callback, calls) = capture_scripted_pcm(policy, &pcm, &script);
+            assert_eq!(recorded, expected, "stop pending frame lost for {policy:?}");
+            assert_eq!(callback, recorded);
+            assert_eq!(
+                calls,
+                if policy == VadPolicy::Disabled {
+                    0
+                } else {
+                    script.len()
+                }
+            );
+        }
+        // 即使所有帧被检测为Noise，显式录音也不硬判为空。
+        let (recorded, callback, calls) =
+            capture_scripted_pcm(VadPolicy::Offline, &pcm, &[false; 14]);
+        assert_eq!(recorded, expected);
+        assert_eq!(callback, recorded);
+        assert_eq!(calls, 14);
+    }
+
     #[test]
     fn stop_timeout_quarantines_worker_and_sends_shutdown_once() {
         let (cmd_tx, cmd_rx) = mpsc::channel();
@@ -966,6 +1137,7 @@ fn run_consumer(
     );
 
     let mut processed_samples = Vec::<f32>::new();
+    let mut capture_stats = CapturedFrameStats::default();
     let mut recording = false;
     let mut vad_policy = VadPolicy::Offline;
 
@@ -1005,31 +1177,27 @@ fn run_consumer(
         vad: &Option<VadConfig>,
         audio_cb: &Option<AudioFrameCallback>,
         out_buf: &mut Vec<f32>,
+        stats: &mut CapturedFrameStats,
     ) {
         if !recording {
             return;
         }
 
-        let mut emit = |buf: &[f32]| {
-            out_buf.extend_from_slice(buf);
-            if let Some(cb) = audio_cb {
-                cb(buf);
-            }
-        };
-
-        if vad_policy == VadPolicy::Disabled {
-            emit(samples);
-            return;
+        // 音频时间轴只有一个来源；检测返回的聚合prefill不是新的采样帧。
+        out_buf.extend_from_slice(samples);
+        stats.raw_samples += samples.len();
+        if let Some(cb) = audio_cb {
+            cb(samples);
         }
-
-        if let Some(cfg) = vad {
-            let mut det = cfg.detector.lock().unwrap();
-            match det.push_frame(samples).unwrap_or(VadFrame::Speech(samples)) {
-                VadFrame::Speech(buf) => emit(buf),
-                VadFrame::Noise => {}
+        if vad_policy != VadPolicy::Disabled {
+            if let Some(cfg) = vad {
+                let mut det = cfg.detector.lock().unwrap();
+                match det.push_frame(samples) {
+                    Ok(VadFrame::Speech(_)) => stats.vad_speech_frames += 1,
+                    Ok(VadFrame::Noise) => stats.vad_noise_frames += 1,
+                    Err(_) => stats.vad_error_frames += 1,
+                }
             }
-        } else {
-            emit(samples);
         }
     }
 
@@ -1063,6 +1231,7 @@ fn run_consumer(
                     stop_flag.store(false, Ordering::Relaxed);
                     vad_policy = policy;
                     processed_samples.clear();
+                    capture_stats = CapturedFrameStats::default();
                     recording = true;
                     visualizer.reset();
                     frame_resampler.reset();
@@ -1096,6 +1265,7 @@ fn run_consumer(
                                 &vad,
                                 &audio_cb,
                                 &mut processed_samples,
+                                &mut capture_stats,
                             )
                         });
                     }
@@ -1120,6 +1290,7 @@ fn run_consumer(
                                         &vad,
                                         &audio_cb,
                                         &mut processed_samples,
+                                        &mut capture_stats,
                                     )
                                 });
                             }
@@ -1142,18 +1313,17 @@ fn run_consumer(
                             &vad,
                             &audio_cb,
                             &mut processed_samples,
+                            &mut capture_stats,
                         )
                     });
 
-                    // Diagnostic only: evidence for whether the VAD was
-                    // still withholding tail audio when capture stopped.
-                    // Suggestive, not conclusive, in either direction.
+                    // 仅记录检测器本会暂扣的尾帧；连续音频已完整传递，不再裁尾。
                     if vad_policy != VadPolicy::Disabled {
                         if let Some(cfg) = &vad {
                             let report = cfg.detector.lock().unwrap().tail_report();
                             if let Some(report) = report {
                                 log::debug!(
-                                    "VAD at stop: withheld tail {} frames (~{}ms, {} voiced), in_speech={}, onset_counter={}, hangover_counter={}",
+                                    "VAD diagnostic at stop (audio preserved): withheld tail {} frames (~{}ms, {} voiced), in_speech={}, onset_counter={}, hangover_counter={}",
                                     report.withheld_frames,
                                     report.withheld_frames * cfg.frame_samples * 1000
                                         / constants::WHISPER_SAMPLE_RATE as usize,
@@ -1166,6 +1336,11 @@ fn run_consumer(
                         }
                     }
 
+                    log::debug!(
+                        "Capture at stop: raw_samples={}, vad_speech_frames={}, vad_noise_frames={}, vad_error_frames={}, vad_reporting_only=true",
+                        capture_stats.raw_samples, capture_stats.vad_speech_frames,
+                        capture_stats.vad_noise_frames, capture_stats.vad_error_frames
+                    );
                     let _ = reply_tx.send(std::mem::take(&mut processed_samples));
                     if !drained {
                         // Return all processed tail audio, but never reuse a
@@ -1224,6 +1399,7 @@ fn run_consumer(
                     &vad,
                     &audio_cb,
                     &mut processed_samples,
+                    &mut capture_stats,
                 )
             });
         }

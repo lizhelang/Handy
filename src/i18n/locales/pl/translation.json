@@ -465,11 +465,11 @@
       },
       "voiceActivityDetection": {
         "title": "Wykrywanie aktywności głosowej",
-        "description": "Odfiltrowuje ciszę z nagrań. Modele obsługujące streaming używają dłuższego marginesu VAD; wyłączenie VAD nagrywa surowy dźwięk."
+        "description": "Detect speech activity without cutting audio. Recognition and saved recordings use the complete audio between start and stop."
       },
       "vadBackend": {
         "title": "Backend wykrywania głosu",
-        "description": "Wybierz detektor używany do filtrowania ciszy. Earshot jest eksperymentalny; wróć do Silero, jeśli mowa jest ucinana lub szum jest zachowywany.",
+        "description": "Choose the speech activity detector. Detection does not remove audio segments. Earshot is experimental.",
         "options": {
           "silero": "Silero",
           "earshot": "Earshot"

@@ -2,8 +2,7 @@ use super::{VadFrame, VadTailReport, VoiceActivityDetector};
 use anyhow::Result;
 use std::collections::VecDeque;
 
-/// One pre-roll buffer slot. `emitted` and `voiced` exist only to power the
-/// end-of-recording `tail_report()` diagnostic; they never affect emission.
+/// 预缓冲槽位：emitted防止短停顿恢复时重放已发送帧，voiced供尾部诊断使用。
 struct BufferedFrame {
     samples: Vec<f32>,
     emitted: bool,
@@ -81,7 +80,7 @@ impl VoiceActivityDetector for SmoothedVad {
 
                     // Collect prefill + current frame
                     self.temp_out.clear();
-                    for buffered in self.frame_buffer.iter_mut() {
+                    for buffered in self.frame_buffer.iter_mut().filter(|frame| !frame.emitted) {
                         self.temp_out.extend(buffered.samples.iter());
                         buffered.emitted = true;
                     }
@@ -200,6 +199,18 @@ mod tests {
 
     fn smoothed(script: &[bool], onset_frames: usize) -> SmoothedVad {
         SmoothedVad::new(Box::new(ScriptedVad::new(script)), 3, 2, onset_frames)
+    }
+
+    #[test]
+    fn short_pause_does_not_replay_already_emitted_prefill() {
+        let mut vad = smoothed(&[true, true, false, false, false, true, true], 2);
+        let mut emitted = Vec::new();
+        for id in 1..=7 {
+            if let VadFrame::Speech(samples) = vad.push_frame(&frame(id as f32)).unwrap() {
+                emitted.extend(samples.chunks_exact(4).map(|chunk| chunk[0]));
+            }
+        }
+        assert_eq!(emitted, [1., 2., 3., 4., 5., 6., 7.]);
     }
 
     #[test]

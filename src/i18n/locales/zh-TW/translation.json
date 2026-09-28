@@ -465,11 +465,11 @@
       },
       "voiceActivityDetection": {
         "title": "語音活動偵測",
-        "description": "過濾錄音中的靜音。支援串流的模型會使用較長的 VAD 尾段；停用 VAD 則會錄製原始音訊"
+        "description": "偵測語音活動，不裁剪錄音。辨識和儲存使用開始至停止之間的完整音訊，保留停頓、輕聲和尾音。"
       },
       "vadBackend": {
         "title": "語音活動偵測後端",
-        "description": "選擇用於過濾靜音的偵測器。Earshot 為實驗性功能；若語音被截斷或雜訊被保留，請切換回 Silero。",
+        "description": "選擇語音活動偵測器。偵測不會刪除錄音片段；Earshot 為實驗性選項。",
         "options": {
           "silero": "Silero",
           "earshot": "Earshot"

@@ -465,11 +465,11 @@
       },
       "voiceActivityDetection": {
         "title": "Phát hiện hoạt động giọng nói",
-        "description": "Lọc bỏ khoảng lặng khỏi bản ghi. Các mô hình hỗ trợ truyền trực tiếp dùng đuôi VAD dài hơn; tắt VAD sẽ ghi âm thanh thô."
+        "description": "Detect speech activity without cutting audio. Recognition and saved recordings use the complete audio between start and stop."
       },
       "vadBackend": {
         "title": "Bộ phát hiện giọng nói",
-        "description": "Chọn bộ phát hiện dùng để lọc khoảng lặng. Earshot đang thử nghiệm; hãy chuyển về Silero nếu giọng nói bị cắt hoặc tiếng ồn vẫn còn.",
+        "description": "Choose the speech activity detector. Detection does not remove audio segments. Earshot is experimental.",
         "options": {
           "silero": "Silero",
           "earshot": "Earshot"
