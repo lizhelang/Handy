@@ -9,6 +9,38 @@ struct InputiaShortcutSelfCheck {
   private static let keyCodeUpArrow: UInt16 = 126
 
   static func main() {
+    func shiftedPunctuationDoesNotToggle(shiftKey: UInt16, shiftReleasedFirst: Bool, missingRelease: Bool) -> Bool {
+      var gesture = InputiaShortcutClassifier.ShiftInputModeGestureState()
+      gesture.observeLocalKeyDown(keyCode: shiftKey, modifiers: [.shift])
+      _ = gesture.observeInputMethodFlagsChanged(shortcut: "shift", modifiers: [.shift])
+      let deferred = InputiaShortcutClassifier.shouldConsumeDeferredShiftToggle(armed: gesture.isArmedForDebug, modifiers: [.shift])
+      gesture.observeLocalKeyDown(keyCode: 44, modifiers: [.shift]) // Shift+/ -> ?
+      guard !deferred else { return false }
+      if missingRelease {
+        gesture.observeLocalKeyUp(keyCode: 44)
+        return !InputiaShortcutClassifier.shouldConsumeDeferredShiftToggle(armed: gesture.isArmedForDebug, modifiers: [])
+      }
+      if !shiftReleasedFirst { gesture.observeLocalKeyUp(keyCode: 44) }
+      guard gesture.observeInputMethodFlagsChanged(shortcut: "shift", modifiers: []) == .none,
+        !gesture.observePhysicalShiftKeyUp(shortcut: "shift", modifiers: []) else { return false }
+      if shiftReleasedFirst { gesture.observeLocalKeyUp(keyCode: 44) }
+      return !InputiaShortcutClassifier.shouldConsumeDeferredShiftToggle(armed: gesture.isArmedForDebug, modifiers: [])
+    }
+    let prefixChecks: [(String, Bool)] = [
+      ("deferredShiftHeldQuestionRejected", !InputiaShortcutClassifier.shouldConsumeDeferredShiftToggle(armed: true, modifiers: [.shift])),
+      ("deferredShiftUppercaseRejected", !InputiaShortcutClassifier.shouldConsumeDeferredShiftToggle(armed: true, modifiers: [.shift])),
+      ("deferredShiftCommandRejected", !InputiaShortcutClassifier.shouldConsumeDeferredShiftToggle(armed: true, modifiers: [.command])),
+      ("deferredShiftControlRejected", !InputiaShortcutClassifier.shouldConsumeDeferredShiftToggle(armed: true, modifiers: [.control])),
+      ("deferredShiftOptionRejected", !InputiaShortcutClassifier.shouldConsumeDeferredShiftToggle(armed: true, modifiers: [.option])),
+      ("deferredShiftPlainKeyRecoversMissingRelease", InputiaShortcutClassifier.shouldConsumeDeferredShiftToggle(armed: true, modifiers: [])),
+      ("deferredShiftUnarmedRejected", !InputiaShortcutClassifier.shouldConsumeDeferredShiftToggle(armed: false, modifiers: [])),
+    ] + [UInt16(56), 60].flatMap { shiftKey in
+      [
+        ("shiftQuestionKeyFirstNoToggle_\(shiftKey)", shiftedPunctuationDoesNotToggle(shiftKey: shiftKey, shiftReleasedFirst: false, missingRelease: false)),
+        ("shiftQuestionShiftFirstNoToggle_\(shiftKey)", shiftedPunctuationDoesNotToggle(shiftKey: shiftKey, shiftReleasedFirst: true, missingRelease: false)),
+        ("shiftQuestionMissingReleaseNoDeferredToggle_\(shiftKey)", shiftedPunctuationDoesNotToggle(shiftKey: shiftKey, shiftReleasedFirst: false, missingRelease: true)),
+      ]
+    }
     let shiftGestureChecks = InputiaShortcutClassifier.shiftInputModeGestureSelfCheckResults()
     let checks: [(String, Bool)] = [
       (
@@ -242,7 +274,7 @@ struct InputiaShortcutSelfCheck {
         "inputTextSpacePassesThroughWithoutComposing",
         !InputiaShortcutClassifier.shouldHandleInputTextSpace(" ", hasComposing: false)
       ),
-    ] + shiftGestureChecks
+    ] + shiftGestureChecks + prefixChecks
 
     let ok = checks.allSatisfy { $0.1 }
     print("shortcutSelfCheck=\(ok)")

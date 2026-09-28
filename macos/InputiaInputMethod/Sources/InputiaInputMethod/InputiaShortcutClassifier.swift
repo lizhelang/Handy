@@ -464,6 +464,15 @@ struct InputiaShortcutClassifier {
     return keyCode == keyCodeSpace
   }
 
+  /// IMK丢失Shift释放时，下一个不带任何组合修饰键的按键才可消费待切换手势。
+  /// Shift仍按住的标点、数字、大写字母均属于组合输入，不能触发此补偿。
+  static func shouldConsumeDeferredShiftToggle(
+    armed: Bool,
+    modifiers: NSEvent.ModifierFlags
+  ) -> Bool {
+    armed && modifiers.intersection([.shift, .command, .control, .option]).isEmpty
+  }
+
   static func shouldArmShiftInputModeToggle(
     shortcut: String,
     modifiers: NSEvent.ModifierFlags

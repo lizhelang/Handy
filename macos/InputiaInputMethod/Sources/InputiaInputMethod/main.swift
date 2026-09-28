@@ -631,12 +631,6 @@ final class InputiaInputController: IMKInputController {
     reloadSettingsIfDue(client: client)
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     let shortcut = bridge.inputModeToggleShortcut()
-    let shiftDown = modifiers.contains(.shift) && !shiftInputModeGesture.hasShiftBaselineForDebug
-    if shiftDown, bridge.latestOutcome.mode == "Chinese", !latestComposing.isEmpty {
-      commitPendingChineseAsEnglish(client: client)
-      shiftInputModeGesture.cancelPendingGesture()
-      return true
-    }
     shiftDiagnostic.notice("phase=local-flags shift=\(modifiers.contains(.shift)) armed=\(self.shiftInputModeGesture.isArmedForDebug) held=\(self.shiftInputModeGesture.hasHeldKeysForDebug) baseline=\(self.shiftInputModeGesture.hasShiftBaselineForDebug) configured=\(shortcut == "shift") blocked=\(!modifiers.intersection([.control, .option, .command]).isEmpty)")
 
     inputiaDebugLog(
@@ -666,6 +660,10 @@ final class InputiaInputController: IMKInputController {
     guard let client else {
       inputiaDebugLog("shiftToggleRejected source=\(source) reason=missing-client")
       return true
+    }
+    // 只有确认是独立 Shift 手势时，才提交未完成的拼音；组合键保持原模式。
+    if bridge.latestOutcome.mode == "Chinese", !bridge.latestOutcome.composing.isEmpty {
+      commitPendingChineseAsEnglish(client: client)
     }
     clearEnglishCompletion()
     shiftDiagnostic.notice("phase=toggle source=\(source, privacy: .public)")
@@ -697,16 +695,10 @@ final class InputiaInputController: IMKInputController {
 
   private func handleKeyDown(_ event: NSEvent, client: IMKTextInput) -> Bool {
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-    let isShiftEnglishCharacter = InputiaShortcutClassifier.isShiftEnglishCompositionCharacter(
-      characters: event.characters,
-      charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+    let deferredShiftToggle = InputiaShortcutClassifier.shouldConsumeDeferredShiftToggle(
+      armed: shiftInputModeGesture.isArmedForDebug,
       modifiers: modifiers
     )
-    let deferredShiftToggle = shiftInputModeGesture.isArmedForDebug
-      && !isShiftEnglishCharacter
-      && !modifiers.contains(.command)
-      && !modifiers.contains(.control)
-      && !modifiers.contains(.option)
     shiftInputModeGesture.observeLocalKeyDown(keyCode: event.keyCode, modifiers: modifiers)
     inputiaDebugLog(
       "keyDown modifiers=\(modifiers.rawValue)"
