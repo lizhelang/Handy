@@ -26,7 +26,11 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
     const normalizedWord = normalizeCustomWord(newWord);
 
     const handleAddWord = () => {
-      if (normalizedWord && normalizedWord.length <= 50) {
+      if (
+        !isUpdating("custom_words") &&
+        normalizedWord &&
+        normalizedWord.length <= 50
+      ) {
         if (customWords.includes(normalizedWord)) {
           toast.error(
             t("settings.advanced.customWords.duplicate", {
@@ -48,6 +52,7 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
     };
 
     const handleKeyPress = (e: React.KeyboardEvent) => {
+      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
       if (e.key === "Enter") {
         e.preventDefault();
         handleAddWord();
@@ -61,11 +66,13 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
           description={t("settings.advanced.customWords.description")}
           descriptionMode={descriptionMode}
           grouped={grouped}
+          layout="stacked"
         >
           <div className="flex items-center gap-2">
             <Input
               type="text"
-              className="max-w-40"
+              className="min-w-0 flex-1"
+              aria-label={t("settings.advanced.customWords.placeholder")}
               value={newWord}
               onChange={(e) => setNewWord(e.target.value)}
               onKeyDown={handleKeyPress}
@@ -98,10 +105,12 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
                 disabled={isUpdating("custom_words")}
                 variant="secondary"
                 size="sm"
-                className="inline-flex items-center gap-1 cursor-pointer"
+                className="inline-flex max-w-full items-center gap-1 cursor-pointer"
                 aria-label={t("settings.advanced.customWords.remove", { word })}
               >
-                <span>{word}</span>
+                <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+                  {word}
+                </span>
                 <svg
                   className="w-3 h-3"
                   fill="none"

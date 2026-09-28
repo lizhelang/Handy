@@ -7,6 +7,59 @@ static RIME_SCHEMA_SMOKE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(feature = "bundled-static-rime")]
 #[test]
+fn explicit_hotword_promotes_late_native_candidate_and_selects_its_original_address() {
+    use inputia_handy_runtime::personalization::{
+        prioritize_explicit_candidates, Candidate as PersonalCandidate,
+    };
+    let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();
+    let shared = bundled_shared_data_dir().unwrap();
+    let user = tempfile::tempdir().unwrap();
+    let engine = RimeEngine::open(
+        RimeEngineConfig::squirrel_luna_pinyin_simp(user.path())
+            .with_shared_data_dir(shared)
+            .with_schema("double_pinyin"),
+    )
+    .unwrap();
+    let pool = engine.candidates_up_to("zhongguo", 64);
+    let selected = pool
+        .iter()
+        .skip(10)
+        .find(|c| c.consumed_len == Some(8) && c.text.chars().count() == 2)
+        .unwrap();
+    let hotwords = vec![selected.text.clone()];
+    let personal: Vec<_> = pool
+        .iter()
+        .enumerate()
+        .map(|(rank, c)| PersonalCandidate {
+            id: c.id.clone(),
+            text: c.text.clone(),
+            base_rank: rank,
+            consumed_len: c.consumed_len.unwrap_or(0),
+            match_type: "exact".into(),
+        })
+        .collect();
+    let ids: Vec<_> = pool.iter().map(|c| c.id.clone()).collect();
+    let promoted = prioritize_explicit_candidates(&personal, &ids, &hotwords).unwrap();
+    assert_eq!(promoted[0], selected.id);
+    let shared_order = inputia_core::shared_candidate_order("zhongguo", &pool, &hotwords);
+    assert_eq!(pool[shared_order[0]].id, selected.id);
+    assert_eq!(
+        prioritize_explicit_candidates(&personal, &ids, &[]).unwrap(),
+        ids
+    );
+    eprintln!(
+        "explicit_hotword={} native_rank={} native_id={}",
+        selected.text,
+        personal.iter().position(|c| c.id == selected.id).unwrap(),
+        selected.id
+    );
+    let committed = engine.select_candidate("zhongguo", 0, 0, selected).unwrap();
+    assert_eq!(committed.commit, selected.text);
+    assert!(committed.composing.is_empty());
+}
+
+#[cfg(feature = "bundled-static-rime")]
+#[test]
 fn natural_code_accepts_full_pinyin_and_keeps_native_partial_selection() {
     let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();
     let shared_data_dir = bundled_shared_data_dir().expect("explicit bundled resources required");

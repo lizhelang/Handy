@@ -37,6 +37,42 @@ fn query_for(root: &Path, context: &str, code: &str) -> Query {
     }
 }
 #[test]
+fn explicit_hotwords_win_over_learned_order_without_crossing_native_groups() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    for i in 0..20 {
+        feedback(
+            root,
+            accept(root, &format!("hotword-learned-{i}"), "爸", ""),
+        )
+        .unwrap();
+    }
+    let q = query_for(root, "", "ba");
+    let learned = query(root, q.clone()).unwrap();
+    let ids: Vec<String> = serde_json::from_value(learned["ordered_ids"].clone()).unwrap();
+    assert_eq!(ids[0], "4");
+    let promoted = prioritize_explicit_candidates(&q.candidates, &ids, &["把".into()]).unwrap();
+    assert_eq!(promoted[0], "3");
+    assert_eq!(promoted[1], "4");
+    assert_eq!(
+        prioritize_explicit_candidates(&q.candidates, &ids, &[]).unwrap(),
+        ids
+    );
+    assert_eq!(
+        prioritize_explicit_candidates(&q.candidates, &ids, &["不存在的新专名".into()]).unwrap(),
+        ids
+    );
+    let mut candidates = q.candidates.clone();
+    candidates[3].consumed_len = 1;
+    let untouched = prioritize_explicit_candidates(
+        &candidates,
+        &["0".into(), "1".into(), "2".into(), "3".into(), "4".into()],
+        &["把".into()],
+    )
+    .unwrap();
+    assert_eq!(untouched[3], "3");
+}
+#[test]
 fn repeat_choices_context_decay_and_eligibility_are_real() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();

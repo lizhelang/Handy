@@ -1243,7 +1243,7 @@ pub fn shared_candidate_order(
     candidates: &[Candidate],
     terms: &[String],
 ) -> Vec<usize> {
-    use integration::terms::{validate_term, TermEvidence};
+    use integration::terms::{build_hotwords, validate_term, HotwordBudget, TermEvidence};
     // 服务端已经分配显式词与学习词预算，客户端只验证总量，不重新分配学习配额。
     if terms.len() > 256
         || terms
@@ -1253,22 +1253,39 @@ pub fn shared_candidate_order(
     {
         return (0..candidates.len()).collect();
     }
-    let allowed: std::collections::HashSet<String> = terms
+    if build_hotwords(terms, &[], HotwordBudget::default()).is_err() {
+        return (0..candidates.len()).collect();
+    }
+    let allowed: std::collections::HashMap<String, usize> = terms
         .iter()
-        .filter_map(|term| validate_term(term, TermEvidence::ConfirmedCorrection).ok())
+        .enumerate()
+        .filter_map(|(index, term)| {
+            let term = term.trim();
+            (validate_term(term, TermEvidence::ConfirmedCorrection).is_ok()
+                || (term.chars().count() == 1 && term.chars().all(char::is_alphanumeric)))
+            .then(|| (term.to_owned(), index))
+        })
         .collect();
     let guard = candidate_phrase_guard(composing, candidates);
-    let mut groups = std::collections::BTreeMap::<i32, Vec<usize>>::new();
+    let mut groups = std::collections::BTreeMap::<(i32, Option<usize>), Vec<usize>>::new();
     for (index, candidate) in candidates.iter().enumerate() {
         let score = guard.map_or(0, |expected| {
             composition_intent_score(expected, &candidate.text)
         });
-        groups.entry(score).or_default().push(index);
+        groups
+            .entry((score, candidate.consumed_len))
+            .or_default()
+            .push(index);
     }
     let mut order = (0..candidates.len()).collect::<Vec<_>>();
     for slots in groups.values() {
         let mut ranked = slots.clone();
-        ranked.sort_by_key(|index| !allowed.contains(candidates[*index].text.as_str()));
+        ranked.sort_by_key(|index| {
+            allowed
+                .get(candidates[*index].text.as_str())
+                .copied()
+                .unwrap_or(usize::MAX)
+        });
         for (slot, index) in slots.iter().zip(ranked) {
             order[*slot] = index;
         }
@@ -1396,6 +1413,30 @@ mod tests {
         assert_eq!(
             shared_candidate_order("ni", &candidates, &["您好".into(), "你们好".into()]),
             vec![2, 5, 0, 1, 3, 4]
+        );
+    }
+
+    #[test]
+    fn shared_hotwords_accept_single_characters_and_preserve_consumption_groups() {
+        let mut candidates = vec![
+            Candidate::new("full1", "把"),
+            Candidate::new("partial", "吧"),
+            Candidate::new("full2", "八"),
+        ];
+        for (candidate, consumed) in candidates.iter_mut().zip([2, 1, 2]) {
+            candidate.consumed_len = Some(consumed);
+        }
+        assert_eq!(
+            shared_candidate_order("ba", &candidates, &["八".into(), "吧".into()]),
+            vec![2, 1, 0]
+        );
+        assert_eq!(
+            shared_candidate_order("ba", &candidates, &["不存在".into()]),
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            shared_candidate_order("ba", &candidates, &["<|bad|>".into()]),
+            vec![0, 1, 2]
         );
     }
 

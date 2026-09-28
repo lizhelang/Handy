@@ -87,7 +87,8 @@
     "history": "History",
     "debug": "Debug",
     "about": "About",
-    "clipboard": "Clipboard"
+    "clipboard": "Clipboard",
+    "hotwords": "Hotwords"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -451,8 +452,8 @@
         }
       },
       "customWords": {
-        "title": "Custom Words",
-        "description": "Help supported models recognize names and specialized terms. Fuzzy correction is currently limited to words using A–Z and numbers.",
+        "title": "Manage Hotwords",
+        "description": "Add names, specialized terms, or frequently used words. Typing prioritizes matching hotwords; speech recognition uses them as preferred references. Results still depend on the dictionary, context, pronunciation, and selected model.",
         "placeholder": "Add a word",
         "add": "Add",
         "remove": "Remove {{word}}",

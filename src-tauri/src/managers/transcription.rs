@@ -3074,6 +3074,34 @@ mod tests {
     }
 
     #[test]
+    fn explicit_hotwords_precede_learned_terms_in_whisper_and_qwen_prompts() {
+        use inputia_core::integration::terms::{build_hotwords, TermEvidence};
+        let settings = AppSettings {
+            custom_words: vec!["南信大".into(), "Inputia".into()],
+            ..Default::default()
+        };
+        let words = build_hotwords(
+            &settings.custom_words,
+            &[("自动学习词".into(), TermEvidence::ConfirmedCorrection)],
+            HotwordBudget::default(),
+        )
+        .unwrap();
+        assert_eq!(&words[..2], &settings.custom_words);
+        let Some(RunExtension::Whisper(whisper)) = native_prompt_extension(&words, true, None)
+        else {
+            panic!("Whisper hotwords missing")
+        };
+        assert_eq!(
+            whisper.initial_prompt.as_deref(),
+            Some("南信大, Inputia, 自动学习词")
+        );
+        let qwen = QwenContextPlan::from_custom_words(&words);
+        let context = qwen.context().unwrap();
+        assert!(context.find("南信大").unwrap() < context.find("自动学习词").unwrap());
+        assert!(native_prompt_extension(&words, false, Some(&qwen)).is_some());
+    }
+
+    #[test]
     fn qwen_echo_guard_removes_a_truncated_context_tail() {
         let plan = QwenContextPlan::from_custom_words(&["Inputia".to_string()]);
         let partial_echo = plan.context().unwrap().chars().take(20).collect::<String>();

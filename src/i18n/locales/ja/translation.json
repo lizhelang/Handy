@@ -87,7 +87,8 @@
     "history": "履歴",
     "debug": "デバッグ",
     "about": "概要",
-    "clipboard": "Clipboard"
+    "clipboard": "Clipboard",
+    "hotwords": "Hotwords"
   },
   "onboarding": {
     "subtitle": "開始するには、文字起こしのモデルを選択してください",
@@ -451,8 +452,8 @@
         }
       },
       "customWords": {
-        "title": "カスタム単語",
-        "description": "対応モデルが名前や専門用語を認識しやすくします。あいまい補正は現在、A～Zの英字と数字を使用する単語に限定されています。",
+        "title": "Manage Hotwords",
+        "description": "Add names, specialized terms, or frequently used words. Typing prioritizes matching hotwords; speech recognition uses them as preferred references. Results still depend on the dictionary, context, pronunciation, and selected model.",
         "placeholder": "単語を追加",
         "add": "追加",
         "remove": "{{word}}を削除",

@@ -87,7 +87,8 @@
     "history": "历史记录",
     "debug": "调试",
     "about": "关于",
-    "clipboard": "剪贴历史"
+    "clipboard": "剪贴历史",
+    "hotwords": "热词"
   },
   "onboarding": {
     "subtitle": "请选择一个转录模型以开始使用",
@@ -451,9 +452,9 @@
         }
       },
       "customWords": {
-        "title": "自定义词汇",
-        "description": "帮助受支持的模型识别名称和专业术语。目前，模糊纠错仅适用于使用 A–Z 字母和数字的词语。",
-        "placeholder": "添加词汇",
+        "title": "管理热词",
+        "description": "添加姓名、专业术语或常用词。打字匹配到热词时优先展示，语音识别优先参考；实际结果仍取决于词库、上下文、发音及所用模型。",
+        "placeholder": "输入热词",
         "add": "添加",
         "remove": "删除 {{word}}",
         "duplicate": "\"{{word}}\" 已存在"

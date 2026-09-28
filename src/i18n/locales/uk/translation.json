@@ -87,7 +87,8 @@
     "history": "Історія",
     "debug": "Дебаг",
     "about": "Інфо",
-    "clipboard": "Clipboard"
+    "clipboard": "Clipboard",
+    "hotwords": "Hotwords"
   },
   "onboarding": {
     "subtitle": "Для початку оберіть модель транскрипції",
@@ -451,8 +452,8 @@
         }
       },
       "customWords": {
-        "title": "Власні слова",
-        "description": "Допоможіть підтримуваним моделям розпізнавати імена та спеціалізовані терміни. Нечітке виправлення наразі обмежене словами, що містять літери A–Z і цифри.",
+        "title": "Manage Hotwords",
+        "description": "Add names, specialized terms, or frequently used words. Typing prioritizes matching hotwords; speech recognition uses them as preferred references. Results still depend on the dictionary, context, pronunciation, and selected model.",
         "placeholder": "Додати слово",
         "add": "Додати",
         "remove": "Видалити {{word}}",

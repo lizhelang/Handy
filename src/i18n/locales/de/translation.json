@@ -87,7 +87,8 @@
     "history": "Verlauf",
     "debug": "Debug",
     "about": "Info",
-    "clipboard": "Clipboard"
+    "clipboard": "Clipboard",
+    "hotwords": "Hotwords"
   },
   "onboarding": {
     "subtitle": "Wähle ein Transkriptionsmodell, um loszulegen",
@@ -451,8 +452,8 @@
         }
       },
       "customWords": {
-        "title": "Benutzerdefinierte Wörter",
-        "description": "Hilf unterstützten Modellen, Namen und Fachbegriffe zu erkennen. Die unscharfe Korrektur ist derzeit auf Wörter mit den Buchstaben A–Z und Zahlen beschränkt.",
+        "title": "Manage Hotwords",
+        "description": "Add names, specialized terms, or frequently used words. Typing prioritizes matching hotwords; speech recognition uses them as preferred references. Results still depend on the dictionary, context, pronunciation, and selected model.",
         "placeholder": "Wort hinzufügen",
         "add": "Hinzufügen",
         "remove": "{{word}} entfernen",

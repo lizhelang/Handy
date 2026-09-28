@@ -87,7 +87,8 @@
     "history": "Historie",
     "debug": "Ladění",
     "about": "O aplikaci",
-    "clipboard": "Clipboard"
+    "clipboard": "Clipboard",
+    "hotwords": "Hotwords"
   },
   "onboarding": {
     "subtitle": "Pro začátek vyberte model pro přepis",
@@ -451,8 +452,8 @@
         }
       },
       "customWords": {
-        "title": "Vlastní slova",
-        "description": "Pomozte podporovaným modelům rozpoznávat jména a odborné termíny. Přibližné opravy jsou v současnosti omezeny na slova obsahující písmena A–Z a číslice.",
+        "title": "Manage Hotwords",
+        "description": "Add names, specialized terms, or frequently used words. Typing prioritizes matching hotwords; speech recognition uses them as preferred references. Results still depend on the dictionary, context, pronunciation, and selected model.",
         "placeholder": "Přidat slovo",
         "add": "Přidat",
         "remove": "Odebrat {{word}}",

@@ -284,7 +284,7 @@ impl VoiceConnection {
                                     secure_input: false,
                                     transient_or_concealed: false,
                                 },
-                                vec![],
+                                crate::settings::get_settings(app).custom_words,
                                 HotwordBudget::default(),
                             )
                             .map_err(|_| VoiceReplyError::Unknown)?;

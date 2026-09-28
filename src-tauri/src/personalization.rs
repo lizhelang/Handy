@@ -120,6 +120,16 @@ pub fn respond(app: &tauri::AppHandle, request: &PersonalizationRequest) -> Pers
                         v["decision_reranked"] = json!(true);
                     }
                 }
+                let current_ids: Vec<String> = serde_json::from_value(v["ordered_ids"].clone())
+                    .map_err(|_| "invalid_candidate_order")?;
+                let explicit = crate::settings::get_settings(app).custom_words;
+                if let Ok(ids) = model::prioritize_explicit_candidates(
+                    &local_candidates,
+                    &current_ids,
+                    &explicit,
+                ) {
+                    v["ordered_ids"] = json!(ids);
+                }
                 // 对外继续使用当前字段opaque ID，不暴露内部证据namespace。
                 v["context_id"] = json!(target.target_id);
                 v

@@ -87,7 +87,8 @@
     "history": "歷史記錄",
     "debug": "偵錯",
     "about": "關於",
-    "clipboard": "剪貼歷史"
+    "clipboard": "剪貼歷史",
+    "hotwords": "熱詞"
   },
   "onboarding": {
     "subtitle": "首先，請選擇一種模型",
@@ -451,9 +452,9 @@
         }
       },
       "customWords": {
-        "title": "自訂詞彙",
-        "description": "協助支援的模型辨識名稱和專業術語。目前，模糊修正僅適用於使用 A–Z 字母和數字的詞語。",
-        "placeholder": "新增詞彙",
+        "title": "管理熱詞",
+        "description": "新增姓名、專業術語或常用詞。打字匹配到熱詞時優先顯示，語音辨識優先參考；實際結果仍取決於詞庫、上下文、發音及所用模型。",
+        "placeholder": "輸入熱詞",
         "add": "新增",
         "remove": "刪除 {{word}}",
         "duplicate": "「{{word}}」已存在"

@@ -87,7 +87,8 @@
     "history": "इतिहास",
     "debug": "डिबग",
     "about": "के बारे में",
-    "clipboard": "Clipboard"
+    "clipboard": "Clipboard",
+    "hotwords": "Hotwords"
   },
   "onboarding": {
     "subtitle": "शुरू करने के लिए, एक ट्रांसक्रिप्शन मॉडल चुनें",
@@ -451,8 +452,8 @@
         }
       },
       "customWords": {
-        "title": "कस्टम शब्द",
-        "description": "समर्थित मॉडल को नाम और विशेष शब्द पहचानने में मदद करें। फ़ज़ी सुधार फिलहाल A–Z अक्षरों और संख्याओं वाले शब्दों तक सीमित है।",
+        "title": "Manage Hotwords",
+        "description": "Add names, specialized terms, or frequently used words. Typing prioritizes matching hotwords; speech recognition uses them as preferred references. Results still depend on the dictionary, context, pronunciation, and selected model.",
         "placeholder": "शब्द जोड़ें",
         "add": "जोड़ें",
         "remove": "{{word}} हटाएं",

@@ -134,6 +134,38 @@ pub fn apply_rerank(candidates: &[Candidate], ordered_ids: &[String]) -> Result<
     }
     Ok(output)
 }
+
+/// 显式热词只提升当前原生候选，保持消费长度/匹配类型组及原生身份。
+pub fn prioritize_explicit_candidates(
+    candidates: &[Candidate],
+    ordered_ids: &[String],
+    explicit: &[String],
+) -> Result<Vec<String>> {
+    use inputia_core::integration::terms::{build_hotwords, HotwordBudget};
+    let words = build_hotwords(explicit, &[], HotwordBudget::default())
+        .map_err(|_| "invalid_explicit_hotwords".to_string())?;
+    let priorities: HashMap<_, _> = words
+        .iter()
+        .enumerate()
+        .map(|(index, word)| (norm(word), index))
+        .collect();
+    let current = apply_rerank(candidates, ordered_ids)?;
+    let mut requested = current.clone();
+    requested.sort_by_key(|candidate| {
+        priorities
+            .get(&norm(&candidate.text))
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
+    let ids: Vec<_> = requested
+        .iter()
+        .map(|candidate| candidate.id.clone())
+        .collect();
+    Ok(apply_rerank(&current, &ids)?
+        .into_iter()
+        .map(|candidate| candidate.id)
+        .collect())
+}
 fn default_limit() -> usize {
     10
 }

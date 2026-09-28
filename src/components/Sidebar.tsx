@@ -10,7 +10,9 @@ import {
   Info,
   Keyboard,
   Sparkles,
+  TextCursorInput,
 } from "lucide-react";
+import { HotwordsPage } from "./hotwords/HotwordsPage";
 import { KnowledgePage } from "./knowledge/KnowledgePage";
 import InputiaWordmark from "./icons/InputiaWordmark";
 import { UnifiedHistoryPage } from "./history/UnifiedHistoryPage";
@@ -47,6 +49,12 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.general",
     icon: Keyboard,
     component: GeneralSettings,
+    enabled: () => true,
+  },
+  hotwords: {
+    labelKey: "sidebar.hotwords",
+    icon: TextCursorInput,
+    component: HotwordsPage,
     enabled: () => true,
   },
   history: {

@@ -1,6 +1,40 @@
 use inputia_handy_runtime::voice_protocol::*;
 
 #[test]
+fn shared_terms_wire_preserves_explicit_hotword_priority_and_lease_identity() {
+    use inputia_core::integration::terms::{build_hotwords, HotwordBudget, TermEvidence};
+    let custom_words = vec!["中古".into(), "把".into()];
+    let terms = build_hotwords(
+        &custom_words,
+        &[("学习词".into(), TermEvidence::ConfirmedCorrection)],
+        HotwordBudget::default(),
+    )
+    .unwrap();
+    let reply = SharedTermsReply::SharedTerms {
+        request_id: "hotword-wire".into(),
+        lease_id: "lease-1".into(),
+        lease_epoch: 2,
+        version: VoiceTermsVersion {
+            policy_epoch: 7,
+            learning_generation: 3,
+        },
+        terms,
+        max_age_ms: 500,
+    };
+    let bytes = serde_json::to_vec(&reply).unwrap();
+    let decoded: SharedTermsReply = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(decoded, reply);
+    let SharedTermsReply::SharedTerms {
+        terms, lease_epoch, ..
+    } = decoded
+    else {
+        panic!("terms rejected")
+    };
+    assert_eq!(&terms[..2], &custom_words);
+    assert_eq!(lease_epoch, 2);
+}
+
+#[test]
 fn shared_terms_wire_binds_authenticated_peer_and_only_accepts_lease_identity() {
     let value = serde_json::json!({"request_id":"terms-1","client_instance":"host-1","server_instance":"server-1","policy_epoch":7,"shared_terms":{"lease_id":"lease-1","lease_epoch":2}});
     let VoiceWireRequest::SharedTerms(request) = serde_json::from_value(value.clone()).unwrap()

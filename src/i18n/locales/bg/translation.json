@@ -87,7 +87,8 @@
     "history": "История",
     "debug": "Отстраняване",
     "about": "За приложението",
-    "clipboard": "Clipboard"
+    "clipboard": "Clipboard",
+    "hotwords": "Hotwords"
   },
   "onboarding": {
     "subtitle": "За да започнете, изберете модел за транскрипция",
@@ -451,8 +452,8 @@
         }
       },
       "customWords": {
-        "title": "Персонализирани думи",
-        "description": "Помогнете на поддържаните модели да разпознават имена и специализирани термини. Приблизителната корекция в момента е ограничена до думи с букви A–Z и цифри.",
+        "title": "Manage Hotwords",
+        "description": "Add names, specialized terms, or frequently used words. Typing prioritizes matching hotwords; speech recognition uses them as preferred references. Results still depend on the dictionary, context, pronunciation, and selected model.",
         "placeholder": "Добавете дума",
         "add": "Добавяне",
         "remove": "Премахване на {{word}}",
