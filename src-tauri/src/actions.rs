@@ -1184,7 +1184,7 @@ struct ClipboardHistoryAction;
 
 impl ShortcutAction for ClipboardHistoryAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        if crate::settings::get_settings(app).clipboard_enabled {
+        if crate::settings::get_settings(app).clipboard_hotkey_enabled {
             crate::overlay::toggle_clipboard_overlay(app);
         }
     }

@@ -530,3 +530,29 @@ fn explicit_terms_allow_emails_and_mixed_words_without_learned_provenance() {
     ]);
     assert_eq!(terms, ["lll@example.com", "compute服务器", "额度"]);
 }
+
+#[test]
+fn menu_reply_exposes_actual_clipboard_binding_and_accepts_old_peers() {
+    let reply = MenuReply::Menu {
+        request_id: "menu-clipboard".into(),
+        selected_model: "model".into(),
+        models: vec![],
+        busy: false,
+        clipboard_hotkey: "ctrl+alt+b".into(),
+        clipboard_hotkey_enabled: true,
+    };
+    let encoded = serde_json::to_value(&reply).unwrap();
+    assert_eq!(encoded["clipboard_hotkey"], "ctrl+alt+b");
+    assert_eq!(serde_json::from_value::<MenuReply>(encoded).unwrap(), reply);
+    let legacy = serde_json::json!({"status":"menu","request_id":"old","selected_model":"m","models":[],"busy":false});
+    let MenuReply::Menu {
+        clipboard_hotkey,
+        clipboard_hotkey_enabled,
+        ..
+    } = serde_json::from_value(legacy).unwrap()
+    else {
+        panic!("menu")
+    };
+    assert!(clipboard_hotkey.is_empty());
+    assert!(!clipboard_hotkey_enabled);
+}

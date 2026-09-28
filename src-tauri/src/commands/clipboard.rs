@@ -14,7 +14,7 @@ fn clipboard_binding(
 }
 
 fn clipboard_shortcut_active(settings: &crate::settings::AppSettings) -> bool {
-    settings.clipboard_enabled && settings.clipboard_hotkey_enabled
+    settings.clipboard_hotkey_enabled
 }
 
 fn unregister_clipboard_shortcut_best_effort(
@@ -216,13 +216,6 @@ pub fn change_clipboard_enabled_setting(
         return Ok(());
     }
 
-    let binding = clipboard_binding(&settings)?;
-    if enabled && settings.clipboard_hotkey_enabled {
-        crate::shortcut::register_shortcut(&app, binding)?;
-    } else if !enabled && settings.clipboard_hotkey_enabled {
-        unregister_clipboard_shortcut_best_effort(&app, binding);
-    }
-
     settings.clipboard_enabled = enabled;
     crate::settings::write_settings(&app, settings);
     crate::tray::update_tray_menu(&app);
@@ -264,9 +257,9 @@ pub fn change_clipboard_hotkey_enabled_setting(
     }
 
     let binding = clipboard_binding(&settings)?;
-    if enabled && settings.clipboard_enabled {
+    if enabled {
         crate::shortcut::register_shortcut(&app, binding)?;
-    } else if !enabled && settings.clipboard_enabled {
+    } else {
         unregister_clipboard_shortcut_best_effort(&app, binding);
     }
 

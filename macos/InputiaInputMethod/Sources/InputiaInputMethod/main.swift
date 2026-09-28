@@ -350,7 +350,10 @@ final class InputiaInputController: IMKInputController {
       return item
     }
     _ = add("复制最新转写", "copy_latest")
-    _ = add("剪贴历史…", "history")
+    let history = add(InputiaShortcutClassifier.clipboardHistoryMenuTitle(
+      shortcut: unifiedMenuSnapshot?.clipboard_hotkey,
+      enabled: unifiedMenuSnapshot?.clipboard_hotkey_enabled
+    ), "history")
     menu.addItem(.separator())
     let models = NSMenu(title: "语音模型")
     models.autoenablesItems = false
@@ -384,6 +387,10 @@ final class InputiaInputController: IMKInputController {
         guard let self else { return }
         self.unifiedMenuRefreshing = false
         self.unifiedMenuSnapshot = snapshot
+        history.title = InputiaShortcutClassifier.clipboardHistoryMenuTitle(
+          shortcut: snapshot?.clipboard_hotkey,
+          enabled: snapshot?.clipboard_hotkey_enabled
+        )
         renderModels(snapshot)
         unload.isEnabled = snapshot?.busy == false
       }
@@ -2125,10 +2132,15 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func isClipboardRecallShortcut(_ event: NSEvent, modifiers: NSEvent.ModifierFlags) -> Bool {
-    InputiaShortcutClassifier.isClipboardRecall(
+    #if INPUTIA_PAIRED_BUILD
+    // 统一产品由主程序注册可配置的全局快捷键，避免同一组合弹出两套窗口。
+    return false
+    #else
+    return InputiaShortcutClassifier.isClipboardRecall(
       charactersIgnoringModifiers: event.charactersIgnoringModifiers,
       modifiers: modifiers
     )
+    #endif
   }
 
   private func isScriptToggleShortcut(_ event: NSEvent, modifiers: NSEvent.ModifierFlags) -> Bool {

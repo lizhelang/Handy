@@ -275,6 +275,10 @@
           "transcribe_with_post_process": {
             "name": "Горячая клавиша постобработки",
             "description": "Специальное сочетание клавиш для ИИ-постобработки вашей транскрипции."
+          },
+          "clipboard_history": {
+            "name": "Clipboard History Shortcut",
+            "description": "Open clipboard history to choose previously copied content. Change the shortcut or restore its default."
           }
         },
         "errors": {

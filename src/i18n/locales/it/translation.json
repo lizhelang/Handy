@@ -275,6 +275,10 @@
           "transcribe_with_post_process": {
             "name": "Tasto di post-elaborazione",
             "description": "Facoltativo: Un tasto di scelta rapida dedicato che applica sempre la post-elaborazione IA alla trascrizione."
+          },
+          "clipboard_history": {
+            "name": "Clipboard History Shortcut",
+            "description": "Open clipboard history to choose previously copied content. Change the shortcut or restore its default."
           }
         },
         "errors": {

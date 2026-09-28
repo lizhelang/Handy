@@ -36,9 +36,7 @@ pub(crate) fn binding_enabled(settings: &settings::AppSettings, id: &str) -> boo
     match id {
         "cancel" => false,
         "transcribe_with_post_process" => settings.post_process_enabled,
-        settings::CLIPBOARD_HISTORY_BINDING_ID => {
-            settings.clipboard_enabled && settings.clipboard_hotkey_enabled
-        }
+        settings::CLIPBOARD_HISTORY_BINDING_ID => settings.clipboard_hotkey_enabled,
         _ => true,
     }
 }
@@ -129,6 +127,36 @@ fn find_handy_keys_conflict(
     }
 
     Ok(None)
+}
+
+/// 迁移默认剪贴入口时不覆盖其他活动绑定；无法解析的旧配置保守停用新入口。
+pub(crate) fn clipboard_migration_conflicts(
+    settings: &settings::AppSettings,
+    candidate: &str,
+) -> bool {
+    settings.bindings.iter().any(|(id, binding)| {
+        id != settings::CLIPBOARD_HISTORY_BINDING_ID
+            && binding_enabled(settings, id)
+            && handy_keys_shortcuts_overlap(candidate, &binding.current_binding).unwrap_or(true)
+    })
+}
+
+/// 禁用入口编辑只保存，不触碰原生注册；重置默认也复用此路径。
+fn update_disabled_clipboard_binding(
+    settings: &mut settings::AppSettings,
+    previous: &ShortcutBinding,
+    replacement: String,
+) -> Option<ShortcutBinding> {
+    if previous.id != settings::CLIPBOARD_HISTORY_BINDING_ID || settings.clipboard_hotkey_enabled {
+        return None;
+    }
+    let mut updated = previous.clone();
+    updated.current_binding = replacement.clone();
+    settings.clipboard_hotkey = replacement;
+    settings
+        .bindings
+        .insert(previous.id.clone(), updated.clone());
+    Some(updated)
 }
 
 /// Repair the historical configuration that assigned the same physical chord
@@ -339,6 +367,17 @@ pub fn change_binding(
     {
         warn!("change_binding validation error: {}", e);
         return Err(e);
+    }
+
+    if let Some(updated_binding) =
+        update_disabled_clipboard_binding(&mut settings, &binding_to_modify, binding.clone())
+    {
+        settings::write_settings(&app, settings);
+        return Ok(BindingResponse {
+            success: true,
+            binding: Some(updated_binding),
+            error: None,
+        });
     }
 
     if let Some(conflict_id) = find_handy_keys_conflict(&settings, &id, &binding)? {
@@ -1534,22 +1573,46 @@ pub async fn get_available_accelerators() -> crate::managers::transcription::Ava
 mod tests {
     use super::{
         binding_enabled, find_handy_keys_conflict, handy_keys_shortcuts_overlap,
-        repair_transcribe_post_process_overlap,
+        repair_transcribe_post_process_overlap, update_disabled_clipboard_binding,
     };
     use crate::settings::{
         get_default_settings, KeyboardImplementation, CLIPBOARD_HISTORY_BINDING_ID,
     };
 
     #[test]
-    fn clipboard_binding_requires_feature_and_hotkey_toggles() {
+    fn clipboard_disabled_edits_and_reset_save_without_registration_path() {
         let mut settings = get_default_settings();
-        assert!(!binding_enabled(&settings, CLIPBOARD_HISTORY_BINDING_ID));
+        settings.clipboard_hotkey_enabled = false;
+        let previous = settings.bindings[CLIPBOARD_HISTORY_BINDING_ID].clone();
+        let edited =
+            update_disabled_clipboard_binding(&mut settings, &previous, "ctrl+alt+b".into())
+                .unwrap();
+        assert_eq!(edited.current_binding, "ctrl+alt+b");
+        assert_eq!(settings.clipboard_hotkey, "ctrl+alt+b");
+        let reset = update_disabled_clipboard_binding(
+            &mut settings,
+            &edited,
+            edited.default_binding.clone(),
+        )
+        .unwrap();
+        assert_eq!(reset.current_binding, "ctrl+shift+v");
+        assert!(!settings.clipboard_hotkey_enabled);
+        settings.clipboard_hotkey_enabled = true;
+        assert!(
+            update_disabled_clipboard_binding(&mut settings, &reset, "ctrl+alt+b".into()).is_none()
+        );
+        assert_eq!(settings.clipboard_hotkey, "ctrl+shift+v");
+    }
 
+    #[test]
+    fn clipboard_binding_entry_does_not_enable_or_require_capture() {
+        let mut settings = get_default_settings();
+        assert!(binding_enabled(&settings, CLIPBOARD_HISTORY_BINDING_ID));
+        assert!(!settings.clipboard_enabled);
+        settings.clipboard_hotkey_enabled = false;
+        assert!(!binding_enabled(&settings, CLIPBOARD_HISTORY_BINDING_ID));
         settings.clipboard_enabled = true;
         assert!(!binding_enabled(&settings, CLIPBOARD_HISTORY_BINDING_ID));
-
-        settings.clipboard_hotkey_enabled = true;
-        assert!(binding_enabled(&settings, CLIPBOARD_HISTORY_BINDING_ID));
     }
 
     #[test]

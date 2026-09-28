@@ -255,6 +255,10 @@
           "transcribe_with_post_process": {
             "name": "Бърз клавиш за постобработка",
             "description": "По избор: отделна комбинация, която винаги прилага ИИ постобработка върху транскрипцията."
+          },
+          "clipboard_history": {
+            "name": "Clipboard History Shortcut",
+            "description": "Open clipboard history to choose previously copied content. Change the shortcut or restore its default."
           }
         },
         "errors": {

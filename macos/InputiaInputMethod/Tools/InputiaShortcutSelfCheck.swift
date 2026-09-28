@@ -43,6 +43,11 @@ struct InputiaShortcutSelfCheck {
     }
     let shiftGestureChecks = InputiaShortcutClassifier.shiftInputModeGestureSelfCheckResults()
     let checks: [(String, Bool)] = [
+      ("clipboardMenuDefault", InputiaShortcutClassifier.clipboardHistoryMenuTitle(shortcut: nil, enabled: nil) == "剪贴历史…（Ctrl + Shift + V）"),
+      ("clipboardMenuCustom", InputiaShortcutClassifier.clipboardHistoryMenuTitle(shortcut: "ctrl+option+b", enabled: true) == "剪贴历史…（Ctrl + Option + B）"),
+      ("clipboardMenuSymbolKey", InputiaShortcutClassifier.clipboardHistoryMenuTitle(shortcut: "ctrl+shift+/", enabled: true) == "剪贴历史…（Ctrl + Shift + /）"),
+      ("clipboardMenuCmdOrCtrl", InputiaShortcutClassifier.clipboardHistoryMenuTitle(shortcut: "CmdOrCtrl+Shift+B", enabled: true) == "剪贴历史…（Cmd + Shift + B）"),
+      ("clipboardMenuDisabled", InputiaShortcutClassifier.clipboardHistoryMenuTitle(shortcut: "ctrl+shift+v", enabled: false) == "剪贴历史…（Ctrl + Shift + V · 已停用）"),
       (
         "ctrlPeriodPunctuation",
         InputiaShortcutClassifier.isPunctuationToggle(

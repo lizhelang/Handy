@@ -275,6 +275,10 @@
           "transcribe_with_post_process": {
             "name": "Skrót postprocessingu",
             "description": "Opcjonalnie: Dedykowany skrót klawiszowy, który zawsze stosuje postprocessing AI do transkrypcji."
+          },
+          "clipboard_history": {
+            "name": "Clipboard History Shortcut",
+            "description": "Open clipboard history to choose previously copied content. Change the shortcut or restore its default."
           }
         },
         "errors": {

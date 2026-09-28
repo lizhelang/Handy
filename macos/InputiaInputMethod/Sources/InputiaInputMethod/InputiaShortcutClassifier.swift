@@ -407,6 +407,24 @@ struct InputiaShortcutClassifier {
   private static let keyCodeUpArrow: UInt16 = 126
   private static let inputTextEnterCharacters: Set<String> = ["\r", "\n"]
 
+  /// 菜单显示实际设置的快捷键；兼容尚未返回该字段的旧服务。
+  static func clipboardHistoryMenuTitle(shortcut: String?, enabled: Bool?) -> String {
+    let raw = shortcut ?? "ctrl+shift+v"
+    let labels = ["ctrl": "Ctrl", "control": "Ctrl", "shift": "Shift", "command": "Cmd",
+      "super": "Cmd", "cmd": "Cmd", "cmdorctrl": "Cmd", "option": "Option", "alt": "Option", "space": "Space"]
+    let parts = raw.split(separator: "+").prefix(5).map { part -> String in
+      let token = part.trimmingCharacters(in: .whitespaces).lowercased()
+      if let label = labels[token] { return label }
+      let safe = String(token.prefix(24)).filter { character in
+        character.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
+      }
+      return safe.uppercased()
+    }.filter { !$0.isEmpty }
+    let display = parts.isEmpty ? "Ctrl + Shift + V" : parts.joined(separator: " + ")
+    let state = enabled == false ? " · 已停用" : ""
+    return "剪贴历史…（\(display)\(state)）"
+  }
+
   static func isClipboardRecall(
     charactersIgnoringModifiers: String?,
     modifiers: NSEvent.ModifierFlags

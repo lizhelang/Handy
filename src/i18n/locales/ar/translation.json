@@ -252,6 +252,10 @@
           "transcribe_with_post_process": {
             "name": "مفتاح المعالجة اللاحقة",
             "description": "اختياري: مفتاح اختصار مخصص يطبق دائماً المعالجة اللاحقة بالذكاء الاصطناعي على التفريغ الصوتي."
+          },
+          "clipboard_history": {
+            "name": "Clipboard History Shortcut",
+            "description": "Open clipboard history to choose previously copied content. Change the shortcut or restore its default."
           }
         },
         "errors": {

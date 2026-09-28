@@ -705,9 +705,17 @@ fn menu_action(
         })
         .collect();
     models.sort_by(|a, b| a.id.cmp(&b.id));
+    let settings = crate::settings::get_settings(app);
+    let clipboard_hotkey = settings
+        .bindings
+        .get(crate::settings::CLIPBOARD_HISTORY_BINDING_ID)
+        .map(|binding| binding.current_binding.clone())
+        .unwrap_or_else(|| settings.clipboard_hotkey.clone());
     Ok(MenuReply::Menu {
         request_id: request.request_id.clone(),
-        selected_model: crate::settings::get_settings(app).selected_model,
+        selected_model: settings.selected_model,
+        clipboard_hotkey,
+        clipboard_hotkey_enabled: settings.clipboard_hotkey_enabled,
         models,
         busy: crate::tray::service_is_busy(app),
     })

@@ -683,6 +683,10 @@ pub enum MenuReply {
         request_id: String,
         selected_model: String,
         models: Vec<MenuModel>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        clipboard_hotkey: String,
+        #[serde(default)]
+        clipboard_hotkey_enabled: bool,
         busy: bool,
     },
     Rejected {

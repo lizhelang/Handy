@@ -10,6 +10,7 @@ import { ClipboardList } from "./ClipboardList";
 import { ClipboardGrid } from "./ClipboardGrid";
 import { ClipboardPreview } from "./ClipboardPreview";
 import { ClipboardExperimentalToggle } from "../settings/ClipboardExperimentalToggle";
+import { ShortcutInput } from "../settings/ShortcutInput";
 import { Button } from "../ui/Button";
 
 type ClipboardFeatureSettings = {
@@ -86,6 +87,13 @@ export const ClipboardSettings: React.FC = () => {
 
       <div className="px-4 space-y-3">
         <ClipboardExperimentalToggle descriptionMode="inline" grouped />
+        <div className="rounded-lg border border-mid-gray/20 overflow-hidden">
+          <ShortcutInput
+            shortcutId="clipboard_history"
+            descriptionMode="tooltip"
+            grouped
+          />
+        </div>
         {!clipboardCaptureEnabled && (
           <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-text/70">
             {t("settings.clipboard.capturePaused")}

@@ -23,6 +23,8 @@ struct InputiaMenuReply: Decodable {
   let selected_model: String?
   let models: [InputiaMenuModel]?
   let busy: Bool?
+  let clipboard_hotkey: String?
+  let clipboard_hotkey_enabled: Bool?
   let code: String?
 }
 private struct InputiaMenuCommand: Encodable {

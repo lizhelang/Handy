@@ -516,7 +516,7 @@ pub struct AppSettings {
     pub clipboard_enabled: bool,
     #[serde(default = "default_clipboard_max_records")]
     pub clipboard_max_records: usize,
-    #[serde(default)]
+    #[serde(default = "default_clipboard_hotkey_enabled")]
     pub clipboard_hotkey_enabled: bool,
     #[serde(default = "default_clipboard_hotkey")]
     pub clipboard_hotkey: String,
@@ -547,7 +547,7 @@ fn default_custom_words_model() -> String {
     String::new()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 4;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 5;
 pub const CLIPBOARD_HISTORY_BINDING_ID: &str = "clipboard_history";
 
 fn default_settings_schema_version() -> u32 {
@@ -617,15 +617,12 @@ fn default_clipboard_max_records() -> usize {
     0
 }
 
+fn default_clipboard_hotkey_enabled() -> bool {
+    true
+}
+
 fn default_clipboard_hotkey() -> String {
-    #[cfg(target_os = "macos")]
-    {
-        "command+shift+v".to_string()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        "ctrl+shift+v".to_string()
-    }
+    "ctrl+shift+v".to_string()
 }
 
 fn default_debug_mode() -> bool {
@@ -1055,7 +1052,7 @@ pub fn get_default_settings() -> AppSettings {
         vad_backend: VadBackend::default(),
         clipboard_enabled: false,
         clipboard_max_records: default_clipboard_max_records(),
-        clipboard_hotkey_enabled: false,
+        clipboard_hotkey_enabled: default_clipboard_hotkey_enabled(),
         clipboard_hotkey: default_clipboard_hotkey(),
         overlay_style: default_overlay_style(),
     }
@@ -1295,6 +1292,32 @@ fn apply_settings_migrations(
         settings.transcribe_gpu_device = default_transcribe_gpu_device();
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
+    }
+
+    if stored_schema_version < 5 {
+        // 只迁移上一版默认入口；自定义键及其显式禁用选择保持不变，采集开关不动。
+        let existing = settings
+            .bindings
+            .get(CLIPBOARD_HISTORY_BINDING_ID)
+            .map(|binding| binding.current_binding.as_str())
+            .unwrap_or(&settings.clipboard_hotkey);
+        if normalize_clipboard_hotkey(existing).eq_ignore_ascii_case("command+shift+v") {
+            settings.clipboard_hotkey = default_clipboard_hotkey();
+            settings.clipboard_hotkey_enabled = !crate::shortcut::clipboard_migration_conflicts(
+                settings,
+                &default_clipboard_hotkey(),
+            );
+            if let Some(binding) = settings.bindings.get_mut(CLIPBOARD_HISTORY_BINDING_ID) {
+                binding.current_binding = default_clipboard_hotkey();
+            }
+            updated = true;
+        }
+        if let Some(binding) = settings.bindings.get_mut(CLIPBOARD_HISTORY_BINDING_ID) {
+            if binding.default_binding != default_clipboard_hotkey() {
+                binding.default_binding = default_clipboard_hotkey();
+                updated = true;
+            }
+        }
     }
 
     if stored_schema_version < u64::from(CURRENT_SETTINGS_SCHEMA_VERSION) {
@@ -1653,7 +1676,8 @@ mod tests {
 
         assert_eq!(binding.current_binding, settings.clipboard_hotkey);
         assert!(!settings.clipboard_enabled);
-        assert!(!settings.clipboard_hotkey_enabled);
+        assert!(settings.clipboard_hotkey_enabled);
+        assert_eq!(binding.current_binding, "ctrl+shift+v");
     }
 
     #[test]
@@ -1692,6 +1716,97 @@ mod tests {
             format!("{expected_modifier}+Shift+B")
         );
         assert_eq!(settings.clipboard_hotkey, binding.current_binding);
+    }
+
+    #[test]
+    fn clipboard_default_migration_enables_entry_without_enabling_capture() {
+        let mut settings = get_default_settings();
+        settings.clipboard_hotkey = "command+shift+v".into();
+        settings.clipboard_hotkey_enabled = false;
+        settings.clipboard_enabled = false;
+        let binding = settings
+            .bindings
+            .get_mut(CLIPBOARD_HISTORY_BINDING_ID)
+            .unwrap();
+        binding.current_binding = "command+shift+v".into();
+        binding.default_binding = "command+shift+v".into();
+        assert!(apply_settings_migrations(
+            &mut settings,
+            &serde_json::json!({"settings_schema_version":4})
+        ));
+        assert_eq!(settings.clipboard_hotkey, "ctrl+shift+v");
+        assert_eq!(
+            settings.bindings[CLIPBOARD_HISTORY_BINDING_ID].current_binding,
+            "ctrl+shift+v"
+        );
+        assert!(settings.clipboard_hotkey_enabled);
+        assert!(!settings.clipboard_enabled);
+    }
+
+    #[test]
+    fn clipboard_default_migration_conflict_disables_only_new_entry() {
+        let mut settings = get_default_settings();
+        settings.clipboard_hotkey = "command+shift+v".into();
+        settings.clipboard_hotkey_enabled = false;
+        settings
+            .bindings
+            .get_mut(CLIPBOARD_HISTORY_BINDING_ID)
+            .unwrap()
+            .current_binding = "command+shift+v".into();
+        settings
+            .bindings
+            .get_mut("transcribe")
+            .unwrap()
+            .current_binding = "ctrl_left+shift_right+v".into();
+        apply_settings_migrations(
+            &mut settings,
+            &serde_json::json!({"settings_schema_version":4}),
+        );
+        assert_eq!(settings.clipboard_hotkey, "ctrl+shift+v");
+        assert!(!settings.clipboard_hotkey_enabled);
+        assert_eq!(
+            settings.bindings["transcribe"].current_binding,
+            "ctrl_left+shift_right+v"
+        );
+        assert!(!settings.clipboard_enabled);
+    }
+
+    #[test]
+    fn clipboard_migration_preserves_custom_binding_and_disabled_choice() {
+        let mut settings = get_default_settings();
+        settings.clipboard_hotkey = "command+shift+v".into(); // binding中的实际自定义值优先。
+        settings.clipboard_hotkey_enabled = false;
+        settings
+            .bindings
+            .get_mut(CLIPBOARD_HISTORY_BINDING_ID)
+            .unwrap()
+            .current_binding = "ctrl+alt+b".into();
+        apply_settings_migrations(
+            &mut settings,
+            &serde_json::json!({"settings_schema_version":4}),
+        );
+        merge_missing_bindings(&mut settings);
+        assert_eq!(settings.clipboard_hotkey, "ctrl+alt+b");
+        assert!(!settings.clipboard_hotkey_enabled);
+        assert!(!settings.clipboard_enabled);
+    }
+
+    #[test]
+    fn clipboard_current_schema_preserves_explicit_command_binding() {
+        let mut settings = get_default_settings();
+        settings.clipboard_hotkey = "command+shift+v".into();
+        settings.clipboard_hotkey_enabled = false;
+        settings
+            .bindings
+            .get_mut(CLIPBOARD_HISTORY_BINDING_ID)
+            .unwrap()
+            .current_binding = "command+shift+v".into();
+        apply_settings_migrations(
+            &mut settings,
+            &serde_json::json!({"settings_schema_version":5}),
+        );
+        assert_eq!(settings.clipboard_hotkey, "command+shift+v");
+        assert!(!settings.clipboard_hotkey_enabled);
     }
 
     #[cfg(not(target_os = "linux"))]
