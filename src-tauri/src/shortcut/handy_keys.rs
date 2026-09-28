@@ -125,7 +125,6 @@ impl HandyKeysState {
             Self::manager_thread(cmd_rx, app_clone, epoch, &worker_healthy, ready_tx);
             if worker_healthy.swap(false, Ordering::AcqRel) {
                 crate::input_permission::mark_shortcuts_failed(epoch, "快捷键原生监听器意外退出");
-                crate::input_permission::close_gate("快捷键原生监听器意外退出");
             }
         });
 
@@ -317,7 +316,6 @@ impl HandyKeysState {
         self.healthy.store(false, Ordering::Release);
         handy_keys::set_blocking_enabled(false);
         crate::input_permission::mark_shortcuts_failed(self.epoch, reason);
-        crate::input_permission::close_gate(reason);
         reason.to_owned()
     }
 

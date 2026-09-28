@@ -16,9 +16,12 @@ struct Lifecycle {
     busy: AtomicBool,
     worker_id: AtomicU64,
     worker_transition: Mutex<()>,
+    admission_transition: Mutex<()>,
+    close_serial: AtomicU64,
     invalidated: AtomicBool,
     auto_initialize: AtomicBool,
     lease_until: AtomicU64,
+    lease_recovery_pending: AtomicBool,
     maintenance: AtomicBool,
     state: Mutex<State>,
 }
@@ -45,9 +48,12 @@ impl Lifecycle {
             busy: AtomicBool::new(false),
             worker_id: AtomicU64::new(0),
             worker_transition: Mutex::new(()),
+            admission_transition: Mutex::new(()),
+            close_serial: AtomicU64::new(0),
             invalidated: AtomicBool::new(!open),
             auto_initialize: AtomicBool::new(true),
             lease_until: AtomicU64::new(u64::MAX),
+            lease_recovery_pending: AtomicBool::new(false),
             maintenance: AtomicBool::new(false),
             state: Mutex::new(State {
                 accessibility: "unknown",
@@ -59,7 +65,9 @@ impl Lifecycle {
             }),
         }
     }
-    fn close_atomic(&self) {
+    // 仅短状态发布临界区使用；不得在此锁内进行 native 检查或退休。
+    fn invalidate_locked(&self) {
+        self.close_serial.fetch_add(1, Ordering::SeqCst);
         self.auto_initialize.store(false, Ordering::SeqCst);
         let new_boundary = !self.invalidated.swap(true, Ordering::SeqCst);
         self.gate.store(false, Ordering::SeqCst);
@@ -71,10 +79,92 @@ impl Lifecycle {
         }
     }
     fn close(&self, reason: &str) {
-        self.close_atomic();
+        let _transition = self.admission_transition.lock().unwrap();
+        self.invalidate_locked();
+        self.lease_recovery_pending.store(false, Ordering::SeqCst);
+        if matches!(reason, "maintenance" | "maintenance_marker") {
+            self.maintenance.store(true, Ordering::SeqCst);
+        }
+        log::warn!(
+            "input_permission_closed reason={reason} epoch={}",
+            self.epoch.load(Ordering::SeqCst)
+        );
         if let Ok(mut state) = self.state.try_lock() {
             state.error = Some(reason.into());
         }
+    }
+    fn fail_shortcuts(&self, worker_epoch: u64, reason: &str) -> bool {
+        let _transition = self.admission_transition.lock().unwrap();
+        if self.epoch.load(Ordering::SeqCst) != worker_epoch {
+            log::debug!("input_permission_stale_shortcut_fault ignored_epoch={worker_epoch}");
+            return false;
+        }
+        self.invalidate_locked();
+        self.lease_recovery_pending.store(false, Ordering::SeqCst);
+        let mut state = self.state.lock().unwrap();
+        state.shortcuts = "restart_required";
+        state.error = Some(reason.into());
+        log::warn!(
+            "input_permission_closed reason={reason} worker_epoch={worker_epoch} epoch={}",
+            self.epoch.load(Ordering::SeqCst)
+        );
+        true
+    }
+    fn expire_lease(&self, now: u64) {
+        let _transition = self.admission_transition.lock().unwrap();
+        let deadline = self.lease_until.load(Ordering::SeqCst);
+        if now <= deadline || !self.authorized.load(Ordering::SeqCst) {
+            return;
+        }
+        self.lease_until.store(0, Ordering::SeqCst);
+        self.invalidate_locked();
+        self.lease_recovery_pending.store(true, Ordering::SeqCst);
+        if self.lease_recovery_pending.load(Ordering::SeqCst) {
+            if let Ok(mut state) = self.state.try_lock() {
+                state.error = Some("permission_lease_expired".into());
+            }
+            log::warn!(
+                "input_permission_closed reason=permission_lease_expired epoch={}",
+                self.epoch.load(Ordering::SeqCst)
+            );
+        }
+    }
+    fn lease_recovery_allowed(&self) -> bool {
+        self.lease_recovery_pending.load(Ordering::SeqCst)
+            && !self.maintenance.load(Ordering::SeqCst)
+    }
+    fn initialization_current(&self, epoch: u64, serial: u64, explicit: bool) -> bool {
+        self.epoch.load(Ordering::SeqCst) == epoch
+            && self.close_serial.load(Ordering::SeqCst) == serial
+            && !self.maintenance.load(Ordering::SeqCst)
+            && (explicit || self.lease_recovery_allowed())
+    }
+    fn begin_initialization(&self, epoch: u64, serial: u64, explicit: bool) -> Result<(), String> {
+        let _transition = self.admission_transition.lock().unwrap();
+        if !self.initialization_current(epoch, serial, explicit) {
+            return Err("stale_permission_initialization".into());
+        }
+        self.invalidated.store(false, Ordering::SeqCst);
+        self.authorized_epoch.store(epoch, Ordering::SeqCst);
+        self.authorized.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+    fn finish_initialization(&self, epoch: u64, serial: u64, explicit: bool) -> Result<(), String> {
+        let _transition = self.admission_transition.lock().unwrap();
+        if !self.initialization_current(epoch, serial, explicit)
+            || !self.authorized.load(Ordering::SeqCst)
+        {
+            return Err("stale_permission_initialization".into());
+        }
+        let mut st = self.state.lock().unwrap();
+        st.enigo = "ready";
+        st.shortcuts = "ready";
+        st.targets = "ready";
+        st.error = None;
+        self.ready_epoch.store(epoch, Ordering::SeqCst);
+        self.gate.store(true, Ordering::SeqCst);
+        self.lease_recovery_pending.store(false, Ordering::SeqCst);
+        Ok(())
     }
     fn check(&self, epoch: u64) -> Result<(), String> {
         if self.gate.load(Ordering::SeqCst)
@@ -102,16 +192,7 @@ fn check_lease() {
     if !cfg!(target_os = "macos") {
         return;
     }
-    let s = lifecycle();
-    let deadline = s.lease_until.load(Ordering::SeqCst);
-    if s.authorized.load(Ordering::SeqCst)
-        && monotonic_ms() > deadline
-        && s.lease_until
-            .compare_exchange(deadline, 0, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
-    {
-        s.close_atomic();
-    }
+    lifecycle().expire_lease(monotonic_ms());
 }
 pub fn callback_allowed() -> bool {
     check_lease();
@@ -173,11 +254,7 @@ pub fn mark_shortcuts_ready(epoch: u64) {
     }
 }
 pub fn mark_shortcuts_failed(epoch: u64, error: &str) {
-    if lifecycle().epoch.load(Ordering::SeqCst) == epoch {
-        let mut s = lifecycle().state.lock().unwrap();
-        s.shortcuts = "restart_required";
-        s.error = Some(error.into());
-    }
+    lifecycle().fail_shortcuts(epoch, error);
 }
 fn root(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     if let Some(profile) = crate::candidate_profile::current() {
@@ -409,11 +486,11 @@ fn launch(app: &AppHandle, recover: bool) {
     drop(transition);
     let app = app.clone();
     let epoch = s.epoch.load(Ordering::SeqCst);
+    let close_serial = s.close_serial.load(Ordering::SeqCst);
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let result = (|| -> Result<(), String> {
             if s.maintenance.load(Ordering::SeqCst) || marker_active(&app) {
-                s.maintenance.store(true, Ordering::SeqCst);
                 close_gate("maintenance_marker");
                 return retire(&app);
             }
@@ -436,7 +513,7 @@ fn launch(app: &AppHandle, recover: bool) {
                 crate::shortcut::health_ready(&app, epoch)?;
                 return s.check(epoch);
             }
-            if !recover {
+            if !recover && !s.lease_recovery_allowed() {
                 // A revoked generation must release its native targets even if AX has since returned.
                 return retire(&app);
             }
@@ -447,12 +524,23 @@ fn launch(app: &AppHandle, recover: bool) {
             {
                 return Err("stale_permission_initialization".into());
             }
-            s.invalidated.store(false, Ordering::SeqCst);
-            if s.epoch.load(Ordering::SeqCst) != epoch || s.maintenance.load(Ordering::SeqCst) {
-                return Err("stale_permission_initialization".into());
+            if !recover && !s.lease_recovery_allowed() {
+                return Err("lease_recovery_superseded".into());
             }
-            s.authorized_epoch.store(epoch, Ordering::SeqCst);
-            s.authorized.store(true, Ordering::SeqCst);
+            if !recover {
+                // 租约恢复在旧资源完整退休后重新被动检查，避免沿用退休前的授权。
+                let (ax, input) = probe();
+                {
+                    let mut st = s.state.lock().unwrap();
+                    st.accessibility = if ax { "granted" } else { "denied" };
+                    st.input_monitoring = if input { "granted" } else { "denied" };
+                }
+                if !ax {
+                    return Err("permission_required".into());
+                }
+                s.lease_until.store(monotonic_ms() + 3500, Ordering::SeqCst);
+            }
+            s.begin_initialization(epoch, close_serial, recover)?;
             {
                 let mut st = s.state.lock().unwrap();
                 st.enigo = "initializing";
@@ -461,20 +549,18 @@ fn launch(app: &AppHandle, recover: bool) {
             crate::input::initialize_enigo(&app, epoch)?;
             crate::shortcut::init_shortcuts(&app)?;
             crate::shortcut::health_ready(&app, epoch)?;
-            let mut st = s.state.lock().unwrap();
-            if s.epoch.load(Ordering::SeqCst) != epoch || !s.authorized.load(Ordering::SeqCst) {
-                return Err("stale_permission_initialization".into());
+            if marker_active(&app) {
+                return Err("maintenance_marker".into());
             }
-            st.enigo = "ready";
-            st.shortcuts = "ready";
-            st.targets = "ready";
-            st.error = None;
-            s.ready_epoch.store(epoch, Ordering::SeqCst);
-            s.gate.store(true, Ordering::SeqCst);
-            if s.epoch.load(Ordering::SeqCst) != epoch || s.maintenance.load(Ordering::SeqCst) {
-                s.gate.store(false, Ordering::SeqCst);
-                return Err("stale_permission_initialization".into());
-            }
+            s.finish_initialization(epoch, close_serial, recover)?;
+            log::info!(
+                "input_permission_ready epoch={epoch} recovery={}",
+                if recover {
+                    "explicit_or_startup"
+                } else {
+                    "lease"
+                }
+            );
             app.manage(crate::commands::ShortcutsInitialized);
             Ok(())
         })();
@@ -564,7 +650,6 @@ pub fn resume(app: &AppHandle) -> Result<(), String> {
 }
 pub fn prepare_maintenance(app: &AppHandle) -> Result<(), String> {
     close_gate("maintenance");
-    lifecycle().maintenance.store(true, Ordering::SeqCst);
     let root = root(app)?;
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     static MARKER_SERIAL: AtomicU64 = AtomicU64::new(0);
@@ -598,7 +683,7 @@ pub fn start_monitor(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || loop {
         let active = marker_active(&app);
-        if active && !lifecycle().maintenance.swap(true, Ordering::SeqCst) {
+        if active && !lifecycle().maintenance.load(Ordering::SeqCst) {
             close_gate("maintenance_marker");
         }
         launch(&app, false);
@@ -609,6 +694,136 @@ pub fn start_monitor(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn ready_lifecycle() -> Lifecycle {
+        let s = Lifecycle::new();
+        s.invalidated.store(false, Ordering::SeqCst);
+        s.lease_until.store(100, Ordering::SeqCst);
+        s
+    }
+    #[test]
+    fn retired_shortcut_worker_cannot_cancel_lease_recovery_or_close_new_generation() {
+        let s = ready_lifecycle();
+        let worker_epoch = s.epoch.load(Ordering::SeqCst);
+        s.expire_lease(101);
+        let recovery_epoch = s.epoch.load(Ordering::SeqCst);
+        let serial = s.close_serial.load(Ordering::SeqCst);
+        assert!(!s.fail_shortcuts(worker_epoch, "old_listener_exited"));
+        assert!(s.lease_recovery_allowed());
+        assert_eq!(s.close_serial.load(Ordering::SeqCst), serial);
+        s.begin_initialization(recovery_epoch, serial, false)
+            .unwrap();
+        s.finish_initialization(recovery_epoch, serial, false)
+            .unwrap();
+        assert!(!s.fail_shortcuts(worker_epoch, "old_listener_exited"));
+        assert!(s.check(recovery_epoch).is_ok());
+        assert_eq!(s.state.lock().unwrap().shortcuts, "ready");
+    }
+    #[test]
+    fn current_shortcut_worker_fault_closes_admission_and_requires_manual_recovery() {
+        let s = ready_lifecycle();
+        assert!(s.fail_shortcuts(1, "current_listener_exited"));
+        assert!(s.check(1).is_err());
+        assert!(!s.authorized.load(Ordering::SeqCst));
+        assert!(!s.lease_recovery_allowed());
+        assert_eq!(s.state.lock().unwrap().shortcuts, "restart_required");
+        assert_eq!(
+            s.state.lock().unwrap().error.as_deref(),
+            Some("current_listener_exited")
+        );
+    }
+    #[test]
+    fn concurrent_close_invalidates_recovery_token_without_needing_new_epoch() {
+        let s = ready_lifecycle();
+        s.expire_lease(101);
+        let epoch = s.epoch.load(Ordering::SeqCst);
+        let serial = s.close_serial.load(Ordering::SeqCst);
+        assert!(s.lease_recovery_allowed());
+        s.close("native_listener_failed");
+        assert_eq!(s.epoch.load(Ordering::SeqCst), epoch);
+        assert!(s.begin_initialization(epoch, serial, false).is_err());
+        assert!(!s.authorized.load(Ordering::SeqCst));
+    }
+    #[test]
+    fn close_racing_final_recovery_publication_always_leaves_gate_closed() {
+        for _ in 0..32 {
+            let s = std::sync::Arc::new(ready_lifecycle());
+            s.expire_lease(101);
+            let epoch = s.epoch.load(Ordering::SeqCst);
+            let serial = s.close_serial.load(Ordering::SeqCst);
+            s.begin_initialization(epoch, serial, false).unwrap();
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let closing = s.clone();
+            let close_barrier = barrier.clone();
+            let thread = std::thread::spawn(move || {
+                close_barrier.wait();
+                closing.close("maintenance");
+            });
+            barrier.wait();
+            let _ = s.finish_initialization(epoch, serial, false);
+            thread.join().unwrap();
+            assert!(!s.gate.load(Ordering::SeqCst));
+            assert!(!s.authorized.load(Ordering::SeqCst));
+            assert!(!s.lease_recovery_allowed());
+            assert!(s.maintenance.load(Ordering::SeqCst));
+        }
+    }
+    #[test]
+    fn lease_recovery_publishes_only_current_verified_generation() {
+        let s = ready_lifecycle();
+        s.expire_lease(101);
+        let epoch = s.epoch.load(Ordering::SeqCst);
+        let serial = s.close_serial.load(Ordering::SeqCst);
+        s.begin_initialization(epoch, serial, false).unwrap();
+        assert!(s.check(epoch).is_err());
+        s.finish_initialization(epoch, serial, false).unwrap();
+        assert!(s.check(1).is_err());
+        assert!(s.check(epoch).is_ok());
+        assert!(!s.lease_recovery_allowed());
+    }
+    #[test]
+    fn expired_lease_invalidates_old_epoch_and_only_requests_verified_recovery() {
+        let s = ready_lifecycle();
+        s.expire_lease(100);
+        assert!(s.check(1).is_ok());
+        s.expire_lease(101);
+        assert_eq!(s.epoch.load(Ordering::SeqCst), 2);
+        assert!(s.check(1).is_err());
+        assert!(s.check(2).is_err());
+        assert!(!s.authorized.load(Ordering::SeqCst));
+        assert!(s.lease_recovery_allowed());
+        assert_eq!(
+            s.state.lock().unwrap().error.as_deref(),
+            Some("permission_lease_expired")
+        );
+        s.expire_lease(102);
+        assert_eq!(s.epoch.load(Ordering::SeqCst), 2);
+    }
+    #[test]
+    fn revocation_native_timeout_and_explicit_maintenance_cancel_lease_recovery() {
+        for reason in [
+            "permission_required",
+            "permission_worker_timeout_restart_required",
+            "maintenance",
+            "native_listener_failed",
+        ] {
+            let s = ready_lifecycle();
+            s.expire_lease(101);
+            assert!(s.lease_recovery_allowed());
+            s.close(reason);
+            assert!(!s.lease_recovery_allowed());
+            s.expire_lease(102);
+            assert!(!s.lease_recovery_allowed());
+            assert!(s.check(1).is_err());
+        }
+    }
+    #[test]
+    fn maintenance_blocks_lease_recovery_even_before_marker_worker_runs() {
+        let s = ready_lifecycle();
+        s.expire_lease(101);
+        s.maintenance.store(true, Ordering::SeqCst);
+        assert!(!s.lease_recovery_allowed());
+        assert!(s.check(2).is_err());
+    }
     #[test]
     fn missing_target_retirement_receipt_cannot_acknowledge_maintenance() {
         assert_eq!(
