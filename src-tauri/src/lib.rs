@@ -219,10 +219,8 @@ fn should_force_show_permissions_window(app: &AppHandle) -> bool {
 }
 
 fn initialize_core_logic(app_handle: &AppHandle) -> tauri::Result<()> {
-    // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
-    // The frontend is responsible for calling the `initialize_enigo` command
-    // after onboarding completes. This avoids triggering permission dialogs
-    // on macOS before the user is ready.
+    // macOS 的 Enigo 与全局快捷键由 setup 启动的权限监视器初始化，
+    // 不依赖设置窗口或前端挂载。前端命令仅用于权限引导与显式重试。
 
     // Initialize the managers. The audio recorder receives the streaming router
     // explicitly, so always-on microphone startup can wire live-preview frames
@@ -269,10 +267,8 @@ fn initialize_core_logic(app_handle: &AppHandle) -> tauri::Result<()> {
         clipboard_manager.start_monitoring();
     }
 
-    // Note: Shortcuts are NOT initialized here.
-    // The frontend is responsible for calling the `initialize_shortcuts` command
-    // after permissions are confirmed (on macOS) or after onboarding completes.
-    // This matches the pattern used for Enigo initialization.
+    // macOS 的后台权限监视器持有原生监听器的生命周期；隐藏窗口不会退休监听器。
+    // 其他平台仍由前端完成首次快捷键初始化。
 
     // Set up signal handlers for toggling transcription. On Linux, SIGUSR1 is
     // deliberately not handled — it belongs to WebKitGTK's garbage collector
@@ -1210,7 +1206,10 @@ pub fn run(cli_args: CliArgs) {
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
-                let _res = window.hide();
+                match window.hide() {
+                    Ok(()) => log::info!("service_lifecycle window_close label={} action=hide service=running", window.label()),
+                    Err(error) => log::warn!("service_lifecycle window_close label={} action=hide_failed service=running error={error}", window.label()),
+                }
             }
             tauri::WindowEvent::ThemeChanged(theme) => {
                 log::info!("Theme changed to: {:?}", theme);
@@ -1249,8 +1248,12 @@ pub fn run(cli_args: CliArgs) {
         tauri::RunEvent::Reopen { .. } => {
             show_main_window(app);
         }
-        // Teardown transcribe.cpp before exit
+        tauri::RunEvent::ExitRequested { code, .. } => {
+            log::info!("service_lifecycle exit_requested code={code:?}");
+        }
+        // 只有事件循环实际退出才停止服务；退出请求与隐藏窗口不触发清理。
         tauri::RunEvent::Exit => {
+            log::info!("service_lifecycle exit action=stop_service");
             commands::knowledge::stop_indexer();
             #[cfg(target_os = "macos")]
             voice_connection::stop_candidate_listener(app);

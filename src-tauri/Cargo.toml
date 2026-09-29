@@ -154,6 +154,7 @@ transcribe-cpp = { git = "https://github.com/lizhelang/transcribe.cpp", rev = "1
 transcribe-cpp = { git = "https://github.com/lizhelang/transcribe.cpp", rev = "18718a497750ec51daa102ee0030f4e4000ea627", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
 transcribe-cpp = { git = "https://github.com/lizhelang/transcribe.cpp", rev = "18718a497750ec51daa102ee0030f4e4000ea627", default-features = false, features = ["metal"] }
 # Used by the receipt-sequenced ("reliable") paste path for lazy NSPasteboard

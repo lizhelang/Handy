@@ -23,6 +23,35 @@ pub enum ConnectionError {
     ControlFrame,
 }
 
+/// 空闲等待不消费帧；首字节就绪后仍由 transport 执行原来的完整帧时限。
+/// 这样已认证连接可复用，既不反复扫描签名资源，也不延长半帧攻击的时限。
+fn control_frame_ready(stream: &UnixStream, wait: std::time::Duration) -> std::io::Result<bool> {
+    use std::os::fd::AsRawFd;
+    let mut descriptor = libc::pollfd {
+        fd: stream.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: 单个有效 pollfd；等待有界，调用期间 stream 保持存活。
+    let result = unsafe {
+        libc::poll(
+            &mut descriptor,
+            1,
+            wait.as_millis().min(i32::MAX as u128) as i32,
+        )
+    };
+    if result >= 0 {
+        // HUP/ERR 也交给原始读取路径处理，不能让断开的描述符空转。
+        return Ok(result > 0);
+    }
+    let error = std::io::Error::last_os_error();
+    if error.kind() == std::io::ErrorKind::Interrupted {
+        Ok(false)
+    } else {
+        Err(error)
+    }
+}
+
 /// 持有原始已认证socket，禁止把该授权挪到其他fd；不提供裸context转移API。
 pub struct VoiceConnection {
     stream: UnixStream,
@@ -936,6 +965,11 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
                     }
                     let coordinator = app.state::<crate::TranscriptionCoordinator>();
                     while !stop.load(Ordering::Acquire) {
+                        match control_frame_ready(&connection.stream, Duration::from_millis(250)) {
+                            Ok(false) => continue,
+                            Err(_) => break,
+                            Ok(true) => {}
+                        }
                         if connection
                             .process_one_with_app(&service, &*coordinator, Some(&app))
                             .is_err()
@@ -954,6 +988,47 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
             log::warn!("unified_voice_listener_unavailable reason={reason}");
         }
     });
+}
+
+#[cfg(test)]
+mod idle_connection_tests {
+    use super::*;
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn idle_connection_survives_frame_timeout_without_consuming_next_frame() {
+        let (mut server, mut client) = UnixStream::pair().unwrap();
+        let idle_until = Instant::now() + transport::IO_TIMEOUT + Duration::from_millis(100);
+        while Instant::now() < idle_until {
+            assert!(!control_frame_ready(&server, Duration::from_millis(50)).unwrap());
+        }
+        let expected = serde_json::json!({"request_id":"after_idle"});
+        transport::write_frame(&mut client, &expected).unwrap();
+        assert!(control_frame_ready(&server, Duration::from_millis(100)).unwrap());
+        let actual: serde_json::Value = transport::read_frame(&mut server).unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn readiness_does_not_extend_partial_frame_deadline() {
+        let (mut server, mut client) = UnixStream::pair().unwrap();
+        client.write_all(&[0]).unwrap();
+        assert!(control_frame_ready(&server, Duration::from_millis(100)).unwrap());
+        let started = Instant::now();
+        let result = transport::read_frame::<serde_json::Value>(&mut server);
+        assert!(matches!(result, Err(ProtocolError::Timeout)));
+        assert!(started.elapsed() >= transport::IO_TIMEOUT);
+        assert!(started.elapsed() < transport::IO_TIMEOUT + Duration::from_secs(1));
+    }
+
+    #[test]
+    fn disconnected_peer_is_ready_for_fail_closed_read() {
+        let (mut server, client) = UnixStream::pair().unwrap();
+        drop(client);
+        assert!(control_frame_ready(&server, Duration::from_millis(100)).unwrap());
+        assert!(transport::read_frame::<serde_json::Value>(&mut server).is_err());
+    }
 }
 
 struct ListenerLifetime(std::sync::Arc<std::sync::atomic::AtomicBool>);

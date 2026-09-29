@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""受控更新候选两组件：固定身份、维护屏障、事务回滚；不读写TCC授权。"""
+"""受控更新正式两组件：固定身份、维护屏障、旧名称迁移和事务回滚；不读写TCC授权。"""
 import argparse
 import fcntl
 import sqlite3
@@ -17,6 +17,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent.parent
+REGISTRAR = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 
 
 def run(*args, timeout=30):
@@ -39,6 +40,45 @@ def canonical(path):
     if path.resolve() != path or path.is_symlink():
         raise ValueError(f"拒绝符号链接或非标准路径: {path}")
     return path
+
+
+def control_installation(applications=Path('/Applications')):
+    current = canonical(applications/'Inputia.app')
+    legacy = canonical(applications/'Inputia Candidate.app')
+    if current.exists() and legacy.exists():
+        raise ValueError('正式与旧名称安装同时存在；拒绝覆盖或选择任一版本')
+    if current.is_dir():
+        return current, current
+    if legacy.is_dir() and not current.exists():
+        return legacy, current
+    raise ValueError('未找到唯一可更新的 Inputia 安装')
+
+
+def unregister_legacy_control(old_control, new_control, old_backup=None):
+    if old_control == new_control:
+        return True
+    try:
+        # 原 URL 已随事务迁移消失，使用保留旧签名包的有效 URL 清理其登记。
+        target = canonical(old_backup if old_backup is not None else old_control)
+        if target == canonical(new_control) or not target.is_dir():
+            raise ValueError('旧登记清理路径无效；拒绝注销新安装')
+        run(REGISTRAR, '-u', target)
+        return True
+    except (subprocess.SubprocessError, OSError, ValueError):
+        # 已验证的新安装保持运行；清理旧登记失败不应误触发回滚或第二次安装。
+        print('legacyRegistrationRemoved=false releaseInstalled=true cleanupPending=true', flush=True)
+        return False
+
+
+def validate_profile(app, role, run_id):
+    prefix = 'Handy' if role == 'control' else 'Inputia'
+    expected_id = 'com.pais.handy.UnifiedCandidate' if role == 'control' else 'com.inputia.inputmethod.Inputia.UnifiedCandidate'
+    with (app/'Contents/Info.plist').open('rb') as stream:
+        info = plistlib.load(stream)
+    if (info.get('CFBundleIdentifier') != expected_id
+            or info.get(prefix+'DevelopmentCandidate') is not True
+            or info.get(prefix+'ProfileRunID') != run_id):
+        raise ValueError('组件身份或数据 profile 不匹配；拒绝迁移')
 
 
 def atomic_json(path, data):
@@ -103,11 +143,15 @@ def maintenance_ready(profile, live_pids, marker_epoch=None, now=None):
     return live.issubset(covered)
 
 
-def install_transaction(destinations, staged, backups, pair_path, new_pair, old_pair):
+def install_transaction(destinations, staged, backups, pair_path, new_pair, old_pair, originals=None):
+    originals = destinations if originals is None else originals
     moved, installed = [], []
     try:
-        for dst, src, backup in zip(destinations, staged, backups):
-            dst.rename(backup); moved.append((dst, backup))
+        for original, dst in zip(originals, destinations):
+            if original != dst and dst.exists():
+                raise ValueError('迁移目标已存在；拒绝覆盖')
+        for original, dst, src, backup in zip(originals, destinations, staged, backups):
+            original.rename(backup); moved.append((original, backup))
             src.rename(dst); installed.append(dst)
         shutil.copy2(new_pair, pair_path.with_suffix('.update'))
         os.replace(pair_path.with_suffix('.update'), pair_path)
@@ -116,6 +160,17 @@ def install_transaction(destinations, staged, backups, pair_path, new_pair, old_
         for dst, backup in reversed(moved): backup.rename(dst)
         shutil.copy2(old_pair, pair_path)
         raise
+
+
+def rollback_installation(destinations, originals, backups, failed_root, pair_path, old_pair):
+    # 失败的新包留在备份域；原包回到原路径，绝不保留第二个可启动安装。
+    for index, (target, original, backup) in enumerate(zip(destinations, originals, backups)):
+        if target.exists():
+            target.rename(failed_root/f'component-{index}-failed.app')
+        if original.exists():
+            raise ValueError('回滚原路径被其他程序占用；拒绝覆盖')
+        shutil.copytree(backup, original, symlinks=True)
+    shutil.copy2(old_pair, pair_path)
 
 
 def main():
@@ -137,10 +192,15 @@ def main():
     except BlockingIOError:
         os.close(lock_fd)
         raise RuntimeError('另一个候选更新正在执行')
-    destinations = [canonical('/Applications/Inputia Candidate.app'), canonical(Path.home()/'Library/Input Methods/InputiaUnifiedCandidate.app')]
+    old_control, new_control = control_installation()
+    ime = canonical(Path.home()/'Library/Input Methods/InputiaUnifiedCandidate.app')
+    originals = [old_control, ime]
+    destinations = [new_control, ime]
     sources = [canonical(args.control_app), canonical(args.inputia_app)]
-    for old, new in zip(destinations, sources):
-        if old == new: raise ValueError('构建源不能是当前安装')
+    for role, old, new in zip(['control', 'ime'], originals, sources):
+        if new in originals or new in destinations: raise ValueError('构建源不能是安装路径')
+        validate_profile(old, role, args.run_id)
+        validate_profile(new, role, args.run_id)
         if identity(old) != identity(new): raise ValueError('更新签名身份改变；拒绝要求用户反复重新授权')
     metadata = canonical(args.public_build); manifest = canonical(args.pair_manifest)
     # 验证编译期公开元数据的归属/权限/内容；不使用清单本身提供的新信任根。
@@ -151,6 +211,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='inputia-update-verify-') as temporary:
         verifier = Path(temporary)/'verify'
         run('/usr/bin/swiftc', '-parse-as-library', REPO/'native/unified-pair-auth/UnifiedPairAuth.swift', ROOT/'Tools/CandidateUpdateVerify.swift', '-o', verifier, timeout=90)
+        print(run(verifier, metadata, pair, pair, *originals, args.run_id).strip())
         print(run(verifier, metadata, pair, manifest, *sources, args.run_id).strip())
         if not args.apply:
             print('updatePreflight=true permissionRecordsUnchanged=true'); return
@@ -172,7 +233,7 @@ def main():
         atomic_json(marker, {'schema_version':1, 'active':True, 'epoch':token})
         print(f'updateBackup={backup}', flush=True)
         with (destinations[1]/'Contents/Info.plist').open('rb') as f: old_version = int(plistlib.load(f)['CFBundleVersion'])
-        pids = process_ids(destinations)
+        pids = process_ids(originals)
         if old_version >= 67 and pids:
             deadline = time.monotonic()+10
             while not maintenance_ready(profile, pids, token):
@@ -185,8 +246,9 @@ def main():
         previous_source = next(line[3:] for line in current.splitlines() if line.startswith('id='))
         switched = run(tis, '--select-source-id', 'com.apple.keylayout.ABC')
         if 'selectCurrentMatchesTarget=true' not in switched: raise RuntimeError('未确认切离输入法，停止更新')
-        stop_known(destinations)
-        install_transaction(destinations, staged, [backup/'control-before.app', backup/'ime-before.app'], pair, backup/'pair-new.json', backup/'pair-before.json')
+        stop_known(originals)
+        backups = [backup/'control-before.app', backup/'ime-before.app']
+        install_transaction(destinations, staged, backups, pair, backup/'pair-new.json', backup/'pair-before.json', originals)
         try:
             run(verifier, metadata, backup/'pair-before.json', pair, *destinations, args.run_id)
             atomic_json(marker, {'schema_version':1, 'active':False, 'epoch':str(uuid.uuid4())})
@@ -207,11 +269,12 @@ def main():
         except Exception:
             atomic_json(marker, {'schema_version':1, 'active':True, 'epoch':str(uuid.uuid4())})
             stop_known(destinations)
-            for target, old in zip(destinations, [backup/'control-before.app', backup/'ime-before.app']):
-                target.rename(backup/(target.stem+'-failed.app')); shutil.copytree(old, target, symlinks=True)
-            shutil.copy2(backup/'pair-before.json', pair)
+            rollback_installation(destinations, originals, backups, backup, pair, backup/'pair-before.json')
             raise
-        print('candidateUpdate=true tccChanged=false previousRecordingsReplayed=false')
+        if old_control != new_control:
+            # 新路径已启动且动态身份核验通过，才清理旧 LaunchServices 登记。
+            unregister_legacy_control(old_control, new_control, backups[0])
+        print('releaseUpdate=true tccChanged=false previousRecordingsReplayed=false')
 
 
 if __name__ == '__main__':

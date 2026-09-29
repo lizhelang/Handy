@@ -437,8 +437,8 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   if [[ "$IS_RELEASE" == "1" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia" "$host_plist"
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia" "$host_plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 82" "$host_plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.8" "$host_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 83" "$host_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.9" "$host_plist"
     /usr/libexec/PlistBuddy -c "Add :InputiaReleaseChannel string stable" "$host_plist"
   fi
 fi
@@ -622,8 +622,8 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   if [[ "$IS_RELEASE" == "1" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia设置" "$settings_plist"
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia设置" "$settings_plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 82" "$settings_plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.8" "$settings_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 83" "$settings_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.9" "$settings_plist"
     /usr/libexec/PlistBuddy -c "Add :InputiaReleaseChannel string stable" "$settings_plist"
   fi
 fi

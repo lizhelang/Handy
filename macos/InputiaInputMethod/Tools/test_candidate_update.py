@@ -11,6 +11,101 @@ spec.loader.exec_module(module)
 
 
 class CandidateUpdateTests(unittest.TestCase):
+    def test_legacy_registration_cleanup_is_bounded_and_failure_is_explicit(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            old, new, backup = root/'Inputia Candidate.app', root/'Inputia.app', root/'control-before.app'
+            old.mkdir(); old.rename(backup); new.mkdir()
+            self.assertFalse(old.exists())
+            with patch.object(module, 'run', return_value='') as run:
+                self.assertTrue(module.unregister_legacy_control(new, new, backup))
+                run.assert_not_called()
+                self.assertTrue(module.unregister_legacy_control(old, new, backup))
+                run.assert_called_once_with(module.REGISTRAR, '-u', backup)
+            with patch.object(module, 'run', side_effect=subprocess.CalledProcessError(1, 'lsregister')):
+                with patch('builtins.print') as output:
+                    self.assertFalse(module.unregister_legacy_control(old, new, backup))
+                    output.assert_called_once_with('legacyRegistrationRemoved=false releaseInstalled=true cleanupPending=true', flush=True)
+
+    def test_legacy_registration_cleanup_never_unregisters_new_destination_or_alias(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            old, new, alias = root/'Candidate.app', root/'Inputia.app', root/'backup.app'
+            new.mkdir(); alias.symlink_to(new, target_is_directory=True)
+            with patch.object(module, 'run') as run, patch('builtins.print'):
+                for backup in [new, alias, root/'missing']:
+                    self.assertFalse(module.unregister_legacy_control(old, new, backup))
+                run.assert_not_called()
+
+    def test_control_path_migrates_only_unique_legacy_installation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            current, legacy = root/'Inputia.app', root/'Inputia Candidate.app'
+            with self.assertRaises(ValueError): module.control_installation(root)
+            legacy.mkdir()
+            self.assertEqual(module.control_installation(root), (legacy, current))
+            current.mkdir()
+            with self.assertRaises(ValueError): module.control_installation(root)
+            legacy.rmdir()
+            self.assertEqual(module.control_installation(root), (current, current))
+
+    def test_control_path_rejects_symlink_even_when_other_install_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root/'Inputia.app').mkdir()
+            (root/'Inputia Candidate.app').symlink_to(root/'missing')
+            with self.assertRaises(ValueError): module.control_installation(root)
+
+    def test_profile_cannot_change_during_rename(self):
+        import plistlib
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory)/'Inputia.app'
+            (app/'Contents').mkdir(parents=True)
+            info = {'CFBundleIdentifier':'com.pais.handy.UnifiedCandidate',
+                    'HandyDevelopmentCandidate':True, 'HandyProfileRunID':'same'}
+            path = app/'Contents/Info.plist'
+            path.write_bytes(plistlib.dumps(info))
+            module.validate_profile(app, 'control', 'same')
+            with self.assertRaises(ValueError): module.validate_profile(app, 'control', 'other')
+            info['HandyDevelopmentCandidate'] = 'true'
+            path.write_bytes(plistlib.dumps(info))
+            with self.assertRaises(ValueError): module.validate_profile(app, 'control', 'same')
+
+    def test_rename_failure_restores_original_path_and_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old, new, ime = root/'Candidate.app', root/'Inputia.app', root/'ime.app'
+            for app in [old, ime]:
+                app.mkdir(); (app/'value').write_text('old')
+            staged = root/'new-control'; staged.mkdir()
+            pair, prior, next_pair = root/'pair', root/'prior', root/'next'
+            pair.write_text('old'); prior.write_text('old'); next_pair.write_text('new')
+            with self.assertRaises(FileNotFoundError):
+                module.install_transaction([new, ime], [staged, root/'missing'],
+                    [root/'control-backup', root/'ime-backup'], pair, next_pair, prior, [old, ime])
+            self.assertTrue(old.is_dir()); self.assertTrue(ime.is_dir())
+            self.assertFalse(new.exists()); self.assertEqual(pair.read_text(), 'old')
+
+    def test_post_install_failure_restores_legacy_path_and_preserves_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old, new, ime = root/'Candidate.app', root/'Inputia.app', root/'ime.app'
+            originals, destinations = [old, ime], [new, ime]
+            staged, backups = [], []
+            for index, app in enumerate(originals):
+                app.mkdir(); (app/'value').write_text('old')
+                stage = root/f'stage-{index}'; stage.mkdir(); (stage/'value').write_text('new')
+                staged.append(stage); backups.append(root/f'backup-{index}')
+            pair, prior, next_pair = root/'pair', root/'prior', root/'next'
+            pair.write_text('old'); prior.write_text('old'); next_pair.write_text('new')
+            module.install_transaction(destinations, staged, backups, pair, next_pair, prior, originals)
+            self.assertFalse(old.exists()); self.assertTrue(new.exists())
+            module.rollback_installation(destinations, originals, backups, root, pair, prior)
+            self.assertTrue(old.exists()); self.assertFalse(new.exists())
+            self.assertTrue(all((app/'value').read_text() == 'old' for app in originals+backups))
+            self.assertEqual(pair.read_text(), 'old')
+
     def test_registration_precedes_starting_either_component(self):
         apps = [Path('/Applications/control.app'), Path('/Users/test/Library/Input Methods/ime.app')]
         with patch.object(module, 'run', return_value='') as run:

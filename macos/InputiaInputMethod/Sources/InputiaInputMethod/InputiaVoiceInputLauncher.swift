@@ -57,6 +57,23 @@ struct InputiaVoiceServiceReadiness {
     return true
   }
   mutating func suspend() { suspended = true }
+  mutating func resumeForExplicitStart() { attempted = false; suspended = false }
+  var needsAutomaticPreparation: Bool { !attempted && !suspended }
+  mutating func markServiceObserved() { attempted = true }
+}
+
+enum InputiaVoiceServiceMenuState: Equatable {
+  case running, stopped, unavailable
+  var action: String? {
+    switch self { case .running: return "quit_service"; case .stopped: return "start_service"; case .unavailable: return nil }
+  }
+  var title: String {
+    switch self {
+    case .running: return "退出语音服务（保留基础输入）"
+    case .stopped: return "打开语音服务"
+    case .unavailable: return "语音服务状态不可用"
+    }
+  }
 }
 
 /// 仅约束当前会话的首次 Fetch；一旦发起便保留 attempted，未知回执不能重试。
@@ -66,6 +83,26 @@ struct InputiaVoiceFirstFetchGate {
     guard verified, !attempted else { return false }
     attempted = true
     return true
+  }
+}
+
+/// 回执归属独立于可退休的全局会话；调用仍限于串行语音队列。
+final class InputiaVoiceReceiptGate {
+  private var claimed = false
+  func claim() -> Bool {
+    guard !claimed else { return false }
+    claimed = true
+    return true
+  }
+}
+
+/// 只复用已经完整认证的 socket；权限或配对清单变化使该租约失效。
+struct InputiaAuthenticatedConnectionScope {
+  let permissionEpoch: UInt64
+  let manifest: Data
+  let server: String
+  func matches(epoch: UInt64, manifest: Data, expectedServer: String?) -> Bool {
+    permissionEpoch == epoch && self.manifest == manifest && (expectedServer == nil || expectedServer == server)
   }
 }
 
@@ -92,26 +129,65 @@ enum InputiaVoiceInputLauncher {
   private static let readinessQueue = DispatchQueue(label: "Inputia.service-readiness")
   private static var readiness = InputiaVoiceServiceReadiness()
   private static let readinessLaunches = DispatchGroup()
+  private static var explicitStartPending = false
   private static var serviceTerminationObserver: NSObjectProtocol?
 
+  private struct BusinessConnection {
+    let connection: InputiaVoiceServiceConnection
+    let scope: InputiaAuthenticatedConnectionScope
+  }
+  private static var personalizationConnection: BusinessConnection?
+  private static var typedCaptureConnection: BusinessConnection?
+  private static func reusableBusinessConnection(_ cached: inout BusinessConnection?, epoch: UInt64,
+    expectedServer: String?) throws -> InputiaVoiceServiceConnection {
+    guard InputiaPermissionLifecycle.shared.epoch == epoch,
+      InputiaPermissionLifecycle.shared.allowsServiceConnection,
+      InputiaPermissionLifecycle.shared.backgroundMaintenanceAllowsWork() else { throw InputiaVoiceServiceError.policy }
+    let manifestURL = InputiaProfile.current.root.deletingLastPathComponent().appendingPathComponent("pair-manifest.json")
+    let manifest = try Data(contentsOf: manifestURL)
+    guard manifest.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
+    if let previous = cached, previous.scope.matches(epoch: epoch, manifest: manifest, expectedServer: expectedServer) {
+      return previous.connection
+    }
+    cached?.connection.closeTypedCaptureConnection(); cached = nil
+    let connection = try openAuthenticatedConnection()
+    guard InputiaPermissionLifecycle.shared.epoch == epoch,
+      expectedServer == nil || expectedServer == connection.server.instance_id else {
+      connection.closeTypedCaptureConnection(); throw InputiaVoiceServiceError.policy
+    }
+    cached = BusinessConnection(connection: connection,
+      scope: InputiaAuthenticatedConnectionScope(permissionEpoch: epoch, manifest: manifest, server: connection.server.instance_id))
+    return connection
+  }
+  private static func retireBusinessConnections() {
+    personalizationQueue.async {
+      personalizationConnection?.connection.closeTypedCaptureConnection(); personalizationConnection = nil
+    }
+    typedCaptureQueue.async {
+      typedCaptureConnection?.connection.closeTypedCaptureConnection(); typedCaptureConnection = nil
+    }
+  }
   private static let personalizationQueue = DispatchQueue(label: "Inputia.personalization")
   static func personalization(_ command: InputiaPersonalCommand, deadline: TimeInterval,
     expectedServer: String? = nil, completion: @escaping (InputiaPersonalReply?) -> Void) {
+    let permissionEpoch = InputiaPermissionLifecycle.shared.epoch
     personalizationQueue.async {
       var reply: InputiaPersonalReply?
       if ProcessInfo.processInfo.systemUptime < deadline {
         do {
-          let connection = try openAuthenticatedConnection()
-          defer { connection.closeTypedCaptureConnection() }
+          let connection = try reusableBusinessConnection(&personalizationConnection, epoch: permissionEpoch, expectedServer: expectedServer)
           if ProcessInfo.processInfo.systemUptime < deadline,
             expectedServer == nil || expectedServer == connection.server.instance_id {
             reply = try connection.personalization(command)
           }
           InputiaPersonalizationDiagnostics.record("personal_transport", reply == nil ? "stale" : "ok")
-        } catch { InputiaPersonalizationDiagnostics.record("personal_transport", InputiaPersonalizationDiagnostics.errorReason(error)) }
+        } catch {
+          personalizationConnection?.connection.closeTypedCaptureConnection(); personalizationConnection = nil
+          InputiaPersonalizationDiagnostics.record("personal_transport", InputiaPersonalizationDiagnostics.errorReason(error))
+        }
       } else { InputiaPersonalizationDiagnostics.record("personal_transport", "expired") }
       let result = reply
-      DispatchQueue.main.async { completion(result) }
+      DispatchQueue.main.async { completion(InputiaPermissionLifecycle.shared.epoch == permissionEpoch ? result : nil) }
     }
   }
 
@@ -119,20 +195,23 @@ enum InputiaVoiceInputLauncher {
   /// 不启动服务；连接、握手和策略刷新仅发生在后台。过期事件丢弃不重放。
   static func typedCapture(_ command: InputiaTypedCaptureCommand, deadline: TimeInterval,
     expectedServer: String? = nil, completion: @escaping (InputiaTypedCaptureReply?) -> Void) {
+    let permissionEpoch = InputiaPermissionLifecycle.shared.epoch
     typedCaptureQueue.async {
       var result: InputiaTypedCaptureReply?
       if ProcessInfo.processInfo.systemUptime < deadline {
         do {
-          let connection = try openAuthenticatedConnection()
-          defer { connection.closeTypedCaptureConnection() }
+          let connection = try reusableBusinessConnection(&typedCaptureConnection, epoch: permissionEpoch, expectedServer: expectedServer)
           if ProcessInfo.processInfo.systemUptime < deadline,
             expectedServer == nil || expectedServer == connection.server.instance_id {
             result = try connection.typedCapture(command)
           }
-        } catch { /* 不保留正文，不重试，不启动服务。 */ }
+        } catch {
+          typedCaptureConnection?.connection.closeTypedCaptureConnection(); typedCaptureConnection = nil
+          // 不保留正文，不重试，不启动服务。
+        }
       }
       let reply = result
-      DispatchQueue.main.async { completion(reply) }
+      DispatchQueue.main.async { completion(InputiaPermissionLifecycle.shared.epoch == permissionEpoch ? reply : nil) }
     }
   }
 
@@ -200,7 +279,7 @@ enum InputiaVoiceInputLauncher {
   /// 输入法启用时异步准备同一签名配对服务，仅隐藏启动，不发送任何录音命令。
   static func ensureUnifiedServiceReady() {
     readinessQueue.async {
-      guard InputiaPermissionLifecycle.shared.allowsServiceConnection else { return }
+      guard readiness.needsAutomaticPreparation, InputiaPermissionLifecycle.shared.allowsServiceConnection else { return }
       do {
         let profile = InputiaProfile.current
         try profile.validateCandidatePaths()
@@ -214,10 +293,12 @@ enum InputiaVoiceInputLauncher {
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
               app.bundleIdentifier == identity.identifier else { return }
             readinessQueue.async { readiness.suspend() }
+            retireBusinessConnections()
           }
         }
         let running = !NSRunningApplication.runningApplications(withBundleIdentifier: identity.identifier).isEmpty
-        guard readiness.requestStart(isRunning: running) else { return }
+        if running { readiness.markServiceObserved(); return }
+        guard readiness.requestStart(isRunning: false) else { return }
         let app = try verifiedInstalledService(identity: identity)
         guard InputiaPermissionLifecycle.shared.allowsServiceConnection,
           InputiaPermissionLifecycle.shared.backgroundMaintenanceAllowsWork() else { return }
@@ -229,6 +310,76 @@ enum InputiaVoiceInputLauncher {
         }
       } catch {
         NSLog("inputia_service_prepare_unavailable automatic_retry=false")
+      }
+    }
+  }
+
+  /// 菜单关闭状态不能由旧端点的连接失败推断，必须核验当前配对身份。
+  static func refreshServiceMenu(completion: @escaping (InputiaMenuReply?, InputiaVoiceServiceMenuState) -> Void) {
+    menuAction(kind: "status") { snapshot in
+      if let snapshot { completion(snapshot, .running); return }
+      readinessQueue.async {
+        var status = InputiaVoiceServiceMenuState.unavailable
+        do {
+          let identity = try verifiedServiceIdentity()
+          status = try trustedServiceIsRunning(identity: identity) ? .running : .stopped
+        } catch { NSLog("inputia_service_menu_unavailable") }
+        let result = status
+        DispatchQueue.main.async { completion(nil, result) }
+      }
+    }
+  }
+
+  private static func verifiedServiceIdentity() throws -> PairCodeIdentity {
+    let profile = InputiaProfile.current
+    try profile.validateCandidatePaths()
+    let bytes = try Data(contentsOf: profile.root.deletingLastPathComponent().appendingPathComponent("pair-manifest.json"))
+    guard bytes.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
+    return try SignedPairManifest.verify(bytes, trust: InputiaEmbeddedPairTrust.trust).identity(for: .handy)
+  }
+
+  private static func trustedServiceIsRunning(identity: PairCodeIdentity) throws -> Bool {
+    let apps = NSRunningApplication.runningApplications(withBundleIdentifier: identity.identifier)
+    guard !apps.isEmpty else { return false }
+    let hashes = identity.cdhashes.map { "cdhash H\"\($0)\"" }.joined(separator: " or ")
+    var requirement: SecRequirement?
+    guard SecRequirementCreateWithString("identifier \"\(identity.identifier)\" and (\(hashes))" as CFString, [], &requirement) == errSecSuccess,
+      let requirement else { throw InputiaVoiceServiceError.handshake }
+    for app in apps {
+      var code: SecCode?
+      let attributes = [kSecGuestAttributePid as String: NSNumber(value: app.processIdentifier)] as CFDictionary
+      guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess, let code,
+        SecCodeCheckValidity(code, [], requirement) == errSecSuccess else { throw InputiaVoiceServiceError.handshake }
+    }
+    return true
+  }
+
+  /// 只有显式打开能解除退出后的暂停；使用原有签名验证和隐藏启动路径。
+  static func startUnifiedService(completion: @escaping (Bool) -> Void) {
+    readinessQueue.async {
+      guard !explicitStartPending else { DispatchQueue.main.async { completion(false) }; return }
+      explicitStartPending = true
+      do {
+        let identity = try verifiedServiceIdentity()
+        let app = try verifiedInstalledService(identity: identity)
+        guard InputiaPermissionLifecycle.shared.allowsServiceConnection,
+          InputiaPermissionLifecycle.shared.backgroundMaintenanceAllowsWork() else { throw InputiaVoiceServiceError.policy }
+        let running = try trustedServiceIsRunning(identity: identity)
+        readiness.resumeForExplicitStart()
+        if running { readiness.markServiceObserved(); explicitStartPending = false; DispatchQueue.main.async { completion(true) }; return }
+        guard readiness.requestStart(isRunning: false) else { explicitStartPending = false; DispatchQueue.main.async { completion(false) }; return }
+        readinessLaunches.enter()
+        openHiddenService(appPath: app.path) { error in
+          readinessQueue.async {
+            readinessLaunches.leave()
+            explicitStartPending = false
+            DispatchQueue.main.async { completion(error == nil) }
+          }
+        }
+      } catch {
+        explicitStartPending = false
+        NSLog("inputia_service_explicit_start_unavailable")
+        DispatchQueue.main.async { completion(false) }
       }
     }
   }
@@ -283,6 +434,16 @@ enum InputiaVoiceInputLauncher {
   static func invalidatePermissionWork(completion: @escaping () -> Void = {}) {
     InputiaSharedTermsMemory.shared.clear()
     let retired = DispatchGroup()
+    retired.enter()
+    personalizationQueue.async {
+      personalizationConnection?.connection.closeTypedCaptureConnection(); personalizationConnection = nil
+      retired.leave()
+    }
+    retired.enter()
+    typedCaptureQueue.async {
+      typedCaptureConnection?.connection.closeTypedCaptureConnection(); typedCaptureConnection = nil
+      retired.leave()
+    }
     retired.enter()
     shortcutQueue.async {
       defer { retired.leave() }
@@ -615,8 +776,30 @@ enum InputiaVoiceInputLauncher {
     }
   }
 
+  /// 退休旧菜单连接和会话归属；已提取结果由独立回执闭包结束，不重放。
+  private static func retireMenuServiceConnection() {
+    retireBusinessConnections()
+    let oldSession = unifiedSession
+    let oldConnection = unifiedConnection
+    let hasPendingReceipt = unifiedFetchGate.attempted
+    unifiedConnection = nil
+    unifiedSession = nil
+    lastUnifiedPhase = nil
+    if !hasPendingReceipt { oldConnection?.close() }
+    if let owner = shortcutSession, oldSession == nil || owner == oldSession {
+      clearShortcutOwnership(sessionID: owner)
+    }
+  }
+
   /// 统一菜单与语音共用串行通讯队列；不在系统菜单或按键回调等待服务。
   static func menuAction(kind: String, modelID: String? = nil, completion: @escaping (InputiaMenuReply?) -> Void) {
+    if kind == "start_service" {
+      startUnifiedService { started in
+        if started { refreshServiceMenu { reply, _ in completion(reply) } }
+        else { completion(nil) }
+      }
+      return
+    }
     if kind == "quit_service" { readinessQueue.async { readiness.suspend() } }
     voiceQueue.async {
       do {
@@ -625,6 +808,7 @@ enum InputiaVoiceInputLauncher {
             DispatchQueue.main.async { completion(nil) }; return
           }
           let reply = try connection.menuRequest(kind: kind, modelID: modelID)
+          if kind == "quit_service", reply.status == "menu" { retireMenuServiceConnection() }
           DispatchQueue.main.async { completion(reply.status == "menu" ? reply : nil) }
           return
         }
@@ -646,6 +830,7 @@ enum InputiaVoiceInputLauncher {
         let reply = try connection.menuRequest(kind: kind, modelID: modelID)
         DispatchQueue.main.async { completion(reply.status == "menu" ? reply : nil) }
       } catch {
+        retireMenuServiceConnection()
         NSLog("inputia_menu_request_unconfirmed automatic_replay=false")
         DispatchQueue.main.async { completion(nil) }
       }
@@ -722,7 +907,10 @@ enum InputiaVoiceInputLauncher {
     let permissionEpoch = InputiaPermissionLifecycle.shared.epoch
     voiceQueue.asyncAfter(deadline: .now() + 0.25) {
       guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { return }
-      guard unifiedSession == session, unifiedConnection === connection, !unifiedFetchGate.attempted else { return }
+      guard unifiedSession == session, unifiedConnection === connection, !unifiedFetchGate.attempted else {
+        if unifiedSession != session { releaseTarget(target.target_id) }
+        return
+      }
       var fetchConnection: InputiaVoiceServiceConnection?
       do {
         let reply = try connection.request(sessionID: session, requestID: UUID().uuidString, command: .status)
@@ -771,11 +959,12 @@ enum InputiaVoiceInputLauncher {
           delivery.dispatchNonce = nonce
           delivery.dispatchDeadline = min(delivery.dispatchDeadline, permit.deadline)
           let permittedDelivery = delivery
+          let receiptGate = InputiaVoiceReceiptGate()
           DispatchQueue.main.async {
             let delivery = permittedDelivery
             let acknowledge: (String) -> Void = { receipt in
               voiceQueue.async {
-                guard unifiedSession == session, unifiedConnection === outputConnection else { return }
+                guard receiptGate.claim() else { return }
                 do {
                   try outputConnection.acknowledgeDelivery(delivery, receipt: receipt)
                   NSLog("inputia_unified_voice_output_receipt=%@", receipt)
@@ -787,7 +976,10 @@ enum InputiaVoiceInputLauncher {
                   DispatchQueue.main.async { completion("插入回执未知，未重放。请核对输入框和历史。") }
                 }
                 releaseTarget(target.target_id)
-                outputConnection.close(); unifiedConnection = nil; unifiedSession = nil
+                outputConnection.close()
+                if unifiedSession == session, unifiedConnection === outputConnection {
+                  unifiedConnection = nil; unifiedSession = nil
+                }
                 clearShortcutOwnership(sessionID: session)
               }
             }
@@ -849,6 +1041,16 @@ enum InputiaVoiceInputLauncher {
     shortcutSession = nil
     return correct
   }
+
+  static func checkMenuConnectionRetirement() -> Bool {
+    unifiedSession = "synthetic-menu-session"
+    shortcutSession = "synthetic-menu-session"
+    shortcutServer = "synthetic-menu-server"
+    lastUnifiedPhase = "recording"
+    retireMenuServiceConnection()
+    return unifiedSession == nil && unifiedConnection == nil && shortcutSession == nil
+      && shortcutServer == nil && lastUnifiedPhase == nil
+  }
   #endif
   #endif
   static let handyBundleIdentifier = "com.pais.handy"
@@ -860,7 +1062,8 @@ enum InputiaVoiceInputLauncher {
   static let startupToggleDelaySeconds: TimeInterval = 1.5
 
   static func installedServiceAppPaths(homeDirectory: String = NSHomeDirectory()) -> [String] {
-    ["/Applications/Inputia Candidate.app", "\(homeDirectory)/Applications/Inputia Candidate.app"]
+    ["/Applications/Inputia.app", "\(homeDirectory)/Applications/Inputia.app",
+      "/Applications/Inputia Candidate.app", "\(homeDirectory)/Applications/Inputia Candidate.app"]
   }
 
   private static func openHiddenService(appPath: String, completion: @escaping (Error?) -> Void) {

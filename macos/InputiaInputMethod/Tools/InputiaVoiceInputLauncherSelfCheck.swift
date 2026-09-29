@@ -6,8 +6,26 @@ struct InputiaVoiceInputLauncherSelfCheck {
   static func main() {
     #if INPUTIA_PAIRED_BUILD && INPUTIA_CONNECTION_SELF_CHECK
     precondition(InputiaVoiceInputLauncher.checkPreFetchFailureReleasesWait())
+    precondition(InputiaVoiceInputLauncher.checkMenuConnectionRetirement())
+    print("menuServiceRetirementClearsStaleOwnership=true")
     print("preFetchFailureReleasesWait=true shortcut_owner_retained=true")
     #endif
+    let receipt = InputiaVoiceReceiptGate()
+    precondition(receipt.claim())
+    precondition(!receipt.claim())
+    print("retiredSessionReceiptRemainsSingleUse=true")
+    let scope = InputiaAuthenticatedConnectionScope(permissionEpoch: 2, manifest: Data([1, 2]), server: "trusted-server")
+    precondition(scope.matches(epoch: 2, manifest: Data([1, 2]), expectedServer: "trusted-server"))
+    precondition(!scope.matches(epoch: 3, manifest: Data([1, 2]), expectedServer: nil))
+    precondition(!scope.matches(epoch: 2, manifest: Data([2, 3]), expectedServer: nil))
+    precondition(!scope.matches(epoch: 2, manifest: Data([1, 2]), expectedServer: "replacement-server"))
+    var observedRunning = InputiaVoiceServiceReadiness()
+    precondition(observedRunning.needsAutomaticPreparation)
+    observedRunning.markServiceObserved()
+    precondition(!observedRunning.needsAutomaticPreparation)
+    observedRunning.resumeForExplicitStart()
+    precondition(observedRunning.needsAutomaticPreparation)
+    print("authenticatedConnectionScopeInvalidates=true readinessAuditOnce=true")
     var firstFetch = InputiaVoiceFirstFetchGate()
     precondition(!firstFetch.claimAfterPolicyRefresh(verified: false))
     precondition(!firstFetch.attempted)
@@ -28,11 +46,20 @@ struct InputiaVoiceInputLauncherSelfCheck {
     var explicitlyQuit = InputiaVoiceServiceReadiness()
     explicitlyQuit.suspend()
     precondition(!explicitlyQuit.requestStart(isRunning: false))
+    explicitlyQuit.resumeForExplicitStart()
+    precondition(explicitlyQuit.requestStart(isRunning: false))
+    precondition(!explicitlyQuit.requestStart(isRunning: false))
+    precondition(InputiaVoiceServiceMenuState.stopped.action == "start_service")
+    precondition(InputiaVoiceServiceMenuState.running.action == "quit_service")
+    precondition(InputiaVoiceServiceMenuState.unavailable.action == nil)
+    precondition(InputiaVoiceInputLauncher.startupArguments == ["--start-hidden"])
+    print("explicitServiceRestartAfterQuit=true trustedMenuLifecycle=true")
     var observedExit = InputiaVoiceServiceReadiness()
     precondition(!observedExit.requestStart(isRunning: true))
     observedExit.suspend()
     precondition(!observedExit.requestStart(isRunning: false))
     precondition(InputiaVoiceInputLauncher.installedServiceAppPaths(homeDirectory: "/Users/example") == [
+      "/Applications/Inputia.app", "/Users/example/Applications/Inputia.app",
       "/Applications/Inputia Candidate.app", "/Users/example/Applications/Inputia Candidate.app",
     ])
     let fakeApp = "/tmp/InputiaVoiceInputLauncherSelfCheck/Inputia.app"

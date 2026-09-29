@@ -167,7 +167,6 @@ final class InputiaInputController: IMKInputController {
   private var voiceActivationGeneration: UInt64 = 0
   private var voiceStatus = ""
   private var unifiedMenuSnapshot: InputiaMenuReply?
-  private var unifiedMenuRefreshing = false
   private var voiceTargetCaptureNotice: String?
   private var voiceTargetPreparationFailure = "unknown"
   private var voiceTargetSnapshots: [String: InputiaVoiceTargetSnapshot.Snapshot] = [:]
@@ -380,20 +379,20 @@ final class InputiaInputController: IMKInputController {
     _ = add("Inputia 设置…", "settings")
     _ = add("检查更新…", "check_updates")
     menu.addItem(.separator())
-    _ = add("退出语音服务（保留基础输入）", "quit_service")
-    if !unifiedMenuRefreshing {
-      unifiedMenuRefreshing = true
-      InputiaVoiceInputLauncher.menuAction(kind: "status") { [weak self] snapshot in
-        guard let self else { return }
-        self.unifiedMenuRefreshing = false
-        self.unifiedMenuSnapshot = snapshot
-        history.title = InputiaShortcutClassifier.clipboardHistoryMenuTitle(
-          shortcut: snapshot?.clipboard_hotkey,
-          enabled: snapshot?.clipboard_hotkey_enabled
-        )
-        renderModels(snapshot)
-        unload.isEnabled = snapshot?.busy == false
-      }
+    let service = add("正在检查语音服务…", "quit_service")
+    service.isEnabled = false
+    InputiaVoiceInputLauncher.refreshServiceMenu { [weak self] snapshot, serviceState in
+      guard let self else { return }
+      self.unifiedMenuSnapshot = snapshot
+      service.title = serviceState.title
+      service.isEnabled = serviceState.action != nil
+      service.representedObject = ["kind": serviceState.action ?? "", "model_id": ""]
+      history.title = InputiaShortcutClassifier.clipboardHistoryMenuTitle(
+        shortcut: snapshot?.clipboard_hotkey,
+        enabled: snapshot?.clipboard_hotkey_enabled
+      )
+      renderModels(snapshot)
+      unload.isEnabled = snapshot?.busy == false
     }
     return menu
   }
@@ -403,9 +402,16 @@ final class InputiaInputController: IMKInputController {
       NSLog("inputia_menu_command_rejected reason=invalid_sender")
       return
     }
-    guard ["copy_latest", "history", "settings", "check_updates", "unload_model", "select_model", "quit_service"].contains(kind) else { return }
+    guard ["copy_latest", "history", "settings", "check_updates", "unload_model", "select_model", "quit_service", "start_service"].contains(kind) else { return }
     // 只记录固定动作名，绝不记录剪贴正文、模型路径或客户端字典。
     NSLog("inputia_menu_command_queued action=\(kind)")
+    if kind == "start_service" {
+      InputiaVoiceInputLauncher.startUnifiedService { [weak self] started in
+        self?.unifiedMenuSnapshot = nil
+        self?.voiceStatus = started ? "已请求在后台打开语音服务" : "打开语音服务未确认；未自动重试"
+      }
+      return
+    }
     let modelID = values["model_id"].flatMap { $0.isEmpty ? nil : $0 }
     InputiaVoiceInputLauncher.menuAction(kind: kind, modelID: modelID) { [weak self] reply in
       self?.unifiedMenuSnapshot = reply
