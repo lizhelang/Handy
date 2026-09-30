@@ -16,7 +16,7 @@ pub struct ImportRequest {
     pub expected_revision: String,
     pub observed_file_digest: String,
 }
-impl Store {
+impl<S: DocumentSchema> DocumentStore<S> {
     pub fn inspect_external(&self) -> Result<ExternalSnapshot> {
         let document = self.load_internal(true)?;
         if digest(&Value::Object(document.values.clone()))? == document.header.values_digest {
@@ -55,7 +55,8 @@ impl Store {
             if digest(&Value::Object(document.values.clone()))? != document.header.values_digest {
                 return Err(Error::ExternalEdit);
             }
-            self.files.confirm_durable(&mut |_| Ok(()))?;
+            self.files
+                .confirm_durable(S::FILE_NAME, S::MARKER_NAME, &mut |_| Ok(()))?;
             return Ok(ApplyResult::Saved {
                 commit_revision: receipt.revision.clone(),
                 replayed: true,
@@ -87,7 +88,7 @@ impl Store {
         }
         maintenance::ensure_normal_start(&self.home, self.uid).map_err(|_| Error::Maintenance)?;
         self.files
-            .replace("settings.json", &document.bytes()?, &mut |_| Ok(()))?;
+            .replace(S::FILE_NAME, &document.bytes()?, &mut |_| Ok(()))?;
         Ok(ApplyResult::Saved {
             commit_revision: document.header.revision.clone(),
             replayed: false,

@@ -170,10 +170,13 @@ impl Files {
     }
     pub(super) fn confirm_durable(
         &self,
+        filename: &str,
+        marker: &str,
         hook: &mut impl FnMut(Boundary) -> Result<()>,
     ) -> Result<()> {
         let confirm = || -> Result<()> {
-            for name in [c"settings.json", c".inputia-settings-initialized.json"] {
+            for name in [filename, marker] {
+                let name = cstring(name.as_bytes())?;
                 let file = fd_file(unsafe {
                     libc::openat(
                         self.directory.as_raw_fd(),

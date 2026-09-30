@@ -1,4 +1,4 @@
-//! 基础输入设置的单一写入器。版本、值与有限幂等回执在同一文档原子提交。
+//! 版本化设置的耐久写入核心。版本、值与有限幂等回执在同一文档原子提交。
 #[cfg(target_os = "macos")]
 pub mod application;
 mod external;
@@ -18,6 +18,50 @@ const LIMIT: usize = 512 * 1024;
 const RECEIPT_LIMIT: usize = 256;
 const META: &str = "_inputia_store";
 const MARKER: &str = ".inputia-settings-initialized.json";
+fn input_settings_domain() -> String {
+    "inputia.basic-input".into()
+}
+fn is_input_settings_domain(domain: &String) -> bool {
+    domain == InputSettingsSchema::DOMAIN
+}
+
+/// 领域适配器只定义格式；锁、CAS、幂等、原子提交和外部导入均由共享核心负责。
+/// 路径名及领域 ID 必须是编译期固定常量，不能从请求或待导入文件读取。
+pub trait DocumentSchema {
+    const FILE_NAME: &'static str;
+    const MARKER_NAME: &'static str;
+    const DOMAIN: &'static str;
+    /// dirty patch 所在的固定对象路径；主应用可选 ["settings"]，请求不能改变它。
+    const PATCH_ROOT: &'static [&'static str] = &[];
+    fn defaults(path: &Path) -> Result<Map<String, Value>>;
+    /// 保留未知扩展；migrate 仅用于首次转换未版本化的文件。错误不得包含字段值。
+    fn validate(
+        values: &Map<String, Value>,
+        path: &Path,
+        migrate: bool,
+    ) -> Result<Map<String, Value>>;
+}
+
+pub struct InputSettingsSchema;
+impl DocumentSchema for InputSettingsSchema {
+    const FILE_NAME: &'static str = "settings.json";
+    const MARKER_NAME: &'static str = MARKER;
+    const DOMAIN: &'static str = "inputia.basic-input";
+    fn defaults(path: &Path) -> Result<Map<String, Value>> {
+        serde_json::to_value(InputiaSettings::default_for_settings_path(path))
+            .map_err(|_| Error::InvalidDocument)?
+            .as_object()
+            .cloned()
+            .ok_or(Error::InvalidDocument)
+    }
+    fn validate(
+        values: &Map<String, Value>,
+        path: &Path,
+        migrate: bool,
+    ) -> Result<Map<String, Value>> {
+        validate_values(values, path, migrate)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,12 +90,20 @@ impl std::error::Error for Error {}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Snapshot {
+    #[serde(
+        default = "input_settings_domain",
+        skip_serializing_if = "is_input_settings_domain"
+    )]
+    domain: String,
     pub store_id: String,
     pub revision: String,
     pub values_digest: String,
     pub values: Value,
 }
 impl Snapshot {
+    pub fn domain(&self) -> &str {
+        &self.domain
+    }
     pub fn operation_id(&self) -> String {
         format!(
             "v1:{}:{}:{}",
@@ -61,6 +113,9 @@ impl Snapshot {
         )
     }
     pub fn settings(&self) -> Result<InputiaSettings> {
+        if self.domain != InputSettingsSchema::DOMAIN {
+            return Err(Error::InvalidDocument);
+        }
         serde_json::from_value(self.values.clone()).map_err(|_| Error::InvalidDocument)
     }
 }
@@ -99,6 +154,11 @@ struct Receipt {
 #[serde(deny_unknown_fields)]
 struct Header {
     schema_version: u32,
+    #[serde(
+        default = "input_settings_domain",
+        skip_serializing_if = "is_input_settings_domain"
+    )]
+    domain: String,
     store_id: String,
     revision: String,
     values_digest: String,
@@ -108,6 +168,11 @@ struct Header {
 #[serde(deny_unknown_fields)]
 struct Marker {
     schema_version: u32,
+    #[serde(
+        default = "input_settings_domain",
+        skip_serializing_if = "is_input_settings_domain"
+    )]
+    domain: String,
     store_id: String,
 }
 struct Document {
@@ -118,6 +183,7 @@ struct Document {
 impl Document {
     fn snapshot(&self) -> Snapshot {
         Snapshot {
+            domain: self.header.domain.clone(),
             store_id: self.header.store_id.clone(),
             revision: self.header.revision.clone(),
             values_digest: self.header.values_digest.clone(),
@@ -206,19 +272,47 @@ fn validate_values(
 }
 
 /// 每次用户动作打开并释放一个短生命周期句柄，不能持锁等待用户输入或网络。
-pub struct Store {
+pub struct DocumentStore<S: DocumentSchema> {
     files: Files,
     path: PathBuf,
     home: PathBuf,
     uid: u32,
+    schema: std::marker::PhantomData<S>,
 }
-impl Store {
+/// 保留基础输入设置的原公共入口和领域观察接口。
+pub type Store = DocumentStore<InputSettingsSchema>;
+
+fn safe_name(name: &str) -> bool {
+    (1..=128).contains(&name.len())
+        && ![
+            ".",
+            "..",
+            ".inputia-settings.lock",
+            ".inputia-settings-applications.json",
+        ]
+        .contains(&name)
+        && name
+            .bytes()
+            .all(|v| v.is_ascii_alphanumeric() || b"._-".contains(&v))
+}
+impl<S: DocumentSchema> DocumentStore<S> {
     pub fn open(path: &Path, home: &Path, uid: u32) -> Result<Self> {
         if uid != unsafe { libc::geteuid() }
             || !path.is_absolute()
             || !home.is_absolute()
             || !path.starts_with(home)
-            || path.file_name().and_then(|v| v.to_str()) != Some("settings.json")
+            || path.file_name().and_then(|v| v.to_str()) != Some(S::FILE_NAME)
+            || !safe_name(S::FILE_NAME)
+            || !safe_name(S::MARKER_NAME)
+            || S::FILE_NAME == S::MARKER_NAME
+            || !safe_name(S::DOMAIN)
+            || S::PATCH_ROOT.len() > 4
+            || S::PATCH_ROOT.iter().any(|key| {
+                key.is_empty()
+                    || key.len() > 128
+                    || *key == META
+                    || key.chars().any(char::is_control)
+            })
         {
             return Err(Error::UnsafePath);
         }
@@ -230,6 +324,7 @@ impl Store {
             path: path.into(),
             home: home.into(),
             uid,
+            schema: std::marker::PhantomData,
         })
     }
     fn load(&self) -> Result<Document> {
@@ -239,20 +334,19 @@ impl Store {
         maintenance::ensure_normal_start(&self.home, self.uid).map_err(|_| Error::Maintenance)?;
         let marker = self
             .files
-            .read(MARKER, 4096, true)?
+            .read(S::MARKER_NAME, 4096, true)?
             .map(|raw| {
                 strict_json(&raw).and_then(|value| {
                     serde_json::from_value::<Marker>(value).map_err(|_| Error::RepairRequired)
                 })
             })
             .transpose()?;
-        if marker
-            .as_ref()
-            .is_some_and(|v| v.schema_version != 1 || !valid_uuid(&v.store_id))
-        {
+        if marker.as_ref().is_some_and(|v| {
+            v.schema_version != 1 || v.domain != S::DOMAIN || !valid_uuid(&v.store_id)
+        }) {
             return Err(Error::RepairRequired);
         }
-        let raw = self.files.read("settings.json", LIMIT, false)?;
+        let raw = self.files.read(S::FILE_NAME, LIMIT, false)?;
         if external && (raw.is_none() || marker.is_none()) {
             return Err(Error::RepairRequired);
         }
@@ -263,11 +357,7 @@ impl Store {
                 .cloned()
                 .ok_or(Error::InvalidDocument)?,
             None if marker.is_some() => return Err(Error::RepairRequired),
-            None => serde_json::to_value(InputiaSettings::default_for_settings_path(&self.path))
-                .map_err(|_| Error::InvalidDocument)?
-                .as_object()
-                .cloned()
-                .ok_or(Error::InvalidDocument)?,
+            None => S::defaults(&self.path)?,
         };
         let mut migrated = false;
         let header = match values.remove(META) {
@@ -276,10 +366,11 @@ impl Store {
             }
             None if marker.is_some() => return Err(Error::RepairRequired),
             None => {
-                values = validate_values(&values, &self.path, true)?;
+                values = S::validate(&values, &self.path, true)?;
                 migrated = true;
                 Header {
                     schema_version: 1,
+                    domain: S::DOMAIN.into(),
                     store_id: uuid::Uuid::new_v4().to_string(),
                     revision: "0".into(),
                     values_digest: digest(&Value::Object(values.clone()))?,
@@ -289,6 +380,7 @@ impl Store {
         };
         let current = revision(&header.revision)?;
         if header.schema_version != 1
+            || header.domain != S::DOMAIN
             || !valid_uuid(&header.store_id)
             || header.receipts.len() > RECEIPT_LIMIT
             || marker
@@ -300,7 +392,7 @@ impl Store {
         if !external && digest(&Value::Object(values.clone()))? != header.values_digest {
             return Err(Error::ExternalEdit);
         }
-        validate_values(&values, &self.path, false)?;
+        S::validate(&values, &self.path, false)?;
         let mut ids = BTreeSet::new();
         let mut previous = None;
         for receipt in &header.receipts {
@@ -338,15 +430,16 @@ impl Store {
         }
         if migrated {
             self.files
-                .replace("settings.json", &document.bytes()?, &mut |_| Ok(()))?;
+                .replace(S::FILE_NAME, &document.bytes()?, &mut |_| Ok(()))?;
         }
         if marker.is_none() {
             let marker = Marker {
                 schema_version: 1,
+                domain: S::DOMAIN.into(),
                 store_id: document.header.store_id.clone(),
             };
             self.files.replace(
-                MARKER,
+                S::MARKER_NAME,
                 &serde_json::to_vec(&marker).map_err(|_| Error::InvalidDocument)?,
                 &mut |_| Ok(()),
             )?;
@@ -372,9 +465,19 @@ impl Store {
         {
             return Err(Error::InvalidRequest);
         }
-        let known =
-            serde_json::to_value(InputiaSettings::default()).map_err(|_| Error::InvalidRequest)?;
-        if request.patch.keys().any(|key| known.get(key).is_none()) {
+        let known = S::defaults(&self.path)?;
+        let mut known = &known;
+        for key in S::PATCH_ROOT {
+            known = known
+                .get(*key)
+                .and_then(Value::as_object)
+                .ok_or(Error::InvalidDocument)?;
+        }
+        if request
+            .patch
+            .keys()
+            .any(|key| key == META || known.get(key).is_none())
+        {
             return Err(Error::InvalidRequest);
         }
         let request_digest =
@@ -394,7 +497,8 @@ impl Store {
             if receipt.request_digest != request_digest {
                 return Err(Error::OperationMismatch);
             }
-            self.files.confirm_durable(hook)?;
+            self.files
+                .confirm_durable(S::FILE_NAME, S::MARKER_NAME, hook)?;
             return Ok(ApplyResult::Saved {
                 commit_revision: receipt.revision.clone(),
                 replayed: true,
@@ -415,8 +519,15 @@ impl Store {
                 })
             };
         }
-        document.values.extend(request.patch.clone());
-        document.values = validate_values(&document.values, &self.path, false)?;
+        let mut target = &mut document.values;
+        for key in S::PATCH_ROOT {
+            target = target
+                .get_mut(*key)
+                .and_then(Value::as_object_mut)
+                .ok_or(Error::InvalidDocument)?;
+        }
+        target.extend(request.patch.clone());
+        document.values = S::validate(&document.values, &self.path, false)?;
         document.header.revision = current
             .checked_add(1)
             .ok_or(Error::RevisionExhausted)?
@@ -432,8 +543,7 @@ impl Store {
             document.header.receipts.remove(0);
         }
         maintenance::ensure_normal_start(&self.home, self.uid).map_err(|_| Error::Maintenance)?;
-        self.files
-            .replace("settings.json", &document.bytes()?, hook)?;
+        self.files.replace(S::FILE_NAME, &document.bytes()?, hook)?;
         Ok(ApplyResult::Saved {
             commit_revision: document.header.revision.clone(),
             replayed: false,
@@ -542,6 +652,146 @@ mod tests {
             expected_revision: snapshot.revision.clone(),
             patch: BTreeMap::from([("memory_enabled".into(), json!(value))]),
         }
+    }
+    struct NestedFixture;
+    impl DocumentSchema for NestedFixture {
+        const FILE_NAME: &'static str = "control-fixture.json";
+        const MARKER_NAME: &'static str = ".control-fixture-initialized.json";
+        const DOMAIN: &'static str = "fixture.control";
+        const PATCH_ROOT: &'static [&'static str] = &["settings"];
+        fn defaults(_: &Path) -> Result<Map<String, Value>> {
+            Ok(json!({"settings":{"theme":"light","sound":true}})
+                .as_object()
+                .unwrap()
+                .clone())
+        }
+        fn validate(values: &Map<String, Value>, _: &Path, _: bool) -> Result<Map<String, Value>> {
+            let settings = values
+                .get("settings")
+                .and_then(Value::as_object)
+                .ok_or(Error::InvalidDocument)?;
+            if settings.get("theme").and_then(Value::as_str).is_none()
+                || settings.get("sound").and_then(Value::as_bool).is_none()
+            {
+                return Err(Error::InvalidDocument);
+            }
+            Ok(values.clone())
+        }
+    }
+    #[test]
+    fn nested_schema_preserves_both_unknown_layers_and_only_syncs_its_own_files() {
+        let (_temp, home, path, uid) = fixture();
+        let input = Store::open(&path, &home, uid).unwrap();
+        input.read().unwrap();
+        drop(input);
+        let input_bytes = fs::read(&path).unwrap();
+        assert!(
+            strict_json(&input_bytes).unwrap()[META]
+                .get("domain")
+                .is_none(),
+            "原Input序列化格式不增加未知字段"
+        );
+        let other_path = path.with_file_name(NestedFixture::FILE_NAME);
+        fs::write(&other_path,br#"{"settings":{"theme":"light","sound":true,"futureNested":{"v":2}},"futureRoot":[1,2]}"#).unwrap();
+        let other = DocumentStore::<NestedFixture>::open(&other_path, &home, uid).unwrap();
+        let snapshot = other.read().unwrap();
+        assert_eq!(snapshot.domain(), NestedFixture::DOMAIN);
+        assert!(snapshot.settings().is_err());
+        let request = PatchRequest {
+            operation_id: snapshot.operation_id(),
+            expected_store_id: snapshot.store_id,
+            expected_revision: snapshot.revision,
+            patch: BTreeMap::from([("theme".into(), json!("dark"))]),
+        };
+        let result = other.apply_with_hook(&request, &mut |point| {
+            if point == Boundary::Renamed {
+                Err(Error::StorageUnavailable)
+            } else {
+                Ok(())
+            }
+        });
+        assert!(matches!(result, Err(Error::CommitUncertain)));
+        drop(other);
+        // 第一领域暂时无法读取；第二领域重放不得去同步它或它的 marker。
+        fs::rename(&path, path.with_extension("held")).unwrap();
+        let other = DocumentStore::<NestedFixture>::open(&other_path, &home, uid).unwrap();
+        let ApplyResult::Saved {
+            current,
+            replayed: true,
+            ..
+        } = other.apply(&request).unwrap()
+        else {
+            panic!("原请求应耐久重放");
+        };
+        assert_eq!(current.values["settings"]["theme"], "dark");
+        assert_eq!(current.values["settings"]["sound"], true);
+        assert_eq!(current.values["settings"]["futureNested"]["v"], 2);
+        assert_eq!(current.values["futureRoot"], json!([1, 2]));
+        let mut raw = strict_json(&fs::read(&other_path).unwrap()).unwrap();
+        raw["settings"]["theme"] = json!("external");
+        fs::write(&other_path, serde_json::to_vec(&raw).unwrap()).unwrap();
+        let preview = other.inspect_external().unwrap();
+        let imported = ImportRequest {
+            operation_id: current.operation_id(),
+            expected_store_id: preview.store_id,
+            expected_revision: preview.revision,
+            observed_file_digest: preview.observed_file_digest,
+        };
+        assert!(matches!(
+            other.import_external(&imported).unwrap(),
+            ApplyResult::Saved {
+                replayed: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            other.import_external(&imported).unwrap(),
+            ApplyResult::Saved { replayed: true, .. }
+        ));
+        drop(other);
+        fs::rename(path.with_extension("held"), &path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), input_bytes);
+        assert_eq!(
+            Store::open(&path, &home, uid)
+                .unwrap()
+                .read()
+                .unwrap()
+                .revision,
+            "0"
+        );
+    }
+    #[test]
+    fn schema_identity_and_patch_root_cannot_be_redirected_by_a_document() {
+        let (_temp, home, path, uid) = fixture();
+        let input = Store::open(&path, &home, uid).unwrap();
+        input.read().unwrap();
+        drop(input);
+        let other_path = path.with_file_name(NestedFixture::FILE_NAME);
+        let other = DocumentStore::<NestedFixture>::open(&other_path, &home, uid).unwrap();
+        let snapshot = other.read().unwrap();
+        let invalid = PatchRequest {
+            operation_id: snapshot.operation_id(),
+            expected_store_id: snapshot.store_id,
+            expected_revision: snapshot.revision,
+            patch: BTreeMap::from([("settings".into(), json!({"theme":"replace"}))]),
+        };
+        assert!(matches!(other.apply(&invalid), Err(Error::InvalidRequest)));
+        drop(other);
+        fs::copy(&other_path, &path).unwrap();
+        fs::copy(
+            path.with_file_name(NestedFixture::MARKER_NAME),
+            path.with_file_name(MARKER),
+        )
+        .unwrap();
+        assert!(matches!(
+            Store::open(&path, &home, uid).unwrap().read(),
+            Err(Error::RepairRequired)
+        ));
+        assert!(!safe_name("../escape"));
+        assert!(!safe_name("/escape"));
+        assert!(!safe_name(".."));
+        assert!(!safe_name(".inputia-settings.lock"));
+        assert!(!safe_name(".inputia-settings-applications.json"));
     }
     #[test]
     fn legacy_migration_and_cas_keep_unknown_fields_and_report_current_values() {
