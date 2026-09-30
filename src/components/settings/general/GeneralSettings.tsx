@@ -13,6 +13,7 @@ import { VolumeSlider } from "../VolumeSlider";
 import { MuteWhileRecording } from "../MuteWhileRecording";
 import { ModelSettingsCard } from "./ModelSettingsCard";
 import { InputiaPermissionHelp } from "./InputiaPermissionHelp";
+import { InputSettingsPanel } from "./InputSettingsPanel";
 
 export const GeneralSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -27,6 +28,7 @@ export const GeneralSettings: React.FC = () => {
         {/* Cancel shortcut remains hidden on Linux because of dynamic shortcut instability. */}
         {!isLinux && <ShortcutInput shortcutId="cancel" grouped={true} />}
       </SettingsGroup>
+      {type() === "macos" && <InputSettingsPanel />}
       <ModelSettingsCard />
       {type() === "macos" && <InputiaPermissionHelp />}
       <SettingsGroup title={t("settings.sound.title")}>
