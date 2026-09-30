@@ -61,11 +61,26 @@ pub(super) enum SaveReport {
 
 impl Coordinator {
     pub fn open(path: &Path, home: &Path, uid: u32) -> Result<Self, Failure> {
-        Ok(Self {
+        Ok(Self::from_loaded(LoadedSettings::read(path, home, uid)?))
+    }
+    pub fn open_observed(
+        path: &Path,
+        home: &Path,
+        uid: u32,
+        observer: &mut dyn FnMut(
+            &inputia_settings::store::InitializationIntent,
+        ) -> Result<(), Error>,
+    ) -> Result<Self, Failure> {
+        Ok(Self::from_loaded(LoadedSettings::read_observed(
+            path, home, uid, observer,
+        )?))
+    }
+    fn from_loaded(loaded: LoadedSettings) -> Self {
+        Self {
             owner: Arc::new(()),
-            cached: RwLock::new(Arc::new(LoadedSettings::read(path, home, uid)?)),
+            cached: RwLock::new(Arc::new(loaded)),
             writer: Mutex::new(WriterState::default()),
-        })
+        }
     }
 
     pub fn read(&self) -> Result<AppSettings, Failure> {

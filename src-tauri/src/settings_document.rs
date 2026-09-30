@@ -10,6 +10,9 @@ use std::{
 };
 
 pub(super) struct Schema;
+pub(super) fn preflight(path: &Path, home: &Path, uid: u32) -> Result<(), Error> {
+    DocumentStore::<Schema>::open(path, home, uid)?.preflight()
+}
 impl DocumentSchema for Schema {
     const FILE_NAME: &'static str = SETTINGS_STORE_PATH;
     const MARKER_NAME: &'static str = ".inputia-control-settings-initialized.json";
@@ -228,6 +231,18 @@ impl LoadedSettings {
     }
     pub fn read(path: &Path, home: &Path, uid: u32) -> Result<Self, Error> {
         let snapshot = DocumentStore::<Schema>::open(path, home, uid)?.read()?;
+        Self::from_snapshot(snapshot, path.into(), home.into(), uid)
+    }
+    pub fn read_observed(
+        path: &Path,
+        home: &Path,
+        uid: u32,
+        observer: &mut dyn FnMut(
+            &inputia_settings::store::InitializationIntent,
+        ) -> Result<(), Error>,
+    ) -> Result<Self, Error> {
+        let snapshot = DocumentStore::<Schema>::open(path, home, uid)?
+            .read_observed_initialization(observer)?;
         Self::from_snapshot(snapshot, path.into(), home.into(), uid)
     }
     pub fn plan(&self, edited: &AppSettings) -> Result<Option<PlannedChange>, Error> {
@@ -466,5 +481,31 @@ mod tests {
             Err(Error::InvalidDocument)
         ));
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn startup_preflight_never_migrates_or_creates_settings_files() {
+        let (_temp, home, path, uid) = fixture();
+        let marker = home.join(Schema::MARKER_NAME);
+        preflight(&path, &home, uid).unwrap();
+        assert!(!path.exists());
+        assert!(!marker.exists());
+        for (raw, accepted) in [
+            (json!({"settings":{"theme":"dark"}}), true),
+            (json!({"settings":{"theme":42}}), false),
+        ] {
+            let bytes = serde_json::to_vec(&raw).unwrap();
+            std::fs::write(&path, &bytes).unwrap();
+            assert_eq!(preflight(&path, &home, uid).is_ok(), accepted);
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+            assert!(!marker.exists());
+        }
+        std::fs::write(&path, b"{}").unwrap();
+        LoadedSettings::read(&path, &home, uid).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let marker_bytes = std::fs::read(&marker).unwrap();
+        preflight(&path, &home, uid).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(std::fs::read(&marker).unwrap(), marker_bytes);
     }
 }

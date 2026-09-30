@@ -127,6 +127,21 @@ pub struct PatchRequest {
     pub expected_revision: String,
     pub patch: BTreeMap<String, Value>,
 }
+/// 初始化写入前的精确归属证明；只有摘要，不包含设置正文或凭据。
+#[derive(Clone, Debug, Serialize)]
+pub struct InitializationIntent {
+    pub domain: String,
+    pub file_name: String,
+    pub marker_name: String,
+    pub store_id: String,
+    pub original_document_sha256: Option<String>,
+    pub document_sha256: String,
+    pub marker_sha256: String,
+    pub will_write_document: bool,
+    pub will_create_marker: bool,
+}
+/// 持有设置锁期间同步登记创建归属；回调返回前不得开始源文件写入。
+pub type InitializationObserver<'a> = dyn FnMut(&InitializationIntent) -> Result<()> + 'a;
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ApplyResult {
@@ -331,9 +346,15 @@ impl<S: DocumentSchema> DocumentStore<S> {
         self.load_internal(false)
     }
     fn load_internal(&self, external: bool) -> Result<Document> {
-        self.load_guarded(external, None)
+        self.load_guarded(external, None, true, None)
     }
-    fn load_guarded(&self, external: bool, floor: Option<&Snapshot>) -> Result<Document> {
+    fn load_guarded(
+        &self,
+        external: bool,
+        floor: Option<&Snapshot>,
+        persist_initialization: bool,
+        observer: Option<&mut InitializationObserver<'_>>,
+    ) -> Result<Document> {
         maintenance::ensure_normal_start(&self.home, self.uid).map_err(|_| Error::Maintenance)?;
         let marker = self
             .files
@@ -444,30 +465,87 @@ impl<S: DocumentSchema> DocumentStore<S> {
             maintenance::ensure_normal_start(&self.home, self.uid)
                 .map_err(|_| Error::Maintenance)?;
         }
-        if migrated {
-            self.files
-                .replace(S::FILE_NAME, &document.bytes()?, &mut |_| Ok(()))?;
-        }
-        if marker.is_none() {
-            let marker = Marker {
-                schema_version: 1,
+        let document_bytes = if migrated && persist_initialization {
+            Some(document.bytes()?)
+        } else {
+            None
+        };
+        let marker_bytes = if marker.is_none() && persist_initialization {
+            Some(
+                serde_json::to_vec(&Marker {
+                    schema_version: 1,
+                    domain: S::DOMAIN.into(),
+                    store_id: document.header.store_id.clone(),
+                })
+                .map_err(|_| Error::InvalidDocument)?,
+            )
+        } else {
+            None
+        };
+        if let (Some(observer), Some(marker_bytes)) = (observer, marker_bytes.as_ref()) {
+            observer(&InitializationIntent {
                 domain: S::DOMAIN.into(),
+                file_name: S::FILE_NAME.into(),
+                marker_name: S::MARKER_NAME.into(),
                 store_id: document.header.store_id.clone(),
-            };
-            self.files.replace(
-                S::MARKER_NAME,
-                &serde_json::to_vec(&marker).map_err(|_| Error::InvalidDocument)?,
-                &mut |_| Ok(()),
-            )?;
+                original_document_sha256: document.source_digest.clone(),
+                document_sha256: match &document_bytes {
+                    Some(bytes) => raw_digest(bytes),
+                    None => document
+                        .source_digest
+                        .clone()
+                        .ok_or(Error::RepairRequired)?,
+                },
+                marker_sha256: raw_digest(marker_bytes),
+                will_write_document: document_bytes.is_some(),
+                will_create_marker: true,
+            })?;
+            // observer 可能等待耐久日志；不覆盖这期间发生的手工外部改动。
+            if self
+                .files
+                .read(S::FILE_NAME, LIMIT, false)?
+                .as_ref()
+                .map(|raw| raw_digest(raw))
+                != document.source_digest
+                || self.files.read(S::MARKER_NAME, 4096, true)?.is_some()
+            {
+                return Err(Error::ExternalChanged);
+            }
+            maintenance::ensure_normal_start(&self.home, self.uid)
+                .map_err(|_| Error::Maintenance)?;
+        }
+        if let Some(bytes) = document_bytes {
+            self.files.replace(S::FILE_NAME, &bytes, &mut |_| Ok(()))?;
+        }
+        if let Some(bytes) = marker_bytes {
+            self.files
+                .replace(S::MARKER_NAME, &bytes, &mut |_| Ok(()))?;
         }
         Ok(document)
     }
     pub fn read(&self) -> Result<Snapshot> {
         Ok(self.load()?.snapshot())
     }
+    /// 启动只读预检：校验当前文档/默认值，但不创建或迁移文档及 marker。
+    /// 不返回尚未持久化的快照，避免调用方误把临时身份作为保存凭据。
+    pub fn preflight(&self) -> Result<()> {
+        self.load_guarded(false, None, false, None).map(|_| ())
+    }
+    /// observer 必须先耐久记录创建归属；它失败时不改正文或 marker。
+    /// 回调期间仍持有设置锁，不得重入设置 API 或反向取得外层迁移锁。
+    pub fn read_observed_initialization(
+        &self,
+        observer: &mut InitializationObserver<'_>,
+    ) -> Result<Snapshot> {
+        Ok(self
+            .load_guarded(false, None, true, Some(observer))?
+            .snapshot())
+    }
     /// 读取已初始化的领域，且不得低于调用方已经确认的真实快照。
     pub fn read_at_least(&self, floor: &Snapshot) -> Result<Snapshot> {
-        Ok(self.load_guarded(false, Some(floor))?.snapshot())
+        Ok(self
+            .load_guarded(false, Some(floor), true, None)?
+            .snapshot())
     }
     pub fn apply(&self, request: &PatchRequest) -> Result<ApplyResult> {
         self.apply_with_hook(request, &mut |_| Ok(()))
@@ -514,7 +592,7 @@ impl<S: DocumentSchema> DocumentStore<S> {
         }
         let request_digest =
             digest(&serde_json::to_value(request).map_err(|_| Error::InvalidRequest)?)?;
-        let mut document = self.load_guarded(false, floor)?;
+        let mut document = self.load_guarded(false, floor, true, None)?;
         if request.expected_store_id != document.header.store_id {
             return Ok(ApplyResult::Conflict {
                 current: document.snapshot(),
@@ -675,6 +753,91 @@ mod tests {
         os::unix::fs::{symlink, PermissionsExt},
         process::Command,
     };
+
+    #[test]
+    fn initialization_observer_runs_before_any_write_and_binds_exact_file_bytes() {
+        let temporary = tempfile::tempdir().unwrap();
+        let home = temporary.path().canonicalize().unwrap();
+        let path = home.join("settings.json");
+        let marker = home.join(MARKER);
+        let store = Store::open(&path, &home, unsafe { libc::geteuid() }).unwrap();
+        let mut attempted = None;
+        assert!(matches!(
+            store.read_observed_initialization(&mut |intent| {
+                assert!(!path.exists());
+                assert!(!marker.exists());
+                attempted = Some(intent.clone());
+                Err(Error::CommitUncertain)
+            }),
+            Err(Error::CommitUncertain)
+        ));
+        assert!(attempted.is_some());
+        assert!(!path.exists());
+        assert!(!marker.exists());
+        let mut captured = None;
+        let initialized = store
+            .read_observed_initialization(&mut |intent| {
+                assert!(!path.exists());
+                assert!(!marker.exists());
+                captured = Some(intent.clone());
+                Ok(())
+            })
+            .unwrap();
+        let intent = captured.unwrap();
+        assert_eq!(intent.store_id, initialized.store_id);
+        assert_eq!(intent.domain, InputSettingsSchema::DOMAIN);
+        assert!(intent.original_document_sha256.is_none());
+        assert!(intent.will_write_document && intent.will_create_marker);
+        assert_eq!(
+            intent.document_sha256,
+            raw_digest(&fs::read(&path).unwrap())
+        );
+        assert_eq!(
+            intent.marker_sha256,
+            raw_digest(&fs::read(&marker).unwrap())
+        );
+        store
+            .read_observed_initialization(&mut |_| panic!("existing files need no creation intent"))
+            .unwrap();
+        let document_bytes = fs::read(&path).unwrap();
+        fs::remove_file(&marker).unwrap();
+        store
+            .read_observed_initialization(&mut |intent| {
+                assert!(!intent.will_write_document);
+                assert!(intent.will_create_marker);
+                assert_eq!(
+                    intent.original_document_sha256,
+                    Some(raw_digest(&document_bytes))
+                );
+                assert_eq!(intent.document_sha256, raw_digest(&document_bytes));
+                assert_eq!(intent.store_id, initialized.store_id);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), document_bytes);
+    }
+
+    #[test]
+    fn external_edit_during_initialization_observer_is_not_overwritten() {
+        let temporary = tempfile::tempdir().unwrap();
+        let home = temporary.path().canonicalize().unwrap();
+        let path = home.join("settings.json");
+        let original = br#"{"candidate_page_size":5}"#;
+        let external = br#"{"candidate_page_size":9}"#;
+        fs::write(&path, original).unwrap();
+        let store = Store::open(&path, &home, unsafe { libc::geteuid() }).unwrap();
+        assert!(matches!(
+            store.read_observed_initialization(&mut |intent| {
+                assert_eq!(intent.original_document_sha256, Some(raw_digest(original)));
+                assert_eq!(fs::read(&path).unwrap(), original);
+                fs::write(&path, external).unwrap();
+                Ok(())
+            }),
+            Err(Error::ExternalChanged)
+        ));
+        assert_eq!(fs::read(&path).unwrap(), external);
+        assert!(!home.join(MARKER).exists());
+    }
     fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf, u32) {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path().canonicalize().unwrap();
