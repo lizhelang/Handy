@@ -1,5 +1,6 @@
 //! 配置请求的耐久单槽。正文可能含凭据，类型不实现 Debug，公开状态只包含身份。
 use super::*;
+use transitions::TransitionOwner;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -150,6 +151,8 @@ struct Ledger {
     store_id: String,
     ledger_id: String,
     state: State,
+    #[serde(skip)]
+    source_digest: Option<String>,
 }
 impl Ledger {
     fn bytes(&self) -> Result<Vec<u8>> {
@@ -168,6 +171,10 @@ pub(super) enum Stage {
     ActivationLedger,
     ActivationDocument,
     ActivationMarker,
+}
+struct PendingHooks<'a, 'b> {
+    fault: &'a mut dyn FnMut(Stage, Boundary) -> Result<()>,
+    observer: Option<&'a mut TransitionObserver<'b>>,
 }
 pub(super) struct Decision {
     pub(super) bytes: Option<Vec<u8>>,
@@ -201,9 +208,10 @@ impl<S: DocumentSchema> DocumentStore<S> {
                 Err(Error::RepairRequired)
             };
         };
-        let ledger: Ledger =
-            serde_json::from_value(strict_json(&raw.ok_or(Error::RepairRequired)?)?)
-                .map_err(|_| Error::RepairRequired)?;
+        let raw = raw.ok_or(Error::RepairRequired)?;
+        let mut ledger: Ledger =
+            serde_json::from_value(strict_json(&raw)?).map_err(|_| Error::RepairRequired)?;
+        ledger.source_digest = Some(raw_digest(&raw));
         if ledger.schema_version != 1
             || ledger.domain != S::DOMAIN
             || ledger.store_id != document.header.store_id
@@ -315,24 +323,88 @@ impl<S: DocumentSchema> DocumentStore<S> {
         floor: Option<&Snapshot>,
         hook: &mut impl FnMut(Stage, Boundary) -> Result<()>,
     ) -> Result<ApplyResult> {
+        self.apply_with_observer(
+            request,
+            floor,
+            &mut PendingHooks {
+                fault: hook,
+                observer: None,
+            },
+        )
+    }
+    /// 启动事务使用此入口逐次登记源写入，observer 不包含配置正文。
+    pub fn apply_observed(
+        &self,
+        request: &PatchRequest,
+        floor: &Snapshot,
+        observer: &mut TransitionObserver<'_>,
+    ) -> Result<ApplyResult> {
+        self.apply_with_observer(
+            request,
+            Some(floor),
+            &mut PendingHooks {
+                fault: &mut |_, _| Ok(()),
+                observer: Some(observer),
+            },
+        )
+    }
+    fn apply_with_observer(
+        &self,
+        request: &PatchRequest,
+        floor: Option<&Snapshot>,
+        hooks: &mut PendingHooks<'_, '_>,
+    ) -> Result<ApplyResult> {
+        if hooks.observer.is_some() && S::PENDING_NAME.is_none() {
+            return Err(Error::PendingProtocolRequired);
+        }
         let digest = self.validate_patch(request)?;
         let document = self.load_guarded(false, floor, S::PENDING_NAME.is_none(), None)?;
         let operation = Operation::Patch(request.clone());
         let ledger = self.admission(&document, &operation, &digest)?;
         let decision = self.decide_patch(request, &digest, &document)?;
-        self.execute_pending(&document, operation, digest, ledger, decision, hook)
+        self.execute_pending(&document, operation, digest, ledger, decision, hooks)
     }
     pub(super) fn import_pending(
         &self,
         request: &ImportRequest,
         hook: &mut impl FnMut(Stage, Boundary) -> Result<()>,
     ) -> Result<ApplyResult> {
+        self.import_with_observer(
+            request,
+            &mut PendingHooks {
+                fault: hook,
+                observer: None,
+            },
+        )
+    }
+    /// 已确认外部预览的原请求同样遵循逐文件登记。
+    pub fn import_observed(
+        &self,
+        request: &ImportRequest,
+        observer: &mut TransitionObserver<'_>,
+    ) -> Result<ApplyResult> {
+        self.import_with_observer(
+            request,
+            &mut PendingHooks {
+                fault: &mut |_, _| Ok(()),
+                observer: Some(observer),
+            },
+        )
+    }
+    fn import_with_observer(
+        &self,
+        request: &ImportRequest,
+        hooks: &mut PendingHooks<'_, '_>,
+    ) -> Result<ApplyResult> {
+        if hooks.observer.is_some() && S::PENDING_NAME.is_none() {
+            return Err(Error::PendingProtocolRequired);
+        }
         let digest = self.validate_import(request)?;
         let document = self.load_internal(true)?;
         let operation = Operation::ExternalImport(request.clone());
         let ledger = self.admission(&document, &operation, &digest)?;
         let decision = self.decide_import(request, &digest, &document)?;
-        self.execute_pending(&document, operation, digest, ledger, decision, hook)
+        self.execute_pending(&document, operation, digest, ledger, decision, hooks)
     }
     fn execute_pending(
         &self,
@@ -341,7 +413,7 @@ impl<S: DocumentSchema> DocumentStore<S> {
         request_digest: String,
         mut ledger: Option<Ledger>,
         decision: Decision,
-        hook: &mut impl FnMut(Stage, Boundary) -> Result<()>,
+        hooks: &mut PendingHooks<'_, '_>,
     ) -> Result<ApplyResult> {
         // 错 store 的请求只返回冲突，不能把另一领域的操作写成当前领域日志。
         if operation.store_id() != document.header.store_id
@@ -349,6 +421,25 @@ impl<S: DocumentSchema> DocumentStore<S> {
         {
             return Ok(decision.result);
         }
+        let mut baseline = ledger
+            .as_ref()
+            .map(|ledger| {
+                self.transition_baseline(
+                    document,
+                    ledger
+                        .source_digest
+                        .as_deref()
+                        .ok_or(Error::RepairRequired)?,
+                )
+            })
+            .transpose()?;
+        let ledger_id = ledger.as_ref().map(|ledger| ledger.ledger_id.clone());
+        let owner = ledger_id.as_ref().map(|ledger_id| TransitionOwner {
+            store_id: &document.header.store_id,
+            ledger_id,
+            operation_id: operation.id(),
+            request_digest: &request_digest,
+        });
         if let Some(ledger) = &mut ledger {
             // 重试 Active 也补同步，不能把上轮 rename 后的不确定日志当已耐久。
             if !matches!(&ledger.state, State::Active { .. }) {
@@ -361,21 +452,53 @@ impl<S: DocumentSchema> DocumentStore<S> {
             let bytes = ledger.bytes()?;
             maintenance::ensure_normal_start(&self.home, self.uid)
                 .map_err(|_| Error::Maintenance)?;
+            if let Some(observer) = &mut hooks.observer {
+                self.observe_transition(
+                    owner.as_ref().ok_or(Error::RepairRequired)?,
+                    TransitionPhase::PrepareRequest,
+                    baseline.as_ref().ok_or(Error::RepairRequired)?,
+                    &bytes,
+                    *observer,
+                )?;
+            }
+            if let Some(baseline) = &baseline {
+                self.check_transition_baseline(baseline)?;
+            }
             self.files.replace(
                 S::PENDING_NAME.ok_or(Error::RepairRequired)?,
                 &bytes,
-                &mut |boundary| hook(Stage::Prepare, boundary),
+                &mut |boundary| (hooks.fault)(Stage::Prepare, boundary),
             )?;
+            ledger.source_digest = Some(raw_digest(&bytes));
+            baseline
+                .as_mut()
+                .ok_or(Error::RepairRequired)?
+                .advance(S::PENDING_NAME.ok_or(Error::RepairRequired)?, &bytes)?;
         }
         maintenance::ensure_normal_start(&self.home, self.uid).map_err(|_| Error::Maintenance)?;
+        if let Some(baseline) = &baseline {
+            self.check_transition_baseline(baseline)?;
+        }
         if let Some(bytes) = &decision.bytes {
+            if let Some(observer) = &mut hooks.observer {
+                self.observe_transition(
+                    owner.as_ref().ok_or(Error::RepairRequired)?,
+                    TransitionPhase::CommitDocument,
+                    baseline.as_ref().ok_or(Error::RepairRequired)?,
+                    bytes,
+                    *observer,
+                )?;
+            }
             self.files.replace(S::FILE_NAME, bytes, &mut |boundary| {
-                hook(Stage::Document, boundary)
+                (hooks.fault)(Stage::Document, boundary)
             })?;
+            if let Some(baseline) = &mut baseline {
+                baseline.advance(S::FILE_NAME, bytes)?;
+            }
         } else if matches!(&decision.result, ApplyResult::Saved { .. }) {
             self.files
                 .confirm_durable(S::FILE_NAME, S::MARKER_NAME, &mut |boundary| {
-                    hook(Stage::Document, boundary)
+                    (hooks.fault)(Stage::Document, boundary)
                 })?;
         }
         // 过期回执不能确认是否曾执行，保留原请求并阻止新操作。
@@ -385,7 +508,7 @@ impl<S: DocumentSchema> DocumentStore<S> {
         if let Some(ledger) = &mut ledger {
             ledger.state = State::Resolved {
                 operation_id: operation.id().into(),
-                request_digest,
+                request_digest: request_digest.clone(),
                 outcome: match &decision.result {
                     ApplyResult::Saved {
                         commit_revision, ..
@@ -398,12 +521,33 @@ impl<S: DocumentSchema> DocumentStore<S> {
                 floor: Floor::of(decision.current()),
             };
             // 配置可能已提交，末态写入失败一律仍为结果不确定。
+            let bytes = ledger.bytes()?;
+            if let Some(baseline) = &baseline {
+                self.check_transition_baseline(baseline)
+                    .map_err(|_| Error::CommitUncertain)?;
+            }
+            if let Some(observer) = &mut hooks.observer {
+                self.observe_transition(
+                    owner.as_ref().ok_or(Error::RepairRequired)?,
+                    TransitionPhase::ResolveRequest,
+                    baseline.as_ref().ok_or(Error::RepairRequired)?,
+                    &bytes,
+                    *observer,
+                )
+                .map_err(|_| Error::CommitUncertain)?;
+            }
             self.files
                 .replace(
                     S::PENDING_NAME.ok_or(Error::RepairRequired)?,
-                    &ledger.bytes()?,
-                    &mut |boundary| hook(Stage::Resolve, boundary),
+                    &bytes,
+                    &mut |boundary| (hooks.fault)(Stage::Resolve, boundary),
                 )
+                .map_err(|_| Error::CommitUncertain)?;
+            baseline
+                .as_mut()
+                .ok_or(Error::RepairRequired)?
+                .advance(S::PENDING_NAME.ok_or(Error::RepairRequired)?, &bytes)?;
+            self.check_transition_baseline(baseline.as_ref().ok_or(Error::RepairRequired)?)
                 .map_err(|_| Error::CommitUncertain)?;
         }
         Ok(decision.result)
@@ -446,9 +590,61 @@ impl<S: DocumentSchema> DocumentStore<S> {
             },
         })
     }
+    /// 启动恢复专用纯预检：允许原外部导入的精确预览，但不接受一般手工改动。
+    /// 不返回可供业务使用的 Snapshot，也不创建或同步任何源文件。
+    pub fn preflight_pending_recovery(&self) -> Result<()> {
+        let document = self.load_guarded(true, None, false, None)?;
+        let ledger = self.read_ledger(&document)?;
+        if let Some(Ledger {
+            state:
+                State::Active {
+                    request,
+                    request_digest,
+                    ..
+                },
+            ..
+        }) = ledger
+        {
+            match request {
+                Operation::Patch(request) => {
+                    if digest(&Value::Object(document.values.clone()))?
+                        != document.header.values_digest
+                    {
+                        return Err(Error::ExternalEdit);
+                    }
+                    self.decide_patch(&request, &request_digest, &document)?;
+                }
+                Operation::ExternalImport(request) => {
+                    self.decide_import(&request, &request_digest, &document)?;
+                }
+            }
+        } else if digest(&Value::Object(document.values.clone()))? != document.header.values_digest
+        {
+            return Err(Error::ExternalEdit);
+        }
+        Ok(())
+    }
     /// 仅重放原配置请求；调用方必须在业务启动前持有已登记的启动恢复事务。
     /// 这不执行或证明任何设备、文件删除、文本输出等外部副作用。
     pub fn reconcile_pending(&self) -> Result<Option<ApplyResult>> {
+        self.reconcile_with_observer(&mut PendingHooks {
+            fault: &mut |_, _| Ok(()),
+            observer: None,
+        })
+    }
+    pub fn reconcile_pending_observed(
+        &self,
+        observer: &mut TransitionObserver<'_>,
+    ) -> Result<Option<ApplyResult>> {
+        self.reconcile_with_observer(&mut PendingHooks {
+            fault: &mut |_, _| Ok(()),
+            observer: Some(observer),
+        })
+    }
+    fn reconcile_with_observer(
+        &self,
+        hooks: &mut PendingHooks<'_, '_>,
+    ) -> Result<Option<ApplyResult>> {
         let document = self.load_guarded(true, None, false, None)?;
         let ledger = self
             .read_ledger(&document)?
@@ -457,11 +653,11 @@ impl<S: DocumentSchema> DocumentStore<S> {
             State::Active {
                 request: Operation::Patch(request),
                 ..
-            } => self.apply(&request).map(Some),
+            } => self.apply_with_observer(&request, None, hooks).map(Some),
             State::Active {
                 request: Operation::ExternalImport(request),
                 ..
-            } => self.import_external(&request).map(Some),
+            } => self.import_with_observer(&request, hooks).map(Some),
             State::Resolved { outcome, .. } => {
                 if digest(&Value::Object(document.values.clone()))? != document.header.values_digest
                 {
@@ -536,6 +732,7 @@ impl<S: DocumentSchema> DocumentStore<S> {
             state: State::Bootstrap {
                 floor: Floor::of(&document.snapshot()),
             },
+            source_digest: None,
         };
         let marker = Marker {
             schema_version: 2,

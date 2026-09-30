@@ -4,6 +4,7 @@ pub mod application;
 mod external;
 mod files;
 mod pending;
+mod transitions;
 use crate::{installation::valid_uuid, maintenance, InputiaSettings};
 pub use external::{ExternalSnapshot, ImportRequest};
 use files::{Boundary, Files};
@@ -15,6 +16,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
+pub use transitions::{FileDigest, TransitionIntent, TransitionObserver, TransitionPhase};
 
 const LIMIT: usize = 512 * 1024;
 const RECEIPT_LIMIT: usize = 256;
@@ -209,6 +211,7 @@ struct Marker {
 #[derive(Clone)]
 struct Document {
     source_digest: Option<String>,
+    marker_digest: Option<String>,
     values: Map<String, Value>,
     header: Header,
 }
@@ -377,11 +380,11 @@ impl<S: DocumentSchema> DocumentStore<S> {
         observer: Option<&mut InitializationObserver<'_>>,
     ) -> Result<Document> {
         maintenance::ensure_normal_start(&self.home, self.uid).map_err(|_| Error::Maintenance)?;
-        let marker = self
-            .files
-            .read(S::MARKER_NAME, 4096, true)?
+        let marker_raw = self.files.read(S::MARKER_NAME, 4096, true)?;
+        let marker = marker_raw
+            .as_deref()
             .map(|raw| {
-                strict_json(&raw).and_then(|value| {
+                strict_json(raw).and_then(|value| {
                     serde_json::from_value::<Marker>(value).map_err(|_| Error::RepairRequired)
                 })
             })
@@ -489,6 +492,7 @@ impl<S: DocumentSchema> DocumentStore<S> {
             values,
             header,
             source_digest,
+            marker_digest: marker_raw.as_ref().map(|bytes| raw_digest(bytes)),
         };
         self.check_pending_document(&document)?;
         if S::PENDING_NAME.is_some()

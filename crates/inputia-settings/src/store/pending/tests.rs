@@ -665,3 +665,227 @@ fn opted_in_plain_read_and_apply_never_initialize_without_observer() {
         store.read().unwrap();
     }
 }
+
+#[test]
+fn transition_observer_registers_each_exact_before_and_after_without_values() {
+    let fixture = Fixture::new();
+    let snapshot = fixture.activate();
+    let req = request(&snapshot);
+    let store = fixture.open();
+    let mut intents = Vec::new();
+    store
+        .apply_observed(&req, &snapshot, &mut |intent| {
+            assert_eq!(
+                intent.before,
+                FileDigest::of(&fs::read(fixture.home.join(&intent.file_name)).unwrap())
+            );
+            assert_eq!(intent.domain, Schema::DOMAIN);
+            assert_eq!(intent.store_id, snapshot.store_id);
+            assert_eq!(intent.operation_id, req.operation_id);
+            assert!(!serde_json::to_string(intent)
+                .unwrap()
+                .contains("private-test-secret"));
+            intents.push(intent.clone());
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        intents.iter().map(|i| i.phase).collect::<Vec<_>>(),
+        vec![
+            TransitionPhase::PrepareRequest,
+            TransitionPhase::CommitDocument,
+            TransitionPhase::ResolveRequest
+        ]
+    );
+    assert_eq!(intents[0].after, intents[2].before);
+    assert_eq!(
+        intents[1].after,
+        FileDigest::of(&fs::read(&fixture.path).unwrap())
+    );
+    assert_eq!(
+        intents[2].after,
+        FileDigest::of(&fs::read(fixture.ledger()).unwrap())
+    );
+    store
+        .reconcile_pending_observed(&mut |_| panic!("resolved only needs durability confirmation"))
+        .unwrap();
+}
+
+#[test]
+fn observer_failure_never_writes_its_target_and_recovery_keeps_original_id() {
+    for rejected in [
+        TransitionPhase::PrepareRequest,
+        TransitionPhase::CommitDocument,
+        TransitionPhase::ResolveRequest,
+    ] {
+        let fixture = Fixture::new();
+        let snapshot = fixture.activate();
+        let req = request(&snapshot);
+        let mut stopped = None;
+        {
+            let store = fixture.open();
+            let failure = store
+                .apply_observed(&req, &snapshot, &mut |intent| {
+                    if intent.phase == rejected {
+                        stopped = Some((
+                            intent.file_name.clone(),
+                            fs::read(fixture.home.join(&intent.file_name)).unwrap(),
+                        ));
+                        Err(Error::StorageUnavailable)
+                    } else {
+                        Ok(())
+                    }
+                })
+                .unwrap_err();
+            if rejected == TransitionPhase::ResolveRequest {
+                assert_eq!(failure, Error::CommitUncertain);
+            }
+        }
+        let (name, original) = stopped.unwrap();
+        assert_eq!(fs::read(fixture.home.join(name)).unwrap(), original);
+        let store = fixture.open();
+        let mut observer = |intent: &TransitionIntent| {
+            assert_eq!(intent.operation_id, req.operation_id);
+            Ok(())
+        };
+        match store.reconcile_pending_observed(&mut observer).unwrap() {
+            Some(result) => assert_saved(result, &req.operation_id),
+            None => assert_saved(
+                store
+                    .apply_observed(&req, &snapshot, &mut observer)
+                    .unwrap(),
+                &req.operation_id,
+            ),
+        }
+        let raw = strict_json(&fs::read(&fixture.path).unwrap()).unwrap();
+        assert_eq!(raw[META]["receipts"].as_array().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn transition_callback_cannot_authorize_changes_to_any_source_file() {
+    for changed in [
+        Schema::FILE_NAME,
+        Schema::MARKER_NAME,
+        Schema::PENDING_NAME.unwrap(),
+    ] {
+        let fixture = Fixture::new();
+        let snapshot = fixture.activate();
+        let store = fixture.open();
+        let mut after_external = None;
+        assert_eq!(
+            store
+                .apply_observed(&request(&snapshot), &snapshot, &mut |_| {
+                    fs::write(fixture.home.join(changed), b"{}").unwrap();
+                    after_external = Some(fixture.files());
+                    Ok(())
+                })
+                .unwrap_err(),
+            Error::ExternalChanged
+        );
+        assert_eq!(fixture.files(), after_external.unwrap());
+    }
+}
+
+#[test]
+fn recovery_preflight_only_accepts_original_pending_external_preview() {
+    let fixture = Fixture::new();
+    let snapshot = fixture.activate();
+    let mut raw = strict_json(&fs::read(&fixture.path).unwrap()).unwrap();
+    raw["enabled"] = json!(false);
+    fs::write(&fixture.path, canonical(&raw).unwrap()).unwrap();
+    let import;
+    {
+        let store = fixture.open();
+        assert_eq!(
+            store.preflight_pending_recovery().unwrap_err(),
+            Error::ExternalEdit
+        );
+        let preview = store.inspect_external().unwrap();
+        import = ImportRequest {
+            operation_id: snapshot.operation_id(),
+            expected_store_id: snapshot.store_id,
+            expected_revision: snapshot.revision,
+            observed_file_digest: preview.observed_file_digest,
+        };
+        assert!(store
+            .import_pending(
+                &import,
+                &mut fail_at(Stage::Prepare, Boundary::DirectorySynced)
+            )
+            .is_err());
+    }
+    let store = fixture.open();
+    let before = fixture.files();
+    store.preflight_pending_recovery().unwrap();
+    assert_eq!(fixture.files(), before);
+    assert_eq!(store.preflight().unwrap_err(), Error::ExternalEdit);
+    let mut phases = Vec::new();
+    store
+        .reconcile_pending_observed(&mut |intent| {
+            phases.push(intent.phase);
+            assert_eq!(intent.operation_id, import.operation_id);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(phases.len(), 3);
+    store.preflight().unwrap();
+    raw["credential"] = json!("changed-after-confirmation");
+    fs::write(&fixture.path, canonical(&raw).unwrap()).unwrap();
+    assert!(store.preflight_pending_recovery().is_err());
+}
+
+#[test]
+fn changes_between_commit_phases_cannot_be_registered_as_a_new_baseline() {
+    for observed in [false, true] {
+        for stage in [Stage::Prepare, Stage::Document] {
+            for changed in [
+                Schema::FILE_NAME,
+                Schema::MARKER_NAME,
+                Schema::PENDING_NAME.unwrap(),
+            ] {
+                let fixture = Fixture::new();
+                let snapshot = fixture.activate();
+                let req = request(&snapshot);
+                let before_document = fs::read(&fixture.path).unwrap();
+                let store = fixture.open();
+                let mut phases = Vec::new();
+                let mut observer = |intent: &TransitionIntent| {
+                    phases.push(intent.phase);
+                    Ok(())
+                };
+                let mut hook = |s, b| {
+                    if s == stage && b == Boundary::DirectorySynced {
+                        let path = fixture.home.join(changed);
+                        let mut raw = fs::read(&path).unwrap();
+                        raw.push(b'\n');
+                        fs::write(path, raw).unwrap();
+                    }
+                    Ok(())
+                };
+                let mut hooks = PendingHooks {
+                    fault: &mut hook,
+                    observer: if observed { Some(&mut observer) } else { None },
+                };
+                let error = store
+                    .apply_with_observer(&req, Some(&snapshot), &mut hooks)
+                    .unwrap_err();
+                if stage == Stage::Document {
+                    assert_eq!(error, Error::CommitUncertain);
+                } else {
+                    assert_eq!(error, Error::ExternalChanged);
+                    if changed != Schema::FILE_NAME {
+                        assert_eq!(fs::read(&fixture.path).unwrap(), before_document);
+                    }
+                }
+                assert!(!phases.contains(&TransitionPhase::ResolveRequest));
+                let ledger = strict_json(&fs::read(fixture.ledger()).unwrap()).unwrap();
+                assert_eq!(ledger["state"]["phase"], "active");
+                assert_eq!(
+                    ledger["state"]["request"]["request"]["operation_id"],
+                    req.operation_id
+                );
+            }
+        }
+    }
+}

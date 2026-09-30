@@ -44,7 +44,7 @@ Inputia 保留两个常驻组件：控制中心与后台应用服务，以及 ma
 
 ## 长期架构设计：四项上线工作
 
-以下是**已完成设计、待批准实施**的目标架构。现有模块将按阶段复用和完善，图中的统一协调、恢复和发布能力不能视为全部已经实现。完整决策、接口与失败语义见 [长期架构与上线计划](docs/codex-plans/20260930-191324-inputia.md)。
+以下是**已批准、正在分阶段实施**的目标架构。现有模块将按阶段复用和完善，图中的统一协调、恢复和发布能力不能视为全部已经实现。完整决策、接口与失败语义见 [长期架构与上线计划](docs/codex-plans/20260930-191324-inputia.md)。
 
 ```mermaid
 flowchart TB
@@ -135,6 +135,7 @@ CI 按受影响路径运行对应检查，覆盖 Rust、Swift、原生依赖、�
 
 - [当前状态与现有验证](docs/CURRENT_STATUS.md)：现有产品事实、能力与待验边界。
 - [完整长期架构与上线计划](docs/codex-plans/20260930-191324-inputia.md)：12 个章节，覆盖接口、失败语义、数据、安装恢复、发布与验收。
+- [设置跨进程保存恢复](docs/architecture/control-settings-durability.md)：原请求耐久记录、三文件归属、启动接线与界面生效合同；App 协议接线仍在实施。
 - [计划执行顺序](docs/codex-plans/plan-order.md)：已有计划登记与实施关系。
 - [macOS 输入法开发](macos/InputiaInputMethod/README.md)、[构建说明](BUILD.md)：原生组件与上游构建要求。
 - [本机发布流程记录](docs/verification/2026-09-27-inputia-release.md)：已有配对构建与升级证据，未宣称完成公众公证分发。
