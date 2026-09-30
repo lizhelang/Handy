@@ -8,13 +8,15 @@ import {
   syncThemeFromSettings,
 } from "@/lib/utils/theme";
 import type { Theme } from "@/bindings";
-import "@/i18n";
+import { syncLanguageFromSettings } from "@/i18n";
 
 // A separate webview from the settings window, so the overlay has to set
 // `data-theme` on its own document: last-known theme before render (shared
 // localStorage) to avoid a flash, reconcile with the persisted setting in case
 // the overlay booted first, then follow live changes.
 applyTheme(getStoredTheme());
+// 原生端仅在 Ready 后创建业务 overlay。
+void syncLanguageFromSettings();
 syncThemeFromSettings();
 listen<Theme>("theme-changed", (event) => applyTheme(event.payload));
 

@@ -1171,5 +1171,16 @@
       "pending_record_invalid": "The local retry record is unreadable. Its original outcome is unknown. Discarding the record only allows a fresh read; it does not undo any earlier save.",
       "pending_operation_changed": "Another page replaced the local retry record. Reopen this page to recover the currently retained operation; no other operation was cleared."
     }
+  },
+  "startupRecovery": {
+    "title": "Inputia 暫時無法完成啟動",
+    "starting": "正在啟動 Inputia…",
+    "editable": "現有資料已保留。請檢查設定檔案，修復後重新啟動 Inputia。",
+    "pendingRecovery": "復原尚未完成。請先重新啟動 Inputia 繼續復原，再修改資料。",
+    "unconfirmed": "無法確認啟動狀態，請重新檢查。",
+    "retry": "重新檢查",
+    "restart": "重新啟動 Inputia",
+    "openFolder": "開啟資料資料夾",
+    "actionFailed": "操作未能完成，請重試。"
   }
 }

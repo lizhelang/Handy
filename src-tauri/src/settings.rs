@@ -6,11 +6,17 @@ use specta::Type;
 use std::collections::HashMap;
 use std::fmt;
 use tauri::AppHandle;
+#[cfg(unix)]
+use tauri::Manager;
+#[cfg(not(unix))]
 use tauri_plugin_store::StoreExt;
 
 #[cfg(unix)]
 #[path = "settings_document.rs"]
 mod document;
+#[cfg(unix)]
+#[path = "settings_runtime.rs"]
+pub(crate) mod runtime;
 #[cfg(unix)]
 #[path = "settings_session.rs"]
 mod session;
@@ -1100,15 +1106,21 @@ impl AppSettings {
     }
 }
 
-/// Startup entry point. Same load-or-create/salvage/migrate behavior as
-/// `get_settings`; kept as a named alias for call-site clarity, plus a
-/// one-time privacy-safe diagnostic summary of the loaded settings.
+/// 只读取启动协调器已确认的配置，不在普通读取中创建或迁移文件。
 pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
     let settings = get_settings(app);
     debug!("Loaded settings: {:?}", settings);
     settings
 }
 
+#[cfg(unix)]
+pub fn get_settings(app: &AppHandle) -> AppSettings {
+    app.state::<runtime::RuntimeSettings>()
+        .read_for_component()
+        .expect("settings must be initialized before business components")
+}
+
+#[cfg(not(unix))]
 pub fn get_settings(app: &AppHandle) -> AppSettings {
     let store = app
         .store(crate::portable::store_path(SETTINGS_STORE_PATH))
@@ -1385,12 +1397,21 @@ pub fn update_checks_effectively_enabled(settings: &AppSettings) -> bool {
     settings.update_checks_enabled && !update_checks_forced_disabled()
 }
 
-pub fn write_settings(app: &AppHandle, settings: AppSettings) {
+#[cfg(unix)]
+pub fn write_settings(app: &AppHandle, settings: AppSettings) -> Result<(), String> {
+    app.state::<runtime::RuntimeSettings>()
+        .save_for_component(&settings)
+}
+
+#[cfg(not(unix))]
+pub fn write_settings(app: &AppHandle, settings: AppSettings) -> Result<(), String> {
     let store = app
         .store(crate::portable::store_path(SETTINGS_STORE_PATH))
-        .expect("Failed to initialize store");
+        .map_err(|_| "settings_state_unavailable".to_owned())?;
 
-    store.set("settings", serde_json::to_value(&settings).unwrap());
+    let value = serde_json::to_value(&settings).map_err(|_| "settings_invalid".to_owned())?;
+    store.set("settings", value);
+    store.save().map_err(|_| "settings_save_failed".to_owned())
 }
 
 pub fn get_bindings(app: &AppHandle) -> HashMap<String, ShortcutBinding> {

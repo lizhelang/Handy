@@ -6,7 +6,6 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use tauri::Manager;
 
 const STARTUP_MIGRATION_ID: &str = "upstream-first-fbd4e15-v1";
 const SQLITE_SIDECARS: [&str; 3] = ["-wal", "-shm", "-journal"];
@@ -235,14 +234,6 @@ struct StartupMigrationMarker {
     manifest_sha256: String,
 }
 
-pub struct StartupMigration {
-    _lock: MigrationLock,
-    outcome: MigrationBackupOutcome,
-    source_roots: Vec<MigrationSourceRoot>,
-    marker_path: PathBuf,
-    completed: bool,
-}
-
 #[derive(Debug)]
 pub struct MigrationLock {
     path: PathBuf,
@@ -328,167 +319,13 @@ impl Drop for MigrationLock {
     }
 }
 
-impl StartupMigration {
-    pub fn complete(&mut self) -> Result<()> {
-        anyhow::ensure!(
-            self.outcome.manifest.status == MigrationBackupStatus::Verified,
-            "startup migration cannot complete before its backup is verified"
-        );
-        validate_outcome_paths(&self.outcome, Some(&self.source_roots))?;
-        let backup_root = self
-            .outcome
-            .backup_dir
-            .parent()
-            .context("backup domain has no parent")?;
-        anyhow::ensure!(
-            self.marker_path == backup_root.join("complete.json"),
-            "marker is outside its backup domain"
-        );
-        checked_path(backup_root, Path::new("complete.json"))?;
-        let (_, manifest_sha256) = file_fingerprint(&self.outcome.manifest_path)?;
-        let marker = StartupMigrationMarker {
-            migration_id: STARTUP_MIGRATION_ID.to_string(),
-            completed_at: Utc::now().to_rfc3339(),
-            manifest_path: self.outcome.manifest_path.clone(),
-            manifest_sha256,
-        };
-        write_json_atomically(&self.marker_path, &marker)?;
-        self.completed = true;
-        Ok(())
-    }
-
-    #[cfg(test)]
-    fn backup_dir(&self) -> &Path {
-        &self.outcome.backup_dir
-    }
-}
-
-impl Drop for StartupMigration {
-    fn drop(&mut self) {
-        if self.completed {
-            return;
-        }
-        // setup 失败时 manager 可能仍持有 SQLite/Rime 连接；不在这些 live handle 下换文件。
-        // 没有 complete marker 的已验证备份由下一次启动、初始化 manager 之前恢复。
-        log::warn!("Startup migration incomplete; verified backup retained for recovery before managers open on next launch: {}", self.outcome.manifest_path.display());
-    }
-}
-
-pub fn prepare_startup_backup(app: &tauri::AppHandle) -> Result<Option<StartupMigration>> {
-    let handy_root = crate::portable::app_data_dir(app)?;
-    let backup_root = handy_root
-        .join("migration_backups")
-        .join(STARTUP_MIGRATION_ID);
-    let lock_root = handy_root.join("migration_locks");
-
-    #[cfg(target_os = "macos")]
-    let inputia_root = crate::candidate_profile::current()
-        .map(|profile| profile.inputia_root.clone())
-        .or_else(|| {
-            app.path()
-                .home_dir()
-                .ok()
-                .map(|home| home.join("Library/Application Support/Inputia"))
-        });
-    #[cfg(not(target_os = "macos"))]
-    let inputia_root: Option<PathBuf> = None;
-
-    prepare_startup_backup_for_paths(
-        &handy_root,
-        inputia_root.as_deref(),
-        &backup_root,
-        &lock_root,
-    )
-}
-
-fn prepare_startup_backup_for_paths(
-    handy_root: &Path,
-    inputia_root: Option<&Path>,
-    backup_root: &Path,
-    lock_root: &Path,
-) -> Result<Option<StartupMigration>> {
-    let marker_path = checked_path(backup_root, Path::new("complete.json"))?;
-    let mut source_roots = vec![MigrationSourceRoot {
-        label: "handy".to_string(),
-        root: handy_root.to_path_buf(),
-    }];
-    let mut candidates = handy_data_candidates("handy");
-
-    if let Some(inputia_root) = inputia_root.filter(|path| path.exists()) {
-        source_roots.push(MigrationSourceRoot {
-            label: "inputia".to_string(),
-            root: inputia_root.to_path_buf(),
-        });
-        candidates.extend(inputia_data_candidates("inputia"));
-    }
-
-    if marker_path.exists() {
-        verify_startup_marker(&marker_path, &source_roots)?;
-        return Ok(None);
-    }
-    let lock = MigrationLock::acquire(lock_root, STARTUP_MIGRATION_ID)?;
-
-    recover_incomplete_startup_backup(backup_root, &source_roots)?;
-    let outcome = prepare_backup_for_migration(
-        &source_roots,
-        &candidates,
-        backup_root,
-        STARTUP_MIGRATION_ID,
-    )?;
-
-    Ok(Some(StartupMigration {
-        _lock: lock,
-        outcome,
-        source_roots,
-        marker_path,
-        completed: false,
-    }))
-}
-
-fn recover_incomplete_startup_backup(
-    backup_root: &Path,
-    source_roots: &[MigrationSourceRoot],
-) -> Result<()> {
-    checked_path(backup_root, Path::new("complete.json"))?;
-    let Ok(entries) = fs::read_dir(backup_root) else {
-        return Ok(());
-    };
-    let mut backup_dirs = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("handy-data-"))
-        })
-        .collect::<Vec<_>>();
-    backup_dirs.sort();
-
-    let Some(backup_dir) = backup_dirs.pop() else {
-        return Ok(());
-    };
-    let relative = backup_dir.strip_prefix(backup_root)?.join("manifest.json");
-    let manifest_path = checked_path(backup_root, &relative)?;
-    if !manifest_path.exists() {
-        return Ok(());
-    }
-    let manifest: MigrationBackupManifest = serde_json::from_slice(
-        &fs::read(&manifest_path)
-            .with_context(|| format!("failed to read {}", manifest_path.display()))?,
-    )?;
-    anyhow::ensure!(
-        manifest.migration_id == STARTUP_MIGRATION_ID,
-        "unexpected incomplete migration id {}",
-        manifest.migration_id
-    );
-    let outcome = MigrationBackupOutcome {
-        backup_dir,
-        manifest,
-        manifest_path,
-    };
-    restore_backup(&outcome, source_roots)
-        .context("failed to restore interrupted startup migration")
-}
+mod startup;
+#[cfg(test)]
+use startup::prepare_startup_backup_for_paths;
+pub use startup::{
+    prepare_startup_backup, prepare_startup_backup_with_preflight, StartupFailure,
+    StartupFailureKind, StartupMigration,
+};
 
 fn verify_startup_marker(marker_path: &Path, roots: &[MigrationSourceRoot]) -> Result<()> {
     let backup_root = marker_path
@@ -553,6 +390,10 @@ pub fn handy_data_candidates(label: &str) -> Vec<MigrationPathCandidate> {
             ("integration.db", MigrationPathKind::Sqlite),
             ("integration-learning.key", MigrationPathKind::File),
             ("settings_store.json", MigrationPathKind::File),
+            (
+                ".inputia-control-settings-initialized.json",
+                MigrationPathKind::File,
+            ),
             ("recordings", MigrationPathKind::Directory),
             ("clipboard_images", MigrationPathKind::Directory),
             ("models", MigrationPathKind::Directory),
@@ -565,6 +406,10 @@ pub fn inputia_data_candidates(label: &str) -> Vec<MigrationPathCandidate> {
         label,
         &[
             ("settings.json", MigrationPathKind::File),
+            (
+                ".inputia-settings-initialized.json",
+                MigrationPathKind::File,
+            ),
             ("inputia_memory.db", MigrationPathKind::Sqlite),
             ("outbox.db", MigrationPathKind::Sqlite),
             ("policy.db", MigrationPathKind::Sqlite),
@@ -700,6 +545,15 @@ pub fn restore_backup_with_policy(
     source_roots: &[MigrationSourceRoot],
     policy: SqliteRestorePolicy,
 ) -> Result<MigrationRestoreReport> {
+    restore_backup_inner(outcome, source_roots, policy, true)
+}
+
+fn restore_backup_inner(
+    outcome: &MigrationBackupOutcome,
+    source_roots: &[MigrationSourceRoot],
+    policy: SqliteRestorePolicy,
+    record_status: bool,
+) -> Result<MigrationRestoreReport> {
     validate_outcome_paths(outcome, Some(source_roots))?;
     let legacy_sidecars: Vec<_> = outcome
         .manifest
@@ -777,7 +631,7 @@ pub fn restore_backup_with_policy(
         let source = checked_database(&root.root, &entry.source_relative_path)?;
         let backup = checked_database(&outcome.backup_dir, &entry.backup_relative_path)?;
         if let Some(parent) = source.parent() {
-            fs::create_dir_all(parent)
+            startup::create_dirs_durable(parent)
                 .with_context(|| format!("failed to create restore dir {}", parent.display()))?;
         }
         if entry.kind == MigrationPathKind::Sqlite {
@@ -785,13 +639,7 @@ pub fn restore_backup_with_policy(
                 .target_quarantines
                 .push(restore_sqlite_file(&backup, &source)?);
         } else {
-            fs::copy(&backup, &source).with_context(|| {
-                format!(
-                    "failed to restore {} from {}",
-                    source.display(),
-                    backup.display()
-                )
-            })?;
+            restore_regular_file(&backup, &source)?;
         }
     }
 
@@ -800,7 +648,9 @@ pub fn restore_backup_with_policy(
     for entry in &mut restored.manifest.entries {
         entry.status = MigrationBackupStatus::Restored;
     }
-    write_manifest(&restored)?;
+    if record_status {
+        write_manifest(&restored)?;
+    }
     write_json_atomically(&outcome.backup_dir.join("last-restore.json"), &report)?;
     log::info!("Migration restored selected snapshot point; legacy sidecars retained={}, target recovery quarantines={}", report.preserved_legacy_sidecars.len(), report.target_quarantines.len());
     Ok(report)
@@ -831,17 +681,8 @@ fn restore_sqlite_file(backup: &Path, target: &Path) -> Result<PathBuf> {
         Utc::now().format("%Y%m%dT%H%M%S%9fZ")
     ));
     let recovery = checked_path(parent, &recovery_relative)?;
-    fs::create_dir_all(
-        recovery
-            .parent()
-            .context("recovery directory has no parent")?,
-    )?;
-    fs::create_dir(&recovery)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&recovery, fs::Permissions::from_mode(0o700))?;
-    }
+    anyhow::ensure!(!recovery.exists(), "restore quarantine collision");
+    startup::create_dirs_durable(&recovery)?;
     let stage = checked_path(&recovery, Path::new("verified-snapshot.db"))?;
     fs::copy(backup, &stage)?;
     verify_sqlite_database(&stage)?;
@@ -857,15 +698,21 @@ fn restore_sqlite_file(backup: &Path, target: &Path) -> Result<PathBuf> {
                 let destination = checked_path(&recovery, Path::new(&component))?;
                 fs::rename(&source, &destination)?;
                 moved.push((source, destination));
+                sync_dir(parent)?;
+                sync_dir(&recovery)?;
             }
         }
         fs::rename(&stage, target)?;
+        sync_dir(&recovery)?;
+        sync_dir(parent)?;
         Ok(())
     })();
     if let Err(error) = replace {
         for (source, destination) in moved.iter().rev() {
             fs::rename(destination, source)
                 .context("SQLite restore failed and quarantine rollback requires recovery")?;
+            sync_dir(parent)?;
+            sync_dir(&recovery)?;
         }
         return Err(error).context("SQLite replacement failed; previous exact files restored");
     }
@@ -1131,50 +978,58 @@ fn write_json_atomically<T: Serialize>(path: &Path, value: &T) -> Result<()> {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    let temp_path = path.with_extension(format!("tmp-{}", std::process::id()));
-    checked_path(
-        root,
-        Path::new(
-            temp_path
-                .file_name()
-                .context("migration JSON temporary path has no file name")?,
-        ),
-    )?;
+    let temp_path = root.join(format!(".migration-{}.tmp", uuid::Uuid::new_v4()));
     let bytes = serde_json::to_vec_pretty(value)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
     {
-        let mut file = fs::File::create(&temp_path)
-            .with_context(|| format!("failed to create {}", temp_path.display()))?;
-        file.write_all(&bytes)
-            .with_context(|| format!("failed to write {}", temp_path.display()))?;
-        file.sync_all()
-            .with_context(|| format!("failed to sync {}", temp_path.display()))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
     }
-    fs::rename(&temp_path, path).with_context(|| {
-        format!(
-            "failed to move startup migration marker {} to {}",
-            temp_path.display(),
-            path.display()
-        )
-    })?;
+    let mut file = options.open(&temp_path)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    startup::journal_fault(path, "journal_before_rename")?;
+    fs::rename(&temp_path, path)?;
+    startup::journal_fault(path, "journal_after_rename")?;
+    sync_dir(root)?;
+    startup::journal_fault(path, "journal_after_sync")?;
     Ok(())
 }
 
 fn write_manifest(outcome: &MigrationBackupOutcome) -> Result<()> {
     validate_outcome_paths(outcome, None)?;
-    let json = serde_json::to_vec_pretty(&outcome.manifest)?;
-    let mut file = fs::File::create(&outcome.manifest_path).with_context(|| {
-        format!(
-            "failed to create migration manifest {}",
-            outcome.manifest_path.display()
-        )
-    })?;
-    file.write_all(&json).with_context(|| {
-        format!(
-            "failed to write migration manifest {}",
-            outcome.manifest_path.display()
-        )
-    })?;
+    write_json_atomically(&outcome.manifest_path, &outcome.manifest)
+}
+
+fn sync_dir(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    fs::File::open(path)?.sync_all()?;
+    // Windows 没有可移植目录 fsync；不能把该平台当作本轮 macOS 耐久验收。
     Ok(())
+}
+
+fn restore_regular_file(backup: &Path, target: &Path) -> Result<()> {
+    let parent = target.parent().context("restore target has no parent")?;
+    let stage = parent.join(format!(".migration-{}.restore", uuid::Uuid::new_v4()));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut output = options.open(&stage)?;
+    std::io::copy(&mut fs::File::open(backup)?, &mut output)?;
+    output.set_permissions(fs::metadata(backup)?.permissions())?;
+    output.sync_all()?;
+    fs::rename(&stage, target)?;
+    sync_dir(parent)
 }
 
 #[cfg(test)]
@@ -1800,6 +1655,7 @@ mod tests {
             .backup_dir()
             .join("inputia/rime/user.yaml")
             .exists());
+        migration.begin_mutations().unwrap();
         migration.complete().unwrap();
         drop(migration);
 
@@ -1823,10 +1679,11 @@ mod tests {
         fs::write(handy_root.join("settings_store.json"), b"kept").unwrap();
         create_sample_database(&handy_root.join("history.db"));
 
-        let migration =
+        let mut migration =
             prepare_startup_backup_for_paths(&handy_root, None, &backup_root, &lock_root)
                 .unwrap()
                 .unwrap();
+        migration.begin_mutations().unwrap();
         fs::write(handy_root.join("settings_store.json"), b"changed").unwrap();
         let writer = Connection::open(handy_root.join("history.db")).unwrap();
         writer
@@ -1854,6 +1711,7 @@ mod tests {
             b"kept"
         );
         assert_eq!(read_item_name(&handy_root.join("history.db")), "kept");
+        resumed.begin_mutations().unwrap();
         resumed.complete().unwrap();
     }
 
@@ -1973,6 +1831,7 @@ mod tests {
         if let Some(mut migration) = migration {
             assert!(!migration.outcome.manifest.entries.is_empty());
             eprintln!("verifiedBackupDir={}", migration.backup_dir().display());
+            migration.begin_mutations().unwrap();
             migration.complete().unwrap();
         } else {
             // prepare_startup_backup_for_paths 已在返回 None 前校验 marker 与授权根。

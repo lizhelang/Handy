@@ -33,6 +33,7 @@ inputia-handy-runtime = { path = "../crates/inputia-handy-runtime" }
 inputia-core = { path = "../crates/inputia-core" }
 inputia-settings = { path = "../crates/inputia-settings" }
 once_cell = "1"
+uuid = { version = "1", features = ["v4"] }
 encoding_rs = "0.8.35"
 tauri = { version = "2.11.5", features = [
   "protocol-asset",

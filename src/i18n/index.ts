@@ -85,11 +85,10 @@ export const getSupportedLanguage = (
   return supported ? supported.code : null;
 };
 
-// Initialize i18n with English as default
-// Language will be synced from settings after init
+// 恢复页只能使用浏览器语言；业务启动确认后再同步持久偏好。
 i18n.use(initReactI18next).init({
   resources,
-  lng: "en",
+  lng: getSupportedLanguage(navigator.language) ?? "en",
   fallbackLng: "en",
   interpolation: {
     escapeValue: false, // React already escapes values
@@ -121,15 +120,14 @@ export const syncLanguageFromSettings = async () => {
   }
 };
 
-// Run language sync on init
-syncLanguageFromSettings();
-
 // Listen for language changes to update HTML dir and lang attributes
 i18n.on("languageChanged", (lng) => {
   const dir = getLanguageDirection(lng);
   updateDocumentDirection(dir);
   updateDocumentLanguage(lng);
 });
+updateDocumentDirection(getLanguageDirection(i18n.language));
+updateDocumentLanguage(i18n.language);
 
 // Re-export RTL utilities for convenience
 export { getLanguageDirection, isRTLLanguage } from "@/lib/utils/rtl";

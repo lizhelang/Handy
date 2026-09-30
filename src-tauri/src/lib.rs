@@ -25,22 +25,23 @@ mod integration_output;
 mod llm_client;
 mod managers;
 mod memory;
+#[cfg(target_os = "macos")]
+mod memory_domain;
 mod native_hotwords;
-mod native_prompt_watch;
 #[cfg(target_os = "macos")]
 // 原生后台与独立Rust诊断共享同一认证API；不注册为WebView可调用命令。
 pub mod native_pair_auth;
+mod native_prompt_watch;
 mod overlay;
 mod paste_tx;
 #[cfg(target_os = "macos")]
 mod personalization;
-#[cfg(target_os = "macos")]
-mod memory_domain;
 pub mod portable;
 mod secure_input;
 mod settings;
 mod shortcut;
 mod signal_handle;
+mod startup;
 mod transcription_coordinator;
 mod tray;
 mod tray_i18n;
@@ -139,7 +140,9 @@ fn show_main_window(app: &AppHandle) {
             }
             return;
         }
-        integration_output::capture_before_ui();
+        if startup::business_ready(app) {
+            integration_output::capture_before_ui();
+        }
     }
     if let Some(main_window) = app.get_webview_window("main") {
         if let Err(e) = main_window.unminimize() {
@@ -189,14 +192,9 @@ fn apply_startup_activation_policy(app: &mut tauri::App, headless_mode: bool) {
         return;
     }
 
-    let cli_args = app.state::<CliArgs>().inner().clone();
-    let settings = settings::get_settings(app.handle());
-
-    let should_hide = settings.start_hidden || cli_args.start_hidden;
-    if should_hide {
-        log::info!("Inputia service starting hidden as Accessory (no Dock icon)");
-        app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-    }
+    // 构建完成时 setup 尚未执行，不能读取设置。统一以 Accessory 启动，
+    // 校验成功且确需显示窗口时再提升为 Regular。
+    app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 }
 
 #[allow(unused_variables)]
@@ -225,28 +223,24 @@ fn should_force_show_permissions_window(app: &AppHandle) -> bool {
     false
 }
 
-fn initialize_core_logic(app_handle: &AppHandle) -> tauri::Result<()> {
+fn initialize_core_logic(app_handle: &AppHandle) -> anyhow::Result<()> {
     // macOS 的 Enigo 与全局快捷键由 setup 启动的权限监视器初始化，
     // 不依赖设置窗口或前端挂载。前端命令仅用于权限引导与显式重试。
 
     // Initialize the managers. The audio recorder receives the streaming router
     // explicitly, so always-on microphone startup can wire live-preview frames
     // even before Tauri state is populated.
-    let model_manager =
-        Arc::new(ModelManager::new(app_handle).expect("Failed to initialize model manager"));
-    let transcription_manager = Arc::new(
-        TranscriptionManager::new(app_handle, model_manager.clone())
-            .expect("Failed to initialize transcription manager"),
-    );
-    let recording_manager = Arc::new(
-        AudioRecordingManager::new(app_handle, transcription_manager.stream_router())
-            .expect("Failed to initialize recording manager"),
-    );
-    let history_manager =
-        Arc::new(HistoryManager::new(app_handle).expect("Failed to initialize history manager"));
-    let clipboard_manager = Arc::new(
-        ClipboardManager::new(app_handle).expect("Failed to initialize clipboard manager"),
-    );
+    let model_manager = Arc::new(ModelManager::new(app_handle)?);
+    let transcription_manager = Arc::new(TranscriptionManager::new(
+        app_handle,
+        model_manager.clone(),
+    )?);
+    let recording_manager = Arc::new(AudioRecordingManager::new(
+        app_handle,
+        transcription_manager.stream_router(),
+    )?);
+    let history_manager = Arc::new(HistoryManager::new(app_handle)?);
+    let clipboard_manager = Arc::new(ClipboardManager::new(app_handle)?);
 
     // Initialize the transcribe-cpp native backend (logging + backend module
     // registration) once, before any whisper model is loaded.
@@ -269,7 +263,18 @@ fn initialize_core_logic(app_handle: &AppHandle) -> tauri::Result<()> {
     ));
     app_handle.manage(tray::TrayState::new());
 
+    Ok(())
+}
+
+/// 配置与 manager 准备完成并确认迁移后，才启动外部输入和登录项。
+fn activate_core_logic(app_handle: &AppHandle) -> anyhow::Result<()> {
+    anyhow::ensure!(startup::business_ready(app_handle), "startup_not_ready");
+    let clipboard_manager = app_handle.state::<Arc<ClipboardManager>>();
+    let recording_manager = app_handle.state::<Arc<AudioRecordingManager>>();
     let settings = settings::get_settings(app_handle);
+    if settings.always_on_microphone {
+        recording_manager.start_microphone_stream()?;
+    }
     if settings.clipboard_enabled {
         clipboard_manager.start_monitoring();
     }
@@ -283,10 +288,7 @@ fn initialize_core_logic(app_handle: &AppHandle) -> tauri::Result<()> {
     #[cfg(unix)]
     signal_handle::setup_signal_handler(app_handle.clone());
 
-    // The macOS activation policy for a start-hidden launch is applied before
-    // the event loop runs (see `apply_startup_activation_policy`), not here:
-    // by the time `setup` runs the app has already launched as a Regular
-    // (Dock) app, and demoting it at runtime is unreliable (#1787).
+    // macOS 已以 Accessory 启动，显示控制中心时才提升为 Regular。
 
     // 仅保留旧菜单动作实现供兼容与统一菜单复用；Inputia产品不创建此独立图标。
     let saved_tray_preference = settings::get_settings(app_handle).show_tray_icon;
@@ -898,6 +900,11 @@ pub fn run(cli_args: CliArgs) {
     }
 
     let invoke_handler = specta_builder.invoke_handler();
+    let startup_handler: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
+        Box::new(tauri::generate_handler![
+            startup::control_settings_status,
+            startup::control_settings_recovery,
+        ]);
     let permission_handler: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
         Box::new(tauri::generate_handler![
             commands::knowledge::knowledge_request,
@@ -1037,6 +1044,10 @@ pub fn run(cli_args: CliArgs) {
     // instance instead.
     if !headless_mode {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !startup::business_ready(app) {
+                show_main_window(app);
+                return;
+            }
             if args.iter().any(|a| a == "--toggle-transcription") {
                 signal_handle::send_transcription_input(app, "transcribe", "CLI");
             } else if args.iter().any(|a| a == "--toggle-post-process") {
@@ -1053,6 +1064,11 @@ pub fn run(cli_args: CliArgs) {
                 show_main_window(app);
             }
         }));
+    }
+
+    #[cfg(unix)]
+    {
+        builder = builder.manage(settings::runtime::RuntimeSettings::default());
     }
 
     #[allow(unused_mut)]
@@ -1073,14 +1089,40 @@ pub fn run(cli_args: CliArgs) {
         .setup(move |app| {
             specta_builder.mount_events(app);
 
-            // Protect the user's existing Handy and Inputia data before any
-            // settings or manager schema migration can write to it. If setup
-            // exits early, retain the verified snapshot for recovery on the
-            // next launch before any managers open their connections; never
-            // overwrite databases underneath live SQLite/Rime handles.
-            // Successful initialization writes a checksum-pinned marker
-            // so later launches do not repeat the multi-gigabyte backup.
-            let mut startup_migration = data_migration::prepare_startup_backup(app.handle())?;
+            if !headless_mode {
+                // 主窗口先以隐藏状态创建，设置失败时承载恢复界面。
+                let mut win_builder = tauri::WebviewWindowBuilder::new(
+                    app, "main", tauri::WebviewUrl::App("/".into()),
+                )
+                    .title("Inputia")
+                    .inner_size(680.0, 570.0)
+                    .min_inner_size(680.0, 570.0)
+                    .resizable(true)
+                    .maximizable(true)
+                    .visible(false);
+                if let Some(data_dir) = portable::data_dir() {
+                    win_builder = win_builder.data_directory(data_dir.join("webview"));
+                }
+                candidate_profile::configure_webview(win_builder).build()?;
+            }
+
+            // 这里尚未打开任何业务数据库。失败时 GUI 仅显示恢复页面；
+            // headless 返回固定错误并退出。业务 manager 开始后的错误则终止进程，
+            // 让下一次启动在没有旧句柄的情况下恢复日志。
+            let mut startup_migration = match startup::prepare(app.handle()) {
+                Ok(migration) => migration,
+                Err(error) if headless_mode => return Err(error.into()),
+                Err(error) => {
+                    #[cfg(unix)]
+                    {
+                        let _ = error;
+                        show_main_window(app.handle());
+                        return Ok(());
+                    }
+                    #[cfg(not(unix))]
+                    return Err(error.into());
+                }
+            };
 
             // Headless one-shot path (`--transcribe-file` / `--list-devices` /
             // `--list-models`): initialize only what transcription needs — the
@@ -1091,12 +1133,9 @@ pub fn run(cli_args: CliArgs) {
             // signal handlers, and autostart that initialize_core_logic sets up.
             if headless_mode {
                 let app_handle = app.handle().clone();
-                let model_manager = Arc::new(
-                    ModelManager::new(&app_handle).expect("Failed to initialize model manager"),
-                );
+                let model_manager = Arc::new(ModelManager::new(&app_handle)?);
                 let transcription_manager = Arc::new(
-                    TranscriptionManager::new(&app_handle, model_manager.clone())
-                        .expect("Failed to initialize transcription manager"),
+                    TranscriptionManager::new(&app_handle, model_manager.clone())?,
                 );
                 app_handle.manage(model_manager);
                 app_handle.manage(transcription_manager);
@@ -1106,6 +1145,7 @@ pub fn run(cli_args: CliArgs) {
                 if let Some(migration) = startup_migration.as_mut() {
                     migration.complete()?;
                 }
+                startup::finish(&app_handle).map_err(std::io::Error::other)?;
 
                 let handle = app_handle.clone();
                 let args = cli_args.clone();
@@ -1127,23 +1167,6 @@ pub fn run(cli_args: CliArgs) {
                 });
                 return Ok(());
             }
-
-            // Create main window programmatically so we can set data_directory
-            // for portable mode (redirects WebView2 cache to portable Data dir)
-            let mut win_builder =
-                tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
-                    .title("Inputia")
-                    .inner_size(680.0, 570.0)
-                    .min_inner_size(680.0, 570.0)
-                    .resizable(true)
-                    .maximizable(true)
-                    .visible(false);
-
-            if let Some(data_dir) = portable::data_dir() {
-                win_builder = win_builder.data_directory(data_dir.join("webview"));
-            }
-
-            candidate_profile::configure_webview(win_builder).build()?;
 
             let mut settings = get_settings(app.handle());
 
@@ -1172,12 +1195,13 @@ pub fn run(cli_args: CliArgs) {
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
 
             initialize_core_logic(&app_handle)?;
-            decision_worker::DecisionWorker::configure_from_resources(&app_handle);
-            commands::knowledge::start_indexer(&app_handle);
-
             if let Some(migration) = startup_migration.as_mut() {
                 migration.complete()?;
             }
+            startup::finish(&app_handle).map_err(std::io::Error::other)?;
+            activate_core_logic(&app_handle)?;
+            decision_worker::DecisionWorker::configure_from_resources(&app_handle);
+            commands::knowledge::start_indexer(&app_handle);
 
             // Secure Input monitor (macOS): detects stuck secure input that
             // silently blocks keyed shortcuts, warns the user, and activates
@@ -1247,14 +1271,24 @@ pub fn run(cli_args: CliArgs) {
             }
             _ => {}
         })
-        .invoke_handler(move |invoke| match invoke.message.command() {
-            "knowledge_request"
-            | "input_settings_request"
-            | "inputia_permission_status"
-            | "inputia_permission_recheck"
-            | "inputia_permission_prepare_maintenance"
-            | "inputia_permission_resume" => permission_handler(invoke),
-            _ => invoke_handler(invoke),
+        .invoke_handler(move |invoke| {
+            let command = invoke.message.command();
+            if command == "control_settings_status" || command == "control_settings_recovery" {
+                return startup_handler(invoke);
+            }
+            if !startup::business_ready(invoke.message.webview_ref().app_handle()) {
+                invoke.resolver.reject("startup_not_ready");
+                return true;
+            }
+            match invoke.message.command() {
+                "knowledge_request"
+                | "input_settings_request"
+                | "inputia_permission_status"
+                | "inputia_permission_recheck"
+                | "inputia_permission_prepare_maintenance"
+                | "inputia_permission_resume" => permission_handler(invoke),
+                _ => invoke_handler(invoke),
+            }
         })
         .build(context)
         .expect("error while building tauri application");

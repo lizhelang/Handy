@@ -1,7 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import ClipboardOverlay from "./ClipboardOverlay";
-import "@/i18n";
+import { syncLanguageFromSettings } from "@/i18n";
+
+void syncLanguageFromSettings();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

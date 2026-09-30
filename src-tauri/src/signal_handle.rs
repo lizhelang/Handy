@@ -16,6 +16,10 @@ use std::thread;
 /// Send a transcription input to the coordinator.
 /// Used by signal handlers, CLI flags, and any other external trigger.
 pub fn send_transcription_input(app: &AppHandle, binding_id: &str, source: &str) {
+    if !crate::startup::business_ready(app) {
+        warn!("startup_not_ready: transcription input rejected");
+        return;
+    }
     if let Some(c) = app.try_state::<TranscriptionCoordinator>() {
         c.send_external_input(binding_id, source);
     } else {

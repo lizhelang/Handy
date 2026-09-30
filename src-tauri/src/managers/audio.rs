@@ -476,11 +476,7 @@ impl AudioRecordingManager {
             cached_device: Arc::new(Mutex::new(None)),
         };
 
-        // Always-on?  Open immediately.
-        if matches!(mode, MicrophoneMode::AlwaysOn) {
-            manager.start_microphone_stream()?;
-        }
-
+        // 这里只准备状态。启动协调器确认 Ready 后再打开常驻麦克风。
         Ok(manager)
     }
 

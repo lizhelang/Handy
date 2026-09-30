@@ -2626,6 +2626,7 @@ dependencies = [
  "tokio",
  "transcribe-cpp",
  "transcribe-rs",
+ "uuid",
  "vad-rs",
  "whatlang",
  "windows 0.61.3",
