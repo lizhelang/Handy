@@ -1,0 +1,785 @@
+{
+  "schema_version": 1,
+  "plan_id": "P20260930-191324",
+  "cases": [
+    {
+      "id": "G0.source",
+      "gate": "G0",
+      "stage": "pre-public",
+      "evidence_levels": ["source"],
+      "description": "固定干净提交、所有组件和资源来源一致",
+      "required": true,
+      "metrics": {
+        "dirty_files": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "unknown_components": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G1.rust",
+      "gate": "G1",
+      "stage": "pre-public",
+      "evidence_levels": ["integration"],
+      "description": "Rust Core/Runtime/CAPI/Settings 完整契约回归",
+      "required": true,
+      "metrics": {
+        "failed_assertions": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "skipped_required": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G1.swift",
+      "gate": "G1",
+      "stage": "pre-public",
+      "evidence_levels": ["integration"],
+      "description": "Swift 状态机、权限与恢复自检",
+      "required": true,
+      "metrics": {
+        "failed_assertions": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "skipped_required": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G1.ipc",
+      "gate": "G1",
+      "stage": "pre-public",
+      "evidence_levels": ["integration"],
+      "description": "真实 IPC N/N-1、未知字段、有界连接及错误合同",
+      "required": true,
+      "metrics": {
+        "failed_assertions": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "skipped_required": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G1.review",
+      "gate": "G1",
+      "stage": "pre-public",
+      "evidence_levels": ["independent_review"],
+      "description": "输出、数据、身份与权限改动独立审查",
+      "required": true,
+      "metrics": {
+        "unresolved_blockers": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G2.migration",
+      "gate": "G2",
+      "stage": "pre-public",
+      "evidence_levels": ["integration"],
+      "description": "混合源迁移、重复导入及每个事务边界恢复",
+      "required": true,
+      "metrics": {
+        "records": {
+          "min": 50000,
+          "type": "integer"
+        },
+        "migration_repeats": {
+          "min": 3,
+          "type": "integer"
+        },
+        "lost_records": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "duplicate_contributions": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "uncovered_crash_boundaries": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G2.privacy-attachments",
+      "gate": "G2",
+      "stage": "pre-public",
+      "evidence_levels": ["integration"],
+      "description": "删除/遗忘不复活；受管附件可达性、外部文件保护及清理恢复",
+      "required": true,
+      "metrics": {
+        "resurrected_records": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "missing_referenced_assets": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "external_files_deleted": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "pending_operations": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G3.output",
+      "gate": "G3",
+      "stage": "pre-public",
+      "evidence_levels": ["integration"],
+      "description": "重复、丢回执、重连、焦点变化及组合冲突",
+      "required": true,
+      "metrics": {
+        "rounds": {
+          "min": 100,
+          "type": "integer"
+        },
+        "wrong_target": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "duplicate_auto_insert": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "unknown_auto_replay": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "lost_results": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G4.textedit",
+      "gate": "G4",
+      "stage": "pre-public",
+      "evidence_levels": ["physical_input"],
+      "description": "真实应用键入、麦克风语音、召回、同 App 换框与焦点变化",
+      "required": true,
+      "metrics": {
+        "typing_rounds": {
+          "min": 20,
+          "type": "integer"
+        },
+        "microphone_rounds": {
+          "min": 20,
+          "type": "integer"
+        },
+        "recall_rounds": {
+          "min": 20,
+          "type": "integer"
+        },
+        "focus_changes": {
+          "min": 10,
+          "type": "integer"
+        },
+        "wrong_target": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "duplicate_auto_insert": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "dropped_consumed_keys": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G4.browser",
+      "gate": "G4",
+      "stage": "pre-public",
+      "evidence_levels": ["physical_input"],
+      "description": "真实应用键入、麦克风语音、召回、同 App 换框与焦点变化",
+      "required": true,
+      "metrics": {
+        "typing_rounds": {
+          "min": 20,
+          "type": "integer"
+        },
+        "microphone_rounds": {
+          "min": 20,
+          "type": "integer"
+        },
+        "recall_rounds": {
+          "min": 20,
+          "type": "integer"
+        },
+        "focus_changes": {
+          "min": 10,
+          "type": "integer"
+        },
+        "wrong_target": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "duplicate_auto_insert": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "dropped_consumed_keys": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G4.electron",
+      "gate": "G4",
+      "stage": "pre-public",
+      "evidence_levels": ["physical_input"],
+      "description": "真实应用键入、麦克风语音、召回、同 App 换框与焦点变化",
+      "required": true,
+      "metrics": {
+        "typing_rounds": {
+          "min": 20,
+          "type": "integer"
+        },
+        "microphone_rounds": {
+          "min": 20,
+          "type": "integer"
+        },
+        "recall_rounds": {
+          "min": 20,
+          "type": "integer"
+        },
+        "focus_changes": {
+          "min": 10,
+          "type": "integer"
+        },
+        "wrong_target": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "duplicate_auto_insert": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "dropped_consumed_keys": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G5.rime",
+      "gate": "G5",
+      "stage": "pre-public",
+      "evidence_levels": ["integration"],
+      "description": "真实 Rime 代表语料，拼写/纠错/双拼/专名/中英，训练评估分离",
+      "required": true,
+      "metrics": {
+        "fixed_case_regressions": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "training_evaluation_overlap": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "representative_groups": {
+          "min": 5,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G5.new-interactions",
+      "gate": "G5",
+      "stage": "pre-public",
+      "evidence_levels": ["physical_input"],
+      "description": "新增召回快打、分段学习、语境拒绝和稳定选位",
+      "required": true,
+      "metrics": {
+        "dropped_consumed_keys": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "reordered_commits": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "wrong_candidates": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G6.asr",
+      "gate": "G6",
+      "stage": "pre-public",
+      "evidence_levels": ["integration"],
+      "description": "许可语料同模型同参数对照，术语与普通组分开",
+      "required": true,
+      "metrics": {
+        "term_clips": {
+          "min": 60,
+          "type": "integer"
+        },
+        "ordinary_clips": {
+          "min": 40,
+          "type": "integer"
+        },
+        "ordinary_error_delta_pp": {
+          "max": 1,
+          "min": -100,
+          "type": "number"
+        },
+        "unspoken_insertions": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "term_recall_delta_pp": {
+          "min": 1e-6,
+          "type": "number"
+        },
+        "unlicensed_clips": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G7.keys",
+      "gate": "G7",
+      "stage": "pre-public",
+      "evidence_levels": ["native_api", "physical_input"],
+      "description": "分路径热身与冷/热键事件时延、争用、取消和超时",
+      "required": true,
+      "metrics": {
+        "key_events": {
+          "min": 10000,
+          "type": "integer"
+        },
+        "ordinary_added_p95_ms": {
+          "max": 5,
+          "min": 0,
+          "type": "number"
+        },
+        "ordinary_added_p99_ms": {
+          "max": 15,
+          "min": 0,
+          "type": "number"
+        },
+        "recall_p95_ms": {
+          "max": 100,
+          "min": 0,
+          "type": "number"
+        },
+        "recall_p99_ms": {
+          "max": 200,
+          "min": 0,
+          "type": "number"
+        },
+        "dropped_consumed_keys": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G7.history",
+      "gate": "G7",
+      "stage": "pre-public",
+      "evidence_levels": ["integration"],
+      "description": "大词库与历史查询、面板和投影分路径指标",
+      "required": true,
+      "metrics": {
+        "history_records": {
+          "min": 50000,
+          "type": "integer"
+        },
+        "queries": {
+          "min": 200,
+          "type": "integer"
+        },
+        "events": {
+          "min": 500,
+          "type": "integer"
+        },
+        "search_p95_ms": {
+          "max": 100,
+          "min": 0,
+          "type": "number"
+        },
+        "panel_hot_p95_ms": {
+          "max": 200,
+          "min": 0,
+          "type": "number"
+        },
+        "projection_p95_ms": {
+          "max": 1000,
+          "min": 0,
+          "type": "number"
+        }
+      }
+    },
+    {
+      "id": "G7.idle",
+      "gate": "G7",
+      "stage": "pre-public",
+      "evidence_levels": ["native_api"],
+      "description": "与已接受基线比较固定机器无交互 CPU/内存窗口",
+      "required": true,
+      "metrics": {
+        "duration_seconds": {
+          "min": 600,
+          "type": "number"
+        },
+        "unexplained_regressions": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G7.soak",
+      "gate": "G7",
+      "stage": "pre-public",
+      "evidence_levels": ["physical_input"],
+      "description": "日用/待机/恢复，睡眠、Spaces、权限撤销及退出再开",
+      "required": true,
+      "metrics": {
+        "duration_hours": {
+          "min": 8,
+          "type": "number"
+        },
+        "unresolved_blockers": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G8.minimum-os",
+      "gate": "G8",
+      "stage": "pre-public",
+      "evidence_levels": ["clean_machine"],
+      "description": "无开发工具的 Apple Silicon 干净用户环境；隔离属性、离线新装、模型失败、卸载保留数据",
+      "required": true,
+      "metrics": {
+        "developer_tool_dependencies": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "quarantined_download": {
+          "min": 1,
+          "type": "integer"
+        },
+        "offline_payload_install": {
+          "min": 1,
+          "type": "integer"
+        },
+        "permission_guidance_checked": {
+          "min": 1,
+          "type": "integer"
+        },
+        "uninstall_preserved_data": {
+          "min": 1,
+          "type": "integer"
+        },
+        "model_failure_recovered": {
+          "min": 1,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G8.current-os",
+      "gate": "G8",
+      "stage": "pre-public",
+      "evidence_levels": ["clean_machine"],
+      "description": "无开发工具的 Apple Silicon 干净用户环境；隔离属性、离线新装、模型失败、卸载保留数据",
+      "required": true,
+      "metrics": {
+        "developer_tool_dependencies": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "quarantined_download": {
+          "min": 1,
+          "type": "integer"
+        },
+        "offline_payload_install": {
+          "min": 1,
+          "type": "integer"
+        },
+        "permission_guidance_checked": {
+          "min": 1,
+          "type": "integer"
+        },
+        "uninstall_preserved_data": {
+          "min": 1,
+          "type": "integer"
+        },
+        "model_failure_recovered": {
+          "min": 1,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G9.transactions",
+      "gate": "G9",
+      "stage": "pre-public",
+      "evidence_levels": ["integration"],
+      "description": "每个替换点 kill、磁盘满、拒权、半包/坏清单/重启恢复",
+      "required": true,
+      "metrics": {
+        "uncovered_crash_boundaries": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "lost_new_records": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "mixed_pair_started": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "weakened_signature_checks": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G9.identity",
+      "gate": "G9",
+      "stage": "pre-public",
+      "evidence_levels": ["clean_machine"],
+      "description": "本机旧身份到真实 Developer ID 一次性桥接、profile隔离和按需授权",
+      "required": true,
+      "metrics": {
+        "wrong_profile_accepted": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "unauthorized_identity_accepted": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "tcc_database_edits": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "migration_rounds": {
+          "min": 1,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G9.rollback",
+      "gate": "G9",
+      "stage": "pre-public",
+      "evidence_levels": ["clean_machine"],
+      "description": "已签兼容程序回滚：新增/修改/删除/遗忘后继续读写和重启",
+      "required": true,
+      "metrics": {
+        "lost_new_records": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "resurrected_records": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "continued_writes": {
+          "min": 1,
+          "type": "integer"
+        },
+        "verified_signed_rollback_targets": {
+          "min": 1,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G10a.artifacts",
+      "gate": "G10a",
+      "stage": "pre-public",
+      "evidence_levels": ["artifact"],
+      "description": "最终包签名公证与受控下载、feed验签、菜单/安装器/README一致",
+      "required": true,
+      "metrics": {
+        "signature_failures": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "notarization_failures": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "digest_mismatches": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "version_mismatches": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "upstream_update_endpoints": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G10b.candidate-download",
+      "gate": "G10b",
+      "stage": "candidate",
+      "evidence_levels": ["distribution"],
+      "description": "授权候选上传后的真实下载、隔离属性、不可变摘要及渠道指针",
+      "required": true,
+      "metrics": {
+        "quarantined_download": {
+          "min": 1,
+          "type": "integer"
+        },
+        "digest_mismatches": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "channel_pointer_mismatches": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G10b.observation",
+      "gate": "G10b",
+      "stage": "stable",
+      "evidence_levels": ["observation"],
+      "description": "公开候选至少七天观察，完整安装升级回滚演练",
+      "required": true,
+      "metrics": {
+        "duration_days": {
+          "min": 7,
+          "type": "number"
+        },
+        "unresolved_blockers": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "complete_recovery_drills": {
+          "min": 1,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "id": "G10b.stable-download",
+      "gate": "G10b",
+      "stage": "stable",
+      "evidence_levels": ["distribution"],
+      "description": "授权稳定晋级后验证指针与候选同制品",
+      "required": true,
+      "metrics": {
+        "digest_mismatches": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "rebuilt_artifacts": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        },
+        "channel_pointer_mismatches": {
+          "max": 0,
+          "min": 0,
+          "type": "integer"
+        }
+      }
+    }
+  ]
+}

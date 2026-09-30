@@ -22,6 +22,8 @@ TARGET_MODE_ID="${INPUTIA_TIS_MODE_ID:-com.inputia.inputmethod.Inputia.Hans}"
 LOCK_DIR="${INPUTIA_POST_INSTALL_LOCK_DIR:-/tmp/inputia-post-install-regression.lock}"
 LOCK_HELD=0
 POST_INSTALL_TIS_BLOCK_REASON=unknown
+UI_SMOKE_COMPLETED=0
+source "$ROOT_DIR/Tools/post-install-result.sh"
 
 section() {
   printf '\n== %s ==\n' "$1"
@@ -339,6 +341,7 @@ fi
 
 section "system verification"
 /bin/zsh "$ROOT_DIR/verify-system.sh" "$APP"
+echo "postInstallSystemVerificationPassed=true"
 
 if [[ "${INPUTIA_RUN_UI_SMOKE:-0}" == "1" ]]; then
   section "UI smoke preflight"
@@ -377,6 +380,7 @@ if [[ "${INPUTIA_RUN_UI_SMOKE:-0}" == "1" ]]; then
 
   section "Clipboard recall smoke"
   /bin/bash "$ROOT_DIR/smoke-clipboard-recall.sh" "$APP"
+  UI_SMOKE_COMPLETED=1
 else
   section "UI smoke"
   echo "uiSmokeSkipped=true reason=disabled"
@@ -384,4 +388,10 @@ else
 fi
 
 section "result"
-echo "postInstallRegressionPassed=true"
+UI_PREFLIGHT_BYPASSED=0
+if [[ "${INPUTIA_SKIP_GUI_SESSION_CHECK:-0}" == "1" ||
+  "${INPUTIA_UI_PROCESS_IGNORE_REAL_FOR_TEST:-0}" == "1" ||
+  -n "${INPUTIA_UI_PROCESS_RUNNING_FOR_TEST:-}" ]]; then
+  UI_PREFLIGHT_BYPASSED=1
+fi
+inputia_post_install_result "${INPUTIA_RUN_UI_SMOKE:-0}" "$UI_SMOKE_COMPLETED" "$UI_PREFLIGHT_BYPASSED"

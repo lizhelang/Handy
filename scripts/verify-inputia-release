@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+"""严格验收入口；不会安装、录音、操作用户数据或发布。"""
+import sys
+
+if sys.version_info < (3, 11):
+    sys.exit("Inputia 发布工具需要 Python 3.11+；最终安装器不依赖 Python。")
+
+from inputia_acceptance import main
+
+sys.exit(main())

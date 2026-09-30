@@ -5,15 +5,63 @@ on:
     branches: [main]
     paths:
       - "src-tauri/**"
+      - "crates/**"
+      - "macos/**"
+      - "native/**"
+      - "release/**"
+      - "scripts/**"
+      - ".github/workflows/test.yml"
   pull_request:
     paths:
       - "src-tauri/**"
+      - "crates/**"
+      - "macos/**"
+      - "native/**"
+      - "release/**"
+      - "scripts/**"
+      - ".github/workflows/test.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  release-contracts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: 发布元数据与验收失败语义
+        run: |
+          python3 scripts/inputia_release.py validate-product
+          python3 scripts/inputia_release.py check-config
+          python3 -m unittest discover -s scripts/tests -p 'test_inputia_*.py' -v
+          bash -n scripts/build-inputia-release.sh
+      - name: 保持原生证据边界
+        run: |
+          echo 'nativeAcceptance=BLOCKED reason=requires-macos-and-physical-input'
+          echo 'releaseAcceptancePassed=false reason=full-release-matrix-required'
+
+  core-contracts:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        crate: [inputia-core, inputia-handy-runtime, inputia-settings]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./crates/${{ matrix.crate }} -> target"
+      - name: 核心契约回归
+        run: |
+          if [ '${{ matrix.crate }}' = inputia-core ]; then
+            cargo test --locked --manifest-path crates/inputia-core/Cargo.toml --features sqlite-memory
+          else
+            cargo test --locked --manifest-path 'crates/${{ matrix.crate }}/Cargo.toml'
+          fi
+
   rust-tests:
     runs-on: ubuntu-24.04
     steps:
