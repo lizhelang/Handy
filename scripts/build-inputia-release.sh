@@ -110,7 +110,7 @@ IME_BUILD="$REPO_ROOT/macos/InputiaInputMethod/candidate-builds/$INPUTIA_PROFILE
 /usr/bin/ditto "$IME_BUILD/InputiaUnifiedCandidate.app" "$RELEASE_DIR/InputiaUnifiedCandidate.app"
 /usr/bin/ditto "$IME_BUILD/Inputia 候选设置.app" "$RELEASE_DIR/Inputia 设置.app"
 "$RELEASE_PYTHON" scripts/inputia_release.py verify-bundles \
-  --directory "$RELEASE_DIR" --context "$INPUTIA_RELEASE_CONTEXT"
+  --directory "$RELEASE_DIR" --context "$INPUTIA_RELEASE_CONTEXT" --scope local-legacy
 /usr/bin/swiftc -parse-as-library \
   native/unified-pair-auth/UnifiedPairAuth.swift \
   native/unified-pair-auth/PairAuthTool.swift \

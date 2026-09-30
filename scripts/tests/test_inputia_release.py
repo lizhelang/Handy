@@ -65,6 +65,25 @@ class ReleaseContractTests(unittest.TestCase):
                 with self.assertRaises(release.ReleaseError):
                     release.verify_executable(Path("fixture-binary"), self.product)
 
+    def test_local_bridge_scope_does_not_claim_complete_release_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            context = {"product_digest": hashlib.sha256(release.canonical_bytes(self.product)).hexdigest(), "release_id": "inputia-test-scope", "source_commit": "a" * 40}
+            context_path = root / "context.json"
+            context_path.write_text(json.dumps(context))
+            for component in self.product["components"]:
+                if component["role"] in ("updater", "bootstrap"):
+                    continue
+                path = root / component["app_name"] / "Contents/Info.plist"
+                path.parent.mkdir(parents=True)
+                path.write_bytes(plistlib.dumps({"CFBundleIdentifier": component["bundle_id"], "CFBundleShortVersionString": self.product["version"], "CFBundleVersion": str(self.product["build"]), "InputiaReleaseID": context["release_id"], "InputiaSourceCommit": context["source_commit"], "LSMinimumSystemVersion": self.product["target"]["min_os"], "CFBundleExecutable": "fixture"}))
+            with mock.patch.object(release, "verify_executable", return_value={}):
+                local = release.verify_bundles(root, context_path, self.product, "local-legacy")
+                self.assertEqual(len(local["components"]), 3)
+                self.assertFalse(local["public_release_eligible"])
+                with self.assertRaises(FileNotFoundError):
+                    release.verify_bundles(root, context_path, self.product)
+
     def test_rejects_unknown_identity_and_hash_cycle_fields(self):
         for key in ("channel", "profile_id", "installation_id", "attestation_digest", "manifest_digest"):
             with self.subTest(key=key):

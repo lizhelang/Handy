@@ -392,11 +392,14 @@ def verify_executable(path, product):
     return {"architectures": architectures, "minimum_system_versions": versions}
 
 
-def verify_bundles(directory, context_path, product):
+def verify_bundles(directory, context_path, product, scope="release"):
+    require(scope in ("release", "local-legacy"), "未知包检查范围")
     context = read_json(context_path)
     require(context.get("product_digest") == hashlib.sha256(canonical_bytes(product)).hexdigest(), "构建元数据不匹配")
     results = []
     for component in product["components"]:
+        if scope == "local-legacy" and component["role"] in ("updater", "bootstrap"):
+            continue
         path = Path(directory) / component["app_name"] / "Contents/Info.plist"
         with path.open("rb") as stream:
             info = plistlib.load(stream)
@@ -407,7 +410,7 @@ def verify_bundles(directory, context_path, product):
         require(executable and "/" not in executable and "\\" not in executable and executable not in (".", ".."), "组件缺少安全的可执行文件名")
         binary = verify_executable(path.parent / "MacOS" / executable, product)
         results.append({"role": component["role"], "metadata_matches": True, "main_executable": binary})
-    return {"components": results, "code_signature_verification": "NOT_RUN", "notarization": "NOT_RUN", "public_release_eligible": False}
+    return {"scope": scope, "components": results, "code_signature_verification": "NOT_RUN", "notarization": "NOT_RUN", "public_release_eligible": False}
 
 
 def main(argv=None):
@@ -429,11 +432,12 @@ def main(argv=None):
     val.add_argument("--artifact-dir", type=Path)
     apply = sub.add_parser("apply-plist")
     apply.add_argument("--plist", type=Path, required=True)
-    apply.add_argument("--role", choices=["control", "ime", "settings"], required=True)
+    apply.add_argument("--role", choices=["control", "ime", "settings", "updater", "bootstrap"], required=True)
     apply.add_argument("--context", type=Path, required=True)
     bundles = sub.add_parser("verify-bundles")
     bundles.add_argument("--directory", type=Path, required=True)
     bundles.add_argument("--context", type=Path, required=True)
+    bundles.add_argument("--scope", choices=["release", "local-legacy"], default="release")
     args = parser.parse_args(argv)
     try:
         product = load_product(args.product)
@@ -456,7 +460,7 @@ def main(argv=None):
             apply_plist(args.plist, args.role, args.context, product)
             result = {"metadata_applied": True, "role": args.role}
         elif args.command == "verify-bundles":
-            result = verify_bundles(args.directory, args.context, product)
+            result = verify_bundles(args.directory, args.context, product, args.scope)
         else:
             value = unwrap_document(read_json(args.document), args.kind, product)
             if args.artifact_dir:
