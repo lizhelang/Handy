@@ -121,10 +121,10 @@ impl std::error::Error for NativeQuiescenceError {}
 type Result<T> = std::result::Result<T, NativeQuiescenceError>;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Request {
+pub(crate) struct Request {
     schema_version: u32,
     action: String,
-    subject: Subject,
+    pub(crate) subject: Subject,
     epoch: String,
     old_release_id: String,
     roles: Vec<CodeExpectation>,
@@ -146,7 +146,7 @@ struct Reply {
     code: Option<String>,
     os_status: Option<i32>,
 }
-fn validate_request(
+pub(crate) fn validate_request(
     subject: &Subject,
     marker: &MaintenanceMarker,
     roles: &[CodeExpectation],
@@ -192,7 +192,7 @@ fn validate_request(
         roles: roles.to_vec(),
     })
 }
-fn actual_marker(subject: &Subject, marker: &MaintenanceMarker) -> Result<u32> {
+pub(crate) fn actual_marker(subject: &Subject, marker: &MaintenanceMarker) -> Result<u32> {
     let context = inputia_settings::maintenance::current_user_context()
         .map_err(NativeQuiescenceError::Maintenance)?;
     let observed = inputia_settings::maintenance::inspect(&context.home, context.uid)
@@ -207,7 +207,7 @@ fn actual_marker(subject: &Subject, marker: &MaintenanceMarker) -> Result<u32> {
     }
     Ok(context.uid)
 }
-fn canonical(v: &impl Serialize) -> Result<Vec<u8>> {
+pub(crate) fn canonical(v: &impl Serialize) -> Result<Vec<u8>> {
     fn sorted(v: serde_json::Value) -> serde_json::Value {
         match v {
             serde_json::Value::Object(v) => serde_json::Value::Object(

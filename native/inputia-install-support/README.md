@@ -65,7 +65,7 @@ Control、IME、Settings 三角色齐全且绑定同一 `Subject` 与维护 epoc
 正常结束必须调用 `resume(&mut self) -> Result<()>`，它幂等、失败保留 handle 可重试，
 不因维护标记撤销而拒绝恢复。原生检查 CONT 后实例已恢复或结束。Drop / deinit 仅尽力兜底；
 若恢复仍失败，记录错误并拒绝本进程后续新租约。**crash / abort / SIGKILL 不执行 Drop。**
-因此独立 guardian / 耐久恢复仍是生产接线前置门禁；当前没有生产调用，不提供崩溃安全恢复承诺。
+因此此旧接口不能用于崩溃恢复；下节 guardian 库提供单边恢复，但正式发布入口仍未接线，不能解除生产门禁。
 
 另须完成 TIS 切离、旧路径永久隔离与服务独占 FD。被暂停写者仍可能持有旧 SQLite FD，任意其他
 同 UID 程序仍可能打开数据；暂停证据本身不能授权服务接管。后续快照、fence 与交接检查必须在
@@ -86,3 +86,24 @@ marker 在验证后撤销、Drop / 显式恢复、原已停状态保留、未知
 - Apple [TN3127](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements) 说明 Developer ID CA/Application 证书标记与 Team OU；这里不接受兼容表达式里的 Mac App Store 分支。
 - Apple [requirement 解释器](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_codesigning/lib/reqinterp.cpp#L202) 与 [公证实现](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_codesigning/lib/notarization.cpp#L80) 表明 `notarized` 经代码摘要查询票据。因此 Developer ID 链和 Team 必须另行显式约束。
 - macOS SDK `SecStaticCode.h` 的公开合同说明全架构、嵌套和 strict flag，以及并发修改会使验证结果无效；`SecCode.h` 说明每 slice 的 `Unique`、同 slice 的多摘要算法列表和 entitlement 字典缺失的歧义。
+
+## Guardian 原生计划与双边恢复
+
+`InputiaWriterGuardian.swift` 向 updater 的私有 guardian 库提供 opaque plan 与只读 peer 句柄。
+生产 `prepare` 首先占用与旧暂停租约共用的 `WriterSuspensionSlot`，验证当前固定 Updater 代码，
+再独立扫描三角色；同进程两个 authority 无法重叠暂停。plan 保存真实 audit 实例与原停止状态，
+协议只能传 index，不能传任意 PID 取得效应能力。STOP 前同步核真实维护授权；关闭 STOP 后
+永不可重新开启。原本停止实例不允许恢复，已恢复 / 退出可幂等查询。
+
+plan 的 `free` **只释放元数据，不发 CONT**：父的备份 plan 可能从未拥有 STOP 权。
+恢复必须经过 Rust 双边 ARM 账本与准确 peer EXIT / EXEC 判断，不能将原生 action ABI 单独
+当作公开进程控制功能。Rust 持有 plan 到真实恢复终态，失败继续保留清单、槽与共享事务锁。
+父子 reexec / flock / 协议状态见 [`inputia-updater` 文档](../../crates/inputia-updater/README.md#单边崩溃恢复-guardian库与临时夹具)。
+
+```sh
+bash native/inputia-install-support/guardian-self-check.sh
+```
+
+自检在自建 sleep 进程上执行 24 个断言，不扫描日用程序。Rust 另在自建进程中执行 14 个单边
+crash / abort 窗口。真实 Developer ID 三角色、正式 Updater 同发布入口与完整生产交接仍
+**NOT_RUN**；双边同时死亡、外部第三方另发 STOP、TIS / fence / 独占 FD 不由本 primitive 证明。

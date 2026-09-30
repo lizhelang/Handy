@@ -47,7 +47,7 @@ struct KernelWriterIdentity {
   let path: String
   var pidVersion: UInt32 { withUnsafeBytes(of: token) { $0.bindMemory(to: UInt32.self)[7] } }
 }
-private func bsdInfo(_ pid: Int32) throws -> proc_bsdinfo {
+func bsdInfo(_ pid: Int32) throws -> proc_bsdinfo {
   var info = proc_bsdinfo()
   let count = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size))
   guard count == MemoryLayout<proc_bsdinfo>.size else {
@@ -264,7 +264,7 @@ func waitStopped(_ identity: KernelWriterIdentity) throws {
   }
   throw InstallCodeError.rejected("writer_suspend_timeout")
 }
-private func scanWriters(_ request: WriterQuiescenceRequest) throws -> [VerifiedRunningWriter] {
+func scanWriters(_ request: WriterQuiescenceRequest) throws -> [VerifiedRunningWriter] {
   let capacity = proc_listallpids(nil, 0)
   guard capacity > 0, capacity < 100_000 else {
     throw InstallCodeError.rejected("process_inventory_unavailable")

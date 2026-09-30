@@ -513,6 +513,16 @@ impl Updater {
 }
 
 impl Transaction {
+    /// 为guardian复制本事务同一flock描述符；仅close释放引用，禁止任何侧LOCK_UN。
+    /// 这不是完整停写回执，也不授权跳过真实marker、TIS或数据域交接门禁。
+    pub fn guardian_authority(&self) -> Result<crate::guardian::GuardianTransactionAuthority> {
+        self.ensure_marker()?;
+        Ok(crate::guardian::GuardianTransactionAuthority {
+            lock: self._lock.try_clone()?,
+            subject: self.journal.subject.clone(),
+            marker: self.marker(),
+        })
+    }
     /// 当前事务只读状态；成功状态不代替真实设备或业务验收。
     pub fn journal(&self) -> &Journal {
         &self.journal

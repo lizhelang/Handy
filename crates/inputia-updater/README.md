@@ -164,7 +164,7 @@ Control、IME、Settings 完整角色集与实际维护标记匹配。内核 UID
 
 该租约不能转为完整 `QuiescenceReceipt`。它只证明存活期间已核实例暂停，不证明退出、未来不会
 启动新实例或 SQLite FD 已释放。TIS 切离、旧路径永久隔离、服务独占 FD 仍是独立门禁。
-**crash / abort / SIGKILL 不触发 Drop，独立 guardian / 耐久恢复尚未接入。当前禁止生产安装接线。**
+**此旧接口的 crash / abort / SIGKILL 不触发 Drop，不能直接用于生产交接。下节 guardian 是独立库入口，正式 Updater 接线尚未验收。**
 没有生产 `NativeAdapter` 调用，也未搬移用户库；后续快照和交接必须持有并重验活租约。
 
 ```sh
@@ -175,3 +175,47 @@ bash native/inputia-install-support/quiescence-self-check.sh
 测试只对自建临时子进程检查内核暂停 / 恢复、原已停、维护撤销、未知子进程和失败回滚；Rust 合成
 元数据测试拒绝缺角色、异 subject / epoch、路径、PID version、签名摘要和伪暂停证据。
 真实 Developer ID 三角色的生产暂停成功路径 **NOT_RUN**，不把 RAII 当作崩溃恢复证明。
+
+## 单边崩溃恢复 guardian（库与临时夹具）
+
+`Transaction::guardian_authority()` 只复制已持有的 `Updater/update.lock` 文件描述符，
+`guardian::begin_guarded_suspension(authority, updater, roles)` 还要求当前 Updater 与旧
+Control / IME / Settings 的真实代码证据及同一维护 epoch。调用者不能用 JSON PID、路径、
+`verified: true` 或空角色集合制造授权。新旧原生暂停入口共用进程槽；同一事务复制多个 authority
+也不能建立重叠暂停。`GuardedWriterLease` 返回后处于 `Starting`，只有 `Holding` 且
+`assert_suspended()` 成功才是当前暂停证据；它不能转换为完整 `QuiescenceReceipt`。
+
+双边分别扫描验证目标，交换的只是准确实例、原始停止状态、index 与绑定摘要。每个原运行实例
+先由父保存 ARM 未知效应清单并 ACK，guardian 才能发 audit-token STOP；STOP 回执丢失仍按
+ARM 恢复。原本 SSTOP 的实例只观察、永不 CONT。guardian 的唯一串行执行器在恢复开始后
+不可逆关闭 STOP，避免先恢复后落入排队的暂停。耗时核验后，双端再次核维护标记、对端身份、
+取消与单调期限；过期结果不能返回暂停成功。
+
+父退出、exec 或通道失效时，guardian 封闭 STOP 并恢复全部已 ACK 的 ARM。guardian 退出或
+exec 时，父只有在内核确认原执行实例结束后才接管；EOF、超时或活着但无响应均不足以授权
+父发 CONT。正常结束为 `Release → Recovering → Resolved → Resumed → DisarmAck`，
+并逐条读回真实 running / 原实例已退出；phase 字段不能单独证明恢复。`resume()` 超时返回
+`RecoveryPending`，恢复线程保留清单与锁，UI 丢弃句柄也不丢恢复责任。
+
+私有 `socketpair` 只通过固定已验 Updater 的 reexec 入口传递，`posix_spawn` 默认关闭其它 FD，
+接收后立即设置 CLOEXEC；没有 PATH helper。父子持有同一 flock open-file-description，
+只 close、不显式 `LOCK_UN`，直到恢复真终态。最多 64 个实例、128 KiB 单帧、每方向
+512 条消息 / 2 MiB，默认暂停上限 30 秒，不无限续租。消息 budget 耗尽不解除恢复责任。
+
+```sh
+cargo test --locked --manifest-path crates/inputia-updater/Cargo.toml --features native-code-verification guardian:: -- --test-threads=1
+cargo clippy --locked --manifest-path crates/inputia-updater/Cargo.toml --features native-code-verification --all-targets -- -D warnings
+bash native/inputia-install-support/guardian-self-check.sh
+```
+
+验证分层：Rust 使用真实自建 sleep / 测试进程的 audit token，执行 14 个 ARM / STOP / CONT /
+终态单方 SIGKILL 或 abort 窗口；测试原 SSTOP、PID version 不匹配、取消交错、存活对端不抢权、
+Updater 死后 guardian 仍保持原事务锁，以及阻塞核验期间过期 / 撤权。Swift 自检覆盖 24 个
+原生 plan 断言，包含双边独立计划、幂等恢复、不可逆关闭、新旧暂停互斥。角色签名在这些正向
+夹具中是合成数据，不替代真实 Developer ID 三角色验证。
+
+**正式 Updater main 尚未调用 `guardian_entry()`；固定发布入口、Developer ID 同入口 reexec
+与完整 NativeAdapter 生产路径均为 NOT_RUN，当前禁止生产交接接线。** 双进程同时死亡、OS
+失效没有在线自动恢复保证；外部第三方在登记后另发 STOP 没有可区分的内核所有者计数。
+意外 fork 的对端使所有权不确定，进入恢复待处理而不猜测。TIS 切离、旧数据库路径 fence、
+快照和服务独占 FD 是后续独立门禁；未操作用户真实数据库或日用进程。

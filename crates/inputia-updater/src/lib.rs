@@ -4,6 +4,7 @@
 pub mod archive;
 mod engine;
 mod filesystem;
+pub mod guardian;
 mod model;
 pub mod native_code;
 pub mod native_quiescence;
