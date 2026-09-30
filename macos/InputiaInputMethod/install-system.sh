@@ -349,18 +349,20 @@ run_best_effort 8 lsregister-unregister-build-inputia "$LSREGISTER" -u "$SOURCE_
 run_best_effort 8 lsregister-unregister-build-settings "$LSREGISTER" -u "$SOURCE_SETTINGS_APP"
 run_best_effort 8 lsregister-register-inputia "$LSREGISTER" -f "$DEST_APP"
 run_best_effort 8 lsregister-register-settings "$LSREGISTER" -f "$DEST_SETTINGS_APP"
-run_best_effort 12 inputia-register "$DEST_APP/Contents/MacOS/InputiaInputMethod" --register-input-source
-run_best_effort 12 inputia-dump-installed "$DEST_APP/Contents/MacOS/InputiaInputMethod" --dump-input-source
-run_best_effort 12 inputia-dump-installed "$DEST_APP/Contents/MacOS/InputiaInputMethod" --dump-input-source
 
-run_best_effort 12 inputia-register-before-refresh "$DEST_APP/Contents/MacOS/InputiaInputMethod" --register-input-source
+# TISRegisterInputSource 在现代 macOS 上只影响当前登录会话的 TIS 缓存，
+# 反复调用会累积重复的 Hans 条目；这里只在刷新输入法服务后注册一次。
+# 正式生效依赖 imklaunchagent 登录扫描（注销重登录）。
 /usr/bin/killall TextInputMenuAgent >/dev/null 2>&1 || true
 /usr/bin/killall SystemUIServer >/dev/null 2>&1 || true
 /bin/sleep 2
 run_best_effort 12 inputia-register-after-refresh "$DEST_APP/Contents/MacOS/InputiaInputMethod" --register-input-source
+run_best_effort 12 inputia-dump-installed "$DEST_APP/Contents/MacOS/InputiaInputMethod" --dump-input-source
 echo "systemInstallRegistered=true"
 echo "systemInstallPath=$DEST_APP"
 echo "systemInstallTISReady=false reason=manual-add-required"
 echo "systemInstallRequiredAction=add-input-source-in-system-settings"
 echo "systemInstallNextStep=System Settings > Keyboard > Text Input > Edit > Add Inputia"
 echo "systemInstallOpenSettingsCommand=open 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension'"
+echo "systemInstallLogoutRequired=first-install-or-input-mode-change"
+echo "systemInstallHotSwapHint=code-only-updates-take-effect-after-killall-and-reselect"

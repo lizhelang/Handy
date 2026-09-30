@@ -10,11 +10,19 @@ struct InputiaShortcutOption {
   let value: String
 }
 
+private struct InputiaMenuIconOption {
+  let title: String
+  let variant: String
+}
+
 let inputiaSettingsProductTitle = "Inputia"
 let inputiaSettingsWindowTitle = "Inputia 设置"
 let inputiaSettingsDefaultCandidatePageSize = 7
 let inputiaSettingsMinCandidatePageSize = 1
 let inputiaSettingsMaxCandidatePageSize = 9
+let inputiaSettingsDefaultCandidateFontSize = 14
+let inputiaSettingsMinCandidateFontSize = 12
+let inputiaSettingsMaxCandidateFontSize = 22
 
 let inputiaSchemaOptions = [
   InputiaSchemaOption(title: "中文全拼", schemaId: "luna_pinyin_simp"),
@@ -49,6 +57,20 @@ let inputiaDefaultSensitiveBundleIds = [
   "com.protonmail.protonmail",
 ]
 
+private let inputiaMenuIconOptions = [
+  InputiaMenuIconOption(title: "连珠 16 颗", variant: "pearl_16"),
+  InputiaMenuIconOption(title: "连珠 14 颗", variant: "pearl_14"),
+  InputiaMenuIconOption(title: "连珠 12 颗", variant: "pearl_12"),
+  InputiaMenuIconOption(title: "连珠 18 颗", variant: "pearl_18"),
+]
+
+private func inputiaIsKnownMenuIconVariant(_ variant: String?) -> Bool {
+  guard let variant else {
+    return false
+  }
+  return inputiaMenuIconOptions.contains { $0.variant == variant }
+}
+
 func inputiaSchemaSupportsSpellingCorrection(_ schemaId: String) -> Bool {
   [
     "luna_pinyin",
@@ -62,6 +84,8 @@ func inputiaSchemaSupportsSpellingCorrection(_ schemaId: String) -> Bool {
 struct InputiaSettingsDocument: Codable {
   var schemaId: String
   var candidatePageSize: Int
+  var candidateFontSize: Int?
+  var menuIconVariant: String?
   var shiftToggleEnabled: Bool
   var inputModeToggleShortcut: String?
   var chineseScript: String?
@@ -80,6 +104,8 @@ struct InputiaSettingsDocument: Codable {
   enum CodingKeys: String, CodingKey {
     case schemaId = "schema_id"
     case candidatePageSize = "candidate_page_size"
+    case candidateFontSize = "candidate_font_size"
+    case menuIconVariant = "menu_icon_variant"
     case shiftToggleEnabled = "shift_toggle_enabled"
     case inputModeToggleShortcut = "input_mode_toggle_shortcut"
     case chineseScript = "chinese_script"
@@ -101,6 +127,8 @@ struct InputiaSettingsDocument: Codable {
     return InputiaSettingsDocument(
       schemaId: "luna_pinyin_simp",
       candidatePageSize: inputiaSettingsDefaultCandidatePageSize,
+      candidateFontSize: inputiaSettingsDefaultCandidateFontSize,
+      menuIconVariant: "pearl_16",
       shiftToggleEnabled: true,
       inputModeToggleShortcut: "shift",
       chineseScript: "simplified",
@@ -126,6 +154,13 @@ struct InputiaSettingsDocument: Codable {
       inputiaSettingsMinCandidatePageSize,
       min(candidatePageSize, inputiaSettingsMaxCandidatePageSize)
     )
+    candidateFontSize = max(
+      inputiaSettingsMinCandidateFontSize,
+      min(candidateFontSize ?? inputiaSettingsDefaultCandidateFontSize, inputiaSettingsMaxCandidateFontSize)
+    )
+    if !inputiaIsKnownMenuIconVariant(menuIconVariant) {
+      menuIconVariant = "pearl_16"
+    }
     if inputModeToggleShortcut == nil {
       inputModeToggleShortcut = shiftToggleEnabled ? "shift" : "none"
     }
@@ -186,6 +221,9 @@ final class InputiaSettingsWindowController: NSWindowController {
   private let scriptShortcutPopup = NSPopUpButton(frame: .zero, pullsDown: false)
   private let candidateStepper = NSStepper()
   private let candidateCountField = NSTextField(labelWithString: "")
+  private let candidateFontStepper = NSStepper()
+  private let candidateFontSizeField = NSTextField(labelWithString: "")
+  private let menuIconPopup = NSPopUpButton(frame: .zero, pullsDown: false)
   private let englishPunctuationCheckbox = NSButton(checkboxWithTitle: "中文模式始终使用英文标点", target: nil, action: nil)
   private let fullWidthCheckbox = NSButton(checkboxWithTitle: "使用全角输入", target: nil, action: nil)
   private let spellingCorrectionCheckbox = NSButton(checkboxWithTitle: "启用全拼纠错", target: nil, action: nil)
@@ -283,6 +321,8 @@ final class InputiaSettingsWindowController: NSWindowController {
     stack.addArrangedSubview(makeChineseScriptRow())
     stack.addArrangedSubview(makeScriptShortcutRow())
     stack.addArrangedSubview(makeCandidateRow())
+    stack.addArrangedSubview(makeCandidateFontRow())
+    stack.addArrangedSubview(makeMenuIconRow())
     stack.addArrangedSubview(englishPunctuationCheckbox)
     stack.addArrangedSubview(fullWidthCheckbox)
     stack.addArrangedSubview(spellingCorrectionCheckbox)
@@ -367,6 +407,32 @@ final class InputiaSettingsWindowController: NSWindowController {
     row.spacing = 8
     row.alignment = .centerY
     return labeledRow(title: "候选数量", control: row)
+  }
+
+  private func makeCandidateFontRow() -> NSView {
+    candidateFontStepper.minValue = Double(inputiaSettingsMinCandidateFontSize)
+    candidateFontStepper.maxValue = Double(inputiaSettingsMaxCandidateFontSize)
+    candidateFontStepper.increment = 1
+    candidateFontStepper.target = self
+    candidateFontStepper.action = #selector(candidateFontStepperChanged)
+    candidateFontSizeField.alignment = .right
+    candidateFontSizeField.widthAnchor.constraint(equalToConstant: 26).isActive = true
+
+    let row = NSStackView(views: [candidateFontSizeField, candidateFontStepper])
+    row.orientation = .horizontal
+    row.spacing = 8
+    row.alignment = .centerY
+    return labeledRow(title: "候选字号", control: row)
+  }
+
+  private func makeMenuIconRow() -> NSView {
+    for option in inputiaMenuIconOptions {
+      menuIconPopup.addItem(withTitle: option.title)
+      menuIconPopup.lastItem?.representedObject = option.variant
+    }
+    menuIconPopup.target = self
+    menuIconPopup.action = #selector(controlChanged)
+    return labeledRow(title: "菜单图标", control: menuIconPopup)
   }
 
   private func makeImportSection() -> NSView {
@@ -511,6 +577,18 @@ final class InputiaSettingsWindowController: NSWindowController {
     }
     candidateStepper.integerValue = settingsDocument.candidatePageSize
     candidateCountField.stringValue = "\(settingsDocument.candidatePageSize)"
+    let candidateFontSize = settingsDocument.candidateFontSize ?? inputiaSettingsDefaultCandidateFontSize
+    candidateFontStepper.integerValue = candidateFontSize
+    candidateFontSizeField.stringValue = "\(candidateFontSize)"
+    let iconVariant = settingsDocument.menuIconVariant ?? "pearl_16"
+    let iconIndex = menuIconPopup.itemArray.firstIndex {
+      ($0.representedObject as? String) == iconVariant
+    }
+    if let iconIndex {
+      menuIconPopup.selectItem(at: iconIndex)
+    } else {
+      menuIconPopup.selectItem(at: 0)
+    }
     let shortcut = settingsDocument.inputModeToggleShortcut ?? (settingsDocument.shiftToggleEnabled ? "shift" : "none")
     let shortcutIndex = inputModeShortcutPopup.itemArray.firstIndex {
       ($0.representedObject as? String) == shortcut
@@ -545,14 +623,22 @@ final class InputiaSettingsWindowController: NSWindowController {
     saveSettings()
   }
 
+  @objc private func candidateFontStepperChanged() {
+    candidateFontSizeField.stringValue = "\(candidateFontStepper.integerValue)"
+    saveSettings()
+  }
+
   @objc private func controlChanged() {
     saveSettings()
   }
 
   @objc private func saveSettings() {
     var next = settingsDocument
+    let previousIconVariant = settingsDocument.menuIconVariant ?? "pearl_16"
     next.schemaId = (schemaPopup.selectedItem?.representedObject as? String) ?? "luna_pinyin_simp"
     next.candidatePageSize = candidateStepper.integerValue
+    next.candidateFontSize = candidateFontStepper.integerValue
+    next.menuIconVariant = (menuIconPopup.selectedItem?.representedObject as? String) ?? "pearl_16"
     next.inputModeToggleShortcut = (inputModeShortcutPopup.selectedItem?.representedObject as? String) ?? "shift"
     next.shiftToggleEnabled = next.inputModeToggleShortcut == "shift"
     next.chineseScript = chineseScriptSegment.selectedSegment == 1 ? "traditional" : "simplified"
@@ -582,7 +668,11 @@ final class InputiaSettingsWindowController: NSWindowController {
       try data.write(to: settingsURL, options: Data.WritingOptions.atomic)
       settingsDocument = next
       updateSpellingCorrectionAvailability(for: next.schemaId)
-      statusLabel.stringValue = "已保存，输入法会自动热重载"
+      if (next.menuIconVariant ?? "pearl_16") != previousIconVariant {
+        statusLabel.stringValue = "已保存，菜单栏图标会在下次重装后生效"
+      } else {
+        statusLabel.stringValue = "已保存，输入法会自动热重载"
+      }
     } catch {
       statusLabel.stringValue = "保存失败"
       NSLog("Inputia failed to save settings: \(error)")

@@ -223,6 +223,112 @@ pub struct LearningOutcome {
     pub term: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RankerWeights {
+    pub rime_rank: f32,
+    pub typed: f32,
+    pub voice: f32,
+    pub clipboard: f32,
+    pub recency: f32,
+    pub app_context: f32,
+    pub selection_feedback: f32,
+}
+
+impl Default for RankerWeights {
+    fn default() -> Self {
+        Self {
+            rime_rank: 1.0,
+            typed: 60.0,
+            voice: 35.0,
+            clipboard: 20.0,
+            recency: 1.0,
+            app_context: 40.0,
+            selection_feedback: 80.0,
+        }
+    }
+}
+
+impl RankerWeights {
+    const RIME_RANK_BOUNDS: (f32, f32) = (0.0, 2.0);
+    const MEMORY_BOUNDS: (f32, f32) = (0.0, 200.0);
+
+    pub fn clamped(self) -> Self {
+        Self {
+            rime_rank: clamp_weight(self.rime_rank, Self::RIME_RANK_BOUNDS),
+            typed: clamp_weight(self.typed, Self::MEMORY_BOUNDS),
+            voice: clamp_weight(self.voice, Self::MEMORY_BOUNDS),
+            clipboard: clamp_weight(self.clipboard, Self::MEMORY_BOUNDS),
+            recency: clamp_weight(self.recency, Self::MEMORY_BOUNDS),
+            app_context: clamp_weight(self.app_context, Self::MEMORY_BOUNDS),
+            selection_feedback: clamp_weight(self.selection_feedback, Self::MEMORY_BOUNDS),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RankerFeatures {
+    pub rime_rank: f32,
+    pub typed: f32,
+    pub voice: f32,
+    pub clipboard: f32,
+    pub recency: f32,
+    pub app_context: f32,
+    pub selection_feedback: f32,
+}
+
+impl RankerFeatures {
+    pub fn score(&self, weights: &RankerWeights) -> f32 {
+        self.rime_rank * weights.rime_rank
+            + self.typed * weights.typed
+            + self.voice * weights.voice
+            + self.clipboard * weights.clipboard
+            + self.recency * weights.recency
+            + self.app_context * weights.app_context
+            + self.selection_feedback * weights.selection_feedback
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RankingFeedback {
+    pub composing: String,
+    pub selected_text: String,
+    pub displayed_candidates: Vec<String>,
+    pub selected_index: usize,
+}
+
+impl RankingFeedback {
+    pub fn new(
+        composing: impl Into<String>,
+        selected_text: impl Into<String>,
+        displayed_candidates: Vec<String>,
+        selected_index: usize,
+    ) -> Self {
+        Self {
+            composing: composing.into(),
+            selected_text: selected_text.into(),
+            displayed_candidates,
+            selected_index,
+        }
+    }
+
+    fn from_candidates(
+        composing: impl Into<String>,
+        displayed_candidates: &[Candidate],
+        selected_index: usize,
+    ) -> Option<Self> {
+        let selected = displayed_candidates.get(selected_index)?;
+        Some(Self::new(
+            composing,
+            selected.text.clone(),
+            displayed_candidates
+                .iter()
+                .map(|candidate| candidate.text.clone())
+                .collect(),
+            selected_index,
+        ))
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryTerm {
     pub text: String,
@@ -253,10 +359,26 @@ impl MemoryTerm {
     }
 
     fn score(&self) -> i32 {
-        (self.typed_count as i32 * 60)
-            + (self.voice_count as i32 * 35)
-            + (self.clipboard_count as i32 * 20)
-            + self.recency_score()
+        let features = self.ranker_features(0.0, 0.0, 0.0, self.last_used_tick);
+        features.score(&RankerWeights::default()).round() as i32
+    }
+
+    fn ranker_features(
+        &self,
+        rime_rank: f32,
+        selection_feedback: f32,
+        app_context: f32,
+        current_tick: u64,
+    ) -> RankerFeatures {
+        RankerFeatures {
+            rime_rank,
+            typed: self.typed_count as f32,
+            voice: self.voice_count as f32,
+            clipboard: self.clipboard_count as f32,
+            recency: recency_feature(self.last_used_tick, current_tick),
+            app_context,
+            selection_feedback,
+        }
     }
 
     fn source_count(&self, source: &MemorySource) -> u32 {
@@ -335,10 +457,14 @@ impl AppPolicy {
     }
 
     pub fn excludes(&self, context: &AppContext) -> bool {
+        let bundle_id = context.bundle_id.trim();
+        if bundle_id.is_empty() || bundle_id == "unknown" {
+            return true;
+        }
         if self
             .sensitive_bundle_ids
             .iter()
-            .any(|bundle_id| bundle_id == &context.bundle_id)
+            .any(|sensitive_bundle_id| sensitive_bundle_id == bundle_id)
         {
             return true;
         }
@@ -362,11 +488,41 @@ impl AppPolicy {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+fn default_ranking_context() -> AppContext {
+    AppContext::new("dev.inputia.ranker")
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct LocalMemory {
     policy: AppPolicy,
     tick: u64,
     terms: Vec<MemoryTerm>,
+    weights: RankerWeights,
+    preferences: Vec<RankerPreference>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct RankerPreference {
+    text: String,
+    app_bundle_id: String,
+    positive_count: f32,
+    negative_count: f32,
+    last_feedback_tick: u64,
+}
+
+impl RankerPreference {
+    fn score(&self, current_tick: u64) -> f32 {
+        let raw_score = self.positive_count - self.negative_count;
+        let age = current_tick.saturating_sub(self.last_feedback_tick) as f32;
+        let decay = 1.0 / (1.0 + age / 64.0);
+        (raw_score * decay).clamp(-4.0, 4.0)
+    }
+}
+
+impl Default for LocalMemory {
+    fn default() -> Self {
+        Self::new(AppPolicy::default())
+    }
 }
 
 impl LocalMemory {
@@ -375,6 +531,8 @@ impl LocalMemory {
             policy,
             tick: 0,
             terms: Vec::new(),
+            weights: RankerWeights::default(),
+            preferences: Vec::new(),
         }
     }
 
@@ -415,30 +573,89 @@ impl LocalMemory {
     }
 
     pub fn rank_candidates(&self, candidates: Vec<Candidate>) -> Vec<Candidate> {
+        self.rank_candidates_for_context(candidates, &default_ranking_context())
+    }
+
+    pub fn rank_candidates_for_context(
+        &self,
+        candidates: Vec<Candidate>,
+        context: &AppContext,
+    ) -> Vec<Candidate> {
+        if self.policy.excludes(context) {
+            return candidates;
+        }
+
         let leading_engine_len = candidates
             .first()
             .map(|candidate| candidate.text.chars().count())
             .unwrap_or(0);
+        let current_tick = self.current_tick();
+        let weights = self.weights.clamped();
         let mut ranked = candidates
             .into_iter()
             .enumerate()
             .map(|(original_index, mut candidate)| {
-                if let Some(term) = self.terms.iter().find(|term| term.text == candidate.text) {
-                    candidate.memory_score += term.score();
+                let rime_rank = candidate.base_score as f32;
+                let selection_feedback =
+                    self.selection_feedback_score(&candidate.text, current_tick);
+                let app_context = self.app_context_score(&candidate.text, context, current_tick);
+                let features = if let Some(term) =
+                    self.terms.iter().find(|term| term.text == candidate.text)
+                {
                     candidate.source = strongest_candidate_source(term);
-                }
-                let memory_score_for_ranking =
-                    memory_score_for_ranking(&candidate, leading_engine_len);
-                let ranking_score = candidate.base_score + memory_score_for_ranking;
-                (original_index, ranking_score, candidate)
+                    term.ranker_features(rime_rank, selection_feedback, app_context, current_tick)
+                } else {
+                    RankerFeatures {
+                        rime_rank,
+                        selection_feedback,
+                        app_context,
+                        ..RankerFeatures::default()
+                    }
+                };
+                let effective_score = features.score(&weights).round() as i32;
+                candidate.memory_score += effective_score - candidate.base_score;
+                let guarded_by_leading =
+                    candidate_is_guarded_by_leading_phrase(&candidate, leading_engine_len);
+                let ranking_score = candidate.final_score();
+                (original_index, guarded_by_leading, ranking_score, candidate)
             })
             .collect::<Vec<_>>();
 
-        ranked.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+        ranked.sort_by(|left, right| {
+            left.1
+                .cmp(&right.1)
+                .then_with(|| right.2.cmp(&left.2))
+                .then_with(|| left.0.cmp(&right.0))
+        });
         ranked
             .into_iter()
-            .map(|(_, _, candidate)| candidate)
+            .map(|(_, _, _, candidate)| candidate)
             .collect()
+    }
+
+    pub fn record_ranking_feedback(
+        &mut self,
+        feedback: RankingFeedback,
+        context: &AppContext,
+    ) -> PrivacyDecision {
+        if self.policy.excludes(context) {
+            return PrivacyDecision::Excluded;
+        }
+
+        if feedback.selected_text.trim().is_empty() {
+            return PrivacyDecision::Learn;
+        }
+
+        self.tick += 1;
+        let tick = self.tick;
+        self.bump_preference(&feedback.selected_text, &context.bundle_id, 1.0, 0.0, tick);
+        for candidate in feedback.displayed_candidates {
+            if candidate == feedback.selected_text || candidate.trim().is_empty() {
+                continue;
+            }
+            self.bump_preference(&candidate, &context.bundle_id, 0.0, 0.25, tick);
+        }
+        PrivacyDecision::Learn
     }
 
     pub fn completion_candidates(&self, prefix: &str, limit: usize) -> Vec<Candidate> {
@@ -543,15 +760,98 @@ impl LocalMemory {
             .map(|term| term.text)
             .collect()
     }
+
+    fn current_tick(&self) -> u64 {
+        self.tick
+            .max(
+                self.terms
+                    .iter()
+                    .map(|term| term.last_used_tick)
+                    .max()
+                    .unwrap_or(0),
+            )
+            .max(
+                self.preferences
+                    .iter()
+                    .map(|preference| preference.last_feedback_tick)
+                    .max()
+                    .unwrap_or(0),
+            )
+    }
+
+    fn selection_feedback_score(&self, text: &str, current_tick: u64) -> f32 {
+        self.preferences
+            .iter()
+            .filter(|preference| preference.text == text)
+            .map(|preference| preference.score(current_tick))
+            .sum::<f32>()
+            .clamp(-4.0, 4.0)
+    }
+
+    fn app_context_score(&self, text: &str, context: &AppContext, current_tick: u64) -> f32 {
+        self.preferences
+            .iter()
+            .filter(|preference| {
+                preference.text == text && preference.app_bundle_id == context.bundle_id
+            })
+            .map(|preference| preference.score(current_tick))
+            .sum::<f32>()
+            .clamp(-4.0, 4.0)
+    }
+
+    fn bump_preference(
+        &mut self,
+        text: &str,
+        app_bundle_id: &str,
+        positive_delta: f32,
+        negative_delta: f32,
+        tick: u64,
+    ) {
+        if let Some(preference) = self
+            .preferences
+            .iter_mut()
+            .find(|preference| preference.text == text && preference.app_bundle_id == app_bundle_id)
+        {
+            preference.positive_count =
+                (preference.positive_count + positive_delta).clamp(0.0, 64.0);
+            preference.negative_count =
+                (preference.negative_count + negative_delta).clamp(0.0, 64.0);
+            preference.last_feedback_tick = tick;
+            return;
+        }
+
+        self.preferences.push(RankerPreference {
+            text: text.to_string(),
+            app_bundle_id: app_bundle_id.to_string(),
+            positive_count: positive_delta,
+            negative_count: negative_delta,
+            last_feedback_tick: tick,
+        });
+    }
 }
 
-fn memory_score_for_ranking(candidate: &Candidate, leading_engine_len: usize) -> i32 {
+fn candidate_is_guarded_by_leading_phrase(
+    candidate: &Candidate,
+    leading_engine_len: usize,
+) -> bool {
     let candidate_len = candidate.text.chars().count();
-    if leading_engine_len > 1 && candidate_len < leading_engine_len {
-        0
+    leading_engine_len > 1 && candidate_len < leading_engine_len
+}
+
+fn clamp_weight(value: f32, bounds: (f32, f32)) -> f32 {
+    if value.is_finite() {
+        value.clamp(bounds.0, bounds.1)
     } else {
-        candidate.memory_score
+        bounds.0
     }
+}
+
+fn recency_feature(last_used_tick: u64, current_tick: u64) -> f32 {
+    if last_used_tick == 0 {
+        return 0.0;
+    }
+    let age = current_tick.saturating_sub(last_used_tick) as f32;
+    10.0 / (1.0 + age / 16.0)
 }
 
 #[cfg(feature = "sqlite-memory")]
@@ -697,12 +997,96 @@ impl SqliteMemory {
     }
 
     pub fn rank_candidates(&self, candidates: Vec<Candidate>) -> rusqlite::Result<Vec<Candidate>> {
+        self.rank_candidates_for_context(candidates, &default_ranking_context())
+    }
+
+    pub fn rank_candidates_for_context(
+        &self,
+        candidates: Vec<Candidate>,
+        context: &AppContext,
+    ) -> rusqlite::Result<Vec<Candidate>> {
         let memory = LocalMemory {
             policy: self.policy.clone(),
-            tick: 0,
+            tick: self.current_tick()? as u64,
             terms: self.load_terms()?,
+            weights: self.ranker_weights()?,
+            preferences: self.load_ranking_preferences()?,
         };
-        Ok(memory.rank_candidates(candidates))
+        Ok(memory.rank_candidates_for_context(candidates, context))
+    }
+
+    pub fn record_ranking_feedback(
+        &mut self,
+        feedback: RankingFeedback,
+        context: &AppContext,
+    ) -> rusqlite::Result<PrivacyDecision> {
+        if self.policy.excludes(context) {
+            return Ok(PrivacyDecision::Excluded);
+        }
+
+        let selected_text = normalize_term(feedback.selected_text);
+        if selected_text.is_empty() {
+            return Ok(PrivacyDecision::Learn);
+        }
+
+        let tick = self.next_tick()?;
+        self.bump_sqlite_preference(&selected_text, &context.bundle_id, 1.0, 0.0, tick)?;
+        for candidate in feedback.displayed_candidates {
+            let candidate = normalize_term(candidate);
+            if candidate.is_empty() || candidate == selected_text {
+                continue;
+            }
+            self.bump_sqlite_preference(&candidate, &context.bundle_id, 0.0, 0.25, tick)?;
+        }
+        Ok(PrivacyDecision::Learn)
+    }
+
+    pub fn ranker_weights(&self) -> rusqlite::Result<RankerWeights> {
+        let mut weights = RankerWeights::default();
+        let mut statement = self
+            .conn
+            .prepare("SELECT feature, weight FROM inputia_ranker_weights")?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)? as f32))
+        })?;
+        for row in rows {
+            let (feature, weight) = row?;
+            match feature.as_str() {
+                "rime_rank" => weights.rime_rank = weight,
+                "typed" => weights.typed = weight,
+                "voice" => weights.voice = weight,
+                "clipboard" => weights.clipboard = weight,
+                "recency" => weights.recency = weight,
+                "app_context" => weights.app_context = weight,
+                "selection_feedback" => weights.selection_feedback = weight,
+                _ => {}
+            }
+        }
+        Ok(weights.clamped())
+    }
+
+    pub fn save_ranker_weights(&self, weights: RankerWeights) -> rusqlite::Result<()> {
+        let weights = weights.clamped();
+        let tick = self.next_tick()?;
+        for (feature, weight) in ranker_weight_rows(weights) {
+            self.conn.execute(
+                "INSERT INTO inputia_ranker_weights (feature, weight, updated_tick)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(feature) DO UPDATE SET
+                    weight = excluded.weight,
+                    updated_tick = excluded.updated_tick",
+                rusqlite::params![feature, weight as f64, tick],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn ranking_feedback_count(&self) -> rusqlite::Result<usize> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM inputia_ranking_feedback", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map(|count| count as usize)
     }
 
     pub fn completion_candidates(
@@ -712,8 +1096,10 @@ impl SqliteMemory {
     ) -> rusqlite::Result<Vec<Candidate>> {
         let memory = LocalMemory {
             policy: self.policy.clone(),
-            tick: 0,
+            tick: self.current_tick()? as u64,
             terms: self.load_terms()?,
+            weights: self.ranker_weights()?,
+            preferences: self.load_ranking_preferences()?,
         };
         Ok(memory.completion_candidates(prefix, limit))
     }
@@ -725,8 +1111,10 @@ impl SqliteMemory {
     ) -> rusqlite::Result<Vec<Candidate>> {
         let memory = LocalMemory {
             policy: self.policy.clone(),
-            tick: 0,
+            tick: self.current_tick()? as u64,
             terms: self.load_terms()?,
+            weights: self.ranker_weights()?,
+            preferences: self.load_ranking_preferences()?,
         };
         Ok(memory.english_completion_candidates(prefix, limit))
     }
@@ -734,8 +1122,10 @@ impl SqliteMemory {
     pub fn clipboard_candidates(&self, limit: usize) -> rusqlite::Result<Vec<Candidate>> {
         let memory = LocalMemory {
             policy: self.policy.clone(),
-            tick: 0,
+            tick: self.current_tick()? as u64,
             terms: self.load_terms()?,
+            weights: self.ranker_weights()?,
+            preferences: self.load_ranking_preferences()?,
         };
         Ok(memory.clipboard_candidates(limit))
     }
@@ -743,8 +1133,10 @@ impl SqliteMemory {
     pub fn voice_hotwords(&self, limit: usize) -> rusqlite::Result<Vec<String>> {
         let memory = LocalMemory {
             policy: self.policy.clone(),
-            tick: 0,
+            tick: self.current_tick()? as u64,
             terms: self.load_terms()?,
+            weights: self.ranker_weights()?,
+            preferences: self.load_ranking_preferences()?,
         };
         Ok(memory.voice_hotwords(limit))
     }
@@ -789,16 +1181,87 @@ impl SqliteMemory {
             CREATE INDEX IF NOT EXISTS idx_inputia_events_source
                 ON inputia_events(source, created_tick);
             CREATE INDEX IF NOT EXISTS idx_inputia_terms_score
-                ON inputia_terms(last_used_tick DESC);",
-        )
+                ON inputia_terms(last_used_tick DESC);
+
+            CREATE TABLE IF NOT EXISTS inputia_ranker_weights (
+                feature TEXT PRIMARY KEY,
+                weight REAL NOT NULL,
+                updated_tick INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS inputia_ranking_feedback (
+                text TEXT NOT NULL,
+                app_bundle_id TEXT NOT NULL,
+                positive_count REAL NOT NULL DEFAULT 0,
+                negative_count REAL NOT NULL DEFAULT 0,
+                last_feedback_tick INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(text, app_bundle_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_inputia_ranking_feedback_text
+                ON inputia_ranking_feedback(text);
+            CREATE INDEX IF NOT EXISTS idx_inputia_ranking_feedback_app
+                ON inputia_ranking_feedback(app_bundle_id, last_feedback_tick DESC);",
+        )?;
+        self.ensure_default_ranker_weights()
     }
 
     fn next_tick(&self) -> rusqlite::Result<i64> {
+        Ok(self.current_tick()? + 1)
+    }
+
+    fn current_tick(&self) -> rusqlite::Result<i64> {
         self.conn.query_row(
-            "SELECT COALESCE(MAX(last_used_tick), 0) + 1 FROM inputia_terms",
+            "SELECT COALESCE(MAX(tick), 0) FROM (
+                SELECT MAX(last_used_tick) AS tick FROM inputia_terms
+                UNION ALL
+                SELECT MAX(created_tick) AS tick FROM inputia_events
+                UNION ALL
+                SELECT MAX(updated_tick) AS tick FROM inputia_ranker_weights
+                UNION ALL
+                SELECT MAX(last_feedback_tick) AS tick FROM inputia_ranking_feedback
+            )",
             [],
             |row| row.get(0),
         )
+    }
+
+    fn ensure_default_ranker_weights(&self) -> rusqlite::Result<()> {
+        for (feature, weight) in ranker_weight_rows(RankerWeights::default()) {
+            self.conn.execute(
+                "INSERT OR IGNORE INTO inputia_ranker_weights (feature, weight, updated_tick)
+                 VALUES (?1, ?2, 0)",
+                rusqlite::params![feature, weight as f64],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn bump_sqlite_preference(
+        &self,
+        text: &str,
+        app_bundle_id: &str,
+        positive_delta: f32,
+        negative_delta: f32,
+        tick: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO inputia_ranking_feedback (
+                text, app_bundle_id, positive_count, negative_count, last_feedback_tick
+            ) VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(text, app_bundle_id) DO UPDATE SET
+                positive_count = MIN(64.0, MAX(0.0, positive_count + excluded.positive_count)),
+                negative_count = MIN(64.0, MAX(0.0, negative_count + excluded.negative_count)),
+                last_feedback_tick = excluded.last_feedback_tick",
+            rusqlite::params![
+                text,
+                app_bundle_id,
+                positive_delta as f64,
+                negative_delta as f64,
+                tick
+            ],
+        )?;
+        Ok(())
     }
 
     fn insert_event(
@@ -840,6 +1303,23 @@ impl SqliteMemory {
         })?;
         rows.collect()
     }
+
+    fn load_ranking_preferences(&self) -> rusqlite::Result<Vec<RankerPreference>> {
+        let mut statement = self.conn.prepare(
+            "SELECT text, app_bundle_id, positive_count, negative_count, last_feedback_tick
+             FROM inputia_ranking_feedback",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(RankerPreference {
+                text: row.get(0)?,
+                app_bundle_id: row.get(1)?,
+                positive_count: row.get::<_, f64>(2)? as f32,
+                negative_count: row.get::<_, f64>(3)? as f32,
+                last_feedback_tick: row.get::<_, i64>(4)? as u64,
+            })
+        })?;
+        rows.collect()
+    }
 }
 
 pub struct InputiaCore<E> {
@@ -850,6 +1330,7 @@ pub struct InputiaCore<E> {
     page: usize,
     settings: CoreSettings,
     engine: E,
+    last_ranking_feedback: Option<RankingFeedback>,
 }
 
 impl<E: ChineseEngine> InputiaCore<E> {
@@ -862,10 +1343,12 @@ impl<E: ChineseEngine> InputiaCore<E> {
             page: 0,
             settings,
             engine,
+            last_ranking_feedback: None,
         }
     }
 
     pub fn handle_key(&mut self, key: Key) -> InputOutcome {
+        self.last_ranking_feedback = None;
         let mut consumed = true;
         let mut commit = None;
 
@@ -999,6 +1482,10 @@ impl<E: ChineseEngine> InputiaCore<E> {
         }
     }
 
+    pub fn take_ranking_feedback(&mut self) -> Option<RankingFeedback> {
+        self.last_ranking_feedback.take()
+    }
+
     fn refresh_candidates(&mut self) {
         self.page = 0;
         if self.composing.is_empty() {
@@ -1019,6 +1506,7 @@ impl<E: ChineseEngine> InputiaCore<E> {
 
     fn commit_candidate_on_page(&mut self, page_index: usize) -> Option<String> {
         let candidate = self.visible_candidates().get(page_index)?.clone();
+        self.remember_ranking_feedback(page_index);
         if let Some(commit) =
             self.engine
                 .select_candidate(&self.composing, &candidate, self.page, page_index)
@@ -1034,6 +1522,7 @@ impl<E: ChineseEngine> InputiaCore<E> {
         let Some(candidate) = self.visible_candidates().get(page_index).cloned() else {
             return Some(self.commit_raw_composition());
         };
+        self.remember_ranking_feedback(page_index);
         if let Some(commit) =
             self.engine
                 .select_candidate(&self.composing, &candidate, self.page, page_index)
@@ -1049,8 +1538,17 @@ impl<E: ChineseEngine> InputiaCore<E> {
         let Some(candidate) = self.visible_candidates().get(page_index).cloned() else {
             return self.commit_raw_composition();
         };
+        self.remember_ranking_feedback(page_index);
         self.clear_composition();
         candidate.text
+    }
+
+    fn remember_ranking_feedback(&mut self, page_index: usize) {
+        self.last_ranking_feedback = RankingFeedback::from_candidates(
+            self.composing.clone(),
+            self.visible_candidates(),
+            page_index,
+        );
     }
 
     fn apply_candidate_commit(&mut self, commit: CandidateCommit) -> Option<String> {
@@ -1183,6 +1681,19 @@ fn source_counts(source: &MemorySource) -> (i64, i64, i64) {
         MemorySource::Voice => (0, 1, 0),
         MemorySource::Clipboard => (0, 0, 1),
     }
+}
+
+#[cfg(feature = "sqlite-memory")]
+fn ranker_weight_rows(weights: RankerWeights) -> [(&'static str, f32); 7] {
+    [
+        ("rime_rank", weights.rime_rank),
+        ("typed", weights.typed),
+        ("voice", weights.voice),
+        ("clipboard", weights.clipboard),
+        ("recency", weights.recency),
+        ("app_context", weights.app_context),
+        ("selection_feedback", weights.selection_feedback),
+    ]
 }
 
 #[cfg(feature = "sqlite-memory")]
@@ -1702,6 +2213,35 @@ mod tests {
     }
 
     #[test]
+    fn ranker_features_from_typed_voice_and_clipboard_affect_sorting() {
+        let context = AppContext::new("com.apple.TextEdit");
+        let mut memory = LocalMemory::new(AppPolicy::default());
+        memory.learn(MemorySource::Typed, "打字候选", &context);
+        for _ in 0..3 {
+            memory.learn(MemorySource::Voice, "语音候选", &context);
+        }
+        for _ in 0..4 {
+            memory.learn(MemorySource::Clipboard, "剪贴板候选", &context);
+        }
+
+        let ranked = memory.rank_candidates(vec![
+            Candidate::new("engine-0", "普通候选"),
+            Candidate::new("engine-1", "剪贴板候选"),
+            Candidate::new("engine-2", "打字候选"),
+            Candidate::new("engine-3", "语音候选"),
+        ]);
+
+        assert_eq!(ranked[0].text, "语音候选");
+        assert_eq!(ranked[0].source, CandidateSource::Voice);
+        assert!(ranked.iter().any(|candidate| {
+            candidate.text == "打字候选" && candidate.source == CandidateSource::Memory
+        }));
+        assert!(ranked.iter().any(|candidate| {
+            candidate.text == "剪贴板候选" && candidate.source == CandidateSource::Clipboard
+        }));
+    }
+
+    #[test]
     fn memory_ranking_preserves_engine_order_without_memory_score() {
         let memory = LocalMemory::new(AppPolicy::default());
 
@@ -1736,6 +2276,35 @@ mod tests {
 
         assert_eq!(ranked[0].text, "你来了吗");
         assert!(ranked.iter().any(|candidate| candidate.text == "你"));
+    }
+
+    #[test]
+    fn ranking_feedback_promotes_selected_candidate_next_time() {
+        let context = AppContext::new("com.apple.TextEdit");
+        let mut memory = LocalMemory::new(AppPolicy::default());
+
+        let feedback = RankingFeedback::new(
+            "ni",
+            "拟",
+            vec!["你".to_string(), "拟".to_string(), "尼".to_string()],
+            1,
+        );
+        assert_eq!(
+            memory.record_ranking_feedback(feedback, &context),
+            PrivacyDecision::Learn
+        );
+
+        let ranked = memory.rank_candidates_for_context(
+            vec![
+                Candidate::new("ni-0", "你"),
+                Candidate::new("ni-1", "拟"),
+                Candidate::new("ni-2", "尼"),
+            ],
+            &context,
+        );
+
+        assert_eq!(ranked[0].text, "拟");
+        assert!(ranked[0].memory_score > ranked[1].memory_score);
     }
 
     #[test]
@@ -1838,6 +2407,77 @@ mod tests {
         assert!(memory.voice_hotwords(5).is_empty());
     }
 
+    #[test]
+    fn unknown_contexts_do_not_learn() {
+        let context = AppContext::new("unknown");
+        let mut memory = LocalMemory::new(AppPolicy::default());
+        let outcome = memory.learn(MemorySource::Typed, "secret phrase", &context);
+
+        assert_eq!(outcome.decision, PrivacyDecision::Excluded);
+        assert!(memory.completion_candidates("secret", 5).is_empty());
+        assert!(memory.voice_hotwords(5).is_empty());
+    }
+
+    #[test]
+    fn sensitive_contexts_do_not_record_ranking_feedback() {
+        let context = AppContext::new("com.1password.1password");
+        let mut memory = LocalMemory::new(AppPolicy::default());
+        let feedback = RankingFeedback::new(
+            "ni",
+            "拟",
+            vec!["你".to_string(), "拟".to_string(), "尼".to_string()],
+            1,
+        );
+
+        assert_eq!(
+            memory.record_ranking_feedback(feedback, &context),
+            PrivacyDecision::Excluded
+        );
+        let ranked = memory.rank_candidates_for_context(
+            vec![Candidate::new("ni-0", "你"), Candidate::new("ni-1", "拟")],
+            &context,
+        );
+        assert_eq!(ranked[0].text, "你");
+    }
+
+    #[test]
+    fn unknown_contexts_do_not_record_ranking_feedback() {
+        let context = AppContext::new("unknown");
+        let mut memory = LocalMemory::new(AppPolicy::default());
+        let feedback = RankingFeedback::new(
+            "ni",
+            "拟",
+            vec!["你".to_string(), "拟".to_string(), "尼".to_string()],
+            1,
+        );
+
+        assert_eq!(
+            memory.record_ranking_feedback(feedback, &context),
+            PrivacyDecision::Excluded
+        );
+        let ranked = memory.rank_candidates_for_context(
+            vec![Candidate::new("ni-0", "你"), Candidate::new("ni-1", "拟")],
+            &context,
+        );
+        assert_eq!(ranked[0].text, "你");
+    }
+
+    #[test]
+    fn core_records_last_displayed_candidate_feedback_on_selection() {
+        let mut core = core();
+        core.handle_key(Key::Shift);
+        feed(&mut core, "ni");
+
+        let outcome = core.handle_key(Key::Digit(2));
+        let feedback = core.take_ranking_feedback().unwrap();
+
+        assert_eq!(outcome.commit.as_deref(), Some("拟"));
+        assert_eq!(feedback.composing, "ni");
+        assert_eq!(feedback.selected_text, "拟");
+        assert_eq!(feedback.selected_index, 1);
+        assert_eq!(feedback.displayed_candidates[0], "你");
+    }
+
     #[cfg(feature = "sqlite-memory")]
     #[test]
     fn sqlite_memory_persists_terms_and_reranks_candidates() {
@@ -1862,6 +2502,121 @@ mod tests {
 
         assert_eq!(ranked[0].text, "泥");
         assert!(ranked[0].memory_score > ranked[1].memory_score);
+    }
+
+    #[cfg(feature = "sqlite-memory")]
+    #[test]
+    fn sqlite_ranker_weights_persist() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let db_path = tempdir.path().join("inputia_memory.db");
+
+        {
+            let memory = SqliteMemory::open(&db_path, AppPolicy::default()).unwrap();
+            let weights = RankerWeights {
+                typed: 77.0,
+                voice: 44.0,
+                selection_feedback: 123.0,
+                ..RankerWeights::default()
+            };
+            memory.save_ranker_weights(weights).unwrap();
+        }
+
+        let memory = SqliteMemory::open(&db_path, AppPolicy::default()).unwrap();
+        let weights = memory.ranker_weights().unwrap();
+        assert_eq!(weights.typed, 77.0);
+        assert_eq!(weights.voice, 44.0);
+        assert_eq!(weights.selection_feedback, 123.0);
+    }
+
+    #[cfg(feature = "sqlite-memory")]
+    #[test]
+    fn sqlite_ranking_feedback_persists_and_reranks_candidates() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let db_path = tempdir.path().join("inputia_memory.db");
+        let context = AppContext::new("com.apple.TextEdit");
+
+        {
+            let mut memory = SqliteMemory::open(&db_path, AppPolicy::default()).unwrap();
+            memory
+                .record_ranking_feedback(
+                    RankingFeedback::new(
+                        "ni",
+                        "拟",
+                        vec!["你".to_string(), "拟".to_string(), "尼".to_string()],
+                        1,
+                    ),
+                    &context,
+                )
+                .unwrap();
+        }
+
+        let memory = SqliteMemory::open(&db_path, AppPolicy::default()).unwrap();
+        assert_eq!(memory.ranking_feedback_count().unwrap(), 3);
+        let ranked = memory
+            .rank_candidates_for_context(
+                vec![
+                    Candidate::new("ni-0", "你"),
+                    Candidate::new("ni-1", "拟"),
+                    Candidate::new("ni-2", "尼"),
+                ],
+                &context,
+            )
+            .unwrap();
+
+        assert_eq!(ranked[0].text, "拟");
+    }
+
+    #[cfg(feature = "sqlite-memory")]
+    #[test]
+    fn sqlite_sensitive_contexts_do_not_record_ranking_feedback() {
+        let context = AppContext::new("com.1password.1password");
+        let mut memory = SqliteMemory::open_in_memory(AppPolicy::default()).unwrap();
+        let decision = memory
+            .record_ranking_feedback(
+                RankingFeedback::new("ni", "拟", vec!["你".to_string(), "拟".to_string()], 1),
+                &context,
+            )
+            .unwrap();
+
+        assert_eq!(decision, PrivacyDecision::Excluded);
+        assert_eq!(memory.ranking_feedback_count().unwrap(), 0);
+    }
+
+    #[cfg(feature = "sqlite-memory")]
+    #[test]
+    fn sqlite_clipboard_and_voice_history_affect_completion_and_ranking() {
+        let context = AppContext::new("com.apple.TextEdit");
+        let mut memory = SqliteMemory::open_in_memory(AppPolicy::default()).unwrap();
+        memory
+            .learn(MemorySource::Voice, "中国市场", &context)
+            .unwrap();
+        memory
+            .learn(MemorySource::Voice, "中国市场", &context)
+            .unwrap();
+        memory
+            .learn(MemorySource::Clipboard, "中国市场报告", &context)
+            .unwrap();
+
+        let completions = memory.completion_candidates("中国", 10).unwrap();
+        assert!(completions
+            .iter()
+            .any(|candidate| candidate.text == "中国市场"));
+        assert!(completions
+            .iter()
+            .any(|candidate| candidate.text == "中国市场报告"));
+
+        let ranked = memory
+            .rank_candidates(vec![
+                Candidate::new("engine-0", "中果"),
+                Candidate::new("engine-1", "中国市场"),
+                Candidate::new("engine-2", "中国市场报告"),
+            ])
+            .unwrap();
+        assert_eq!(ranked[0].text, "中国市场");
+        assert_eq!(ranked[0].source, CandidateSource::Voice);
+        assert!(ranked
+            .iter()
+            .any(|candidate| candidate.source == CandidateSource::Clipboard));
     }
 
     #[cfg(feature = "sqlite-memory")]

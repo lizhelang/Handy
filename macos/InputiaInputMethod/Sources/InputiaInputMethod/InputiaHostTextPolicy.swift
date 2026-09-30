@@ -164,15 +164,19 @@ enum InputiaHostTextPolicy {
     )
   }
 
+  static func shouldPassThroughInputPipeline(bundleIdentifier: String?) -> Bool {
+    isSecureDirectBundleIdentifier(bundleIdentifier)
+  }
+
   static func shouldPassThroughSecureDirectText(
     _ text: String,
     bundleIdentifier: String?
   ) -> Bool {
-    isSecureDirectBundleIdentifier(bundleIdentifier) && !text.isEmpty
+    shouldPassThroughInputPipeline(bundleIdentifier: bundleIdentifier) && !text.isEmpty
   }
 
   static func secureDirectDecision(bundleIdentifier: String?) -> InputiaSecureDirectDecision {
-    let passthrough = isSecureDirectBundleIdentifier(bundleIdentifier)
+    let passthrough = shouldPassThroughInputPipeline(bundleIdentifier: bundleIdentifier)
     return InputiaSecureDirectDecision(
       passthrough: passthrough,
       clearComposition: passthrough,

@@ -32,6 +32,7 @@ pub struct InputiaSession {
     core: InputiaCore<RankedRimeEngine>,
     memory: Option<Arc<Mutex<SqliteMemory>>>,
     context: AppContext,
+    rank_context: Arc<Mutex<AppContext>>,
 }
 
 struct SessionOptions {
@@ -44,6 +45,7 @@ struct SessionOptions {
 struct RankedRimeEngine {
     rime: RimeEngine,
     memory: Option<Arc<Mutex<SqliteMemory>>>,
+    context: Arc<Mutex<AppContext>>,
 }
 
 impl ChineseEngine for RankedRimeEngine {
@@ -56,8 +58,13 @@ impl ChineseEngine for RankedRimeEngine {
         let Ok(memory) = memory.lock() else {
             return candidates;
         };
+        let context = self
+            .context
+            .lock()
+            .map(|context| context.clone())
+            .unwrap_or_else(|_| AppContext::new(""));
         memory
-            .rank_candidates(candidates.clone())
+            .rank_candidates_for_context(candidates.clone(), &context)
             .unwrap_or(candidates)
     }
 
@@ -276,7 +283,9 @@ pub extern "C" fn inputia_session_set_app_context(
         return learning_json(LearningEnvelope::error("bundle id is null"));
     };
     let session = unsafe { &mut *session };
-    session.context = AppContext::new(bundle_id);
+    let context = AppContext::new(bundle_id);
+    session.context = context.clone();
+    set_rank_context(session, context);
     learning_json(LearningEnvelope::context_set())
 }
 
@@ -297,7 +306,9 @@ pub extern "C" fn inputia_session_set_app_context_with_window(
         .filter(|title| !title.is_empty());
 
     let session = unsafe { &mut *session };
-    session.context = AppContext::new(bundle_id).with_window_title(window_title);
+    let context = AppContext::new(bundle_id).with_window_title(window_title);
+    session.context = context.clone();
+    set_rank_context(session, context);
     learning_json(LearningEnvelope::context_set())
 }
 
@@ -524,15 +535,19 @@ fn new_session_with_options(options: SessionOptions) -> *mut InputiaSession {
         }
         None => None,
     };
+    let context = AppContext::new("dev.inputia.host");
+    let rank_context = Arc::new(Mutex::new(context.clone()));
     let ranked_engine = RankedRimeEngine {
         rime: engine,
         memory: memory.clone(),
+        context: rank_context.clone(),
     };
     let core = InputiaCore::new(options.core, ranked_engine);
     Box::into_raw(Box::new(InputiaSession {
         core,
         memory,
-        context: AppContext::new("dev.inputia.host"),
+        context,
+        rank_context,
     }))
 }
 
@@ -599,12 +614,8 @@ fn effective_rime_script_config(
 ) -> (String, Vec<(String, bool)>) {
     match (schema_id, chinese_script) {
         ("luna_pinyin_simp", inputia_settings::ChineseScript::Traditional) => (
-            "luna_pinyin".to_string(),
-            vec![
-                ("simplification".to_string(), false),
-                ("zh_hans".to_string(), false),
-                ("zh_hant".to_string(), true),
-            ],
+            "luna_pinyin_tw".to_string(),
+            vec![("zh_tw".to_string(), true)],
         ),
         ("luna_pinyin", inputia_settings::ChineseScript::Simplified) => (
             "luna_pinyin".to_string(),
@@ -615,12 +626,8 @@ fn effective_rime_script_config(
             ],
         ),
         ("luna_pinyin", inputia_settings::ChineseScript::Traditional) => (
-            "luna_pinyin".to_string(),
-            vec![
-                ("simplification".to_string(), false),
-                ("zh_hans".to_string(), false),
-                ("zh_hant".to_string(), true),
-            ],
+            "luna_pinyin_tw".to_string(),
+            vec![("zh_tw".to_string(), true)],
         ),
         ("guobiao_bispell", inputia_settings::ChineseScript::Traditional) => (
             "guobiao_bispell".to_string(),
@@ -716,8 +723,22 @@ fn with_session(
     }
     let session = unsafe { &mut *session };
     let outcome = handle(session);
+    record_ranking_feedback(session);
     learn_committed_text(session, &outcome);
     outcome_json(OutputEnvelope::from_outcome(outcome))
+}
+
+fn record_ranking_feedback(session: &mut InputiaSession) {
+    let Some(feedback) = session.core.take_ranking_feedback() else {
+        return;
+    };
+    let Some(memory) = &session.memory else {
+        return;
+    };
+    let Ok(mut memory) = memory.lock() else {
+        return;
+    };
+    let _ = memory.record_ranking_feedback(feedback, &session.context);
 }
 
 fn learn_committed_text(session: &mut InputiaSession, outcome: &InputOutcome) {
@@ -731,6 +752,12 @@ fn learn_committed_text(session: &mut InputiaSession, outcome: &InputOutcome) {
         return;
     };
     let _ = memory.learn(MemorySource::Typed, commit, &session.context);
+}
+
+fn set_rank_context(session: &mut InputiaSession, context: AppContext) {
+    if let Ok(mut rank_context) = session.rank_context.lock() {
+        *rank_context = context;
+    }
 }
 
 unsafe fn optional_c_string(value: *const c_char) -> Option<String> {
@@ -1090,8 +1117,17 @@ mod tests {
         for ch in "ni".chars() {
             latest = handle_json(inputia_session_handle_char(session, ch as u32));
         }
-        assert_eq!(latest["visible_candidates"][0]["text"], "你");
-        assert_eq!(latest["panel_candidates"][0]["text"], "你");
+        let first_page_first = latest["visible_candidates"][0]["text"].as_str().unwrap();
+        assert!(latest["visible_candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate["text"] == "你"));
+        assert!(latest["panel_candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate["text"] == "你"));
         assert!(
             latest["panel_candidates"].as_array().unwrap().len()
                 > latest["visible_candidates"].as_array().unwrap().len()
@@ -1099,7 +1135,7 @@ mod tests {
 
         let page_down = handle_json(inputia_session_handle_special(session, KEY_PAGE_DOWN));
         assert_eq!(page_down["page"], 1);
-        assert_ne!(page_down["visible_candidates"][0]["text"], "你");
+        assert_ne!(page_down["visible_candidates"][0]["text"], first_page_first);
         assert_eq!(page_down["visible_candidates"].as_array().unwrap().len(), 5);
         assert!(
             page_down["panel_candidates"].as_array().unwrap().len()
@@ -1236,6 +1272,119 @@ mod tests {
         assert!(!hotword_values.iter().any(|value| value == "密码 候选"));
 
         inputia_session_free(session);
+    }
+
+    #[test]
+    fn capi_candidate_selection_records_ranking_feedback() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let user_data_dir = persistent_rime_user_data_dir("feedback");
+        let memory_db_path = temp.path().join("inputia-memory.db");
+        let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
+        let memory_db = CString::new(memory_db_path.to_string_lossy().as_bytes()).unwrap();
+        let session = inputia_session_new_luna_pinyin_simp_with_memory(
+            user_data_dir.as_ptr(),
+            memory_db.as_ptr(),
+            5,
+        );
+        if session.is_null() {
+            eprintln!("skip: Squirrel librime runtime is not available");
+            return;
+        }
+
+        let source_app = CString::new("com.apple.TextEdit").unwrap();
+        assert_eq!(
+            handle_json(inputia_session_set_app_context(
+                session,
+                source_app.as_ptr()
+            ))["decision"],
+            "context_set"
+        );
+        assert_eq!(
+            handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
+            "Chinese"
+        );
+        let mut latest = Value::Null;
+        for ch in "zhongguo".chars() {
+            latest = handle_json(inputia_session_handle_char(session, ch as u32));
+        }
+        let visible = latest["visible_candidates"].as_array().unwrap();
+        if visible.len() < 2 {
+            eprintln!("skip: not enough Rime candidates for feedback test");
+            inputia_session_free(session);
+            return;
+        }
+        let selected_text = visible[0]["text"].as_str().unwrap().to_string();
+        let skipped_text = visible[1]["text"].as_str().unwrap().to_string();
+
+        let _ = handle_json(inputia_session_handle_special(session, KEY_SPACE));
+        inputia_session_free(session);
+
+        let conn = Connection::open(&memory_db_path).unwrap();
+        let positive_count: f64 = conn
+            .query_row(
+                "SELECT positive_count FROM inputia_ranking_feedback
+                 WHERE text = ?1 AND app_bundle_id = 'com.apple.TextEdit'",
+                [&selected_text],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let negative_count: f64 = conn
+            .query_row(
+                "SELECT negative_count FROM inputia_ranking_feedback
+                 WHERE text = ?1 AND app_bundle_id = 'com.apple.TextEdit'",
+                [&skipped_text],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert!(positive_count >= 1.0);
+        assert!(negative_count >= 0.25);
+    }
+
+    #[test]
+    fn capi_sensitive_context_does_not_record_ranking_feedback() {
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let user_data_dir = persistent_rime_user_data_dir("sensitive-feedback");
+        let memory_db_path = temp.path().join("inputia-memory.db");
+        let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
+        let memory_db = CString::new(memory_db_path.to_string_lossy().as_bytes()).unwrap();
+        let session = inputia_session_new_luna_pinyin_simp_with_memory(
+            user_data_dir.as_ptr(),
+            memory_db.as_ptr(),
+            5,
+        );
+        if session.is_null() {
+            eprintln!("skip: Squirrel librime runtime is not available");
+            return;
+        }
+
+        let sensitive_app = CString::new("com.1password.1password").unwrap();
+        assert_eq!(
+            handle_json(inputia_session_set_app_context(
+                session,
+                sensitive_app.as_ptr()
+            ))["decision"],
+            "context_set"
+        );
+        assert_eq!(
+            handle_json(inputia_session_set_input_mode(session, INPUT_MODE_CHINESE))["mode"],
+            "Chinese"
+        );
+        for ch in "zhongguo".chars() {
+            let _ = handle_json(inputia_session_handle_char(session, ch as u32));
+        }
+        let _ = handle_json(inputia_session_handle_special(session, KEY_SPACE));
+        inputia_session_free(session);
+
+        let conn = Connection::open(&memory_db_path).unwrap();
+        let feedback_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM inputia_ranking_feedback", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(feedback_count, 0);
     }
 
     #[test]
@@ -2090,12 +2239,8 @@ mod tests {
                 &inputia_settings::ChineseScript::Traditional
             ),
             (
-                "luna_pinyin".to_string(),
-                vec![
-                    ("simplification".to_string(), false),
-                    ("zh_hans".to_string(), false),
-                    ("zh_hant".to_string(), true)
-                ]
+                "luna_pinyin_tw".to_string(),
+                vec![("zh_tw".to_string(), true)]
             )
         );
         assert_eq!(
@@ -2128,12 +2273,8 @@ mod tests {
                 &inputia_settings::ChineseScript::Traditional
             ),
             (
-                "luna_pinyin".to_string(),
-                vec![
-                    ("simplification".to_string(), false),
-                    ("zh_hans".to_string(), false),
-                    ("zh_hant".to_string(), true)
-                ]
+                "luna_pinyin_tw".to_string(),
+                vec![("zh_tw".to_string(), true)]
             )
         );
         assert_eq!(
@@ -2167,6 +2308,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let settings_path = temp.path().join("settings.json");
         let settings = InputiaSettings {
+            rime_shared_data_dir: bundled_shared_data_dir(),
             rime_user_data_dir: Some(shared_rime_user_data_dir()),
             memory_enabled: false,
             chinese_script: inputia_settings::ChineseScript::Traditional,
@@ -2424,11 +2566,11 @@ mod tests {
         }
 
         for path in [
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../macos/InputiaInputMethod/build/RimeData"),
             std::path::PathBuf::from(
                 "/Library/Input Methods/InputiaInputMethod.app/Contents/Resources/RimeData",
             ),
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../macos/InputiaInputMethod/build/RimeData"),
         ] {
             if path.exists() {
                 return Some(path);
@@ -2440,6 +2582,16 @@ mod tests {
 
     fn shared_rime_user_data_dir() -> std::path::PathBuf {
         let path = std::env::temp_dir().join("inputia-capi-rime-user");
+        std::fs::create_dir_all(&path).expect("rime user data dir should be writable");
+        path
+    }
+
+    fn persistent_rime_user_data_dir(label: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "inputia-capi-rime-user-{}-{}",
+            label,
+            std::process::id()
+        ));
         std::fs::create_dir_all(&path).expect("rime user data dir should be writable");
         path
     }

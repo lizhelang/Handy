@@ -56,8 +56,9 @@ struct InputiaCandidatePanelModel: Equatable {
     pageSize: Int
   ) -> InputiaCandidatePanelModel {
     let safePageSize = max(1, min(pageSize, InputiaCandidatePanelStyle.maximumMainCandidateCount))
-    let allCandidates = deduplicated(candidates.isEmpty ? visibleCandidates : candidates)
-    let visible = deduplicated(visibleCandidates.isEmpty ? Array(allCandidates.prefix(safePageSize)) : visibleCandidates)
+    let visible = deduplicated(visibleCandidates.isEmpty
+      ? Array(deduplicated(candidates).prefix(safePageSize))
+      : visibleCandidates)
     let rankedVisible = visible
       .enumerated()
       .sorted { left, right in
@@ -73,51 +74,12 @@ struct InputiaCandidatePanelModel: Equatable {
         )
       }
 
-    let mainTexts = Set(rankedVisible.map(\.candidate.text))
-    let topSuggestions = allCandidates
-      .enumerated()
-      .filter { _, candidate in
-        candidate.text.countByComposedCharacterSequences > 1
-      }
-      .sorted { left, right in
-        compareTopSuggestion(left.element, left.offset, right.element, right.offset)
-      }
-      .prefix(InputiaCandidatePanelStyle.maximumTopSuggestionCount)
-      .map { _, candidate in
-        InputiaCandidatePanelEntry(candidate: candidate, section: .topSuggestion, label: nil)
-      }
-    let topTexts = Set(topSuggestions.map(\.candidate.text))
-
-    let characterLimit = expanded
-      ? InputiaCandidatePanelStyle.maximumExpandedCharCandidateCount
-      : InputiaCandidatePanelStyle.maximumCollapsedCharCandidateCount
-    let charCandidates = allCandidates
-      .filter { candidate in
-        candidate.text.countByComposedCharacterSequences == 1 && !mainTexts.contains(candidate.text)
-      }
-      .prefix(characterLimit)
-      .map { candidate in
-        InputiaCandidatePanelEntry(candidate: candidate, section: .charCandidate, label: nil)
-      }
-
-    let rareLimit = expanded ? InputiaCandidatePanelStyle.maximumRareCandidateCount : 0
-    let rareCandidates = allCandidates
-      .filter { candidate in
-        candidate.text.countByComposedCharacterSequences > 1
-          && !mainTexts.contains(candidate.text)
-          && !topTexts.contains(candidate.text)
-          && candidate.finalScore < 850
-      }
-      .prefix(rareLimit)
-      .map { candidate in
-        InputiaCandidatePanelEntry(candidate: candidate, section: .rareCandidate, label: nil)
-      }
-
+    // 恢复旧版单行候选条：不展示顶部推荐 / 单字网格 / 冷门分区。
     return InputiaCandidatePanelModel(
-      topSuggestions: Array(topSuggestions),
+      topSuggestions: [],
       mainCandidates: Array(rankedVisible),
-      charCandidates: Array(charCandidates),
-      rareCandidates: Array(rareCandidates),
+      charCandidates: [],
+      rareCandidates: [],
       expanded: expanded,
       activePage: activePage,
       pageSize: safePageSize
@@ -226,6 +188,40 @@ struct InputiaCandidatePanelLayout {
   let separatorYValues: [CGFloat]
 }
 
+struct InputiaCandidateDisplaySettings: Equatable {
+  static let defaultFontSize: CGFloat = 14
+  static let fontSizeRange: ClosedRange<CGFloat> = 12...22
+
+  let fontSize: CGFloat
+
+  var fontScale: CGFloat {
+    fontSize / Self.defaultFontSize
+  }
+
+  static func load() -> Self {
+    guard
+      let data = try? Data(contentsOf: settingsURL()),
+      let object = try? JSONSerialization.jsonObject(with: data),
+      let dictionary = object as? [String: Any]
+    else {
+      return Self(fontSize: defaultFontSize)
+    }
+    let rawSize = dictionary["candidate_font_size"] as? NSNumber
+    let fontSize = CGFloat(rawSize?.doubleValue ?? Double(defaultFontSize))
+    return Self(fontSize: min(max(fontSize, fontSizeRange.lowerBound), fontSizeRange.upperBound))
+  }
+
+  static func modificationDate() -> Date? {
+    try? FileManager.default.attributesOfItem(atPath: settingsURL().path)[.modificationDate] as? Date
+  }
+
+  private static func settingsURL() -> URL {
+    let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+      ?? URL(fileURLWithPath: NSTemporaryDirectory())
+    return baseURL.appendingPathComponent("Inputia/settings.json")
+  }
+}
+
 enum InputiaCandidatePanelStyle {
   static let maximumCollapsedCandidateCount = 9
   static let maximumMainCandidateCount = 9
@@ -235,20 +231,26 @@ enum InputiaCandidatePanelStyle {
   static let maximumExpandedCharCandidateCount = 24
   static let maximumRareCandidateCount = 6
   static let charColumnCount = 6
-  static let contentInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
-  static let topRowHeight: CGFloat = 52
-  static let mainRowHeight: CGFloat = 56
-  static let charRowHeight: CGFloat = 44
-  static let rareRowHeight: CGFloat = 38
-  static let rowGap: CGFloat = 8
-  static let columnGap: CGFloat = 10
-  static let topCellWidth: CGFloat = 148
-  static let mainCellMinWidth: CGFloat = 104
-  static let mainCellMaxWidth: CGFloat = 174
-  static let charCellWidth: CGFloat = 104
-  static let rareCellWidth: CGFloat = 104
-  static let minPanelWidth: CGFloat = 360
-  static let maxPanelWidth: CGFloat = 1080
+
+  /// 由候选窗在展示前根据 `candidate_font_size` 设置刷新；1 对应字号 14（接近旧版紧凑候选条）。
+  static var fontScale: CGFloat = 1
+
+  static var contentInsets: NSEdgeInsets {
+    NSEdgeInsets(top: 6 * fontScale, left: 8 * fontScale, bottom: 6 * fontScale, right: 8 * fontScale)
+  }
+  static var topRowHeight: CGFloat { 28 * fontScale }
+  static var mainRowHeight: CGFloat { 30 * fontScale }
+  static var charRowHeight: CGFloat { 24 * fontScale }
+  static var rareRowHeight: CGFloat { 22 * fontScale }
+  static var rowGap: CGFloat { 4 * fontScale }
+  static var columnGap: CGFloat { 6 * fontScale }
+  static var topCellWidth: CGFloat { 86 * fontScale }
+  static var mainCellMinWidth: CGFloat { 60 * fontScale }
+  static var mainCellMaxWidth: CGFloat { 108 * fontScale }
+  static var charCellWidth: CGFloat { 56 * fontScale }
+  static var rareCellWidth: CGFloat { 72 * fontScale }
+  static var minPanelWidth: CGFloat { 220 * fontScale }
+  static let maxPanelWidth: CGFloat = 960
 
   static let backgroundColor = NSColor(calibratedWhite: 0.075, alpha: 0.97)
   static let borderColor = NSColor(calibratedWhite: 0.25, alpha: 0.9)
@@ -256,14 +258,26 @@ enum InputiaCandidatePanelStyle {
   static let primaryTextColor = NSColor(calibratedWhite: 0.88, alpha: 1)
   static let secondaryTextColor = NSColor(calibratedWhite: 0.55, alpha: 1)
   static let mutedTextColor = NSColor(calibratedWhite: 0.42, alpha: 1)
-  static let accentColor = NSColor(calibratedRed: 0.0, green: 0.72, blue: 0.45, alpha: 1)
+  static let accentColor = nsColor(hex: 0x2F6F73)
+  static let accentHoverColor = nsColor(hex: 0x3A8588)
+  static let highlightedTextColor = nsColor(hex: 0xF5FFFF)
+  static let highlightedLabelColor = nsColor(hex: 0xDDEEEF)
   static let hoverColor = NSColor(calibratedWhite: 1, alpha: 0.08)
 
-  static let topFont = NSFont.systemFont(ofSize: 24, weight: .semibold)
-  static let mainFont = NSFont.systemFont(ofSize: 24, weight: .semibold)
-  static let mainLabelFont = NSFont.monospacedDigitSystemFont(ofSize: 20, weight: .medium)
-  static let charFont = NSFont.systemFont(ofSize: 24, weight: .medium)
-  static let rareFont = NSFont.systemFont(ofSize: 20, weight: .regular)
+  static var topFont: NSFont { .systemFont(ofSize: 14 * fontScale, weight: .semibold) }
+  static var mainFont: NSFont { .systemFont(ofSize: 14 * fontScale, weight: .semibold) }
+  static var mainLabelFont: NSFont { .monospacedDigitSystemFont(ofSize: 12 * fontScale, weight: .medium) }
+  static var charFont: NSFont { .systemFont(ofSize: 14 * fontScale, weight: .medium) }
+  static var rareFont: NSFont { .systemFont(ofSize: 12 * fontScale, weight: .regular) }
+
+  private static func nsColor(hex: UInt32) -> NSColor {
+    NSColor(
+      calibratedRed: CGFloat((hex >> 16) & 0xFF) / 255,
+      green: CGFloat((hex >> 8) & 0xFF) / 255,
+      blue: CGFloat(hex & 0xFF) / 255,
+      alpha: 1
+    )
+  }
 }
 
 enum InputiaCandidatePanelFormatter {
@@ -430,7 +444,7 @@ enum InputiaCandidatePanelFormatter {
         width(
           of: "\(entry.label ?? 0) \(entry.candidate.text)",
           font: InputiaCandidatePanelStyle.mainFont
-        ) + 30
+        ) + 18 * InputiaCandidatePanelStyle.fontScale
       }
       .max() ?? InputiaCandidatePanelStyle.mainCellMinWidth
     return min(
@@ -553,16 +567,16 @@ final class InputiaCandidatePanelContentView: NSView {
 
   private func draw(cell: InputiaCandidatePanelLayout.Cell) {
     let entry = cell.entry
-    let frame = cell.frame.insetBy(dx: 2, dy: 5)
+    let frame = cell.frame.insetBy(dx: 1 * InputiaCandidatePanelStyle.fontScale, dy: 2 * InputiaCandidatePanelStyle.fontScale)
     let isHovered = hoveredEntry == entry
     switch entry.section {
     case .topSuggestion:
       if isHovered {
-        drawRoundedRect(frame, color: InputiaCandidatePanelStyle.hoverColor, radius: 8)
+        drawRoundedRect(frame, color: InputiaCandidatePanelStyle.hoverColor, radius: 5)
       }
       drawText(
         entry.candidate.text,
-        in: frame.insetBy(dx: 8, dy: 9),
+        in: frame.insetBy(dx: 4 * InputiaCandidatePanelStyle.fontScale, dy: 4 * InputiaCandidatePanelStyle.fontScale),
         font: InputiaCandidatePanelStyle.topFont,
         color: InputiaCandidatePanelStyle.primaryTextColor,
         alignment: .center
@@ -570,29 +584,29 @@ final class InputiaCandidatePanelContentView: NSView {
     case .mainCandidate:
       let isFirst = entry.label == 1
       if isFirst {
-        drawRoundedRect(frame, color: InputiaCandidatePanelStyle.accentColor, radius: 9)
+        drawRoundedRect(frame, color: InputiaCandidatePanelStyle.accentColor, radius: 5)
       } else if isHovered {
-        drawRoundedRect(frame, color: InputiaCandidatePanelStyle.hoverColor, radius: 9)
+        drawRoundedRect(frame, color: InputiaCandidatePanelStyle.hoverColor, radius: 5)
       }
       drawMainCandidate(entry, in: frame, highlighted: isFirst)
     case .charCandidate:
       if isHovered {
-        drawRoundedRect(frame, color: InputiaCandidatePanelStyle.hoverColor, radius: 7)
+        drawRoundedRect(frame, color: InputiaCandidatePanelStyle.hoverColor, radius: 4)
       }
       drawText(
         entry.candidate.text,
-        in: frame.insetBy(dx: 8, dy: 7),
+        in: frame.insetBy(dx: 4 * InputiaCandidatePanelStyle.fontScale, dy: 3 * InputiaCandidatePanelStyle.fontScale),
         font: InputiaCandidatePanelStyle.charFont,
         color: InputiaCandidatePanelStyle.primaryTextColor,
         alignment: .center
       )
     case .rareCandidate:
       if isHovered {
-        drawRoundedRect(frame, color: InputiaCandidatePanelStyle.hoverColor, radius: 6)
+        drawRoundedRect(frame, color: InputiaCandidatePanelStyle.hoverColor, radius: 4)
       }
       drawText(
         entry.candidate.text,
-        in: frame.insetBy(dx: 8, dy: 7),
+        in: frame.insetBy(dx: 4 * InputiaCandidatePanelStyle.fontScale, dy: 3 * InputiaCandidatePanelStyle.fontScale),
         font: InputiaCandidatePanelStyle.rareFont,
         color: InputiaCandidatePanelStyle.secondaryTextColor,
         alignment: .center
@@ -606,25 +620,35 @@ final class InputiaCandidatePanelContentView: NSView {
     highlighted: Bool
   ) {
     let labelText = "\(entry.label ?? 0)"
-    let labelFrame = NSRect(x: frame.minX + 10, y: frame.minY + 14, width: 22, height: 28)
+    let scale = InputiaCandidatePanelStyle.fontScale
+    let labelFrame = NSRect(
+      x: frame.minX + 4 * scale,
+      y: frame.minY + 5 * scale,
+      width: 14 * scale,
+      height: 18 * scale
+    )
     let textFrame = NSRect(
-      x: labelFrame.maxX + 8,
-      y: frame.minY + 12,
-      width: max(20, frame.maxX - labelFrame.maxX - 18),
-      height: 32
+      x: labelFrame.maxX + 4 * scale,
+      y: frame.minY + 4 * scale,
+      width: max(12, frame.maxX - labelFrame.maxX - 8 * scale),
+      height: 20 * scale
     )
     drawText(
       labelText,
       in: labelFrame,
       font: InputiaCandidatePanelStyle.mainLabelFont,
-      color: highlighted ? .white : InputiaCandidatePanelStyle.secondaryTextColor,
+      color: highlighted
+        ? InputiaCandidatePanelStyle.highlightedLabelColor
+        : InputiaCandidatePanelStyle.secondaryTextColor,
       alignment: .right
     )
     drawText(
       entry.candidate.text,
       in: textFrame,
       font: InputiaCandidatePanelStyle.mainFont,
-      color: highlighted ? .white : InputiaCandidatePanelStyle.primaryTextColor,
+      color: highlighted
+        ? InputiaCandidatePanelStyle.highlightedTextColor
+        : InputiaCandidatePanelStyle.primaryTextColor,
       alignment: .left
     )
   }
@@ -667,6 +691,8 @@ final class InputiaCandidatePanel: NSPanel {
   private let content = InputiaCandidatePanelContentView()
   private let cursorOffset: CGFloat = 8
   private var currentModel: InputiaCandidatePanelModel?
+  private var displaySettings = InputiaCandidateDisplaySettings.load()
+  private var displaySettingsModificationDate = InputiaCandidateDisplaySettings.modificationDate()
   var selectionHandler: ((InputiaCandidatePanelEntry) -> Void)? {
     didSet {
       content.selectionHandler = selectionHandler
@@ -675,7 +701,7 @@ final class InputiaCandidatePanel: NSPanel {
 
   init() {
     super.init(
-      contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
+      contentRect: NSRect(x: 0, y: 0, width: 220, height: 48),
       styleMask: [.nonactivatingPanel],
       backing: .buffered,
       defer: true
@@ -691,7 +717,7 @@ final class InputiaCandidatePanel: NSPanel {
     ignoresMouseEvents = false
 
     backgroundView.wantsLayer = true
-    backgroundView.layer?.cornerRadius = 8
+    backgroundView.layer?.cornerRadius = 6
     backgroundView.layer?.masksToBounds = true
     backgroundView.layer?.backgroundColor = InputiaCandidatePanelStyle.backgroundColor.cgColor
     backgroundView.layer?.borderColor = InputiaCandidatePanelStyle.borderColor.cgColor
@@ -739,6 +765,7 @@ final class InputiaCandidatePanel: NSPanel {
       return
     }
 
+    reloadDisplaySettingsIfNeeded()
     let model = InputiaCandidatePanelFormatter.model(
       candidates: candidates,
       visibleCandidates: visibleCandidates,
@@ -786,6 +813,15 @@ final class InputiaCandidatePanel: NSPanel {
   func hide() {
     currentModel = nil
     orderOut(nil)
+  }
+
+  private func reloadDisplaySettingsIfNeeded() {
+    let currentModificationDate = InputiaCandidateDisplaySettings.modificationDate()
+    if currentModificationDate != displaySettingsModificationDate {
+      displaySettingsModificationDate = currentModificationDate
+      displaySettings = InputiaCandidateDisplaySettings.load()
+    }
+    InputiaCandidatePanelStyle.fontScale = displaySettings.fontScale
   }
 
   private static func normalizedAnchor(_ rect: NSRect) -> NSRect {

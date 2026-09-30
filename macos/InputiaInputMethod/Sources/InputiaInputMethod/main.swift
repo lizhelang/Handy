@@ -103,9 +103,6 @@ final class InputiaInputController: IMKInputController {
       return false
     }
 
-    if shouldPassThroughSensitiveClient(client) {
-      return false
-    }
     updateAppContext(client: client)
     var handled = false
     for character in string {
@@ -158,9 +155,6 @@ final class InputiaInputController: IMKInputController {
       return false
     }
 
-    if shouldPassThroughSensitiveClient(client) {
-      return false
-    }
     updateAppContext(client: client)
 
     switch event.type {
@@ -185,7 +179,7 @@ final class InputiaInputController: IMKInputController {
       return false
     }
 
-    if shouldPassThroughSensitiveClient(client) {
+    if shouldPassThroughSecureDirectClient(client) {
       return false
     }
     updateAppContext(client: client)
@@ -407,9 +401,6 @@ final class InputiaInputController: IMKInputController {
   override func activateServer(_ sender: Any!) {
     if let client = sender as? IMKTextInput {
       if shouldPassThroughSecureDirectClient(client) {
-        return
-      }
-      if shouldPassThroughSensitiveClient(client) {
         return
       }
       updateAppContext(client: client, forceRefresh: true)
@@ -1167,37 +1158,9 @@ final class InputiaInputController: IMKInputController {
     pushedAppContext = context
   }
 
-  private func shouldPassThroughSensitiveClient(_ client: IMKTextInput) -> Bool {
-    if shouldPassThroughSecureDirectClient(client) {
-      return true
-    }
-
-    reloadSettingsIfDue(client: client)
-    let context = appContext(for: client)
-    let isSensitive: Bool
-    if cachedSensitiveContext == context {
-      isSensitive = cachedSensitiveDecision
-    } else {
-      isSensitive = bridge.isSensitiveApp(bundleId: context.bundleId, windowTitle: context.windowTitle)
-      cachedSensitiveContext = context
-      cachedSensitiveDecision = isSensitive
-    }
-
-    guard isSensitive else {
-      return false
-    }
-    clearInputState(client: client)
-    inputiaDebugLog("sensitivePassthrough bundle=\(context.bundleId) window=\(context.windowTitle ?? "")")
-    if pushedAppContext != context {
-      _ = bridge.setAppContext(bundleId: context.bundleId, windowTitle: context.windowTitle)
-      pushedAppContext = context
-    }
-    return true
-  }
-
   private func shouldPassThroughSecureDirectClient(_ client: IMKTextInput) -> Bool {
     let bundleId = client.bundleIdentifier()
-    guard InputiaHostTextPolicy.isSecureDirectBundleIdentifier(bundleId) else {
+    guard InputiaHostTextPolicy.shouldPassThroughInputPipeline(bundleIdentifier: bundleId) else {
       return false
     }
     clearSecureDirectState()

@@ -34,6 +34,55 @@ This is a **fork** of [cjpais/Handy](https://github.com/cjpais/Handy) — a Taur
 
 `release/full-check.sh` 才允许 pkg/postinstall、公证 readiness、菜单栏 AXPress、TextEdit/Safari/Clipboard GUI smoke。`menu-readiness.sh`、`gui-smoke-readiness.sh` 和真实 GUI smoke 必须显式 opt-in；一次验证周期里菜单栏 AXPress 结果必须通过 `INPUTIA_MENU_READINESS_CACHE_FILE` 缓存，不能反复触碰 `TextInputMenuAgent`。
 
+## Inputia 安装-测试固定流程（macOS）
+
+**为什么以前重装像撞大运——三个必须记住的系统事实：**
+
+1. **macOS 只在用户登录时扫描 `/Library/Input Methods`**（由 `imklaunchagent` 完成）。`TISRegisterInputSource` 在现代 macOS 上返回 `noErr` 但对 System Settings 的输入法列表基本是 no-op。所以"装完立刻能在系统设置里加"是不成立的；**首次安装或 `Info.plist` 输入模式结构变化后，必须注销并重新登录**。（参考：Apple DevForums thread 775526、Squirrel 发布说明"安装完毕请退出当前用户再重新登录"。）
+2. **反复调用 register/enable/修复脚本会在当前登录会话的 TIS 缓存里堆出重复的 `Inputia.Hans` 条目**，重复条目会让 `TISSelectInputSource` 返回 `-50 paramErr`。重复条目的正确清理方式是**注销重登录**（会话缓存按磁盘内容重建），不是循环跑 `repair-tis-duplicates.sh` 或 `defaults write` HIToolbox。
+3. **判断"装没装对"只能看 `status.sh` 的 CDHash 对比**（`systemMatchesBuild` / `runningMatchesBuild` / `runningVersion`），不能看菜单栏截图、`TISEnableInputSource` 返回码或"所有输入法"列表可见性。
+
+### 场景 A：首次安装，或 bundle id / `Info.plist` 输入模式结构变化
+
+```bash
+cd macos/InputiaInputMethod
+INPUTIA_RUST_TOOLCHAIN=1.96.0 ./dev-fast.sh          # 1. 本地验证必须先通过
+INPUTIA_RUST_TOOLCHAIN=1.96.0 ./install-system.sh    # 2. 安装（会弹管理员授权）
+```
+
+3. **注销 macOS 并重新登录**（必须，无 API 可替代）。
+4. System Settings > 键盘 > 文字输入 > 输入法：先删掉所有重复的 Inputia，再通过 `+` > 简体中文 > Inputia 添加一次。
+5. 验证（见下方"验收命令"）。
+
+### 场景 B：日常代码更新（bundle id 与输入模式结构不变）
+
+```bash
+cd macos/InputiaInputMethod
+INPUTIA_RUST_TOOLCHAIN=1.96.0 ./dev-fast.sh
+INPUTIA_RUST_TOOLCHAIN=1.96.0 ./install-system.sh    # 会 killall 旧 Host 并热替换 bundle
+```
+
+然后**切到其他输入法再切回 Inputia**（触发系统用新二进制重启 Host），不需要注销。若切回后无响应，说明系统仍握着旧进程记录，此时才需要注销重登录。
+
+### 验收命令（每次安装后都要跑，输出为准）
+
+```bash
+./status.sh                                # systemMatchesBuild=true 且 runningMatchesBuild=true
+INPUTIA_APP='/Library/Input Methods/InputiaInputMethod.app' \
+INPUTIA_TIS_REQUIRE_APP_MATCH=1 \
+./build/inputia-tis-tool --dump            # 精确一条 Inputia.Hans，enabled=true selectable=true
+./build/inputia-tis-tool --dump-current-input-source   # 选中后应显示 Inputia.Hans
+```
+
+不能宣布"修好了"的完整验收标准见 `handoff.md`（唯一 Hans、可选择、系统启动的是新版本 Host、普通 App 能输入）。
+
+### 禁止事项
+
+- 禁止在一次安装周期里多次调用 `--register-input-source`（会制造重复条目，`install-system.sh` 已收敛为刷新后单次注册）。
+- 禁止把 `defaults write com.apple.HIToolbox ...` 当正式修复；只读诊断可以。
+- 禁止直接手工启动 `/Library/Input Methods/InputiaInputMethod.app/Contents/MacOS/InputiaInputMethod` 当作"运行验证"；Host 必须由系统在选择输入法时启动。
+- 禁止为了测试反复开 TextEdit/Safari 抢用户焦点；GUI smoke 必须显式 opt-in。
+
 ## Quick Reference
 
 ```bash

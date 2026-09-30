@@ -5,6 +5,7 @@ import Foundation
 struct InputiaSecureDirectSelfCheck {
   private static let securityAgentBundleId = "com.apple.SecurityAgent"
   private static let normalBundleId = "com.apple.TextEdit"
+  private static let passwordManagerBundleId = "com.1password.1password"
 
   static func main() {
     let securityDecision = InputiaHostTextPolicy.secureDirectDecision(
@@ -27,6 +28,15 @@ struct InputiaSecureDirectSelfCheck {
         "normalAppSecureDirectRejected",
         !InputiaHostTextPolicy.isSecureDirectBundleIdentifier(normalBundleId)
           && !normalDecision.passthrough
+      ),
+      (
+        "unknownBundleDoesNotBypassInputPipeline",
+        !InputiaHostTextPolicy.shouldPassThroughInputPipeline(bundleIdentifier: nil)
+          && !InputiaHostTextPolicy.shouldPassThroughInputPipeline(bundleIdentifier: "unknown")
+      ),
+      (
+        "sensitiveNonSecureBundleDoesNotBypassInputPipeline",
+        !InputiaHostTextPolicy.shouldPassThroughInputPipeline(bundleIdentifier: passwordManagerBundleId)
       ),
       (
         "secureDirectAlphabetPassesThrough",

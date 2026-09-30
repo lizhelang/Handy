@@ -139,6 +139,9 @@ SOURCE_DIRTY="$(git_dirty_state)"
 rm -rf "$APP_DIR" "$SETTINGS_APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$SETTINGS_MACOS_DIR" "$SETTINGS_RESOURCES_DIR"
 
+# 按 settings.json / INPUTIA_MENU_ICON_VARIANT 生成联珠纹 Inputia.icns 与 inputia.pdf
+/usr/bin/python3 "$ROOT_DIR/Tools/generate_inputia_icons.py" --resources-dir "$ROOT_DIR/Resources"
+
 if [[ ! -f "$CAPI_MANIFEST" ]]; then
   echo "missing inputia-capi manifest: $CAPI_MANIFEST" >&2
   exit 1

@@ -2,42 +2,36 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleDevelopmentRegion</key>
-  <string>zh_CN</string>
-  <key>CFBundleExecutable</key>
-  <string>InputiaInputMethod</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh_CN</string>
+	<key>CFBundleDisplayName</key>
+	<string>Inputia</string>
+	<key>CFBundleExecutable</key>
+	<string>InputiaInputMethod</string>
 	<key>CFBundleIconFile</key>
 	<string>Inputia.icns</string>
-  <key>CFBundleIdentifier</key>
-  <string>com.inputia.inputmethod.Inputia</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleName</key>
-  <string>Inputia</string>
-  <key>CFBundleDisplayName</key>
-  <string>Inputia</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleSignature</key>
-  <string>????</string>
-	  <key>CFBundleShortVersionString</key>
-	  <string>0.0.47</string>
-  <key>CFBundleSupportedPlatforms</key>
-  <array>
-    <string>MacOSX</string>
-  </array>
-	  <key>CFBundleVersion</key>
-		<string>47</string>
-  <key>InputMethodConnectionName</key>
-  <string>com.inputia.inputmethod.Inputia_Connection</string>
-  <key>InputMethodServerControllerClass</key>
-  <string>InputiaInputMethod.InputiaInputController</string>
-  <key>InputMethodServerDelegateClass</key>
-  <string>InputiaInputMethod.InputiaInputController</string>
-  <key>ComponentInputModeDict</key>
-  <dict>
-    <key>tsInputModeListKey</key>
-    <dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.inputia.inputmethod.Inputia</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Inputia</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.0.50</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>MacOSX</string>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>50</string>
+	<key>ComponentInputModeDict</key>
+	<dict>
+		<key>tsInputModeListKey</key>
+		<dict>
 			<key>com.inputia.inputmethod.Inputia.Hans</key>
 			<dict>
 				<key>TISIconLabels</key>
@@ -51,12 +45,12 @@
 				<string>zh-Hans</string>
 				<key>tsInputModeAlternateMenuIconFileKey</key>
 				<string>inputia.pdf</string>
-        <key>tsInputModeCharacterRepertoireKey</key>
-        <array>
-          <string>Hans</string>
-          <string>Hant</string>
-          <string>Latn</string>
-        </array>
+				<key>tsInputModeCharacterRepertoireKey</key>
+				<array>
+					<string>Hans</string>
+					<string>Hant</string>
+					<string>Latn</string>
+				</array>
 				<key>tsInputModeDefaultStateKey</key>
 				<true/>
 				<key>tsInputModeIsVisibleKey</key>
@@ -85,12 +79,12 @@
 				<string>zh-Hant</string>
 				<key>tsInputModeAlternateMenuIconFileKey</key>
 				<string>inputia.pdf</string>
-        <key>tsInputModeCharacterRepertoireKey</key>
-        <array>
-          <string>Hant</string>
-          <string>Hans</string>
-          <string>Latn</string>
-        </array>
+				<key>tsInputModeCharacterRepertoireKey</key>
+				<array>
+					<string>Hant</string>
+					<string>Hans</string>
+					<string>Latn</string>
+				</array>
 				<key>tsInputModeDefaultStateKey</key>
 				<false/>
 				<key>tsInputModeIsVisibleKey</key>
@@ -113,25 +107,31 @@
 			<string>com.inputia.inputmethod.Inputia.Hant</string>
 		</array>
 	</dict>
-  <key>LSMinimumSystemVersion</key>
-  <string>13.0</string>
-  <key>LSBackgroundOnly</key>
-  <false/>
-  <key>LSUIElement</key>
-  <true/>
-  <key>NSHumanReadableCopyright</key>
-  <string>Copyright 2026 Inputia contributors.</string>
-  <key>NSPrincipalClass</key>
-  <string>NSApplication</string>
-	  <key>TICapsLockLanguageSwitchCapable</key>
-	  <true/>
-	  <key>tsInputMethodCharacterRepertoireKey</key>
-  <array>
-    <string>Hans</string>
-    <string>Hant</string>
-    <string>Latn</string>
-  </array>
-  <key>tsInputMethodIconFileKey</key>
-  <string>inputia.pdf</string>
+	<key>InputMethodConnectionName</key>
+	<string>com.inputia.inputmethod.Inputia_Connection</string>
+	<key>InputMethodServerControllerClass</key>
+	<string>InputiaInputMethod.InputiaInputController</string>
+	<key>InputMethodServerDelegateClass</key>
+	<string>InputiaInputMethod.InputiaInputController</string>
+	<key>LSBackgroundOnly</key>
+	<false/>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright 2026 Inputia contributors.</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>TICapsLockLanguageSwitchCapable</key>
+	<true/>
+	<key>tsInputMethodCharacterRepertoireKey</key>
+	<array>
+		<string>Hans</string>
+		<string>Hant</string>
+		<string>Latn</string>
+	</array>
+	<key>tsInputMethodIconFileKey</key>
+	<string>inputia.pdf</string>
 </dict>
 </plist>

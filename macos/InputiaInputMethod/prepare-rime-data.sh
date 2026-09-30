@@ -140,6 +140,7 @@ download_schema https://raw.githubusercontent.com/baopaau/rime-guobiao-quick/mai
   /^schema_list:/ {
     print "schema_list:"
     print "  - schema: luna_pinyin_simp"
+    print "  - schema: luna_pinyin_tw"
     print "  - schema: double_pinyin"
     print "  - schema: double_pinyin_flypy"
     print "  - schema: double_pinyin_sogou"
