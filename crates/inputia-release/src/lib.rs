@@ -1,6 +1,8 @@
 //! 发布目录信任：密码验证、文档语义、新鲜度和安装授权分别处理。
 //! 本库不访问凭据、不联网、不安装、不把数学验签等同于已通过产品验收。
 
+#[cfg(unix)]
+pub mod artifacts;
 pub mod canonical;
 pub mod feed;
 pub mod manifest;
