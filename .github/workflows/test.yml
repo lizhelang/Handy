@@ -54,6 +54,7 @@ jobs:
             inputia-handy-runtime,
             inputia-settings,
             inputia-release,
+            inputia-updater,
           ]
     steps:
       - uses: actions/checkout@v5
