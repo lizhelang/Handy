@@ -111,7 +111,7 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
     getLanguageLabel(selectedLanguage) || t("settings.general.language.auto");
 
   const handleLanguageSelect = async (languageCode: string) => {
-    await updateSetting("selected_language", languageCode);
+    if (!(await updateSetting("selected_language", languageCode))) return;
     setIsOpen(false);
     setSearchQuery("");
   };

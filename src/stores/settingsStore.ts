@@ -8,9 +8,12 @@ import type {
   OrtAcceleratorSetting,
   ShortcutActivation,
   VadBackend,
+  LogLevel,
+  Result as CommandResult,
 } from "@/bindings";
 import { commands } from "@/bindings";
 import { toast } from "sonner";
+import i18n from "i18next";
 
 interface SettingsStore {
   settings: Settings | null;
@@ -31,7 +34,7 @@ interface SettingsStore {
   updateSetting: <K extends keyof Settings>(
     key: K,
     value: Settings[K],
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   resetSetting: (key: keyof Settings) => Promise<void>;
   refreshSettings: () => Promise<void>;
   refreshAudioDevices: () => Promise<void>;
@@ -79,8 +82,44 @@ const DEFAULT_AUDIO_DEVICE: AudioDevice = {
   is_default: true,
 };
 
+const saveFailureKey = "unifiedHistory.feedback.updateFailed";
+
+// Specta 将 Rust Err 包在成功 resolve 的 Promise 内；不能仅靠 catch 判断保存结果。
+function savedResult<T>(result: CommandResult<T, string>): T {
+  if (result.status === "error") throw new Error(i18n.t(saveFailureKey));
+  return result.data;
+}
+
+function notifySaveFailure(): Error {
+  const error = new Error(i18n.t(saveFailureKey));
+  toast.error(error.message);
+  // 后端错误可能包含正文、地址或凭据，只记录固定分类。
+  console.error("Settings save failed");
+  return error;
+}
+
+const settingMutations = new Map<
+  keyof Settings,
+  {
+    identity: symbol;
+    pending: number;
+    baseline: Settings | null;
+    confirmedSequence: number;
+    latestFailed: boolean;
+  }
+>();
+const settingGenerations = new Map<keyof Settings, number>();
+
+function advanceSetting(key: keyof Settings): number {
+  const next = (settingGenerations.get(key) ?? 0) + 1;
+  settingGenerations.set(key, next);
+  return next;
+}
+
 const settingUpdaters: {
-  [K in keyof Settings]?: (value: Settings[K]) => Promise<unknown>;
+  [K in keyof Settings]?: (
+    value: Settings[K],
+  ) => Promise<CommandResult<null, string>>;
 } = {
   always_on_microphone: (value) =>
     commands.updateMicrophoneMode(value as boolean),
@@ -108,14 +147,7 @@ const settingUpdaters: {
         ? "default"
         : (value as string),
     ),
-  selected_channel: async (value) => {
-    const result = await commands.setSelectedChannel(
-      (value as number | null | undefined) ?? null,
-    );
-    if (result.status === "error") {
-      throw new Error(result.error);
-    }
-  },
+  selected_channel: (value) => commands.setSelectedChannel(value ?? null),
   clamshell_microphone: (value) =>
     commands.setClamshellMicrophone(
       (value as string) === "Default" ? "default" : (value as string),
@@ -170,7 +202,7 @@ const settingUpdaters: {
     commands.changeMuteWhileRecordingSetting(value as boolean),
   append_trailing_space: (value) =>
     commands.changeAppendTrailingSpaceSetting(value as boolean),
-  log_level: (value) => commands.setLogLevel(value as any),
+  log_level: (value) => commands.setLogLevel(value as LogLevel),
   app_language: (value) => commands.changeAppLanguageSetting(value as string),
   theme: (value) => commands.changeThemeSetting(value as string),
   experimental_enabled: (value) =>
@@ -179,15 +211,7 @@ const settingUpdaters: {
     commands.changeLazyStreamCloseSetting(value as boolean),
   overlay_style: (value) => commands.changeOverlayStyleSetting(value as string),
   vad_enabled: (value) => commands.changeVadEnabledSetting(value as boolean),
-  vad_backend: async (value) => {
-    const result = await commands.changeVadBackendSetting(value as VadBackend);
-    if (result.status === "error") {
-      // Rejected switches (e.g. mid-recording) roll the dropdown back via the
-      // throw below; the toast tells the user why.
-      toast.error(result.error);
-      throw new Error(result.error);
-    }
-  },
+  vad_backend: (value) => commands.changeVadBackendSetting(value as VadBackend),
   filler_word_removal_enabled: (value) =>
     commands.changeFillerWordRemovalEnabledSetting(value as boolean),
   show_tray_icon: (value) =>
@@ -234,6 +258,8 @@ export const useSettingsStore = create<SettingsStore>()(
 
     // Load settings from store
     refreshSettings: async () => {
+      const generations = new Map(settingGenerations);
+      const pendingAtRead = new Set(settingMutations.keys());
       try {
         const result = await commands.getAppSettings();
         if (result.status === "ok") {
@@ -246,13 +272,29 @@ export const useSettingsStore = create<SettingsStore>()(
             selected_output_device:
               settings.selected_output_device ?? "Default",
           };
-          set({ settings: normalizedSettings, isLoading: false });
+          set((state) => {
+            let merged = normalizedSettings;
+            if (state.settings) {
+              for (const key of Object.keys(
+                state.settings,
+              ) as (keyof Settings)[]) {
+                if (
+                  pendingAtRead.has(key) ||
+                  settingMutations.has(key) ||
+                  generations.get(key) !== settingGenerations.get(key)
+                ) {
+                  merged = { ...merged, [key]: state.settings[key] };
+                }
+              }
+            }
+            return { settings: merged, isLoading: false };
+          });
         } else {
-          console.error("Failed to load settings:", result.error);
+          console.error("Failed to load settings");
           set({ isLoading: false });
         }
       } catch (error) {
-        console.error("Failed to load settings:", error);
+        console.error("Failed to load settings");
         set({ isLoading: false });
       }
     },
@@ -323,29 +365,80 @@ export const useSettingsStore = create<SettingsStore>()(
       value: Settings[K],
     ) => {
       const { settings, setUpdating } = get();
-      const updateKey = String(key);
-      const originalValue = settings?.[key];
-
-      setUpdating(updateKey, true);
+      const previous = settingMutations.get(key);
+      const identity = Symbol();
+      const sequence = advanceSetting(key);
+      const baseline = previous?.baseline ?? settings;
+      settingMutations.set(key, {
+        identity,
+        pending: (previous?.pending ?? 0) + 1,
+        baseline,
+        confirmedSequence: previous?.confirmedSequence ?? 0,
+        latestFailed: false,
+      });
+      const current = () => settingMutations.get(key)?.identity === identity;
+      setUpdating(String(key), true);
 
       try {
+        const updater = settingUpdaters[key];
+        if (!updater || !settings) throw new Error(i18n.t(saveFailureKey));
         set((state) => ({
           settings: state.settings ? { ...state.settings, [key]: value } : null,
         }));
-
-        const updater = settingUpdaters[key];
-        if (updater) {
-          await updater(value);
-        } else if (key !== "bindings" && key !== "selected_model") {
-          console.warn(`No handler for setting: ${String(key)}`);
+        savedResult(await updater(value));
+        const group = settingMutations.get(key);
+        if (group && sequence > group.confirmedSequence) {
+          group.confirmedSequence = sequence;
+          group.baseline = group.baseline
+            ? { ...group.baseline, [key]: value }
+            : null;
+          if (group.latestFailed) {
+            set((state) => ({
+              settings: state.settings
+                ? { ...state.settings, [key]: value }
+                : null,
+            }));
+          }
         }
-      } catch (error) {
-        console.error(`Failed to update setting ${String(key)}:`, error);
-        if (settings) {
-          set({ settings: { ...settings, [key]: originalValue } });
+        return true;
+      } catch {
+        if (current()) {
+          const group = settingMutations.get(key);
+          if (group) group.latestFailed = true;
         }
+        // 保存失败仅核对本字段。读取不会重发原动作，也不能覆盖期间其他字段的乐观修改。
+        let rollback = (settingMutations.get(key)?.baseline ?? baseline)?.[key];
+        if (current()) {
+          const confirmedAtRead = settingMutations.get(key)?.confirmedSequence;
+          try {
+            const result = await commands.getAppSettings();
+            rollback =
+              result.status === "ok" &&
+              confirmedAtRead === settingMutations.get(key)?.confirmedSequence
+                ? result.data[key]
+                : (settingMutations.get(key)?.baseline ?? baseline)?.[key];
+          } catch {
+            // 无法确认最新值时保留本轮开始前的已知基准，不使用另一在途修改作基准。
+            rollback = (settingMutations.get(key)?.baseline ?? baseline)?.[key];
+          }
+          set((state) => ({
+            settings:
+              current() &&
+              state.settings &&
+              Object.is(state.settings[key], value)
+                ? { ...state.settings, [key]: rollback }
+                : state.settings,
+          }));
+        }
+        notifySaveFailure();
+        return false;
       } finally {
-        setUpdating(updateKey, false);
+        advanceSetting(key);
+        const pending = settingMutations.get(key);
+        if (pending && --pending.pending === 0) {
+          settingMutations.delete(key);
+          setUpdating(String(key), false);
+        }
       }
     },
 
@@ -355,7 +448,7 @@ export const useSettingsStore = create<SettingsStore>()(
       if (defaultSettings) {
         const defaultValue = defaultSettings[key];
         if (defaultValue !== undefined) {
-          await get().updateSetting(key, defaultValue as any);
+          await get().updateSetting(key, defaultValue);
         }
       }
     },
@@ -389,15 +482,15 @@ export const useSettingsStore = create<SettingsStore>()(
 
         // Check if the command executed successfully
         if (result.status === "error") {
-          throw new Error(result.error);
+          throw new Error(i18n.t(saveFailureKey));
         }
 
         // Check if the binding change was successful
         if (!result.data.success) {
-          throw new Error(result.data.error || "Failed to update binding");
+          throw new Error(i18n.t(saveFailureKey));
         }
-      } catch (error) {
-        console.error(`Failed to update binding ${id}:`, error);
+      } catch {
+        const error = notifySaveFailure();
 
         // Rollback on error
         if (originalBinding && get().settings) {
@@ -432,10 +525,11 @@ export const useSettingsStore = create<SettingsStore>()(
       setUpdating(updateKey, true);
 
       try {
-        await commands.resetBinding(id);
+        const result = savedResult(await commands.resetBinding(id));
+        if (!result.success) throw new Error(i18n.t(saveFailureKey));
         await refreshSettings();
-      } catch (error) {
-        console.error(`Failed to reset binding ${id}:`, error);
+      } catch {
+        notifySaveFailure();
       } finally {
         setUpdating(updateKey, false);
       }
@@ -466,10 +560,10 @@ export const useSettingsStore = create<SettingsStore>()(
       setPostProcessModelOptions(providerId, []);
 
       try {
-        await commands.setPostProcessProvider(providerId);
+        savedResult(await commands.setPostProcessProvider(providerId));
         await refreshSettings();
-      } catch (error) {
-        console.error("Failed to set post-process provider:", error);
+      } catch {
+        notifySaveFailure();
         if (previousId !== null) {
           set((state) => ({
             settings: state.settings
@@ -495,18 +589,21 @@ export const useSettingsStore = create<SettingsStore>()(
 
       try {
         if (settingType === "base_url") {
-          await commands.changePostProcessBaseUrlSetting(providerId, value);
+          savedResult(
+            await commands.changePostProcessBaseUrlSetting(providerId, value),
+          );
         } else if (settingType === "api_key") {
-          await commands.changePostProcessApiKeySetting(providerId, value);
+          savedResult(
+            await commands.changePostProcessApiKeySetting(providerId, value),
+          );
         } else if (settingType === "model") {
-          await commands.changePostProcessModelSetting(providerId, value);
+          savedResult(
+            await commands.changePostProcessModelSetting(providerId, value),
+          );
         }
         await refreshSettings();
-      } catch (error) {
-        console.error(
-          `Failed to update post-process ${settingType.replace("_", " ")}:`,
-          error,
-        );
+      } catch {
+        notifySaveFailure();
       } finally {
         setUpdating(updateKey, false);
       }
@@ -524,10 +621,7 @@ export const useSettingsStore = create<SettingsStore>()(
           providerId,
           baseUrl,
         );
-        if (urlResult.status === "error") {
-          console.error("Failed to persist base URL:", urlResult.error);
-          return;
-        }
+        savedResult(urlResult);
 
         // Reset the stored model since the previous value is almost certainly
         // invalid for the new endpoint (e.g. switching Custom from Groq to
@@ -536,10 +630,7 @@ export const useSettingsStore = create<SettingsStore>()(
           providerId,
           "",
         );
-        if (modelResult.status === "error") {
-          console.error("Failed to reset model setting:", modelResult.error);
-          return;
-        }
+        savedResult(modelResult);
 
         // Clear cached model options only after both backend writes succeed.
         set((state) => ({
@@ -551,8 +642,10 @@ export const useSettingsStore = create<SettingsStore>()(
 
         // Single refresh after both backend writes.
         await refreshSettings();
-      } catch (error) {
-        console.error("Failed to update post-process base URL:", error);
+      } catch {
+        notifySaveFailure();
+        // 第一次保存可能已成功；这里只重新读取，不自动重做第二个保存动作。
+        await refreshSettings();
       } finally {
         setUpdating(updateKey, false);
       }
@@ -586,11 +679,11 @@ export const useSettingsStore = create<SettingsStore>()(
           setPostProcessModelOptions(providerId, result.data);
           return result.data;
         } else {
-          console.error("Failed to fetch models:", result.error);
+          console.error("Failed to fetch models");
           return [];
         }
       } catch (error) {
-        console.error("Failed to fetch models:", error);
+        console.error("Failed to fetch models");
         // Don't cache empty array on error - let user retry
         return [];
       } finally {
@@ -613,10 +706,10 @@ export const useSettingsStore = create<SettingsStore>()(
         if (result.status === "ok") {
           set({ defaultSettings: result.data });
         } else {
-          console.error("Failed to load default settings:", result.error);
+          console.error("Failed to load default settings");
         }
       } catch (error) {
-        console.error("Failed to load default settings:", error);
+        console.error("Failed to load default settings");
       }
     },
 

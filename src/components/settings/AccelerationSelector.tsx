@@ -118,7 +118,7 @@ export const AccelerationSelector: FC<AccelerationSelectorProps> = ({
   const handleTranscribeChange = async (value: string) => {
     const { accelerator, gpuDevice } = decodeTranscribeValue(value);
     // Save the device first to avoid `gpu + null` being normalized to Auto.
-    await updateSetting("transcribe_gpu_device", gpuDevice);
+    if (!(await updateSetting("transcribe_gpu_device", gpuDevice))) return;
     await updateSetting("transcribe_accelerator", accelerator);
   };
 

@@ -55,7 +55,11 @@ export const AutoSubmit: React.FC<AutoSubmitProps> = React.memo(
         return;
       }
 
-      await updateSetting("auto_submit_key", selected as AutoSubmitKey);
+      if (
+        !(await updateSetting("auto_submit_key", selected as AutoSubmitKey))
+      ) {
+        return;
+      }
       if (!enabled) {
         await updateSetting("auto_submit", true);
       }
