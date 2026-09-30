@@ -7,6 +7,10 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::{cell::Cell, path::PathBuf};
 type Result<T> = std::result::Result<T, String>;
+// 同时绑定逻辑源与当前实例，利用 (store_id, record_id) 唯一索引，拒绝残留旧实例条目。
+const PROJECTION_REVISION: &str = "SELECT item.revision FROM integration_items item
+    JOIN integration_sources source ON source.logical_name=item.logical_name
+    WHERE source.active_store_id=?1 AND item.store_id=source.active_store_id AND item.record_id=?2";
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -1017,8 +1021,12 @@ impl LegacyMemory {
             .map_err(db_err)?;
         let refs:Vec<(String,String,u64)>=tx.prepare("SELECT store_id,record_id,revision FROM memory_sources WHERE deleted=0 AND store_id NOT LIKE 'commit:%' ORDER BY store_id,record_id").map_err(db_err)?.query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(db_err)?.collect::<std::result::Result<_,_>>().map_err(db_err)?;
         let mut revoke = vec![];
+        let mut projected = projection.prepare(PROJECTION_REVISION).map_err(db_err)?;
         for (store, record, revision) in refs {
-            let current:Option<u64>=projection.query_row("SELECT item.revision FROM integration_items item JOIN integration_sources source ON source.logical_name=item.logical_name WHERE source.active_store_id=?1 AND item.record_id=?2",params![store,record],|r|r.get(0)).optional().map_err(db_err)?;
+            let current: Option<u64> = projected
+                .query_row(params![store, record], |r| r.get(0))
+                .optional()
+                .map_err(db_err)?;
             if current != Some(revision) {
                 revoke.push((
                     store,
@@ -1029,6 +1037,7 @@ impl LegacyMemory {
             }
             after_record();
         }
+        drop(projected);
         for (store, record, revision, deleted) in revoke {
             revoke_record(&tx, &store, &record, revision, deleted)?;
         }
@@ -1718,16 +1727,125 @@ mod tests {
             .unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
             .unwrap().collect::<std::result::Result<_, _>>().unwrap()
     }
+    fn large_projection(
+        temp: &tempfile::TempDir,
+    ) -> (LegacyMemory, crate::store::IntegrationStore) {
+        let m = memory(temp);
+        let mut projection =
+            crate::store::IntegrationStore::open(temp.path().join("projection.db"), "fixture")
+                .unwrap();
+        projection
+            .register_source("history", "fixture-source")
+            .unwrap();
+        projection.attachment_connection().execute_batch(
+            "BEGIN IMMEDIATE;
+            WITH RECURSIVE numbers(n) AS(SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<50000)
+            INSERT INTO integration_items
+            SELECT CAST(n AS TEXT),'history','fixture-source',CAST(n AS TEXT),1,1,'voice','text',0,0,n,'{}' FROM numbers;
+            COMMIT;",
+        ).unwrap();
+        m.db()
+            .unwrap()
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+            WITH RECURSIVE numbers(n) AS(SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<50000)
+            INSERT INTO memory_sources SELECT 'fixture-source',CAST(n AS TEXT),1,0 FROM numbers;
+            COMMIT;",
+            )
+            .unwrap();
+        (m, projection)
+    }
+    #[test]
+    fn full_projection_audit_uses_bounded_index_work_and_rejects_inactive_instance_rows() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mut m, mut store) = large_projection(&temp);
+        let projection = store.attachment_connection();
+        let mut statement = projection.prepare(PROJECTION_REVISION).unwrap();
+        let revision: u64 = statement
+            .query_row(["fixture-source", "50000"], |r| r.get(0))
+            .unwrap();
+        assert_eq!(revision, 1);
+        // 断言执行工作量而非墙钟，避免慢机器误报，也能阻止重新引入整表扫描。
+        assert!(statement.get_status(rusqlite::StatementStatus::VmStep) < 100);
+        assert_eq!(
+            statement.get_status(rusqlite::StatementStatus::FullscanStep),
+            0
+        );
+        drop(statement);
+        let started = std::time::Instant::now();
+        m.reconcile_projection(projection).unwrap();
+        eprintln!(
+            "full audit, actual schema, 50000 source refs: {:?}",
+            started.elapsed()
+        );
+        assert!(m.reconciled_projection.is_some());
+        let live: u64 = m
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM memory_sources WHERE deleted=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(live, 50000);
+
+        let source = evidence("50000", 1, 1, "retained-word");
+        m.apply_intent(&source.intent("learn-tail".into()), &source)
+            .unwrap();
+        // 相同 logical_name/record_id/revision 的旧实例行不能证明当前来源仍存在。
+        projection
+            .execute_batch(
+                "INSERT INTO integration_instances VALUES('retired-source','history',0,0);
+            UPDATE integration_items SET store_id='retired-source' WHERE record_id='50000';",
+            )
+            .unwrap();
+        m.reconcile_projection(projection).unwrap();
+        assert_eq!(count(&m, "retained-word"), 0);
+        let deleted: bool = m.db().unwrap().query_row(
+            "SELECT deleted FROM memory_sources WHERE store_id='fixture-source' AND record_id='50000'", [], |r| r.get(0),
+        ).unwrap();
+        assert!(deleted);
+    }
+
+    #[test]
+    #[ignore = "临时合成数据库性能诊断；不等于冷启动或原生 G7 验收"]
+    fn full_projection_audit_latency_diagnostic() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mut m, mut store) = large_projection(&temp);
+        let projection = store.attachment_connection();
+        let mut samples = Vec::new();
+        for index in 0..205 {
+            m.reconciled_projection = None;
+            let start = std::time::Instant::now();
+            m.reconcile_projection(projection).unwrap();
+            if index >= 5 {
+                samples.push(start.elapsed().as_micros());
+            }
+        }
+        samples.sort_unstable();
+        let bytes = |db: &Connection| -> u64 {
+            let pages: u64 = db
+                .pragma_query_value(None, "page_count", |r| r.get(0))
+                .unwrap();
+            let page_size: u64 = db
+                .pragma_query_value(None, "page_size", |r| r.get(0))
+                .unwrap();
+            pages * page_size
+        };
+        eprintln!("audit_diagnostic rows=50000 warmup=5 n=200 p50_us={} p95_us={} p99_us={} max_us={} errors=0 memory_db_bytes={} projection_db_bytes={} cold_os_cache=false",
+            samples[99],samples[189],samples[197],samples[199],bytes(m.db().unwrap()),bytes(projection));
+    }
     #[test]
     fn projection_cache_rechecks_new_sources_revisions_external_writes_and_empty_restores() {
         let temp = tempfile::tempdir().unwrap();
         let mut m = memory(&temp);
         let path = temp.path().join("projection.db");
         let projection = Connection::open(&path).unwrap();
-        projection.execute_batch("CREATE TABLE integration_items(logical_name TEXT,record_id TEXT,revision INTEGER);
+        projection.execute_batch("CREATE TABLE integration_items(logical_name TEXT,record_id TEXT,revision INTEGER,store_id TEXT NOT NULL DEFAULT 'fixture-source');
             CREATE TABLE integration_sources(logical_name TEXT,active_store_id TEXT);
             INSERT INTO integration_sources VALUES('history','fixture-source');
-            INSERT INTO integration_items VALUES('history','one',1),('history','two',1),('history','three',1);").unwrap();
+            INSERT INTO integration_items(logical_name,record_id,revision) VALUES('history','one',1),('history','two',1),('history','three',1);").unwrap();
         crate::memory_projection_clock::install(
             &projection,
             crate::memory_projection_clock::Domain::Projection,
@@ -1783,10 +1901,10 @@ mod tests {
             let mut m = memory(&temp);
             let path = temp.path().join("projection.db");
             let projection = Connection::open(&path).unwrap();
-            projection.execute_batch("CREATE TABLE integration_items(logical_name TEXT,record_id TEXT,revision INTEGER);
+            projection.execute_batch("CREATE TABLE integration_items(logical_name TEXT,record_id TEXT,revision INTEGER,store_id TEXT NOT NULL DEFAULT 'fixture-source');
                 CREATE TABLE integration_sources(logical_name TEXT,active_store_id TEXT);
                 INSERT INTO integration_sources VALUES('history','fixture-source');
-                INSERT INTO integration_items VALUES('history','one',2),('history','two',1);").unwrap();
+                INSERT INTO integration_items(logical_name,record_id,revision) VALUES('history','one',2),('history','two',1);").unwrap();
             if installed {
                 crate::memory_projection_clock::install(
                     &projection,
@@ -1832,10 +1950,10 @@ mod tests {
         let projection = Connection::open_in_memory().unwrap();
         projection
             .execute_batch(
-                "CREATE TABLE integration_items(logical_name TEXT,record_id TEXT,revision INTEGER);
+                "CREATE TABLE integration_items(logical_name TEXT,record_id TEXT,revision INTEGER,store_id TEXT NOT NULL DEFAULT 'fixture-source');
             CREATE TABLE integration_sources(logical_name TEXT,active_store_id TEXT);
             INSERT INTO integration_sources VALUES('history','fixture-source');
-            INSERT INTO integration_items VALUES('history','one',1);",
+            INSERT INTO integration_items(logical_name,record_id,revision) VALUES('history','one',1);",
             )
             .unwrap();
         crate::memory_projection_clock::install(

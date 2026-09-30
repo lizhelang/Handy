@@ -403,3 +403,14 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 验证：12 项临时文件测试通过，包含 10 个真实自建子进程 SIGKILL 窗口、热 rollback journal、WAL、旧 inode 持有者、跨进程锁、路径替换、6 处持续同步失败与 6 种未知 sidecar 反例；root 重跑同范围 12 项通过。默认/native all-targets 严格 Clippy、格式和 diff 检查通过，独立增量复核 CLEAR。
 
 边界：本包是机械交接核心；生产 origin_authority 仍返回 OriginProofRequired，运行时尚未接入，不以序列化 Ready 或暂停租约授权。归档包含旧数据，后续必须接入隐私与保留生命周期；尚未对用户库、日用进程或安装执行迁移。
+
+
+### 第三十七批：首次学习来源核对使用实例索引
+
+来源查询同时绑定逻辑源、当前 store 实例及记录 ID，使用既有 `(store_id, record_id)` 唯一索引；每轮只准备一次语句。原查询仅绑定 active source 和 record ID，在 5 万条临时数据中执行计划为逐条整表扫描；补充条件也拒绝同逻辑源/记录/修订的旧实例残留。原写事务、逐行外部变更夹具、版本核验与缓存失效规则保持有效。
+
+验证：新增实际 IntegrationStore schema 的 5 万来源回归，单条查找 FullscanStep=0、VmStep<100，以确定工作量防止回退；旧实例残留被撤销。projection 定向合计 17 项通过、1 项诊断默认忽略，runtime all-targets 严格 Clippy、格式/diff 通过，独立窄审 CLEAR。调试构建单轮全量核对约 241ms。
+
+性能诊断使用本机 macOS 27.2 (26B5091g)、arm64 Mac14,5、32GiB，在 `5905f7ff` 加本批未提交 SQL 差异上编译 release。实际运行 `cargo test --release --manifest-path crates/inputia-handy-runtime/Cargo.toml --lib full_projection_audit_latency_diagnostic -- --ignored --nocapture --test-threads=1` 对应的测试二进制，并由 `/usr/bin/time -l` 单独测量。50,000 来源，预热 5 次、强制缓存失效的完整扫描 200 次：p50=93.075ms、p95=104.085ms、p99=126.827ms、max=142.847ms；错误 0，未设服务超时，进程峰值 RSS 24,707,072 bytes。SQLite 逻辑大小为学习域 3,158,016 bytes、投影 8,376,320 bytes（不含 WAL/SHM）；只测来源审计，没有构造大正文/附件/贡献词表。
+
+边界：这是临时合成数据、单测试进程、已预热 OS 文件缓存下的模块诊断，未隔离本机其他任务，不能充当 G7 冷启动、语音并发、按键或端到端验收。首次审计仍在服务队列同步执行；后续实机压力证据若超限，再按隔离队列或有界准备方案处理，不能在核对未完成时放行旧个性化结果。
