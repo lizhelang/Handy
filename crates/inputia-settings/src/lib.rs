@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 pub mod installation;
 pub mod maintenance;
+#[cfg(unix)]
+pub mod store;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -57,7 +59,11 @@ impl Default for InputiaSettings {
 impl InputiaSettings {
     pub fn load_or_create(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        if path.exists() {
+        if path.exists()
+            || path
+                .parent()
+                .is_some_and(|p| p.join(".inputia-settings-initialized.json").exists())
+        {
             return Self::load(path);
         }
 
@@ -72,27 +78,62 @@ impl InputiaSettings {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let content = std::fs::read_to_string(path)?;
+        #[cfg(unix)]
+        {
+            let value = store::strict_json(content.as_bytes()).map_err(std::io::Error::other)?;
+            if value.get("_inputia_store").is_some()
+                || path
+                    .parent()
+                    .is_some_and(|p| p.join(".inputia-settings-initialized.json").exists())
+            {
+                let context = maintenance::current_user_context().map_err(std::io::Error::other)?;
+                return store::Store::open(path, &context.home, context.uid)
+                    .and_then(|store| store.read()?.settings())
+                    .map_err(|e| std::io::Error::other(e).into());
+            }
+        }
         let mut settings: Self = serde_json::from_str(&content)?;
         settings.sanitize_for_settings_path(path);
         Ok(settings)
     }
 
+    /// 仅供创建尚未进入版本协调的导入/测试文档；现有文件必须使用 store::Store::apply。
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
+        use std::io::Write;
         let path = path.as_ref();
         if let Some(parent) = path.parent() {
+            if parent.join(".inputia-settings-initialized.json").exists() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "设置已初始化，请使用 CAS",
+                )
+                .into());
+            }
             std::fs::create_dir_all(parent)?;
         }
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, format!("{content}\n"))?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        }
+        let mut file = options.open(path)?;
+        file.write_all(format!("{content}\n").as_bytes())?;
+        file.sync_all()?;
         Ok(())
     }
 
     pub fn default_for_settings_path(path: &Path) -> Self {
         let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
-        let mut settings = Self::default();
-        settings.rime_user_data_dir = Some(base_dir.join("rime"));
-        settings.memory_db_path = Some(base_dir.join("inputia_memory.db"));
-        settings
+        Self {
+            rime_user_data_dir: Some(base_dir.join("rime")),
+            memory_db_path: Some(base_dir.join("inputia_memory.db")),
+            ..Self::default()
+        }
     }
 
     pub fn sanitize(&mut self) {
@@ -143,17 +184,12 @@ pub enum PunctuationPreference {
     EnglishInChinese,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CharacterWidthPreference {
+    #[default]
     HalfWidth,
     FullWidth,
-}
-
-impl Default for CharacterWidthPreference {
-    fn default() -> Self {
-        Self::HalfWidth
-    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

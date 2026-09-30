@@ -18,6 +18,7 @@
 
 pub mod installation;
 pub mod maintenance;
+pub mod settings_store;
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
@@ -53,6 +54,8 @@ const SOURCE_VOICE: c_int = 2;
 const SOURCE_CLIPBOARD: c_int = 3;
 
 pub struct InputiaSession {
+    #[cfg(target_os = "macos")]
+    settings_binding: Option<settings_store::SessionBinding>,
     core: InputiaCore<RankedRimeEngine>,
     memory: Option<Arc<Mutex<SqliteMemory>>>,
     context: AppContext,
@@ -281,6 +284,10 @@ pub unsafe extern "C" fn inputia_session_new_from_settings_without_memory(
 #[no_mangle]
 pub unsafe extern "C" fn inputia_session_free(session: *mut InputiaSession) {
     if !session.is_null() {
+        #[cfg(target_os = "macos")]
+        if let Some(binding) = unsafe { &*session }.settings_binding.as_ref() {
+            settings_store::retire(binding);
+        }
         unsafe { drop(Box::from_raw(session)) };
     }
 }
@@ -800,12 +807,21 @@ fn new_session(
 }
 
 fn new_session_with_options(options: SessionOptions) -> *mut InputiaSession {
+    new_session_with_options_and_readiness(options, false)
+}
+fn new_session_with_options_and_readiness(
+    options: SessionOptions,
+    verify_ready: bool,
+) -> *mut InputiaSession {
     if inputia_settings::maintenance::ensure_current_normal_start().is_err() {
         return null_mut();
     }
     let Ok(engine) = RimeEngine::open(options.rime) else {
         return null_mut();
     };
+    if verify_ready && engine.verify_ready().is_err() {
+        return null_mut();
+    }
     let memory = match options.memory_db_path {
         Some(path) => {
             if let Some(parent) = std::path::Path::new(&path).parent() {
@@ -828,6 +844,8 @@ fn new_session_with_options(options: SessionOptions) -> *mut InputiaSession {
     };
     let core = InputiaCore::new(options.core, ranked_engine);
     Box::into_raw(Box::new(InputiaSession {
+        #[cfg(target_os = "macos")]
+        settings_binding: None,
         core,
         memory,
         context: AppContext::new("dev.inputia.host"),
@@ -1432,6 +1450,7 @@ mod tests {
         let mut settings = InputiaSettings::load(file).unwrap();
         settings.rime_shared_data_dir = Some(static_test_data());
         settings.rime_dylib_path = Some("/synthetic/not-a-library.dylib".into());
+        std::fs::remove_file(file).unwrap(); // 测试专用的旧格式 fixture，生产 writer 使用 CAS。
         settings.save(file).unwrap();
         unsafe { super::inputia_session_new_from_settings(path) }
     }
@@ -2659,6 +2678,155 @@ mod tests {
             assert_eq!(commit["composing"], "");
             unsafe { inputia_session_free(session) };
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn snapshot_session_reports_real_revision_degradation_and_retires_observation() {
+        use inputia_settings::{
+            maintenance,
+            store::{PatchRequest, Store},
+        };
+        let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
+        let Some(shared) = bundled_shared_data_dir() else {
+            unavailable("skip: Inputia bundled RimeData is not available");
+            return;
+        };
+        let context = maintenance::current_user_context().unwrap();
+        // 真实 C ABI 不接受 HOME 重定向；隔离目录由 tempfile 创建并在测试后清理。
+        let temporary = tempfile::Builder::new()
+            .prefix(".inputia-settings-capi-test-")
+            .tempdir_in(&context.home)
+            .unwrap();
+        let path = temporary.path().join("settings.json");
+        let snapshot = Store::open(&path, &context.home, context.uid)
+            .unwrap()
+            .read()
+            .unwrap();
+        let request = CString::new(serde_json::json!({"path":path,"store_id":snapshot.store_id,"revision":snapshot.revision,
+            "values_digest":snapshot.values_digest,"rime_shared_data_dir":shared,"without_memory":true}).to_string()).unwrap();
+        let session =
+            unsafe { settings_store::inputia_session_new_from_settings_snapshot(request.as_ptr()) };
+        if session.is_null() {
+            unavailable("skip: Squirrel librime runtime is not available");
+            return;
+        }
+        let forged =
+            CString::new(r#"{"applied_fields":["schema_id"],"unavailable_fields":[]}"#).unwrap();
+        assert_eq!(
+            handle_json(unsafe {
+                settings_store::inputia_session_settings_applied(session, forged.as_ptr())
+            })["ok"],
+            false
+        );
+        let native = CString::new(r#"{"applied_fields":["input_mode_toggle_shortcut"],"unavailable_fields":["candidate_font_size"]}"#).unwrap();
+        let reply = handle_json(unsafe {
+            settings_store::inputia_session_settings_applied(session, native.as_ptr())
+        });
+        assert_eq!(reply["application"]["revision"], snapshot.revision);
+        assert!(reply["application"]["unavailable_fields"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("memory_enabled")));
+        let flush = CString::new(serde_json::json!({"path":path}).to_string()).unwrap();
+        assert_eq!(
+            handle_json(unsafe {
+                settings_store::inputia_settings_flush_applications(flush.as_ptr())
+            })["ok"],
+            true
+        );
+        {
+            let store = Store::open(&path, &context.home, context.uid).unwrap();
+            assert_eq!(store.application_status().unwrap().sessions.len(), 1);
+            store
+                .apply(&PatchRequest {
+                    operation_id: snapshot.operation_id(),
+                    expected_store_id: snapshot.store_id.clone(),
+                    expected_revision: snapshot.revision.clone(),
+                    patch: std::collections::BTreeMap::from([(
+                        "candidate_page_size".into(),
+                        serde_json::json!(5),
+                    )]),
+                })
+                .unwrap();
+        }
+        assert!(unsafe {
+            settings_store::inputia_session_new_from_settings_snapshot(request.as_ptr())
+        }
+        .is_null());
+        assert_eq!(
+            handle_json(unsafe {
+                settings_store::inputia_settings_flush_applications(flush.as_ptr())
+            })["ok"],
+            true
+        );
+        {
+            let status = Store::open(&path, &context.home, context.uid)
+                .unwrap()
+                .application_status()
+                .unwrap();
+            assert_eq!(status.current_revision, "1");
+            assert_eq!(status.sessions[0].revision, "0");
+        }
+        {
+            let store = Store::open(&path, &context.home, context.uid).unwrap();
+            let current = store.read().unwrap();
+            store
+                .apply(&PatchRequest {
+                    operation_id: current.operation_id(),
+                    expected_store_id: current.store_id,
+                    expected_revision: current.revision,
+                    patch: std::collections::BTreeMap::from([(
+                        "schema_id".into(),
+                        serde_json::json!("inputia_missing_schema_negative_test"),
+                    )]),
+                })
+                .unwrap();
+        }
+        let missing = Store::open(&path, &context.home, context.uid)
+            .unwrap()
+            .read()
+            .unwrap();
+        let invalid = CString::new(serde_json::json!({"path":path,"store_id":missing.store_id,"revision":missing.revision,
+            "values_digest":missing.values_digest,"rime_shared_data_dir":shared,"without_memory":true}).to_string()).unwrap();
+        assert!(
+            unsafe { settings_store::inputia_session_new_from_settings_snapshot(invalid.as_ptr()) }
+                .is_null(),
+            "不存在的schema不得产生可报告Applied的session"
+        );
+        assert_eq!(
+            handle_json(unsafe { inputia_session_set_input_mode(session, INPUT_MODE_CHINESE) })
+                ["ok"],
+            true
+        );
+        let original = handle_json(unsafe { inputia_session_handle_char(session, 'n' as u32) });
+        assert_eq!(original["ok"], true, "失败的新设置不能销毁旧session");
+        for field in [
+            "rime_dylib_path",
+            "rime_shared_data_dir",
+            "rime_user_data_dir",
+            "memory_db_path",
+        ] {
+            assert!(!reply["application"]["applied_fields"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!(field)));
+        }
+        unsafe {
+            inputia_session_free(session);
+        }
+        assert_eq!(
+            handle_json(unsafe {
+                settings_store::inputia_settings_flush_applications(flush.as_ptr())
+            })["ok"],
+            true
+        );
+        assert!(Store::open(&path, &context.home, context.uid)
+            .unwrap()
+            .application_status()
+            .unwrap()
+            .sessions
+            .is_empty());
     }
 
     #[test]

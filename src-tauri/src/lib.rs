@@ -898,6 +898,7 @@ pub fn run(cli_args: CliArgs) {
     let permission_handler: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
         Box::new(tauri::generate_handler![
             commands::knowledge::knowledge_request,
+            commands::input_settings::input_settings_request,
             commands::permissions::inputia_permission_status,
             commands::permissions::inputia_permission_recheck,
             commands::permissions::inputia_permission_prepare_maintenance,
@@ -1245,6 +1246,7 @@ pub fn run(cli_args: CliArgs) {
         })
         .invoke_handler(move |invoke| match invoke.message.command() {
             "knowledge_request"
+            | "input_settings_request"
             | "inputia_permission_status"
             | "inputia_permission_recheck"
             | "inputia_permission_prepare_maintenance"

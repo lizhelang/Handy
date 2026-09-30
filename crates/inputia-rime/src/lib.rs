@@ -193,6 +193,68 @@ impl RimeEngine {
         Ok(engine)
     }
 
+    /// 无输入地建立真实 session，并读回 schema/options；用于设置生效确认，不能以库初始化代替。
+    pub fn verify_ready(&self) -> Result<()> {
+        let _guard = self
+            .evaluation_lock
+            .lock()
+            .map_err(|_| Error::LockPoisoned)?;
+        let api = self.api();
+        let schema_open = required(api.schema_open, "schema_open")?;
+        let config_close = required(api.config_close, "config_close")?;
+        let config_string = required(api.config_get_string, "config_get_string")?;
+        let list_size = required(api.config_list_size, "config_list_size")?;
+        let schema_id = CString::new(self.config.schema_id.as_str())?;
+        let mut config = RimeConfig { ptr: null_mut() };
+        let opened = unsafe { schema_open(schema_id.as_ptr(), &mut config) } != FALSE;
+        let mut configured_id = vec![0_i8; self.config.schema_id.len() + 2];
+        let configured = opened
+            && !config.ptr.is_null()
+            && unsafe {
+                config_string(
+                    &mut config,
+                    c"schema/schema_id".as_ptr(),
+                    configured_id.as_mut_ptr(),
+                    configured_id.len() - 1,
+                )
+            } != FALSE
+            && unsafe { c_string(configured_id.as_ptr()) } == self.config.schema_id
+            && unsafe { list_size(&mut config, c"engine/processors".as_ptr()) } > 0
+            && unsafe { list_size(&mut config, c"engine/translators".as_ptr()) } > 0;
+        if !config.ptr.is_null() {
+            unsafe {
+                config_close(&mut config);
+            }
+        }
+        if !configured {
+            return Err(Error::Rime(
+                "requested schema is not deployed with a usable engine configuration",
+            ));
+        }
+        let mut slot = self.live_session.lock().map_err(|_| Error::LockPoisoned)?;
+        let live = self.ensure_live_session(api, &mut slot)?;
+        let schema = required(api.get_current_schema, "get_current_schema")?;
+        let get_option = required(api.get_option, "get_option")?;
+        let mut buffer = vec![0_i8; self.config.schema_id.len() + 2];
+        if unsafe { schema(live.session_id, buffer.as_mut_ptr(), buffer.len() - 1) } == FALSE
+            || unsafe { c_string(buffer.as_ptr()) } != self.config.schema_id
+        {
+            return Err(Error::Rime(
+                "selected schema does not match requested settings",
+            ));
+        }
+        for (option, enabled) in &self.output_options {
+            if (unsafe { get_option(live.session_id, option.as_ptr()) } != FALSE)
+                != (*enabled != FALSE)
+            {
+                return Err(Error::Rime(
+                    "runtime option does not match requested settings",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// 返回实际持有的库生命周期类型，供集成诊断区分显式静态/动态模式。
     pub fn backend_kind(&self) -> RimeBackendKind {
         match &self.library {
@@ -389,9 +451,13 @@ impl RimeEngine {
         let get_context = required(api.get_context, "get_context")?;
         let free_context = required(api.free_context, "free_context")?;
 
-        let mut schema_buffer = [0_i8; 128];
+        let mut schema_buffer = [0_i8; 129];
         let schema_id = if unsafe {
-            get_current_schema(session_id, schema_buffer.as_mut_ptr(), schema_buffer.len())
+            get_current_schema(
+                session_id,
+                schema_buffer.as_mut_ptr(),
+                schema_buffer.len() - 1,
+            )
         } != FALSE
         {
             unsafe { c_string(schema_buffer.as_ptr()) }
@@ -467,6 +533,10 @@ impl RimeEngine {
                 return Err(Error::Rime("failed to create session"));
             }
             if unsafe { select_schema(session_id, schema_id.as_ptr()) } == FALSE {
+                let destroy = required(api.destroy_session, "destroy_session")?;
+                unsafe {
+                    destroy(session_id);
+                }
                 return Err(Error::Rime("failed to select schema"));
             }
             for (output_option, enabled) in &self.output_options {
@@ -1302,6 +1372,11 @@ impl RimeContext {
 }
 
 #[repr(C)]
+struct RimeConfig {
+    ptr: *mut std::ffi::c_void,
+}
+
+#[repr(C)]
 struct RimeApi {
     data_size: c_int,
     setup: Option<unsafe extern "C" fn(*mut RimeTraits)>,
@@ -1332,20 +1407,21 @@ struct RimeApi {
     get_status: UnusedFn,
     free_status: UnusedFn,
     set_option: Option<unsafe extern "C" fn(RimeSessionId, *const c_char, Bool)>,
-    get_option: UnusedFn,
+    get_option: Option<unsafe extern "C" fn(RimeSessionId, *const c_char) -> Bool>,
     set_property: UnusedFn,
     get_property: UnusedFn,
     get_schema_list: UnusedFn,
     free_schema_list: UnusedFn,
     get_current_schema: Option<unsafe extern "C" fn(RimeSessionId, *mut c_char, usize) -> Bool>,
     select_schema: Option<unsafe extern "C" fn(RimeSessionId, *const c_char) -> Bool>,
-    schema_open: UnusedFn,
+    schema_open: Option<unsafe extern "C" fn(*const c_char, *mut RimeConfig) -> Bool>,
     config_open: UnusedFn,
-    config_close: UnusedFn,
+    config_close: Option<unsafe extern "C" fn(*mut RimeConfig) -> Bool>,
     config_get_bool: UnusedFn,
     config_get_int: UnusedFn,
     config_get_double: UnusedFn,
-    config_get_string: UnusedFn,
+    config_get_string:
+        Option<unsafe extern "C" fn(*mut RimeConfig, *const c_char, *mut c_char, usize) -> Bool>,
     config_get_cstring: UnusedFn,
     config_update_signature: UnusedFn,
     config_begin_map: UnusedFn,
@@ -1371,7 +1447,7 @@ struct RimeApi {
     config_clear: UnusedFn,
     config_create_list: UnusedFn,
     config_create_map: UnusedFn,
-    config_list_size: UnusedFn,
+    config_list_size: Option<unsafe extern "C" fn(*mut RimeConfig, *const c_char) -> usize>,
     config_begin_list: UnusedFn,
     get_input: Option<unsafe extern "C" fn(RimeSessionId) -> *const c_char>,
     get_caret_pos: UnusedFn,

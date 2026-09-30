@@ -2,6 +2,7 @@ pub mod audio;
 pub mod clipboard;
 pub mod history;
 pub mod integration;
+pub mod input_settings;
 pub mod knowledge;
 pub mod models;
 pub mod permissions;
