@@ -1,5 +1,26 @@
 # Handy
 
+## Inputia 当前产品与架构计划
+
+当前 Inputia 产品开发位于 [`codex/unified-input-system`](https://github.com/lizhelang/Handy/tree/codex/unified-input-system) 分支。本分支保留较早的 Handy 语音模型、热词和 Inputia 输入法工作，下面的 Handy 说明属于该历史基线。
+
+最新产品已具备统一历史、录音与图片迁移、输入法与后台配对通信、个性化和双组件本地更新。现有能力和实际验收边界以[当前产品 README](https://github.com/lizhelang/Handy/blob/codex/unified-input-system/README.md)及其开发状态入口为准。
+
+[Inputia 长期架构与上线计划（P20260930-191324）](https://github.com/lizhelang/Handy/blob/codex/unified-input-system/docs/codex-plans/20260930-191324-inputia.md)已完成设计与独立复审，覆盖以下四项：
+
+| 工作目标       | 架构与完成条件                                                                                                                     |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 融合可靠性     | 所有语音、菜单与历史插入经过唯一输出协调器；目标变化、未知回执、删除与遗忘都有一致语义，保留既有源库并完善事务事件和附件生命周期。 |
+| 独立安装与更新 | 预编译安装器交付完整配对组件；持久更新日志、独立恢复助手及经过读写与隐私兼容验证的回滚包覆盖更新中断。                             |
+| 自有正式发布   | 产品、版本、渠道和本机数据身份分离；Developer ID 迁移、签名公证、统一发布清单及候选到稳定渠道的同制品晋级。                        |
+| 验收与长期维护 | 验收绑定最终安装包，区分单元、模拟界面、原生 API、实体键盘／麦克风和干净机证据；包括跨 App、质量、性能和故障恢复门槛。             |
+
+实施分为 P0 基线与合同、P1 运行时与数据、P2 身份与发布描述、P3 独立安装更新、P4 公共签名与渠道、P5 全链路验收、P6 受控公开。完整模块职责、状态机、迁移规则和阶段退出条件见正式计划。
+
+**当前仅归档计划与已有开发成果；新架构尚未开始实施，等待用户批准。** 本地日用版本与公开签名公证发布分别验收，不将源码提交或推送当作公开产品发布。
+
+## 上游 Handy 说明
+
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/invite/WVBeWsNXK4)
 
 **A free, open source, and extensible speech-to-text application that works completely offline.**
