@@ -1173,14 +1173,14 @@
     }
   },
   "startupRecovery": {
-    "title": "Inputia couldn’t finish starting",
-    "starting": "Starting Inputia…",
-    "editable": "Your existing data has been kept. Check the settings file, then restart Inputia.",
-    "pendingRecovery": "Recovery is not finished. Restart Inputia to continue recovery before editing any data.",
-    "unconfirmed": "The startup status could not be confirmed. Retry the check.",
-    "retry": "Check again",
-    "restart": "Restart Inputia",
-    "openFolder": "Open data folder",
-    "actionFailed": "The action could not be completed. Try again."
+    "title": "تعذّر إكمال بدء تشغيل Inputia",
+    "starting": "جارٍ بدء تشغيل Inputia…",
+    "editable": "تم الاحتفاظ ببياناتك الحالية. تحقّق من ملف الإعدادات ثم أعد تشغيل Inputia.",
+    "pendingRecovery": "لم تكتمل الاستعادة. يمكنك إعادة تشغيل Inputia للمحاولة مجددًا. اترك الملفات الحالية دون تغيير.",
+    "unconfirmed": "تعذّر تأكيد حالة بدء التشغيل. أعد التحقّق.",
+    "retry": "إعادة التحقّق",
+    "restart": "إعادة تشغيل Inputia",
+    "openFolder": "فتح مجلد البيانات",
+    "actionFailed": "تعذّر إكمال الإجراء. حاول مجددًا."
   }
 }

@@ -1176,7 +1176,7 @@
     "title": "Inputia couldn’t finish starting",
     "starting": "Starting Inputia…",
     "editable": "Your existing data has been kept. Check the settings file, then restart Inputia.",
-    "pendingRecovery": "Recovery is not finished. Restart Inputia to continue recovery before editing any data.",
+    "pendingRecovery": "Recovery is not finished. You can restart Inputia to retry. Keep the existing files unchanged.",
     "unconfirmed": "The startup status could not be confirmed. Retry the check.",
     "retry": "Check again",
     "restart": "Restart Inputia",

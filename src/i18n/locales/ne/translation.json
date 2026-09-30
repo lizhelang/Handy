@@ -1173,14 +1173,14 @@
     }
   },
   "startupRecovery": {
-    "title": "Inputia couldn’t finish starting",
-    "starting": "Starting Inputia…",
-    "editable": "Your existing data has been kept. Check the settings file, then restart Inputia.",
-    "pendingRecovery": "Recovery is not finished. Restart Inputia to continue recovery before editing any data.",
-    "unconfirmed": "The startup status could not be confirmed. Retry the check.",
-    "retry": "Check again",
-    "restart": "Restart Inputia",
-    "openFolder": "Open data folder",
-    "actionFailed": "The action could not be completed. Try again."
+    "title": "Inputia सुरु हुन सकेन",
+    "starting": "Inputia सुरु हुँदैछ…",
+    "editable": "तपाईंको हालको डेटा सुरक्षित राखिएको छ। सेटिङ फाइल जाँचेर Inputia फेरि सुरु गर्नुहोस्।",
+    "pendingRecovery": "पुनःप्राप्ति पूरा भएको छैन। फेरि प्रयास गर्न Inputia पुनः सुरु गर्न सक्नुहुन्छ। हालका फाइलहरू नबदल्नुहोस्।",
+    "unconfirmed": "सुरु हुने स्थिति पुष्टि गर्न सकिएन। फेरि जाँच गर्नुहोस्।",
+    "retry": "फेरि जाँच गर्नुहोस्",
+    "restart": "Inputia फेरि सुरु गर्नुहोस्",
+    "openFolder": "डेटा फोल्डर खोल्नुहोस्",
+    "actionFailed": "कार्य पूरा हुन सकेन। फेरि प्रयास गर्नुहोस्।"
   }
 }

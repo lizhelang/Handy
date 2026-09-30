@@ -1176,7 +1176,7 @@
     "title": "Inputia 暫時無法完成啟動",
     "starting": "正在啟動 Inputia…",
     "editable": "現有資料已保留。請檢查設定檔案，修復後重新啟動 Inputia。",
-    "pendingRecovery": "復原尚未完成。請先重新啟動 Inputia 繼續復原，再修改資料。",
+    "pendingRecovery": "復原尚未完成。可以重新啟動 Inputia 重試；請保留現有檔案，暫勿修改。",
     "unconfirmed": "無法確認啟動狀態，請重新檢查。",
     "retry": "重新檢查",
     "restart": "重新啟動 Inputia",

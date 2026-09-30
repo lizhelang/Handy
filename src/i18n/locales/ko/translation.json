@@ -1173,14 +1173,14 @@
     }
   },
   "startupRecovery": {
-    "title": "Inputia couldn’t finish starting",
-    "starting": "Starting Inputia…",
-    "editable": "Your existing data has been kept. Check the settings file, then restart Inputia.",
-    "pendingRecovery": "Recovery is not finished. Restart Inputia to continue recovery before editing any data.",
-    "unconfirmed": "The startup status could not be confirmed. Retry the check.",
-    "retry": "Check again",
-    "restart": "Restart Inputia",
-    "openFolder": "Open data folder",
-    "actionFailed": "The action could not be completed. Try again."
+    "title": "Inputia 시작을 완료하지 못했습니다",
+    "starting": "Inputia 시작 중…",
+    "editable": "기존 데이터는 보존되었습니다. 설정 파일을 확인한 후 Inputia를 다시 시작하세요.",
+    "pendingRecovery": "복구가 완료되지 않았습니다. Inputia를 다시 시작하여 재시도할 수 있습니다. 기존 파일을 변경하지 마세요.",
+    "unconfirmed": "시작 상태를 확인하지 못했습니다. 다시 확인하세요.",
+    "retry": "다시 확인",
+    "restart": "Inputia 다시 시작",
+    "openFolder": "데이터 폴더 열기",
+    "actionFailed": "작업을 완료하지 못했습니다. 다시 시도하세요."
   }
 }

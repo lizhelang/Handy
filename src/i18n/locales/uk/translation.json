@@ -1173,14 +1173,14 @@
     }
   },
   "startupRecovery": {
-    "title": "Inputia couldn’t finish starting",
-    "starting": "Starting Inputia…",
-    "editable": "Your existing data has been kept. Check the settings file, then restart Inputia.",
-    "pendingRecovery": "Recovery is not finished. Restart Inputia to continue recovery before editing any data.",
-    "unconfirmed": "The startup status could not be confirmed. Retry the check.",
-    "retry": "Check again",
-    "restart": "Restart Inputia",
-    "openFolder": "Open data folder",
-    "actionFailed": "The action could not be completed. Try again."
+    "title": "Не вдалося завершити запуск Inputia",
+    "starting": "Запуск Inputia…",
+    "editable": "Ваші наявні дані збережено. Перевірте файл налаштувань і перезапустіть Inputia.",
+    "pendingRecovery": "Відновлення не завершено. Можна перезапустити Inputia й повторити спробу. Не змінюйте наявні файли.",
+    "unconfirmed": "Не вдалося підтвердити стан запуску. Повторіть перевірку.",
+    "retry": "Перевірити знову",
+    "restart": "Перезапустити Inputia",
+    "openFolder": "Відкрити папку даних",
+    "actionFailed": "Не вдалося виконати дію. Спробуйте ще раз."
   }
 }

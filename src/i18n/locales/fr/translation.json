@@ -1173,14 +1173,14 @@
     }
   },
   "startupRecovery": {
-    "title": "Inputia couldn’t finish starting",
-    "starting": "Starting Inputia…",
-    "editable": "Your existing data has been kept. Check the settings file, then restart Inputia.",
-    "pendingRecovery": "Recovery is not finished. Restart Inputia to continue recovery before editing any data.",
-    "unconfirmed": "The startup status could not be confirmed. Retry the check.",
-    "retry": "Check again",
-    "restart": "Restart Inputia",
-    "openFolder": "Open data folder",
-    "actionFailed": "The action could not be completed. Try again."
+    "title": "Inputia n’a pas pu terminer son démarrage",
+    "starting": "Démarrage d’Inputia…",
+    "editable": "Vos données existantes ont été conservées. Vérifiez le fichier de paramètres, puis redémarrez Inputia.",
+    "pendingRecovery": "La récupération n’est pas terminée. Vous pouvez redémarrer Inputia pour réessayer. Ne modifiez pas les fichiers existants.",
+    "unconfirmed": "L’état du démarrage n’a pas pu être confirmé. Relancez la vérification.",
+    "retry": "Vérifier à nouveau",
+    "restart": "Redémarrer Inputia",
+    "openFolder": "Ouvrir le dossier des données",
+    "actionFailed": "L’action n’a pas pu être terminée. Réessayez."
   }
 }

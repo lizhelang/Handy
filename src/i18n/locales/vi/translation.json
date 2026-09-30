@@ -1173,14 +1173,14 @@
     }
   },
   "startupRecovery": {
-    "title": "Inputia couldn’t finish starting",
-    "starting": "Starting Inputia…",
-    "editable": "Your existing data has been kept. Check the settings file, then restart Inputia.",
-    "pendingRecovery": "Recovery is not finished. Restart Inputia to continue recovery before editing any data.",
-    "unconfirmed": "The startup status could not be confirmed. Retry the check.",
-    "retry": "Check again",
-    "restart": "Restart Inputia",
-    "openFolder": "Open data folder",
-    "actionFailed": "The action could not be completed. Try again."
+    "title": "Inputia không thể khởi động xong",
+    "starting": "Đang khởi động Inputia…",
+    "editable": "Dữ liệu hiện có của bạn đã được giữ lại. Hãy kiểm tra tệp cài đặt rồi khởi động lại Inputia.",
+    "pendingRecovery": "Quá trình khôi phục chưa hoàn tất. Bạn có thể khởi động lại Inputia để thử lại. Không sửa đổi các tệp hiện có.",
+    "unconfirmed": "Không thể xác nhận trạng thái khởi động. Hãy kiểm tra lại.",
+    "retry": "Kiểm tra lại",
+    "restart": "Khởi động lại Inputia",
+    "openFolder": "Mở thư mục dữ liệu",
+    "actionFailed": "Không thể hoàn tất thao tác. Hãy thử lại."
   }
 }
