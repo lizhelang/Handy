@@ -1,0 +1,287 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "product_id": {
+      "const": "com.inputia"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "previous_keyset_digest": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "issued_at": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "expires_at": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "keys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9.-]{0,127}$",
+            "maxLength": 128
+          },
+          "algorithm": {
+            "const": "ecdsa-p256-sha256"
+          },
+          "public_key_x963_base64": {
+            "type": "string",
+            "maxLength": 88
+          },
+          "status": {
+            "enum": ["active", "retired", "revoked"]
+          },
+          "not_before": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+          },
+          "not_after": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+          }
+        },
+        "required": [
+          "key_id",
+          "algorithm",
+          "public_key_x963_base64",
+          "status",
+          "not_before",
+          "not_after"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 1024,
+      "uniqueItems": true
+    },
+    "roles": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "type": "object",
+          "properties": {
+            "threshold": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16
+            },
+            "key_ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9.-]{0,127}$",
+                "maxLength": 128
+              },
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true
+            }
+          },
+          "required": ["threshold", "key_ids"],
+          "additionalProperties": false
+        },
+        "manifest": {
+          "type": "object",
+          "properties": {
+            "threshold": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16
+            },
+            "key_ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9.-]{0,127}$",
+                "maxLength": 128
+              },
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true
+            }
+          },
+          "required": ["threshold", "key_ids"],
+          "additionalProperties": false
+        },
+        "attestation": {
+          "type": "object",
+          "properties": {
+            "threshold": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16
+            },
+            "key_ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9.-]{0,127}$",
+                "maxLength": 128
+              },
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true
+            }
+          },
+          "required": ["threshold", "key_ids"],
+          "additionalProperties": false
+        },
+        "feeds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "track": {
+                "type": "object",
+                "properties": {
+                  "channel": {
+                    "type": "string",
+                    "enum": ["candidate", "stable"]
+                  },
+                  "platform": {
+                    "const": "macos"
+                  },
+                  "architecture": {
+                    "type": "string",
+                    "enum": ["arm64"]
+                  }
+                },
+                "required": ["channel", "platform", "architecture"],
+                "additionalProperties": false
+              },
+              "role": {
+                "type": "object",
+                "properties": {
+                  "threshold": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 16
+                  },
+                  "key_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9.-]{0,127}$",
+                      "maxLength": 128
+                    },
+                    "minItems": 1,
+                    "maxItems": 16,
+                    "uniqueItems": true
+                  }
+                },
+                "required": ["threshold", "key_ids"],
+                "additionalProperties": false
+              }
+            },
+            "required": ["track", "role"],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 16,
+          "uniqueItems": true
+        }
+      },
+      "required": ["root", "manifest", "attestation", "feeds"],
+      "additionalProperties": false
+    },
+    "archive_policies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "policy_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9.-]{0,127}$",
+            "maxLength": 128
+          },
+          "manifest": {
+            "type": "object",
+            "properties": {
+              "threshold": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16
+              },
+              "key_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9.-]{0,127}$",
+                  "maxLength": 128
+                },
+                "minItems": 1,
+                "maxItems": 16,
+                "uniqueItems": true
+              }
+            },
+            "required": ["threshold", "key_ids"],
+            "additionalProperties": false
+          },
+          "attestation": {
+            "type": "object",
+            "properties": {
+              "threshold": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16
+              },
+              "key_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9.-]{0,127}$",
+                  "maxLength": 128
+                },
+                "minItems": 1,
+                "maxItems": 16,
+                "uniqueItems": true
+              }
+            },
+            "required": ["threshold", "key_ids"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["policy_id", "manifest", "attestation"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 1024,
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "schema_version",
+    "product_id",
+    "version",
+    "previous_keyset_digest",
+    "issued_at",
+    "expires_at",
+    "keys",
+    "roles",
+    "archive_policies"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://inputia.invalid/schema/keyset.schema.json"
+}

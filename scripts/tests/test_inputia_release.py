@@ -20,7 +20,7 @@ spec.loader.exec_module(release)
 def fixture(product):
     digest = "a" * 64
     stores = [{"id": sid, "readable_schema_range": {"min": 1, "max": 2}, "writable_schema_range": {"min": 2, "max": 2}, "migration_id": "expand-2", "event_formats": {"readable_versions": [1, 2], "writable_version": 2}, "outbox_capabilities": ["idempotent-consumer"], "revision_capabilities": ["monotonic-revision"], "privacy_capabilities": ["deletion-barrier", "forgetting-barrier"]} for sid in product["compatibility"]["required_stores"]]
-    components = [{"role": c["role"], "bundle_id": c["bundle_id"], "artifact": f"components/{c['role']}.zip", "sha256": digest, "size": 4, "cdhashes": ["b" * 40], "signing_requirement": {"trust_domain": "developer-id", "team_id": "TESTTEAM01", "bundle_id": c["bundle_id"]}} for c in [*product["components"], {"role": "updater", "bundle_id": "com.inputia.updater"}, {"role": "bootstrap", "bundle_id": "com.inputia.bootstrap"}]]
+    components = [{"role": c["role"], "bundle_id": c["bundle_id"], "artifact": f"components/{c['role']}.zip", "sha256": digest, "size": 4, "cdhashes": ["b" * 40], "signing_requirement": {"trust_domain": "developer-id", "team_id": "TESTTEAM01", "bundle_id": c["bundle_id"]}} for c in product["components"]]
     return {"schema_version": 2, "product_id": product["product_id"], "release_id": "inputia-test-current", "version": product["version"], "build": product["build"], "source_commit": "c" * 40, "target": {"platform": "macos", "architecture": "arm64", "min_os": "13.0", "tested_os": ["13", "26"]}, "components": components, "protocol": {"supported_majors": [1, 2], "capabilities": ["pair-auth"]}, "stores": stores, "rollback_targets": [{"release_id": "inputia-test-compatible", "artifact_digests": [digest], "stores": copy.deepcopy(stores)}], "resources": [{"id": "fixture-resource", "version": "1", "digest": digest, "license": "MIT", "required": True, "distribution_mode": "bundled"}], "pair_manifest": {"schema": 2, "artifact": "pair-manifest.json", "sha256": digest, "signer_key_id": "pair-key-1"}, "updater": {"min_version": "1.0.0", "transaction_schema": 1, "migration_requirements": []}, "distribution_artifacts": [{"role": "installer-dmg", "artifact": "Inputia.dmg", "sha256": digest, "size": 4}], "sbom_digest": digest}
 
 
@@ -96,6 +96,21 @@ class ReleaseContractTests(unittest.TestCase):
     def test_rejects_missing_recovery_component(self):
         self.manifest["components"] = [c for c in self.manifest["components"] if c["role"] != "bootstrap"]
         self.rejected(self.manifest)
+
+    def test_recovery_identity_and_new_feed_keyset_contract_are_fixed(self):
+        for role in ("updater", "bootstrap"):
+            value = copy.deepcopy(self.manifest)
+            component = next(c for c in value["components"] if c["role"] == role)
+            component["bundle_id"] = "com.other.helper"
+            component["signing_requirement"]["bundle_id"] = "com.other.helper"
+            self.rejected(value)
+        feed = {"schema_version": 2, "product_id": self.product["product_id"], "channel": "candidate", "platform": "macos", "architecture": "arm64", "sequence": 1, "keyset_version": 1, "keyset_digest": "a" * 64, "archive_policy_id": "release-2026", "issued_at": "2026-09-30T00:00:00Z", "expires_at": "2026-10-02T00:00:00Z", "release_id": self.manifest["release_id"], "manifest_digest": "b" * 64, "attestation_digest": "c" * 64, "release_path": "releases/" + self.manifest["release_id"], "rollback": None}
+        release.validate_document(feed, "feed", self.product)
+        for key, value in (("keyset_version", True), ("rollback", False), ("expires_at", "2026-10-30T00:00:00Z"), ("release_path", "releases/another")):
+            changed = copy.deepcopy(feed)
+            changed[key] = value
+            with self.assertRaises(release.ReleaseError):
+                release.validate_document(changed, "feed", self.product)
 
     def test_rollback_requires_all_stores_write_events_and_privacy(self):
         for mutation in ("store", "write", "event", "privacy", "outbox", "revision"):

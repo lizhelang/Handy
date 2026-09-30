@@ -73,7 +73,12 @@ def validate_schema(value, schema, document=None, path="$", *, strict_schema=Tru
     if "const" in schema:
         require(type(value) is type(schema["const"]) and value == schema["const"], f"{path}: 常量不匹配")
     kind = schema.get("type")
-    types = {"object": dict, "array": list, "string": str, "integer": int, "boolean": bool}
+    types = {"object": dict, "array": list, "string": str, "integer": int, "boolean": bool, "null": type(None)}
+    if isinstance(kind, list):
+        require(all(item in types for item in kind), f"{path}: 未知 schema 类型")
+        matching = [item for item in kind if type(value) is types[item]]
+        require(len(matching) == 1, f"{path}: 类型不匹配")
+        kind = matching[0]
     if kind:
         require(kind in types and type(value) is types[kind], f"{path}: 应为 {kind}")
     if "enum" in schema:
@@ -126,7 +131,7 @@ def load_product(path=PRODUCT):
         raise ReleaseError("产品 TOML 无法解析") from error
     validate_schema(product, schema("product.schema.json"))
     components = indexed(product["components"], "role", "产品组件")
-    require(set(components) == {"control", "ime", "settings"}, "产品必须声明 control/ime/settings")
+    require(set(components) == {"control", "ime", "settings", "updater", "bootstrap"}, "产品必须声明 control/ime/settings/updater/bootstrap")
     require(len({c["bundle_id"] for c in components.values()}) == len(components), "产品 Bundle ID 重复")
     require("input_source_id" in components["ime"], "IME 缺少输入源 ID")
     for component in components.values():
@@ -197,7 +202,7 @@ def validate_manifest(value, product, *, expect_current_build=False):
 def validate_document(value, kind, product):
     if kind == "manifest":
         return validate_manifest(value, product)
-    name = {"attestation": "release-attestation.schema.json", "feed": "channel-feed.schema.json"}[kind]
+    name = {"attestation": "release-attestation.schema.json", "feed": "channel-feed-v2.schema.json" if value.get("schema_version") == 2 else "channel-feed.schema.json"}[kind]
     validate_schema(value, schema(name))
     require(value["product_id"] == product["product_id"], "文档产品身份不匹配")
     if kind == "attestation":
@@ -205,6 +210,12 @@ def validate_document(value, kind, product):
     else:
         safe_relative(value["release_path"])
         require(parse_time(value["expires_at"]) > parse_time(value["issued_at"]), "feed 有效期不合法")
+        if value["schema_version"] == 2:
+            require(parse_time(value["expires_at"]) - parse_time(value["issued_at"]) <= dt.timedelta(days=7), "feed 有效期超过七天")
+            require(value["release_path"] == f"releases/{value['release_id']}", "feed 必须指向准确的发布目录")
+            if value["rollback"] is not None:
+                rollback = value["rollback"]
+                require(rollback["to_release_id"] == value["release_id"] and rollback["to_manifest_digest"] == value["manifest_digest"] and rollback["from_release_id"] != value["release_id"], "回滚身份不匹配")
     parse_time(value["issued_at"])
     return value
 

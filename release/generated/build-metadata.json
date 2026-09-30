@@ -20,6 +20,16 @@
       "role": "settings",
       "bundle_id": "com.inputia.settings.UnifiedCandidate",
       "app_name": "Inputia 设置.app"
+    },
+    {
+      "role": "updater",
+      "bundle_id": "com.inputia.updater",
+      "app_name": "Inputia Updater.app"
+    },
+    {
+      "role": "bootstrap",
+      "bundle_id": "com.inputia.bootstrap",
+      "app_name": "Inputia Installer.app"
     }
   ]
 }

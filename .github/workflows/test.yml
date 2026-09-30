@@ -48,7 +48,13 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        crate: [inputia-core, inputia-handy-runtime, inputia-settings]
+        crate:
+          [
+            inputia-core,
+            inputia-handy-runtime,
+            inputia-settings,
+            inputia-release,
+          ]
     steps:
       - uses: actions/checkout@v5
       - uses: swatinem/rust-cache@v2

@@ -1,0 +1,435 @@
+{
+  "build": 84,
+  "components": [
+    {
+      "artifact": "components/control.zip",
+      "bundle_id": "com.pais.handy.UnifiedCandidate",
+      "cdhashes": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ],
+      "role": "control",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "signing_requirement": {
+        "bundle_id": "com.pais.handy.UnifiedCandidate",
+        "team_id": "TESTTEAM01",
+        "trust_domain": "developer-id"
+      },
+      "size": 4
+    },
+    {
+      "artifact": "components/ime.zip",
+      "bundle_id": "com.inputia.inputmethod.Inputia.UnifiedCandidate",
+      "cdhashes": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ],
+      "role": "ime",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "signing_requirement": {
+        "bundle_id": "com.inputia.inputmethod.Inputia.UnifiedCandidate",
+        "team_id": "TESTTEAM01",
+        "trust_domain": "developer-id"
+      },
+      "size": 4
+    },
+    {
+      "artifact": "components/settings.zip",
+      "bundle_id": "com.inputia.settings.UnifiedCandidate",
+      "cdhashes": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ],
+      "role": "settings",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "signing_requirement": {
+        "bundle_id": "com.inputia.settings.UnifiedCandidate",
+        "team_id": "TESTTEAM01",
+        "trust_domain": "developer-id"
+      },
+      "size": 4
+    },
+    {
+      "artifact": "components/updater.zip",
+      "bundle_id": "com.inputia.updater",
+      "cdhashes": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ],
+      "role": "updater",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "signing_requirement": {
+        "bundle_id": "com.inputia.updater",
+        "team_id": "TESTTEAM01",
+        "trust_domain": "developer-id"
+      },
+      "size": 4
+    },
+    {
+      "artifact": "components/bootstrap.zip",
+      "bundle_id": "com.inputia.bootstrap",
+      "cdhashes": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ],
+      "role": "bootstrap",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "signing_requirement": {
+        "bundle_id": "com.inputia.bootstrap",
+        "team_id": "TESTTEAM01",
+        "trust_domain": "developer-id"
+      },
+      "size": 4
+    }
+  ],
+  "distribution_artifacts": [
+    {
+      "artifact": "Inputia.dmg",
+      "role": "installer-dmg",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 4
+    }
+  ],
+  "pair_manifest": {
+    "artifact": "pair-manifest.json",
+    "schema": 2,
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "signer_key_id": "pair-key-1"
+  },
+  "product_id": "com.inputia",
+  "protocol": {
+    "capabilities": [
+      "pair-auth"
+    ],
+    "supported_majors": [
+      1,
+      2
+    ]
+  },
+  "release_id": "inputia-test-current",
+  "resources": [
+    {
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "distribution_mode": "bundled",
+      "id": "fixture-resource",
+      "license": "MIT",
+      "required": true,
+      "version": "1"
+    }
+  ],
+  "rollback_targets": [
+    {
+      "artifact_digests": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "release_id": "inputia-test-compatible",
+      "stores": [
+        {
+          "event_formats": {
+            "readable_versions": [
+              1,
+              2
+            ],
+            "writable_version": 2
+          },
+          "id": "transcription",
+          "migration_id": "expand-2",
+          "outbox_capabilities": [
+            "idempotent-consumer"
+          ],
+          "privacy_capabilities": [
+            "deletion-barrier",
+            "forgetting-barrier"
+          ],
+          "readable_schema_range": {
+            "max": 2,
+            "min": 1
+          },
+          "revision_capabilities": [
+            "monotonic-revision"
+          ],
+          "writable_schema_range": {
+            "max": 2,
+            "min": 2
+          }
+        },
+        {
+          "event_formats": {
+            "readable_versions": [
+              1,
+              2
+            ],
+            "writable_version": 2
+          },
+          "id": "clipboard",
+          "migration_id": "expand-2",
+          "outbox_capabilities": [
+            "idempotent-consumer"
+          ],
+          "privacy_capabilities": [
+            "deletion-barrier",
+            "forgetting-barrier"
+          ],
+          "readable_schema_range": {
+            "max": 2,
+            "min": 1
+          },
+          "revision_capabilities": [
+            "monotonic-revision"
+          ],
+          "writable_schema_range": {
+            "max": 2,
+            "min": 2
+          }
+        },
+        {
+          "event_formats": {
+            "readable_versions": [
+              1,
+              2
+            ],
+            "writable_version": 2
+          },
+          "id": "integration",
+          "migration_id": "expand-2",
+          "outbox_capabilities": [
+            "idempotent-consumer"
+          ],
+          "privacy_capabilities": [
+            "deletion-barrier",
+            "forgetting-barrier"
+          ],
+          "readable_schema_range": {
+            "max": 2,
+            "min": 1
+          },
+          "revision_capabilities": [
+            "monotonic-revision"
+          ],
+          "writable_schema_range": {
+            "max": 2,
+            "min": 2
+          }
+        },
+        {
+          "event_formats": {
+            "readable_versions": [
+              1,
+              2
+            ],
+            "writable_version": 2
+          },
+          "id": "personalization",
+          "migration_id": "expand-2",
+          "outbox_capabilities": [
+            "idempotent-consumer"
+          ],
+          "privacy_capabilities": [
+            "deletion-barrier",
+            "forgetting-barrier"
+          ],
+          "readable_schema_range": {
+            "max": 2,
+            "min": 1
+          },
+          "revision_capabilities": [
+            "monotonic-revision"
+          ],
+          "writable_schema_range": {
+            "max": 2,
+            "min": 2
+          }
+        },
+        {
+          "event_formats": {
+            "readable_versions": [
+              1,
+              2
+            ],
+            "writable_version": 2
+          },
+          "id": "rime",
+          "migration_id": "expand-2",
+          "outbox_capabilities": [
+            "idempotent-consumer"
+          ],
+          "privacy_capabilities": [
+            "deletion-barrier",
+            "forgetting-barrier"
+          ],
+          "readable_schema_range": {
+            "max": 2,
+            "min": 1
+          },
+          "revision_capabilities": [
+            "monotonic-revision"
+          ],
+          "writable_schema_range": {
+            "max": 2,
+            "min": 2
+          }
+        }
+      ]
+    }
+  ],
+  "sbom_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "schema_version": 2,
+  "source_commit": "cccccccccccccccccccccccccccccccccccccccc",
+  "stores": [
+    {
+      "event_formats": {
+        "readable_versions": [
+          1,
+          2
+        ],
+        "writable_version": 2
+      },
+      "id": "transcription",
+      "migration_id": "expand-2",
+      "outbox_capabilities": [
+        "idempotent-consumer"
+      ],
+      "privacy_capabilities": [
+        "deletion-barrier",
+        "forgetting-barrier"
+      ],
+      "readable_schema_range": {
+        "max": 2,
+        "min": 1
+      },
+      "revision_capabilities": [
+        "monotonic-revision"
+      ],
+      "writable_schema_range": {
+        "max": 2,
+        "min": 2
+      }
+    },
+    {
+      "event_formats": {
+        "readable_versions": [
+          1,
+          2
+        ],
+        "writable_version": 2
+      },
+      "id": "clipboard",
+      "migration_id": "expand-2",
+      "outbox_capabilities": [
+        "idempotent-consumer"
+      ],
+      "privacy_capabilities": [
+        "deletion-barrier",
+        "forgetting-barrier"
+      ],
+      "readable_schema_range": {
+        "max": 2,
+        "min": 1
+      },
+      "revision_capabilities": [
+        "monotonic-revision"
+      ],
+      "writable_schema_range": {
+        "max": 2,
+        "min": 2
+      }
+    },
+    {
+      "event_formats": {
+        "readable_versions": [
+          1,
+          2
+        ],
+        "writable_version": 2
+      },
+      "id": "integration",
+      "migration_id": "expand-2",
+      "outbox_capabilities": [
+        "idempotent-consumer"
+      ],
+      "privacy_capabilities": [
+        "deletion-barrier",
+        "forgetting-barrier"
+      ],
+      "readable_schema_range": {
+        "max": 2,
+        "min": 1
+      },
+      "revision_capabilities": [
+        "monotonic-revision"
+      ],
+      "writable_schema_range": {
+        "max": 2,
+        "min": 2
+      }
+    },
+    {
+      "event_formats": {
+        "readable_versions": [
+          1,
+          2
+        ],
+        "writable_version": 2
+      },
+      "id": "personalization",
+      "migration_id": "expand-2",
+      "outbox_capabilities": [
+        "idempotent-consumer"
+      ],
+      "privacy_capabilities": [
+        "deletion-barrier",
+        "forgetting-barrier"
+      ],
+      "readable_schema_range": {
+        "max": 2,
+        "min": 1
+      },
+      "revision_capabilities": [
+        "monotonic-revision"
+      ],
+      "writable_schema_range": {
+        "max": 2,
+        "min": 2
+      }
+    },
+    {
+      "event_formats": {
+        "readable_versions": [
+          1,
+          2
+        ],
+        "writable_version": 2
+      },
+      "id": "rime",
+      "migration_id": "expand-2",
+      "outbox_capabilities": [
+        "idempotent-consumer"
+      ],
+      "privacy_capabilities": [
+        "deletion-barrier",
+        "forgetting-barrier"
+      ],
+      "readable_schema_range": {
+        "max": 2,
+        "min": 1
+      },
+      "revision_capabilities": [
+        "monotonic-revision"
+      ],
+      "writable_schema_range": {
+        "max": 2,
+        "min": 2
+      }
+    }
+  ],
+  "target": {
+    "architecture": "arm64",
+    "min_os": "13.0",
+    "platform": "macos",
+    "tested_os": [
+      "13",
+      "26"
+    ]
+  },
+  "updater": {
+    "migration_requirements": [],
+    "min_version": "1.0.0",
+    "transaction_schema": 1
+  },
+  "version": "1.1.0"
+}

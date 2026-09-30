@@ -8,7 +8,14 @@
     },
     "payload_kind": {
       "type": "string",
-      "enum": ["manifest", "attestation", "feed"]
+      "enum": [
+        "manifest",
+        "attestation",
+        "feed",
+        "keyset",
+        "recovery",
+        "offline_install"
+      ]
     },
     "payload": {
       "type": "object"
@@ -30,7 +37,7 @@
           "signature_der_base64": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 1024,
+            "maxLength": 128,
             "pattern": "^[A-Za-z0-9+/]+={0,2}$"
           }
         },
@@ -38,7 +45,7 @@
         "additionalProperties": false
       },
       "minItems": 1,
-      "maxItems": 1024,
+      "maxItems": 32,
       "uniqueItems": true
     }
   },
