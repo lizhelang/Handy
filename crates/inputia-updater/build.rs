@@ -18,6 +18,8 @@ fn main() {
     )
     .join("../../native/inputia-install-support/InputiaInstallSupport.swift");
     println!("cargo:rerun-if-changed={}", source.display());
+    let quiescence = source.with_file_name("InputiaWriterQuiescence.swift");
+    println!("cargo:rerun-if-changed={}", quiescence.display());
     let object = out.join("InputiaInstallSupport.o");
     let result = std::process::Command::new("/usr/bin/swiftc")
         .args([
@@ -31,6 +33,7 @@ fn main() {
         ])
         .arg(format!("{architecture}-apple-macos13.0"))
         .arg(&source)
+        .arg(&quiescence)
         .arg("-o")
         .arg(&object)
         .status()

@@ -1,6 +1,6 @@
-# Inputia 原生安装只读验证
+# Inputia 原生安装验证与写者暂停租约
 
-本包通过 macOS 公开 Security API 校验 `.app`，是原生安装适配层的一部分。目前只实现静态代码验证，不实现完整 `NativeAdapter`、进程退出、TIS 切换、bootstrap 注册或数据库快照，也不把验证成功当作安装授权。
+本包通过 macOS Security API 校验 `.app`，并提供受管旧写者的身份核验与存活期间暂停租约。它是原生安装适配层的一部分，不实现完整 `NativeAdapter`、TIS 切换、bootstrap 注册或数据库快照，也不把代码验证成功当作安装授权。
 
 ## ABI 与输入合同
 
@@ -38,6 +38,48 @@ bash native/inputia-install-support/self-check.sh
 `native-code-verification` 是显式 macOS 编译特性；不启用时返回 `NativeUnavailable`，没有模拟成功适配器。Swift 自检与 Rust 原生集成测试只生成临时 ad-hoc 应用并验证拒绝，纯策略夹具单独验证字段/架构/entitlement 判断。不会执行这些临时 app，更不会退出、替换日常安装或读取签名凭据。
 
 **真实 Developer ID + 公证成功路径为 NOT_RUN。** 尚需使用正式签名制品，在支持 OS 矩阵中验证票据、全架构、嵌套代码与恢复环境；当前测试不构成产品安装验收。
+
+## 已核写者的暂停租约
+
+Rust `NativeWriterSuspender::suspend` 只接收真实 `VerifiedCodeEvidence`，要求旧 release 的
+Control、IME、Settings 三角色齐全且绑定同一 `Subject` 与维护 epoch。维护文件通过共享
+`inputia-settings::maintenance` 合同读取；缺失、变化或角色不足都失败。原生
+`iuis_writer_suspend` 接受最多 131,072 字节规范 JSON，不接受客户端 PID 或跳过签名的选项。
+
+原生按当前 UID 枚举，通过受管根或签名 identifier 发现目标；PID 查询仅用于发现。
+目标必须取得内核 `TASK_AUDIT_TOKEN`，绑定 UID、启动时间、PID version、实际可执行路径，再以
+该 token 校验运行代码的 Developer ID / Team / identifier / CDHash / 公证 requirement。
+元数据读取失败不能当作目标不存在，准确根以外的旧套副本也会拒绝。暂停前与暂停后核对子树，
+任何未纳入已验角色的后代都使操作失败；不向未知 helper 发信号。
+
+只有动态查找的 `proc_signal_with_audittoken` 能发送 SIGSTOP / SIGCONT；无 PID-only 回退，
+没有 TERM / KILL 退出功能。每个 STOP 前同步回调 Rust，重新读取真实维护文件。
+原生保留真实 audit 实例和观察到的原始停止状态；原本已 SSTOP 的进程不会被租约恢复。
+失败路径恢复本次实际暂停的实例，同进程禁止重叠生产租约。能力不足时暂停前拒绝。
+
+`SuspendedWriterLease` 无 Clone / Deserialize / 公开构造，且非 Send / Sync。
+原生 handle 由唯一拥有者保留，Rust 在返回解析、末次门禁或重验失败时也会释放并恢复。
+`assert_suspended` 重新检查维护标记、角色代码、实例集合、子树及内核暂停状态；它只证明当时
+已核实例被暂停，不是未来新实例的启动锁，也不能转换为完整 `QuiescenceReceipt`。
+
+正常结束必须调用 `resume(&mut self) -> Result<()>`，它幂等、失败保留 handle 可重试，
+不因维护标记撤销而拒绝恢复。原生检查 CONT 后实例已恢复或结束。Drop / deinit 仅尽力兜底；
+若恢复仍失败，记录错误并拒绝本进程后续新租约。**crash / abort / SIGKILL 不执行 Drop。**
+因此独立 guardian / 耐久恢复仍是生产接线前置门禁；当前没有生产调用，不提供崩溃安全恢复承诺。
+
+另须完成 TIS 切离、旧路径永久隔离与服务独占 FD。被暂停写者仍可能持有旧 SQLite FD，任意其他
+同 UID 程序仍可能打开数据；暂停证据本身不能授权服务接管。后续快照、fence 与交接检查必须在
+租约仍存活且重新核验成功时执行；真实优雅退出另由合作 shutdown / 用户迁移边界解决。
+
+```sh
+bash native/inputia-install-support/quiescence-self-check.sh
+cargo test --locked --manifest-path crates/inputia-updater/Cargo.toml --features native-code-verification native_quiescence
+```
+
+自检只创建自己的临时 sleep / shell 父子进程，验证真实内核身份、签名不匹配不发信号、
+marker 在验证后撤销、Drop / 显式恢复、原已停状态保留、未知后代及失败回滚。
+测试不枚举或停止日用 Inputia / IME，不调用生产三角色 suspend；真实 Developer ID 旧套的
+暂停成功路径仍为 **NOT_RUN**。这些夹具证明局部 primitive，不能替代生产交接验收。
 
 ## 一手依据
 

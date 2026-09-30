@@ -82,7 +82,6 @@ cargo clippy --locked --manifest-path crates/inputia-updater/Cargo.toml --all-ta
 
 测试仅操作临时目录。覆盖新装/更新、每次更新与回滚 rename 前后故障、日志边界故障、重复恢复、锁冲突、收据顺序、缺失权限、未知文件和坏备份保留、原源不删除、用户新数据不覆盖，以及 Framework 内部链接与归档越界。测试适配器名称明确为 `SyntheticNative`，不承担真实系统证明。
 
-
 ## 真实 ZIP 解包：`inputia-zip-v1`
 
 `archive::extract_zip` 消费调用方提供的 `File`，以及从已验证发布描述取得的
@@ -150,3 +149,29 @@ cargo test --locked --manifest-path crates/inputia-updater/Cargo.toml --test arc
 路径逃逸、恶意头/descriptor/metadata、CRC 与尺寸损坏、压缩炸弹/预算/取消、源 fd
 变化、已有目标和硬链接拒绝。macOS 专属测试只对自行创建的临时夹具调用 `ditto/xattr`，
 用来证明上述生产 profile 行为；生产解包路径没有这些外部工具依赖。
+
+## 原生写者暂停租约
+
+`native_quiescence::NativeWriterSuspender::suspend` 复用真实 `VerifiedCodeEvidence`，要求旧 release 的
+Control、IME、Settings 完整角色集与实际维护标记匹配。内核 UID / 启动时间 / audit token 和运行代码
+准确根都需匹配，每个 SIGSTOP 前重新核真实 marker；缺能力时拒绝，没有 PID-only、TERM 或 KILL 回退。
+暂停前后核对子树；未知后代使操作失败并恢复本次暂停，不能通过停止未知进程来消除缺口。
+
+返回 `SuspendedWriterLease` 无公开构造、Clone、Deserialize、Send 或 Sync，原生 opaque handle
+持有准确实例及原停止状态。同进程禁止重叠租约。`assert_suspended` 重核 marker、代码、实际集合、
+子树和暂停状态；`resume(&mut self)` 幂等且失败可重试，只恢复本租约从运行态暂停的实例，
+原已停止进程保持停止。Drop 仅尽力恢复；恢复失败有错误且本进程不再接受新租约。
+
+该租约不能转为完整 `QuiescenceReceipt`。它只证明存活期间已核实例暂停，不证明退出、未来不会
+启动新实例或 SQLite FD 已释放。TIS 切离、旧路径永久隔离、服务独占 FD 仍是独立门禁。
+**crash / abort / SIGKILL 不触发 Drop，独立 guardian / 耐久恢复尚未接入。当前禁止生产安装接线。**
+没有生产 `NativeAdapter` 调用，也未搬移用户库；后续快照和交接必须持有并重验活租约。
+
+```sh
+cargo test --locked --manifest-path crates/inputia-updater/Cargo.toml --features native-code-verification native_quiescence
+bash native/inputia-install-support/quiescence-self-check.sh
+```
+
+测试只对自建临时子进程检查内核暂停 / 恢复、原已停、维护撤销、未知子进程和失败回滚；Rust 合成
+元数据测试拒绝缺角色、异 subject / epoch、路径、PID version、签名摘要和伪暂停证据。
+真实 Developer ID 三角色的生产暂停成功路径 **NOT_RUN**，不把 RAII 当作崩溃恢复证明。
