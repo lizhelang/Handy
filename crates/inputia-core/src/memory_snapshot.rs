@@ -7,6 +7,14 @@ pub const MAX_SNAPSHOT_TEXT_BYTES: usize = 512 * 1_024;
 pub const MAX_RESULT_LIMIT: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "snapshot-wire",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[cfg_attr(
+    feature = "snapshot-wire",
+    serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)
+)]
 pub enum MemoryQuery {
     Rank { candidate_texts: Vec<String> },
     Completion { prefix: String, limit: usize },

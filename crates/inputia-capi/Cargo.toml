@@ -12,9 +12,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 default = []
 bundled-static-rime = ["inputia-rime/bundled-static-rime"]
+managed-memory = []
 
 [dependencies]
-inputia-core = { path = "../inputia-core", features = ["sqlite-memory"] }
+inputia-core = { path = "../inputia-core", features = ["sqlite-memory", "snapshot-wire"] }
 inputia-rime = { path = "../inputia-rime" }
 inputia-settings = { path = "../inputia-settings" }
 serde = { version = "1", features = ["derive"] }

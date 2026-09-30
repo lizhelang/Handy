@@ -11,9 +11,11 @@ path = "src/lib.rs"
 [features]
 default = []
 sqlite-memory = ["dep:rusqlite"]
+snapshot-wire = ["dep:serde"]
 
 [dependencies]
 rusqlite = { version = "0.37", features = ["bundled"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"

@@ -208,6 +208,11 @@ pub struct LearningOutcome {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "snapshot-wire",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[cfg_attr(feature = "snapshot-wire", serde(deny_unknown_fields))]
 pub struct MemoryTerm {
     pub text: String,
     pub typed_count: u32,
@@ -984,6 +989,21 @@ impl<E: ChineseEngine> InputiaCore<E> {
             page: self.page,
             visible_candidates: self.visible_candidates().to_vec(),
         }
+    }
+
+    /// 当前Core候选集合是否实际持有派生权重；扩展回基础排序后不再保留旧展示租约。
+    pub fn uses_memory_scores(&self) -> bool {
+        self.candidates
+            .iter()
+            .any(|candidate| candidate.memory_score != 0)
+    }
+
+    /// 撤销派生权重后重新取得引擎候选，保留未提交拼音；调用方须拒绝旧索引选择。
+    pub fn refresh_candidate_snapshot(&mut self) -> InputSnapshot {
+        if !self.composing.is_empty() {
+            self.refresh_candidates();
+        }
+        self.snapshot()
     }
 
     /// 有界扩展候选召回，保留当前页及已经展示的顺序；返回值包含引擎原候选身份。
