@@ -11,6 +11,9 @@ use tauri_plugin_store::StoreExt;
 #[cfg(unix)]
 #[path = "settings_document.rs"]
 mod document;
+#[cfg(unix)]
+#[path = "settings_session.rs"]
+mod session;
 
 pub const APPLE_INTELLIGENCE_PROVIDER_ID: &str = "apple_intelligence";
 pub const LOCAL_POST_PROCESS_PROVIDER_ID: &str = "local";
@@ -367,6 +370,10 @@ impl std::ops::DerefMut for SecretMap {
 #[derive(Serialize, Deserialize, Clone, Type)]
 #[serde(default)]
 pub struct AppSettings {
+    #[cfg(unix)]
+    #[serde(skip)]
+    #[specta(skip)]
+    pub(crate) read_ticket: Option<session::ReadTicket>,
     /// Internal settings schema marker for one-time migrations. Fresh installs
     /// start at the current version; existing stores missing this key are
     /// treated as version 0 and migrated forward.
@@ -992,6 +999,8 @@ pub fn get_default_settings() -> AppSettings {
     );
 
     AppSettings {
+        #[cfg(unix)]
+        read_ticket: None,
         settings_schema_version: default_settings_schema_version(),
         bindings,
         shortcut_activation: ShortcutActivation::default(),

@@ -173,6 +173,31 @@ pub(super) enum SavedSettings {
     },
 }
 impl LoadedSettings {
+    pub fn reload(&self) -> Result<Self, Error> {
+        let snapshot = DocumentStore::<Schema>::open(&self.path, &self.home, self.uid)?
+            .read_at_least(&self.snapshot)?;
+        Self::from_snapshot(snapshot, self.path.clone(), self.home.clone(), self.uid)
+    }
+    pub fn follows(&self, previous: &Self) -> bool {
+        self.path == previous.path
+            && self.home == previous.home
+            && self.uid == previous.uid
+            && self.snapshot.store_id == previous.snapshot.store_id
+            && self.snapshot.revision.parse::<u64>().is_ok_and(|revision| {
+                previous
+                    .snapshot
+                    .revision
+                    .parse::<u64>()
+                    .is_ok_and(|prior| {
+                        revision > prior
+                            || (revision == prior
+                                && self.snapshot.values_digest == previous.snapshot.values_digest)
+                    })
+            })
+    }
+    pub fn revision(&self) -> &str {
+        &self.snapshot.revision
+    }
     pub fn settings(&self) -> &AppSettings {
         &self.settings
     }
@@ -241,10 +266,27 @@ impl LoadedSettings {
     }
 }
 impl PlannedChange {
+    pub fn operation_id(&self) -> &str {
+        &self.request.operation_id
+    }
+    pub fn changed_fields(&self) -> Vec<String> {
+        self.request.patch.keys().cloned().collect()
+    }
+    pub fn apply_at_least(&self, floor: &LoadedSettings) -> Result<SavedSettings, Error> {
+        if self.path != floor.path || self.home != floor.home || self.uid != floor.uid {
+            return Err(Error::RepairRequired);
+        }
+        let result = DocumentStore::<Schema>::open(&self.path, &self.home, self.uid)?
+            .apply_at_least(&self.request, &floor.snapshot)?;
+        self.result(result)
+    }
     /// 同一实例可按原 ID 重试；错误不清除原请求或捏造成功。
     pub fn apply(&self) -> Result<SavedSettings, Error> {
         let result = DocumentStore::<Schema>::open(&self.path, &self.home, self.uid)?
             .apply(&self.request)?;
+        self.result(result)
+    }
+    fn result(&self, result: ApplyResult) -> Result<SavedSettings, Error> {
         let loaded = |snapshot| {
             LoadedSettings::from_snapshot(snapshot, self.path.clone(), self.home.clone(), self.uid)
         };

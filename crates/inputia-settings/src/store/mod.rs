@@ -331,6 +331,9 @@ impl<S: DocumentSchema> DocumentStore<S> {
         self.load_internal(false)
     }
     fn load_internal(&self, external: bool) -> Result<Document> {
+        self.load_guarded(external, None)
+    }
+    fn load_guarded(&self, external: bool, floor: Option<&Snapshot>) -> Result<Document> {
         maintenance::ensure_normal_start(&self.home, self.uid).map_err(|_| Error::Maintenance)?;
         let marker = self
             .files
@@ -347,7 +350,7 @@ impl<S: DocumentSchema> DocumentStore<S> {
             return Err(Error::RepairRequired);
         }
         let raw = self.files.read(S::FILE_NAME, LIMIT, false)?;
-        if external && (raw.is_none() || marker.is_none()) {
+        if (external || floor.is_some()) && (raw.is_none() || marker.is_none()) {
             return Err(Error::RepairRequired);
         }
         let source_digest = raw.as_ref().map(|bytes| raw_digest(bytes));
@@ -356,7 +359,7 @@ impl<S: DocumentSchema> DocumentStore<S> {
                 .as_object()
                 .cloned()
                 .ok_or(Error::InvalidDocument)?,
-            None if marker.is_some() => return Err(Error::RepairRequired),
+            None if marker.is_some() || floor.is_some() => return Err(Error::RepairRequired),
             None => S::defaults(&self.path)?,
         };
         let mut migrated = false;
@@ -364,7 +367,7 @@ impl<S: DocumentSchema> DocumentStore<S> {
             Some(value) => {
                 serde_json::from_value::<Header>(value).map_err(|_| Error::RepairRequired)?
             }
-            None if marker.is_some() => return Err(Error::RepairRequired),
+            None if marker.is_some() || floor.is_some() => return Err(Error::RepairRequired),
             None => {
                 values = S::validate(&values, &self.path, true)?;
                 migrated = true;
@@ -391,6 +394,19 @@ impl<S: DocumentSchema> DocumentStore<S> {
         }
         if !external && digest(&Value::Object(values.clone()))? != header.values_digest {
             return Err(Error::ExternalEdit);
+        }
+        // 在同一文件锁内、任何初始化或提交前检查已确认下限。
+        // 缺失的旧领域不能被悄悄创建成另一份新默认配置。
+        if let Some(floor) = floor {
+            let prior = revision(&floor.revision)?;
+            if floor.domain != S::DOMAIN
+                || floor.store_id != header.store_id
+                || !is_digest(&floor.values_digest)
+                || current < prior
+                || (current == prior && floor.values_digest != header.values_digest)
+            {
+                return Err(Error::RepairRequired);
+            }
         }
         S::validate(&values, &self.path, false)?;
         let mut ids = BTreeSet::new();
@@ -449,12 +465,28 @@ impl<S: DocumentSchema> DocumentStore<S> {
     pub fn read(&self) -> Result<Snapshot> {
         Ok(self.load()?.snapshot())
     }
+    /// 读取已初始化的领域，且不得低于调用方已经确认的真实快照。
+    pub fn read_at_least(&self, floor: &Snapshot) -> Result<Snapshot> {
+        Ok(self.load_guarded(false, Some(floor))?.snapshot())
+    }
     pub fn apply(&self, request: &PatchRequest) -> Result<ApplyResult> {
         self.apply_with_hook(request, &mut |_| Ok(()))
+    }
+    /// 整个读取、下限校验与 CAS 提交共享同一独占锁；不初始化丢失的领域。
+    pub fn apply_at_least(&self, request: &PatchRequest, floor: &Snapshot) -> Result<ApplyResult> {
+        self.apply_guarded(request, Some(floor), &mut |_| Ok(()))
     }
     fn apply_with_hook(
         &self,
         request: &PatchRequest,
+        hook: &mut impl FnMut(Boundary) -> Result<()>,
+    ) -> Result<ApplyResult> {
+        self.apply_guarded(request, None, hook)
+    }
+    fn apply_guarded(
+        &self,
+        request: &PatchRequest,
+        floor: Option<&Snapshot>,
         hook: &mut impl FnMut(Boundary) -> Result<()>,
     ) -> Result<ApplyResult> {
         maintenance::ensure_normal_start(&self.home, self.uid).map_err(|_| Error::Maintenance)?;
@@ -482,7 +514,7 @@ impl<S: DocumentSchema> DocumentStore<S> {
         }
         let request_digest =
             digest(&serde_json::to_value(request).map_err(|_| Error::InvalidRequest)?)?;
-        let mut document = self.load()?;
+        let mut document = self.load_guarded(false, floor)?;
         if request.expected_store_id != document.header.store_id {
             return Ok(ApplyResult::Conflict {
                 current: document.snapshot(),
