@@ -32,5 +32,13 @@ void iuis_guardian_plan_free(void *handle);
 char *iuis_guardian_peer_open(int32_t pid, const uint8_t *bytes, size_t length, void **handle);
 char *iuis_guardian_peer_state(void *handle);
 void iuis_guardian_peer_free(void *handle);
+/* TIS内部接口仅主线程：prepare只读登记observer，action 1切离/2读回/3条件恢复。
+ * 输入来自绑定真实Transaction的Rust租约，prepare不接受任意sourceId；读回/恢复重新提供当前或回滚已验IME。
+ * check/context仅同步借用，慢验证后实际select前后都核维护授权。free不自动选择输入源。
+ * TIS没有CAS，返回仅Observed/Uncertain；不构成退出或排他交接证明，未与guardian崩溃恢复联动。 */
+char *iuis_input_source_prepare(const uint8_t *bytes, size_t length, void **handle);
+char *iuis_input_source_action(void *handle, uint32_t action, const uint8_t *bytes, size_t length,
+                               iuis_writer_effect_check check, void *context);
+void iuis_input_source_free(void *handle);
 void iuis_string_free(char *string);
 #endif

@@ -107,3 +107,25 @@ bash native/inputia-install-support/guardian-self-check.sh
 自检在自建 sleep 进程上执行 24 个断言，不扫描日用程序。Rust 另在自建进程中执行 14 个单边
 crash / abort 窗口。真实 Developer ID 三角色、正式 Updater 同发布入口与完整生产交接仍
 **NOT_RUN**；双边同时死亡、外部第三方另发 STOP、TIS / fence / 独占 FD 不由本 primitive 证明。
+
+## TIS 切离与恢复观察
+
+`InputiaInputSource.swift` 提供独立的输入源租约，主线程限定、同进程单租约，prepare 不选择源。
+真实选择由绑定事务 / 维护标记 / 已验 IME 的 Rust 句柄显式调用。mode 与图标资源路径直接
+取自同一已验 SecStaticCode 的 `kSecCodeInfoPList` 安全字典，所有架构一致后才交付，不重开
+plist 路径；使用字段有界，Security 内部元数据加载不由本层限制。TIS 注册属性与已签合同匹配
+仅是条件观察；IconURL 是显示资源，不能证明执行组件来自已验根，后续 NativeAdapter 尚需
+独立组件关联证据。观察与恢复可重绑定同事务根下的已验新/回滚版本。
+fallback 仅接受启用的 Apple ABC / US 布局及其可核实文件映射 / 签名 / 内容来源；
+复制相同字节、伪造 Bundle ID 或缺来源都不能授权，普通系统缺映射时也可能不可用。
+
+选择前后均读回并核期限 / 维护；没有启用或注册 API。通知代数不重置；任何已观察到的新选择、
+ABA 或迟到通知都会阻止自动恢复。TIS 无 CAS，Observed 不是排他证明；free / Drop 不选源，
+与 guardian 崩溃恢复尚未联动。详细字段及边界见 updater README 的 TIS 小节。
+
+```sh
+bash native/inputia-install-support/input-source-self-check.sh
+```
+
+本自检只注入 backend，不构造真实 Carbon 后端、不读取或切换用户当前输入源。真实 TIS、
+Apple 映射来源正向、正式 IME / Updater 签名正向均 **NOT_RUN**。

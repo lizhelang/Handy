@@ -347,3 +347,13 @@ Unix 控制中心在业务模块前严格预检并打开版本化设置协调器
 生产边界：当前只交付库级同已验证 Updater 重执行入口，没有正式 Updater main 接线或 Developer ID 同发布入口正向验收。TIS 输入源切换、旧路径隔离、服务独占 FD、成套替换的完整 NativeAdapter 仍在后续工作；暂停租约不能转换成完整 QuiescenceReceipt。父进程和 guardian 同时被杀、外部并发另发 STOP 不具备绝对恢复保证。
 
 第二十九批补充：普通 `save` 的无修改分支也在 writer 锁内重读磁盘并核对原 ticket；日志级别、主题等后续动作不能仅凭缓存的“无变化”取得许可。原 `save_with_snapshot` 复用同一核验。新增双协调器日志级别反例，另一个进程已修改时返回冲突且副作用计数为零；协调器最终 16 项通过，独立窄审 CLEAR。
+
+### 第三十一批：输入源切换与恢复的有界租约
+
+更新器输入源租约绑定真实事务锁、维护 marker 与已验证 IME，单活跃 slot 防止同事务重复取得切换所有权。准备阶段只读取；切离、观察与恢复分别返回已观察、保留用户选择或无法确认。通知、ABA、迟到核验及期限发生歧义时不重放切换，Drop 不抢回用户当前输入源。观察可接受同一安装身份的当前或回滚 IME，避免替换旧制品后继续只核旧路径。
+
+独立复核发现最初验签后再按路径读取 Info.plist 的内容绑定窗口，现只消费同一个已验证 SecStaticCode 的 secured plist，跨架构一致且全部验证成功后交付，限制字段与集合预算。TIS 的图标属性只作为受限筛选信息，不视为实际输入组件执行来源证明。
+
+验证：Swift 输入源注入夹具 48 项、原 Security 自检 43 项、Rust 合同 3 项通过；native/default 配置 all-targets 严格 Clippy、Rust 格式、新 Swift lint、C header 语法与 diff 检查通过，独立修复窄审 CLEAR。未真实调用 TIS 切换、安装或操作日用进程/用户数据。
+
+边界：公共 TIS API 没有 CAS 或可靠动作归属，Observed 不授予完整停写许可，也不证明 guardian 已接管输入源崩溃恢复。真实 Apple 来源链正向、Developer ID 正向、固定 Updater main、完整 NativeAdapter 与真实切源验收仍未执行。

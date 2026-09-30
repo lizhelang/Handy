@@ -7,6 +7,7 @@ mod filesystem;
 pub mod guardian;
 mod model;
 pub mod native_code;
+pub mod native_input_source;
 pub mod native_quiescence;
 
 pub use engine::{artifact_set_digest, Transaction, Updater};

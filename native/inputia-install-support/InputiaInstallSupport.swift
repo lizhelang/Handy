@@ -326,13 +326,30 @@ private func actualArchitectures(_ info: [String: Any], root: String) throws -> 
   return try inspectMachOArchitectures(Data(buffer.prefix(count)), fileSize: UInt64(before.st_size))
 }
 
-func verifyInstallCode(_ request: InstallCodeRequest) throws -> InstallCodeEvidence {
+// 仅收集已验 SecStaticCode 的安全字典；不重新打开路径，也不把普通 CFBundle 元数据当作签名内容。
+struct SecuredInstallPlist {
+  private(set) var value: [String: Any]?
+  mutating func include(_ info: [String: Any]) throws {
+    guard let plist = info[kSecCodeInfoPList as String] as? [String: Any] else {
+      throw InstallCodeError.rejected("secured_plist_unavailable")
+    }
+    if let value, !NSDictionary(dictionary: value).isEqual(to: plist) {
+      throw InstallCodeError.rejected("secured_plist_architecture_mismatch")
+    }
+    value = plist
+  }
+}
+
+func verifyInstallCode(_ request: InstallCodeRequest,
+  captureSecuredPlist: (([String: Any]) throws -> Void)? = nil
+) throws -> InstallCodeEvidence {
   try validateInstallRequest(request)
   let root = try BundleAnchor(request.exact_bundle_path)
   try validateContainedLinks(root.path)
   let requirement = try installRequirement(request)
   let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSCheckNestedCode | kSecCSStrictValidate)
   var slices: [InstallSliceEvidence] = []
+  var securedPlist = SecuredInstallPlist()
   for name in request.architectures {
     var code: SecStaticCode?
     let attributes = [kSecCodeAttributeArchitecture as String: name] as CFDictionary
@@ -348,10 +365,15 @@ func verifyInstallCode(_ request: InstallCodeRequest) throws -> InstallCodeEvide
     slices.append(try validateInstallSigningInfo(info, request: request, architecture: name))
     let checkedAgain = SecStaticCodeCheckValidity(code, flags, requirement)
     guard checkedAgain == errSecSuccess else { throw InstallCodeError.rejected("code_changed", checkedAgain) }
+    if captureSecuredPlist != nil { try securedPlist.include(info) }
   }
   guard slices.map({ $0.cdhash }).sorted() == request.cdhashes else { throw InstallCodeError.rejected("cdhash_set_mismatch") }
   try validateContainedLinks(root.path)
   try root.recheck()
+  if let captureSecuredPlist {
+    guard let plist = securedPlist.value else { throw InstallCodeError.rejected("secured_plist_unavailable") }
+    try captureSecuredPlist(plist)
+  }
   return .init(schema_version: 1, request: request, slices: slices,
     developer_id_requirement: true, notarized_requirement: true, nested_code_integrity_checked: true,
     bundle_device: root.device, bundle_inode: root.inode)

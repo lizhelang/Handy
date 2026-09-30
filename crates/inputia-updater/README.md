@@ -219,3 +219,53 @@ Updater 死后 guardian 仍保持原事务锁，以及阻塞核验期间过期 /
 失效没有在线自动恢复保证；外部第三方在登记后另发 STOP 没有可区分的内核所有者计数。
 意外 fork 的对端使所有权不确定，进入恢复待处理而不猜测。TIS 切离、旧数据库路径 fence、
 快照和服务独占 FD 是后续独立门禁；未操作用户真实数据库或日用进程。
+
+## TIS 输入源切离与条件恢复（原生库，系统切换未运行）
+
+`native_input_source::InputSourceLease::prepare(&Transaction, &VerifiedCodeEvidence)` 仅登记观察。
+它从真实事务复制同一个锁描述符，绑定 subject / 维护 epoch 与旧 IME 签名证据；不接收调用方
+提供的输入源 ID。租约不可 Clone / Deserialize / Send / Sync，要求主线程，同进程只有一个
+输入源租约，防止同一 Transaction 重复 prepare 后各自恢复。prepare 与每次操作重验 IME
+代码；新功能没有调用已审核 guardian 的暂停/恢复逻辑。
+
+`detach()` 只有当前选择的注册属性匹配已验 IME 合同时才尝试切离；当前为其它输入源则
+`AlreadyDetached` 且无选择效应。源与 mode 直接来自同一已验证 `SecStaticCode` 的
+`kSecCodeInfoPList` 安全字典，跨架构须一致；没有验签后重新打开路径读取 plist 的窗口。
+只对使用的 mode / ID / icon 字段施加预算，Security 自身的元数据加载不由本层限制。
+匹配 `TISInputSourceID` / `ComponentInputModeDict`、TIS Bundle ID、准确图标资源路径和唯一
+注册对象。**SDK 只承诺 IconURL 是显示资源；这些匹配不证明该 TIS 对象实际执行的组件来自
+已验 bundle 根。完整 NativeAdapter 仍需独立组件关联证据，不能把这里的观察升级为该证明。**
+没有按名称或 ID 前缀选择任意源，也不调用
+register / enable。唯一允许的 fallback 为已启用、可选择、ASCII 的 Apple ABC / US 键盘布局。
+其实际布局数据必须具有指向准确 root-owned 系统资源的内核文件映射，资源须通过 `anchor apple`
+及固定标识的签名验证，且完整字节匹配映射的文件偏移；同名 ID、相同 heap 字节、第三方文件
+均不足以建立 fallback 能力。**SDK 不承诺布局 CFData 必须来自文件映射，缺证据正常返回
+`no_verified_fallback`，当前不宣称这一路径在全部 macOS 上可用。**
+
+`assert_detached(&VerifiedCodeEvidence)` 用当前版本重新绑定合同并读回；它与
+`restore(&VerifiedCodeEvidence)` 均允许同 subject / Bundle ID / 安装根下已验新版本或回滚版本，
+因此不要求已被替换的旧 artifact 继续存在。restore 只恢复本轮捕获的原 mode，不能传任意 ID。只有本次确实
+切换且当前仍为该 fallback、未观察到任何选择通知时才条件尝试。用户选择其它源得到
+`PreservedUserSelection`；fallback → 其它 → fallback 的 ABA、包括自身迟到通知在内的任何
+通知，都使恢复资格变为 `Uncertain`。通知代数从 prepare 起从不重置，不把事件猜作“自己产生”。
+每次慢校验后紧邻真实 `TISSelectInputSource` 前再核当前对象 / 代数 / 维护标记 / 期限，调用后
+读回并再次核验；默认两分钟期限不因重试续期。失败或未知结果不自动重放。
+
+结果为 `Prepared`、`AlreadyDetached`、`DetachedObserved`、`PreservedUserSelection`、
+`RestoredObserved` 或 `Uncertain`，并带原始/最近观察/备用源 ID 与是否尝试效应。
+`ownership_exact` 恒为 false：TIS 没有原子 CAS、所有者计数或可靠带序号的通知，最终检查到
+选择之间仍有不可消除的竞争。Observed 只表示当次读回，不能当作退出、长期排他切离或完整
+NativeAdapter 回执。Drop **不切换输入源**；TIS 尚未与 guardian 的进程崩溃恢复联动。
+
+```sh
+cargo test --locked --manifest-path crates/inputia-updater/Cargo.toml --features native-code-verification native_input_source::
+bash native/inputia-install-support/input-source-self-check.sh
+```
+
+Swift 使用注入后端验证安全字典与路径分离、跨架构一致、字段预算、验签失败不交付合同，
+以及正常切离/条件恢复、用户选择保护、ABA/迟到通知、两侧超时/撤权、失败
+不重放、禁用/伪装 fallback、互斥和 Drop；没有构造系统后端或执行真正的 TIS 切换。Rust 检查
+事务/角色/版本/epoch 与严格观察结果合同。**真实系统选源、Apple fallback 来源链正向、
+Developer ID IME 正向与正式 Updater / NativeAdapter 接线均 NOT_RUN。** 未启停日用 Host、
+未启用或安装输入源、未修改用户设置。公开 SDK 合同来自 Xcode `TextInputSources.h`，尤其是
+Bundle ID 可缺、布局 CFData 无来源承诺、`TISSelectInputSource` 与 distributed change 通知的限制。

@@ -22,6 +22,8 @@ fn main() {
     println!("cargo:rerun-if-changed={}", quiescence.display());
     let guardian = source.with_file_name("InputiaWriterGuardian.swift");
     println!("cargo:rerun-if-changed={}", guardian.display());
+    let input_source = source.with_file_name("InputiaInputSource.swift");
+    println!("cargo:rerun-if-changed={}", input_source.display());
     let object = out.join("InputiaInstallSupport.o");
     let result = std::process::Command::new("/usr/bin/swiftc")
         .args([
@@ -37,6 +39,7 @@ fn main() {
         .arg(&source)
         .arg(&quiescence)
         .arg(&guardian)
+        .arg(&input_source)
         .arg("-o")
         .arg(&object)
         .status()
@@ -53,7 +56,7 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", out.display());
     println!("cargo:rustc-link-search=native=/usr/lib/swift");
     println!("cargo:rustc-link-lib=static=inputia_install_support");
-    for framework in ["Foundation", "Security", "CryptoKit"] {
+    for framework in ["Foundation", "Security", "CryptoKit", "Carbon"] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
