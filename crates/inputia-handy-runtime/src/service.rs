@@ -1,6 +1,9 @@
 //! 单一后台写入线程；Tauri/Host 通过请求队列访问，不在按键线程等待。
 
 use crate::{
+    deletion_lifecycle::{
+        DeleteFailure, DeleteRecord, DeleteRequest, DeleteState, DELETE_SCHEMA_VERSION,
+    },
     learning::{ApplyContribution, ContributionInput, HistoryTermConfirmation},
     source::SourceTable,
     store::{
@@ -73,12 +76,304 @@ struct Worker {
     sources: Vec<SourcePump>,
     last_error: Option<String>,
     generation: u64,
+    deletion_recovery_cursor: Option<String>,
+    next_deletion_recovery: Instant,
+    deletion_audit_cursor: Option<String>,
+    deletion_audit_complete: bool,
     changed: Box<dyn Fn(u64) + Send>,
 }
 
 impl Worker {
     fn revoke_outputs(&self) {
         self.output_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn require_deletions_settled(&self) -> ServiceResult<()> {
+        if !self.deletion_audit_complete {
+            return Err("history deletion recovery is verifying prior completion evidence".into());
+        }
+        if self
+            .store
+            .has_pending_deletions()
+            .map_err(|e| e.to_string())?
+        {
+            return Err("history deletion recovery is pending; content access is suspended".into());
+        }
+        Ok(())
+    }
+
+    fn deletion_failure(
+        &mut self,
+        record: &DeleteRecord,
+        failure: DeleteFailure,
+        reject: bool,
+    ) -> ServiceResult<DeleteRecord> {
+        self.store
+            .transition_deletion(
+                &record.request,
+                if reject {
+                    DeleteState::Rejected
+                } else {
+                    record.state
+                },
+                Some(failure),
+            )
+            .map_err(|e| e.to_string())
+    }
+
+    fn resume_deletion(
+        &mut self,
+        mut record: DeleteRecord,
+        sync_budget: usize,
+    ) -> ServiceResult<DeleteRecord> {
+        if record.state == DeleteState::Rejected {
+            return Err(
+                "deletion rejected before source commit; review the current revision".into(),
+            );
+        }
+        self.revoke_outputs();
+        let request = record.request.clone();
+        if !self
+            .store
+            .deletion_source_is_current(&request)
+            .map_err(|e| e.to_string())?
+        {
+            self.deletion_failure(&record, DeleteFailure::SourceIdentity, false)?;
+            return Err("deletion projection source identity changed".into());
+        }
+        let Some(index) = self.sources.iter().position(|source| {
+            source.store_id() == request.store_id
+                && source.source_table().logical_name() == request.logical_name
+        }) else {
+            self.deletion_failure(&record, DeleteFailure::SourceIdentity, false)?;
+            return Err("deletion source identity unavailable; original source required".into());
+        };
+        // 已提交回执优先。回执存在但源记录重新出现时不能再次删除新内容。
+        let result = (|| {
+            if !self.sources[index].verify_deleted_record(
+                &request.record_id,
+                request.expected_revision,
+                &request.operation_id,
+            )? {
+                if record.state != DeleteState::Requested {
+                    return Err(crate::sync::SyncError::Source(
+                        crate::source::SourceError::ChangedAfterDeletion,
+                    ));
+                }
+                for source in &self.sources {
+                    // 同一操作 ID 不能在另一源库被用作其他修改；此时本源尚无回执。
+                    source.delete_receipt(
+                        &request.item_id,
+                        request.expected_revision,
+                        &request.operation_id,
+                    )?;
+                }
+                self.sources[index].delete_record(
+                    &request.record_id,
+                    request.expected_revision,
+                    &request.operation_id,
+                )?;
+            }
+            if !self.sources[index].verify_deleted_record(
+                &request.record_id,
+                request.expected_revision,
+                &request.operation_id,
+            )? {
+                return Err(crate::sync::SyncError::Source(
+                    crate::source::SourceError::ChangedAfterDeletion,
+                ));
+            }
+            Ok::<(), crate::sync::SyncError>(())
+        })();
+        if let Err(error) = result {
+            use crate::{source::SourceError, sync::SyncError};
+            let (failure, reject) = match error {
+                SyncError::Source(SourceError::RevisionConflict) => (
+                    DeleteFailure::SourceRevision,
+                    record.state == DeleteState::Requested,
+                ),
+                SyncError::Source(SourceError::OperationConflict) => (
+                    DeleteFailure::OperationConflict,
+                    record.state == DeleteState::Requested,
+                ),
+                SyncError::Source(SourceError::WrongSource) => {
+                    (DeleteFailure::SourceIdentity, false)
+                }
+                SyncError::Source(SourceError::ChangedAfterDeletion) => {
+                    (DeleteFailure::SourceChangedAfterCommit, false)
+                }
+                _ => (DeleteFailure::SourceUnavailable, false),
+            };
+            self.deletion_failure(&record, failure, reject)?;
+            return Err(format!("deletion pending or rejected: {failure:?}"));
+        }
+        if record.state == DeleteState::Requested {
+            record = self
+                .store
+                .transition_deletion(&request, DeleteState::SourceApplied, None)
+                .map_err(|e| e.to_string())?;
+        }
+        for _ in 0..sync_budget {
+            if let Err(error) = self.sync_once() {
+                self.deletion_failure(&record, DeleteFailure::ProjectionUnavailable, false)?;
+                return Err(error);
+            }
+            if self
+                .store
+                .deletion_projection_revoked(&request)
+                .map_err(|e| e.to_string())?
+            {
+                // 同步之后再次核验源，避免提交期间源恢复/换库被当作删除完成。
+                match self.sources[index].verify_deleted_record(
+                    &request.record_id,
+                    request.expected_revision,
+                    &request.operation_id,
+                ) {
+                    Ok(true) => {}
+                    _ => {
+                        self.deletion_failure(
+                            &record,
+                            DeleteFailure::SourceChangedAfterCommit,
+                            false,
+                        )?;
+                        return Err("source changed during deletion projection".into());
+                    }
+                }
+                return self
+                    .store
+                    .transition_deletion(&request, DeleteState::ProjectionRevoked, None)
+                    .map_err(|e| e.to_string());
+            }
+        }
+        self.deletion_failure(&record, DeleteFailure::ProjectionUnavailable, false)?;
+        Err("source deleted but projection recovery is still pending".into())
+    }
+
+    fn recover_deletions(&mut self) -> ServiceResult<()> {
+        self.audit_deletions()?;
+        if Instant::now() < self.next_deletion_recovery {
+            return Ok(());
+        }
+        let mut pending = self
+            .store
+            .pending_deletions(self.deletion_recovery_cursor.as_deref())
+            .map_err(|e| e.to_string())?;
+        if pending.is_empty() && self.deletion_recovery_cursor.take().is_some() {
+            pending = self
+                .store
+                .pending_deletions(None)
+                .map_err(|e| e.to_string())?;
+        }
+        // 每轮最多一项、一个同步批次；轮转游标让失败项不能饿死后面的删除。
+        let result = if let Some(record) = pending.pop() {
+            self.deletion_recovery_cursor = Some(record.request.operation_id.clone());
+            self.resume_deletion(record, 1).map(|_| ())
+        } else {
+            Ok(())
+        };
+        self.next_deletion_recovery = Instant::now() + Duration::from_millis(250);
+        result
+    }
+
+    fn audit_deletions(&mut self) -> ServiceResult<()> {
+        if self.deletion_audit_complete {
+            return Ok(());
+        }
+        let records = self
+            .store
+            .deletion_audit_page(self.deletion_audit_cursor.as_deref())
+            .map_err(|e| e.to_string())?;
+        let finished = records.len() < 32;
+        for record in records {
+            let request = &record.request;
+            if matches!(
+                record.state,
+                DeleteState::ProjectionRevoked | DeleteState::Rejected
+            ) {
+                if !self
+                    .store
+                    .deletion_source_is_current(request)
+                    .map_err(|e| e.to_string())?
+                {
+                    return Err("deletion audit source identity changed".into());
+                }
+                let source = self
+                    .sources
+                    .iter_mut()
+                    .find(|source| {
+                        source.store_id() == request.store_id
+                            && source.source_table().logical_name() == request.logical_name
+                    })
+                    .ok_or("deletion audit source unavailable")?;
+                if record.state == DeleteState::ProjectionRevoked {
+                    // 只核验已完成证据；绝不把声称完成的记录重新送入源删除。
+                    if record.last_failure.is_some()
+                        || !source
+                            .verify_deleted_record(
+                                &request.record_id,
+                                request.expected_revision,
+                                &request.operation_id,
+                            )
+                            .map_err(|e| e.to_string())?
+                        || !self
+                            .store
+                            .deletion_projection_revoked(request)
+                            .map_err(|e| e.to_string())?
+                    {
+                        return Err("deletion completion evidence missing or inconsistent".into());
+                    }
+                } else {
+                    if !matches!(
+                        record.last_failure,
+                        Some(DeleteFailure::SourceRevision | DeleteFailure::OperationConflict)
+                    ) {
+                        return Err("deletion rejection evidence missing".into());
+                    }
+                    // 拒绝证据取源事务的持久 CAS 观察，不能靠统一库 phase/失败标签自证。
+                    // 后来的正常修订可能恰好达到旧 expected，因此不能事后再比较当前修订。
+                    if record.last_failure == Some(DeleteFailure::SourceRevision)
+                        && source
+                            .delete_receipt(
+                                &request.item_id,
+                                request.expected_revision,
+                                &request.operation_id,
+                            )
+                            .map_err(|e| e.to_string())?
+                            != Some(false)
+                    {
+                        return Err("deletion source rejection receipt missing".into());
+                    }
+                    let mut conflicting = false;
+                    for source in &self.sources {
+                        match source.delete_receipt(
+                            &request.item_id,
+                            request.expected_revision,
+                            &request.operation_id,
+                        ) {
+                            Ok(None) => {}
+                            Ok(Some(false))
+                                if source.store_id() == request.store_id
+                                    && record.last_failure
+                                        == Some(DeleteFailure::SourceRevision) => {}
+                            Ok(Some(_)) => {
+                                return Err("rejected deletion has a source commit receipt".into())
+                            }
+                            Err(crate::sync::SyncError::Source(
+                                crate::source::SourceError::OperationConflict,
+                            )) => conflicting = true,
+                            Err(error) => return Err(error.to_string()),
+                        }
+                    }
+                    if record.last_failure == Some(DeleteFailure::OperationConflict) && !conflicting
+                    {
+                        return Err("deletion conflict receipt missing".into());
+                    }
+                }
+            }
+            self.deletion_audit_cursor = Some(record.request.operation_id);
+        }
+        self.deletion_audit_complete = finished;
+        Ok(())
     }
 
     fn sync_once(&mut self) -> ServiceResult<bool> {
@@ -181,12 +476,18 @@ impl HistoryService {
                         sources,
                         last_error: None,
                         generation: 0,
+                        deletion_recovery_cursor: None,
+                        next_deletion_recovery: Instant::now(),
+                        deletion_audit_cursor: None,
+                        deletion_audit_complete: false,
                         changed: Box::new(changed),
                     })
                 })();
                 while !stop.load(Ordering::Acquire) {
                     if let Ok(state) = &mut worker {
-                        state.last_error = state.sync_once().err();
+                        // 先恢复删除屏障再接收下一项工作；重启不依赖 UI 重放请求。
+                        let recovery = state.recover_deletions().err();
+                        state.last_error = recovery.or_else(|| state.sync_once().err());
                     }
                     match receiver.recv_timeout(Duration::from_millis(100)) {
                         Ok(job) => job(&mut worker),
@@ -206,6 +507,17 @@ impl HistoryService {
     }
 
     fn call<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&mut Worker) -> ServiceResult<T> + Send + 'static,
+    ) -> ServiceResult<T> {
+        self.call_metadata(move |worker| {
+            worker.require_deletions_settled()?;
+            work(worker)
+        })
+    }
+
+    /// 仅状态、既有回执、取消或恢复入口使用；不得经此方法读取正文或签发许可。
+    fn call_metadata<T: Send + 'static>(
         &self,
         work: impl FnOnce(&mut Worker) -> ServiceResult<T> + Send + 'static,
     ) -> ServiceResult<T> {
@@ -260,49 +572,107 @@ impl HistoryService {
         })
     }
 
+    /// true 仅确认源记录和统一投影撤销；附件和其他学习域以日志范围为准。
     pub fn delete_item(
         &self,
         item_id: String,
         expected_revision: u64,
         operation_id: String,
     ) -> ServiceResult<bool> {
-        self.call(move |worker| {
+        self.call_metadata(move |worker| {
             worker.revoke_outputs();
-            let mut replayed = false;
-            for source in &worker.sources {
-                replayed |= source
-                    .delete_receipt(&item_id, expected_revision, &operation_id)
-                    .map_err(|e| e.to_string())?
-                    .is_some();
-            }
-            if !replayed {
-                let item = worker
-                    .store
-                    .get(&item_id)
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| "history item no longer exists".to_owned())?;
-                let source = worker
-                    .sources
-                    .iter_mut()
-                    .find(|source| source.store_id() == item.store_id)
-                    .ok_or_else(|| "history source unavailable".to_owned())?;
-                source
-                    .delete_record(&item.record_id, expected_revision, &operation_id)
-                    .map_err(|e| e.to_string())?;
-            }
-            for _ in 0..100 {
-                worker.sync_once()?;
-                if worker
-                    .store
-                    .get(&item_id)
-                    .map_err(|e| e.to_string())?
-                    .is_none()
+            let existing = worker
+                .store
+                .deletion_record(&operation_id)
+                .map_err(|e| e.to_string())?;
+            let record = if let Some(record) = existing {
+                if record.request.item_id != item_id
+                    || record.request.expected_revision != expected_revision
                 {
-                    worker.last_error = None;
-                    return Ok(true);
+                    return Err("deletion operation identifier conflict".into());
                 }
+                record
+            } else {
+                // 兼容本日志引入前已提交的源回执，同时拒绝其他源重用操作 ID。
+                let mut prior_source = None;
+                for source in &worker.sources {
+                    if source
+                        .delete_receipt(&item_id, expected_revision, &operation_id)
+                        .map_err(|e| e.to_string())?
+                        .is_some()
+                    {
+                        prior_source = Some((
+                            source.store_id().to_owned(),
+                            source.source_table().logical_name().to_owned(),
+                        ));
+                    }
+                }
+                let (store_id, logical_name, record_id) =
+                    if let Some((store_id, logical_name)) = prior_source {
+                        let prefix = format!("{}:{}", store_id.len(), store_id);
+                        let encoded = item_id
+                            .strip_prefix(&prefix)
+                            .ok_or("deletion receipt source mismatch")?;
+                        let (length, record_id) = encoded
+                            .split_once(':')
+                            .ok_or("deletion item identity invalid")?;
+                        if length.parse::<usize>().ok() != Some(record_id.len())
+                            || crate::store::item_id(&store_id, record_id) != item_id
+                        {
+                            return Err("deletion item identity invalid".into());
+                        }
+                        (store_id, logical_name, record_id.to_owned())
+                    } else {
+                        let item = worker
+                            .store
+                            .get(&item_id)
+                            .map_err(|e| e.to_string())?
+                            .ok_or("history item no longer exists")?;
+                        let source = worker
+                            .sources
+                            .iter()
+                            .find(|source| source.store_id() == item.store_id)
+                            .ok_or("history source unavailable")?;
+                        (
+                            item.store_id,
+                            source.source_table().logical_name().to_owned(),
+                            item.record_id,
+                        )
+                    };
+                let request = DeleteRequest {
+                    schema_version: DELETE_SCHEMA_VERSION,
+                    operation_id,
+                    item_id,
+                    store_id,
+                    logical_name,
+                    record_id,
+                    expected_revision,
+                };
+                worker
+                    .store
+                    .prepare_deletion(&request)
+                    .map_err(|e| e.to_string())?
+            };
+            worker.resume_deletion(record, 100)?;
+            worker.last_error = None;
+            Ok(true)
+        })
+        .map_err(|error| {
+            if error == "history service request timed out" {
+                "deletion outcome unknown; retry the same operation_id and arguments".into()
+            } else {
+                error
             }
-            Err("source deleted but projection is still pending".into())
+        })
+    }
+
+    /// 返回可恢复阶段及明确未完成的附件范围，不返回正文或路径。
+    pub fn deletion_record(&self, operation_id: String) -> ServiceResult<Option<DeleteRecord>> {
+        self.call_metadata(move |worker| {
+            worker
+                .store
+                .deletion_record(&operation_id)
+                .map_err(|e| e.to_string())
         })
     }
 
@@ -315,6 +685,14 @@ impl HistoryService {
     ) -> ServiceResult<u64> {
         self.call(move |worker| {
             worker.revoke_outputs();
+            if worker
+                .store
+                .deletion_record(&operation_id)
+                .map_err(|e| e.to_string())?
+                .is_some()
+            {
+                return Err("source operation identifier already belongs to a deletion".into());
+            }
             let item = worker
                 .store
                 .get(&item_id)
@@ -449,7 +827,7 @@ impl HistoryService {
     }
 
     pub fn policy_epoch(&self) -> ServiceResult<u64> {
-        self.call(|worker| worker.store.policy_epoch().map_err(|e| e.to_string()))
+        self.call_metadata(|worker| worker.store.policy_epoch().map_err(|e| e.to_string()))
     }
 
     pub fn prepare_voice_request(
@@ -459,7 +837,10 @@ impl HistoryService {
         server: String,
         applied_epoch: Option<u64>,
     ) -> ServiceResult<crate::voice_ledger::SessionRecord> {
-        self.call(move |worker| {
+        self.call_metadata(move |worker| {
+            if request.strict_start_identity().is_some() {
+                worker.require_deletions_settled()?;
+            }
             worker
                 .store
                 .prepare_voice_request(&request, &client, &server, applied_epoch)
@@ -468,7 +849,7 @@ impl HistoryService {
     }
 
     pub fn bind_voice_peer(&self, client: String, audit: [u8; 32]) -> ServiceResult<()> {
-        self.call(move |worker| {
+        self.call_metadata(move |worker| {
             worker
                 .store
                 .bind_voice_peer(&client, &audit)
@@ -477,7 +858,7 @@ impl HistoryService {
     }
 
     pub fn voice_terms_version(&self) -> ServiceResult<crate::voice_protocol::VoiceTermsVersion> {
-        self.call(|worker| {
+        self.call_metadata(|worker| {
             worker
                 .store
                 .voice_terms_version()
@@ -486,7 +867,7 @@ impl HistoryService {
     }
 
     pub fn voice_cancellation_requested(&self, session_id: String) -> ServiceResult<bool> {
-        self.call(move |worker| {
+        self.call_metadata(move |worker| {
             worker
                 .store
                 .voice_cancellation_requested(&session_id)
@@ -500,7 +881,10 @@ impl HistoryService {
         server: String,
         applied_epoch: Option<u64>,
     ) -> ServiceResult<bool> {
-        self.call(move |worker| {
+        self.call_metadata(move |worker| {
+            if request.strict_start_identity().is_some() {
+                worker.require_deletions_settled()?;
+            }
             worker
                 .store
                 .claim_voice_request(&request, &client, &server, applied_epoch)
@@ -513,7 +897,7 @@ impl HistoryService {
         server: String,
         view: crate::voice_protocol::VoiceSessionView,
     ) -> ServiceResult<bool> {
-        self.call(move |worker| {
+        self.call_metadata(move |worker| {
             worker
                 .store
                 .project_voice_session(&client, &server, &view)
@@ -524,7 +908,7 @@ impl HistoryService {
         &self,
         session_id: String,
     ) -> ServiceResult<Option<crate::voice_ledger::SessionRecord>> {
-        self.call(move |worker| {
+        self.call_metadata(move |worker| {
             worker
                 .store
                 .voice_session(&session_id)
@@ -683,7 +1067,7 @@ impl HistoryService {
         &self,
         session_id: String,
     ) -> ServiceResult<Option<crate::output_ledger::OutputRecord>> {
-        self.call(move |worker| {
+        self.call_metadata(move |worker| {
             worker
                 .store
                 .voice_result(&session_id)
@@ -696,7 +1080,7 @@ impl HistoryService {
         client: String,
         server: String,
     ) -> ServiceResult<bool> {
-        self.call(move |worker| {
+        self.call_metadata(move |worker| {
             worker.revoke_outputs();
             worker
                 .store
@@ -772,7 +1156,7 @@ impl HistoryService {
         intent: crate::output_ledger::OutputIntent,
         outcome: crate::output_ledger::OutputOutcome,
     ) -> ServiceResult<crate::output_ledger::OutputRecord> {
-        self.call(move |worker| {
+        self.call_metadata(move |worker| {
             worker
                 .store
                 .finish_output(&intent, outcome)
@@ -783,7 +1167,7 @@ impl HistoryService {
         &self,
         id: String,
     ) -> ServiceResult<Option<crate::output_ledger::OutputRecord>> {
-        self.call(move |worker| worker.store.output_record(&id).map_err(|e| e.to_string()))
+        self.call_metadata(move |worker| worker.store.output_record(&id).map_err(|e| e.to_string()))
     }
     /// 启动与显式刷新均只读持久结果，不用重放输出请求恢复 UI。
     pub fn unresolved_output_notices(
@@ -791,7 +1175,7 @@ impl HistoryService {
         cursor: Option<String>,
         limit: u32,
     ) -> ServiceResult<crate::output_ledger::OutputNoticePage> {
-        self.call(move |worker| {
+        self.call_metadata(move |worker| {
             worker
                 .store
                 .unresolved_output_notices(cursor.as_deref(), limit)
@@ -804,7 +1188,7 @@ impl HistoryService {
         operation_id: String,
         expected_state: crate::output_ledger::OutputState,
     ) -> ServiceResult<()> {
-        self.call(move |worker| {
+        self.call_metadata(move |worker| {
             worker
                 .store
                 .acknowledge_output_notice(&operation_id, expected_state)

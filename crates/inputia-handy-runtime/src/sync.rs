@@ -64,6 +64,31 @@ impl SourcePump {
         self.source
     }
 
+    /// SQLite 连接可能仍指向已被替换/移走的旧 inode；禁止把它当当前源继续写入。
+    fn verify_file_identity(&self) -> Result<(), SyncError> {
+        #[cfg(unix)]
+        if let Some(path) = self.connection.path().filter(|path| !path.is_empty()) {
+            let metadata = std::fs::symlink_metadata(path).map_err(|_| SourceError::WrongSource)?;
+            if !metadata.file_type().is_file() {
+                return Err(SourceError::WrongSource.into());
+            }
+            let mut moved: std::ffi::c_int = 0;
+            // SAFETY: 连接在本线程独占；参数是 SQLite FCNTL_HAS_MOVED 要求的可写 int。
+            let status = unsafe {
+                rusqlite::ffi::sqlite3_file_control(
+                    self.connection.handle(),
+                    c"main".as_ptr(),
+                    rusqlite::ffi::SQLITE_FCNTL_HAS_MOVED,
+                    (&mut moved as *mut std::ffi::c_int).cast(),
+                )
+            };
+            if status != rusqlite::ffi::SQLITE_OK || moved != 0 {
+                return Err(SourceError::WrongSource.into());
+            }
+        }
+        Ok(())
+    }
+
     pub fn update_record(
         &mut self,
         record_id: &str,
@@ -71,14 +96,17 @@ impl SourcePump {
         operation_id: &str,
         patch: &crate::source::HistoryPatch,
     ) -> Result<crate::source::MutationResult, SyncError> {
-        Ok(self.outbox.update_record(
+        self.verify_file_identity()?;
+        let result = self.outbox.update_record(
             &mut self.connection,
             self.source,
             record_id,
             expected_revision,
             operation_id,
             patch,
-        )?)
+        )?;
+        self.verify_file_identity()?;
+        Ok(result)
     }
 
     pub fn delete_record(
@@ -87,13 +115,16 @@ impl SourcePump {
         revision: u64,
         operation_id: &str,
     ) -> Result<crate::source::MutationResult, SyncError> {
-        Ok(self.outbox.delete_record(
+        self.verify_file_identity()?;
+        let result = self.outbox.delete_record(
             &mut self.connection,
             self.source,
             record_id,
             revision,
             operation_id,
-        )?)
+        );
+        self.verify_file_identity()?;
+        Ok(result?)
     }
 
     pub fn delete_receipt(
@@ -102,9 +133,28 @@ impl SourcePump {
         revision: u64,
         operation_id: &str,
     ) -> Result<Option<bool>, SyncError> {
+        self.verify_file_identity()?;
         Ok(self
             .outbox
             .delete_receipt(&self.connection, item_id, revision, operation_id)?)
+    }
+
+    pub fn verify_deleted_record(
+        &mut self,
+        record_id: &str,
+        revision: u64,
+        operation_id: &str,
+    ) -> Result<bool, SyncError> {
+        self.verify_file_identity()?;
+        let result = self.outbox.verify_deleted_record(
+            &mut self.connection,
+            self.source,
+            record_id,
+            revision,
+            operation_id,
+        )?;
+        self.verify_file_identity()?;
+        Ok(result)
     }
 
     /// 每次处理最多 2000 事件，允许外层服务公平处理 UI 和停止请求。
@@ -118,6 +168,7 @@ impl SourcePump {
         store: &mut IntegrationStore,
         mut before_apply: impl FnMut(),
     ) -> Result<SyncReport, SyncError> {
+        self.verify_file_identity()?;
         store.register_source(self.source.logical_name(), self.outbox.store_id())?;
         let cursor = store.cursor(self.outbox.store_id())?;
         let events = match self.outbox.read_batch(&self.connection, cursor, 2_000) {
@@ -140,10 +191,12 @@ impl SourcePump {
                         })?;
                 let policy = store.history_retention_policy()?;
                 before_apply();
+                self.verify_file_identity()?;
                 store.restore_retained_history(&header, &records, &policy)?;
                 self.outbox
                     .acknowledge(&mut self.connection, header.through_sequence)?;
                 self.outbox.advance_policy(&self.connection, policy.epoch)?;
+                self.verify_file_identity()?;
                 return Ok(SyncReport {
                     applied_events: 0,
                     restored_records: records.len(),
@@ -156,12 +209,14 @@ impl SourcePump {
         if !events.is_empty() {
             let policy = store.history_retention_policy()?;
             before_apply();
+            self.verify_file_identity()?;
             store.apply_retained_history(&events, &policy)?;
             self.outbox
                 .acknowledge(&mut self.connection, through_sequence)?;
         }
         self.outbox
             .advance_policy(&self.connection, store.policy_epoch()?)?;
+        self.verify_file_identity()?;
         Ok(SyncReport {
             applied_events: events.len(),
             restored_records: 0,

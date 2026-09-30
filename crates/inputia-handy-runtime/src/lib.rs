@@ -1,6 +1,7 @@
 pub mod personalization_wire;
 use std::fmt;
 pub mod decision;
+pub mod deletion_lifecycle;
 pub mod embedding;
 pub mod knowledge;
 pub mod knowledge_cli;

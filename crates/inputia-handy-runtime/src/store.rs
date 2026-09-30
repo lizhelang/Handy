@@ -282,6 +282,114 @@ pub struct IntegrationStore {
 }
 
 impl IntegrationStore {
+    /// 先提交耐久意图；此事务不能与后续源库副作用交换顺序。
+    pub fn prepare_deletion(
+        &mut self,
+        request: &crate::deletion_lifecycle::DeleteRequest,
+    ) -> StoreResult<crate::deletion_lifecycle::DeleteRecord> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let active: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM integration_sources
+            WHERE logical_name=?1 AND active_store_id=?2)",
+            params![request.logical_name, request.store_id],
+            |row| row.get(0),
+        )?;
+        if !active {
+            return Err(StoreError::SourceConflict);
+        }
+        let record = crate::deletion_lifecycle::prepare(&tx, request)?;
+        tx.commit()?;
+        Ok(record)
+    }
+
+    /// 安全状态摘要；不从日志恢复正文，也不隐含附件已删除。
+    pub fn deletion_record(
+        &self,
+        operation_id: &str,
+    ) -> StoreResult<Option<crate::deletion_lifecycle::DeleteRecord>> {
+        crate::deletion_lifecycle::get(&self.conn, operation_id)
+    }
+
+    pub(crate) fn pending_deletions(
+        &self,
+        after: Option<&str>,
+    ) -> StoreResult<Vec<crate::deletion_lifecycle::DeleteRecord>> {
+        crate::deletion_lifecycle::pending(&self.conn, after, 1)
+    }
+
+    pub(crate) fn has_pending_deletions(&self) -> StoreResult<bool> {
+        crate::deletion_lifecycle::has_pending(&self.conn)
+    }
+
+    pub(crate) fn deletion_audit_page(
+        &self,
+        after: Option<&str>,
+    ) -> StoreResult<Vec<crate::deletion_lifecycle::DeleteRecord>> {
+        crate::deletion_lifecycle::audit_page(&self.conn, after)
+    }
+
+    pub(crate) fn deletion_source_is_current(
+        &self,
+        request: &crate::deletion_lifecycle::DeleteRequest,
+    ) -> StoreResult<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM integration_sources source
+            JOIN integration_instances instance ON source.active_store_id=instance.store_id
+            WHERE source.logical_name=?1 AND source.active_store_id=?2 AND instance.active=1)",
+            params![request.logical_name, request.store_id],
+            |row| row.get(0),
+        )?)
+    }
+
+    pub(crate) fn transition_deletion(
+        &mut self,
+        request: &crate::deletion_lifecycle::DeleteRequest,
+        next: crate::deletion_lifecycle::DeleteState,
+        failure: Option<crate::deletion_lifecycle::DeleteFailure>,
+    ) -> StoreResult<crate::deletion_lifecycle::DeleteRecord> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let record = crate::deletion_lifecycle::transition(&tx, request, next, failure)?;
+        tx.commit()?;
+        Ok(record)
+    }
+
+    /// 墓碑可能来自更早的隐私撤销；源回执另行证明本次源删除，不能复活旧条目。
+    pub(crate) fn deletion_projection_revoked(
+        &self,
+        request: &crate::deletion_lifecycle::DeleteRequest,
+    ) -> StoreResult<bool> {
+        let tx = self.conn.unchecked_transaction()?;
+        let removed: bool = tx.query_row(
+            "SELECT
+            EXISTS(SELECT 1 FROM integration_sources WHERE logical_name=?1 AND active_store_id=?2)
+            AND EXISTS(SELECT 1 FROM integration_tombstones WHERE logical_name=?1 AND record_id=?3)
+            AND NOT EXISTS(SELECT 1 FROM integration_items WHERE item_id=?4)
+            AND NOT EXISTS(SELECT 1 FROM integration_revisions WHERE item_id=?4)",
+            params![
+                request.logical_name,
+                request.store_id,
+                request.record_id,
+                request.item_id
+            ],
+            |row| row.get(0),
+        )?;
+        if !removed {
+            return Ok(false);
+        }
+        if self.learning_initialized()? {
+            let retained: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM learning_contributions WHERE store_id=?1 AND record_id=?2)",
+                params![request.store_id,request.record_id], |row|row.get(0))?;
+            if retained {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     pub fn initialize_voice_sessions(&mut self) -> StoreResult<()> {
         let tx = self
             .conn
@@ -1102,6 +1210,9 @@ impl IntegrationStore {
         }
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        crate::deletion_lifecycle::initialize(&tx)?;
+        tx.commit()?;
         Ok(Self { conn })
     }
 

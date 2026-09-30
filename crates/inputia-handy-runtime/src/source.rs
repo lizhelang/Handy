@@ -10,6 +10,24 @@ use std::{fmt, time::Duration};
 /// 独立于业务库 user_version 的事务 outbox 版本。
 pub const SOURCE_SCHEMA_VERSION: i64 = 4;
 
+/// CAS 拒绝也持久化；修订后来恰好匹配时仍不能重跑同一操作。
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeleteRejection {
+    version: u32,
+    actual_revision: Option<u64>,
+    record_exists: bool,
+}
+
+impl DeleteRejection {
+    fn validates(response: &str, expected_revision: u64) -> bool {
+        serde_json::from_str::<Self>(response).is_ok_and(|proof| {
+            proof.version == 1
+                && (proof.actual_revision != Some(expected_revision) || !proof.record_exists)
+        })
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct HistoryPatch {
     pub starred: Option<bool>,
@@ -74,6 +92,9 @@ pub enum SourceError {
     InvalidAcknowledgement,
     PolicyRegression,
     OperationConflict,
+    InvalidReceipt,
+    RevisionConflict,
+    ChangedAfterDeletion,
     SnapshotRequired { acknowledged_sequence: u64 },
     CursorAhead { maximum_sequence: u64 },
 }
@@ -93,6 +114,11 @@ impl fmt::Display for SourceError {
             Self::OperationConflict => {
                 f.write_str("operation identifier reused for a different mutation")
             }
+            Self::InvalidReceipt => {
+                f.write_str("source operation receipt version or payload invalid")
+            }
+            Self::RevisionConflict => f.write_str("source revision changed before deletion"),
+            Self::ChangedAfterDeletion => f.write_str("source changed after deletion receipt"),
             Self::SnapshotRequired {
                 acknowledged_sequence,
             } => write!(
@@ -532,7 +558,7 @@ impl SourceOutbox {
             return Err(SourceError::WrongSource);
         }
         let digest = delete_digest(&item_id, expected_revision);
-        self.mutate_once(conn, operation_id, &digest, |tx| {
+        let result = self.mutate_once(conn, operation_id, &digest, |tx| {
             let logical: String = tx.query_row(
                 "SELECT logical_name FROM unified_source_meta WHERE singleton=1",
                 [],
@@ -541,26 +567,97 @@ impl SourceOutbox {
             if logical != source.logical_name() {
                 return Err(rusqlite::Error::InvalidQuery);
             }
-            let revision: u64 = tx.query_row(
-                "SELECT revision FROM unified_source_versions WHERE record_id=?1",
+            let revision: Option<u64> = tx
+                .query_row(
+                    "SELECT revision FROM unified_source_versions WHERE record_id=?1",
+                    [record_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let exists: bool = tx.query_row(
+                &format!(
+                    "SELECT EXISTS(SELECT 1 FROM {} WHERE CAST(id AS TEXT)=?1)",
+                    source.table()
+                ),
                 [record_id],
                 |r| r.get(0),
             )?;
-            if revision != expected_revision {
-                return Err(rusqlite::Error::QueryReturnedNoRows);
+            if revision != Some(expected_revision) || !exists {
+                return serde_json::to_string(&DeleteRejection {
+                    version: 1,
+                    actual_revision: revision,
+                    record_exists: exists,
+                })
+                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)));
             }
             let changed = tx.execute(
                 &format!("DELETE FROM {} WHERE CAST(id AS TEXT)=?1", source.table()),
                 [record_id],
             )?;
             if changed != 1 {
-                return Err(rusqlite::Error::QueryReturnedNoRows);
+                return Err(rusqlite::Error::InvalidQuery);
             }
             Ok("true".into())
-        })
+        })?;
+        if result.response == "true" {
+            Ok(result)
+        } else if DeleteRejection::validates(&result.response, expected_revision) {
+            Err(SourceError::RevisionConflict)
+        } else {
+            Err(SourceError::InvalidReceipt)
+        }
     }
 
-    /// 删除后的投影已不存在，仍可按原始请求身份查源事务回执。
+    /// 回执、缺失记录与删除后的修订必须来自同一源快照。
+    pub fn verify_deleted_record(
+        &self,
+        conn: &mut Connection,
+        source: SourceTable,
+        record_id: &str,
+        expected_revision: u64,
+        operation_id: &str,
+    ) -> Result<bool> {
+        let tx = conn.transaction()?;
+        self.verify_identity(&tx)?;
+        let logical: String = tx.query_row(
+            "SELECT logical_name FROM unified_source_meta WHERE singleton=1",
+            [],
+            |r| r.get(0),
+        )?;
+        if logical != source.logical_name() {
+            return Err(SourceError::WrongSource);
+        }
+        if self.delete_receipt(
+            &tx,
+            &crate::store::item_id(&self.store_id, record_id),
+            expected_revision,
+            operation_id,
+        )? != Some(true)
+        {
+            return Ok(false);
+        }
+        let exists: bool = tx.query_row(
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM {} WHERE CAST(id AS TEXT)=?1)",
+                source.table()
+            ),
+            [record_id],
+            |r| r.get(0),
+        )?;
+        let revision: Option<u64> = tx
+            .query_row(
+                "SELECT revision FROM unified_source_versions WHERE record_id=?1",
+                [record_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if exists || revision != expected_revision.checked_add(1) {
+            return Err(SourceError::ChangedAfterDeletion);
+        }
+        Ok(true)
+    }
+
+    /// Some(true) 为删除提交，Some(false) 为事务内 CAS 拒绝；两者都不可重派副作用。
     pub fn delete_receipt(
         &self,
         conn: &Connection,
@@ -578,7 +675,16 @@ impl SourceOutbox {
             {
                 Ok(Some(true))
             }
-            Some(_) => Err(SourceError::OperationConflict),
+            Some((digest, response))
+                if digest == delete_digest(item_id, revision)
+                    && DeleteRejection::validates(&response, revision) =>
+            {
+                Ok(Some(false))
+            }
+            Some((digest, _)) if digest != delete_digest(item_id, revision) => {
+                Err(SourceError::OperationConflict)
+            }
+            Some(_) => Err(SourceError::InvalidReceipt),
         }
     }
 
@@ -596,6 +702,7 @@ impl SourceOutbox {
         Identifier::parse(operation_id).map_err(|_| SourceError::InvalidIdentifier)?;
         self.verify_identity(conn)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        self.verify_identity(&tx)?;
         let prior = tx.query_row("SELECT request_digest,response FROM unified_source_operations WHERE operation_id=?1",
             [operation_id], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).optional()?;
         if let Some((digest, response)) = prior {
