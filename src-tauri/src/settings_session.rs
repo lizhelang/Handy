@@ -115,14 +115,7 @@ impl Coordinator {
                     .as_ref()
                     .ok_or(Failure::MissingReadTicket)?
                     .loaded;
-                // 无修改也不能仅凭进程缓存授权副作用：另一个进程可能已经保存。
-                let floor = self
-                    .cached
-                    .read()
-                    .map_err(|_| Error::StorageUnavailable)?
-                    .clone();
-                let current = floor.reload()?;
-                self.publish(current)?;
+                // save_locked 已在同一 writer 锁内完成无修改请求的磁盘核验。
                 original.revision().to_owned()
             }
             SaveReport::Saved {
@@ -172,6 +165,27 @@ impl Coordinator {
             return Err(error.clone().into());
         }
         let Some(plan) = ticket.loaded.plan(settings)? else {
+            // 普通保存也会触发日志级别/主题等后续动作；无修改不能跳过版本核验。
+            let floor = self
+                .cached
+                .read()
+                .map_err(|_| Error::StorageUnavailable)?
+                .clone();
+            let current = match floor.reload() {
+                Ok(current) => current,
+                Err(error) => {
+                    writer.blocked = Some(error.clone());
+                    return Err(error.into());
+                }
+            };
+            let unchanged_revision = current.revision() == ticket.loaded.revision();
+            if let Err(error) = self.publish(current) {
+                writer.blocked = Some(error.clone());
+                return Err(error.into());
+            }
+            if !unchanged_revision {
+                return Err(Failure::Conflict);
+            }
             return Ok(SaveReport::Unchanged);
         };
         // 先保留原请求；任何不确定结果都不能使下一次编辑生成新 ID 覆盖它。
@@ -434,6 +448,28 @@ mod tests {
         assert_eq!(result, Err(Failure::Conflict));
         assert_eq!(file_effects, 0);
         assert_eq!(coordinator.read().unwrap().selected_model, "model-b");
+    }
+
+    #[test]
+    fn ordinary_unchanged_save_cannot_apply_a_stale_log_level() {
+        let (temp, coordinator) = fixture();
+        let old_ticket = coordinator.read().unwrap();
+        let home = temp.path().canonicalize().unwrap();
+        let other = Coordinator::open(&home.join(SETTINGS_STORE_PATH), &home, unsafe {
+            libc::geteuid()
+        })
+        .unwrap();
+        let mut newer = other.read().unwrap();
+        newer.log_level = crate::settings::LogLevel::Error;
+        other.save(&newer).unwrap();
+        let mut native_effects = 0;
+        let result = coordinator.save(&old_ticket).map(|_| native_effects += 1);
+        assert_eq!(result, Err(Failure::Conflict));
+        assert_eq!(native_effects, 0);
+        assert_eq!(
+            coordinator.read().unwrap().log_level,
+            crate::settings::LogLevel::Error
+        );
     }
 
     #[test]

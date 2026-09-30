@@ -345,3 +345,5 @@ Unix 控制中心在业务模块前严格预检并打开版本化设置协调器
 验证：Rust guardian 范围 11 项通过，其中一项包含 14 个真实自建子进程单方 SIGKILL/abort 窗口；Swift 原生 plan 24 项检查通过，保留原停态。native/default 配置 all-targets 严格 Clippy、Rust 格式、新 Swift 文件 lint、C header 语法、文档格式和 diff 检查通过。独立修复后局部 CLEAR。没有碰日用进程或数据。
 
 生产边界：当前只交付库级同已验证 Updater 重执行入口，没有正式 Updater main 接线或 Developer ID 同发布入口正向验收。TIS 输入源切换、旧路径隔离、服务独占 FD、成套替换的完整 NativeAdapter 仍在后续工作；暂停租约不能转换成完整 QuiescenceReceipt。父进程和 guardian 同时被杀、外部并发另发 STOP 不具备绝对恢复保证。
+
+第二十九批补充：普通 `save` 的无修改分支也在 writer 锁内重读磁盘并核对原 ticket；日志级别、主题等后续动作不能仅凭缓存的“无变化”取得许可。原 `save_with_snapshot` 复用同一核验。新增双协调器日志级别反例，另一个进程已修改时返回冲突且副作用计数为零；协调器最终 16 项通过，独立窄审 CLEAR。
