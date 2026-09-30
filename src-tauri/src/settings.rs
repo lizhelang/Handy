@@ -1403,6 +1403,16 @@ pub fn write_settings(app: &AppHandle, settings: AppSettings) -> Result<(), Stri
         .save_for_component(&settings)
 }
 
+/// 原生副作用失败时可由此快照生成补偿；保存后不得改用新的读取凭据。
+#[cfg(unix)]
+pub fn write_settings_with_snapshot(
+    app: &AppHandle,
+    settings: AppSettings,
+) -> Result<AppSettings, String> {
+    app.state::<runtime::RuntimeSettings>()
+        .save_with_snapshot(&settings)
+}
+
 #[cfg(not(unix))]
 pub fn write_settings(app: &AppHandle, settings: AppSettings) -> Result<(), String> {
     let store = app

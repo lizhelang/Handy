@@ -1543,54 +1543,28 @@ impl ModelManager {
 
     fn auto_select_model_if_needed(&self) -> Result<()> {
         let mut settings = get_settings(&self.app_handle);
-
-        // Clear stale selection: selected model is set but doesn't exist
-        // in available_models (e.g. deleted custom model file)
+        let original_selection = settings.selected_model.clone();
         if !settings.selected_model.is_empty() {
             let models = self.available_models.lock().unwrap();
-            let exists = models.contains_key(&settings.selected_model);
-            drop(models);
-
-            if !exists {
-                info!(
-                    "Selected model '{}' not found in available models, clearing selection",
-                    settings.selected_model
-                );
-                settings.selected_model = String::new();
-                write_settings(&self.app_handle, settings.clone());
+            if !models.contains_key(&settings.selected_model) {
+                settings.selected_model.clear();
             }
         }
-
-        // If onboarding is still pending, do not auto-select just because a
-        // compatible model exists on disk or in the shared HF cache. The
-        // onboarding model step should present that choice explicitly.
-        if !settings.onboarding_completed {
-            debug!("Skipping model auto-selection until onboarding is complete");
-            return Ok(());
-        }
-
-        // If no model is selected, pick the first downloaded one using the same
-        // ranked order the UI receives.
-        if settings.selected_model.is_empty() {
+        // 首次引导仍由用户选择。已有用户才按界面排序挑选可用模型。
+        if settings.onboarding_completed && settings.selected_model.is_empty() {
             if let Some(available_model) = self
                 .get_available_models()
                 .into_iter()
                 .find(|model| model.is_downloaded)
             {
-                info!(
-                    "Auto-selecting model: {} ({})",
-                    available_model.id, available_model.name
-                );
-
-                // Update settings with the selected model
-                let mut updated_settings = settings;
-                updated_settings.selected_model = available_model.id.clone();
-                write_settings(&self.app_handle, updated_settings);
-
-                info!("Successfully auto-selected model: {}", available_model.id);
+                settings.selected_model = available_model.id;
             }
         }
-
+        // 清理旧选择与挑选替代模型构成一次修改，不能复用旧 ticket 连续写两次。
+        if settings.selected_model != original_selection {
+            write_settings(&self.app_handle, settings).map_err(anyhow::Error::msg)?;
+            info!("Model selection updated after model inventory validation");
+        }
         Ok(())
     }
 

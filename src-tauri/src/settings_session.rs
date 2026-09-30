@@ -101,9 +101,61 @@ impl Coordinator {
         self.save_with(settings, |plan, floor| plan.apply_at_least(floor))
     }
 
+    /// 为原生组件返回原提交版本的读取凭据。后续失败补偿只能从此凭据构造，
+    /// 不能先重新读取较新配置再覆盖用户已经确认的新选择。
+    pub fn save_with_snapshot(&self, settings: &AppSettings) -> Result<AppSettings, Failure> {
+        let mut writer = self.writer.lock().map_err(|_| Error::StorageUnavailable)?;
+        let report = self.save_locked(settings, &mut writer, |plan, floor| {
+            plan.apply_at_least(floor)
+        })?;
+        let expected_revision = match report {
+            SaveReport::Unchanged => {
+                let original = &settings
+                    .read_ticket
+                    .as_ref()
+                    .ok_or(Failure::MissingReadTicket)?
+                    .loaded;
+                // 无修改也不能仅凭进程缓存授权副作用：另一个进程可能已经保存。
+                let floor = self
+                    .cached
+                    .read()
+                    .map_err(|_| Error::StorageUnavailable)?
+                    .clone();
+                let current = floor.reload()?;
+                self.publish(current)?;
+                original.revision().to_owned()
+            }
+            SaveReport::Saved {
+                commit_revision,
+                current_revision,
+                ..
+            } if commit_revision == current_revision => commit_revision,
+            SaveReport::Saved { .. } => return Err(Failure::Conflict),
+        };
+        let current = self.read()?;
+        if current
+            .read_ticket
+            .as_ref()
+            .is_none_or(|ticket| ticket.loaded.revision() != expected_revision)
+        {
+            return Err(Failure::Conflict);
+        }
+        Ok(current)
+    }
+
     fn save_with(
         &self,
         settings: &AppSettings,
+        apply: impl FnOnce(&PlannedChange, &LoadedSettings) -> Result<SavedSettings, Error>,
+    ) -> Result<SaveReport, Failure> {
+        let mut writer = self.writer.lock().map_err(|_| Error::StorageUnavailable)?;
+        self.save_locked(settings, &mut writer, apply)
+    }
+
+    fn save_locked(
+        &self,
+        settings: &AppSettings,
+        writer: &mut WriterState,
         apply: impl FnOnce(&PlannedChange, &LoadedSettings) -> Result<SavedSettings, Error>,
     ) -> Result<SaveReport, Failure> {
         let ticket = settings
@@ -111,7 +163,6 @@ impl Coordinator {
             .as_ref()
             .filter(|ticket| Arc::ptr_eq(&ticket.owner, &self.owner))
             .ok_or(Failure::MissingReadTicket)?;
-        let mut writer = self.writer.lock().map_err(|_| Error::StorageUnavailable)?;
         if let Some(pending) = &writer.pending {
             return Err(Failure::Pending {
                 operation_id: pending.plan.operation_id().into(),
@@ -128,7 +179,7 @@ impl Coordinator {
             plan,
             uncertain: false,
         });
-        self.apply_pending(&mut writer, apply)
+        self.apply_pending(writer, apply)
     }
 
     pub fn pending_operation(&self) -> Result<Option<String>, Failure> {
@@ -291,6 +342,98 @@ mod tests {
         let current = coordinator.read().unwrap();
         assert!(matches!(current.theme, Theme::Dark));
         assert!(!current.audio_feedback);
+    }
+
+    #[test]
+    fn component_compensation_is_bound_to_its_original_saved_revision() {
+        let (_temp, coordinator) = fixture();
+        let mut selection = coordinator.read().unwrap();
+        let old_selection = selection.selected_model.clone();
+        selection.selected_model = "new-model".into();
+        let mut compensation = coordinator.save_with_snapshot(&selection).unwrap();
+
+        let mut newer = coordinator.read().unwrap();
+        newer.theme = Theme::Dark;
+        coordinator.save(&newer).unwrap();
+        compensation.selected_model = old_selection;
+        assert_eq!(coordinator.save(&compensation), Err(Failure::Conflict));
+        let current = coordinator.refresh().unwrap();
+        assert_eq!(current.selected_model, "new-model");
+        assert!(matches!(current.theme, Theme::Dark));
+    }
+
+    #[test]
+    fn component_can_compensate_its_exact_saved_snapshot() {
+        let (_temp, coordinator) = fixture();
+        let mut selection = coordinator.read().unwrap();
+        let old_selection = selection.selected_model.clone();
+        selection.selected_model = "unloadable-model".into();
+        selection.onboarding_completed = true;
+        let mut compensation = coordinator.save_with_snapshot(&selection).unwrap();
+        compensation.selected_model = old_selection.clone();
+        coordinator.save(&compensation).unwrap();
+        let current = coordinator.refresh().unwrap();
+        assert_eq!(current.selected_model, old_selection);
+        assert!(current.onboarding_completed);
+    }
+
+    #[test]
+    fn stale_unchanged_snapshot_cannot_authorize_a_native_side_effect() {
+        let (_temp, coordinator) = fixture();
+        let unchanged = coordinator.read().unwrap();
+        let mut newer = unchanged.clone();
+        newer.selected_model = "later-model".into();
+        coordinator.save(&newer).unwrap();
+        assert!(matches!(
+            coordinator.save_with_snapshot(&unchanged),
+            Err(Failure::Conflict)
+        ));
+        assert_eq!(coordinator.refresh().unwrap().selected_model, "later-model");
+    }
+
+    #[test]
+    fn unchanged_snapshot_rechecks_other_process_before_authorizing_effect() {
+        let (temp, coordinator) = fixture();
+        let unchanged = coordinator.read().unwrap();
+        let home = temp.path().canonicalize().unwrap();
+        let other = Coordinator::open(&home.join(SETTINGS_STORE_PATH), &home, unsafe {
+            libc::geteuid()
+        })
+        .unwrap();
+        let mut newer = other.read().unwrap();
+        newer.selected_model = "other-process-selection".into();
+        other.save(&newer).unwrap();
+        assert!(matches!(
+            coordinator.save_with_snapshot(&unchanged),
+            Err(Failure::Conflict)
+        ));
+        assert_eq!(
+            coordinator.read().unwrap().selected_model,
+            "other-process-selection"
+        );
+    }
+
+    #[test]
+    fn stale_inactive_model_deletion_is_rejected_before_any_effect() {
+        let (temp, coordinator) = fixture();
+        let mut original = coordinator.read().unwrap();
+        original.selected_model = "model-a".into();
+        let old_ticket = coordinator.save_with_snapshot(&original).unwrap();
+        let home = temp.path().canonicalize().unwrap();
+        let other = Coordinator::open(&home.join(SETTINGS_STORE_PATH), &home, unsafe {
+            libc::geteuid()
+        })
+        .unwrap();
+        let mut newer = other.read().unwrap();
+        newer.selected_model = "model-b".into();
+        other.save(&newer).unwrap();
+        let mut file_effects = 0;
+        let result = coordinator.save_with_snapshot(&old_ticket).map(|_| {
+            file_effects += 1;
+        });
+        assert_eq!(result, Err(Failure::Conflict));
+        assert_eq!(file_effects, 0);
+        assert_eq!(coordinator.read().unwrap().selected_model, "model-b");
     }
 
     #[test]

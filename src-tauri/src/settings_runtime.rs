@@ -112,6 +112,21 @@ impl RuntimeSettings {
             .map_err(failure_code)
     }
 
+    pub fn save_with_snapshot(&self, settings: &AppSettings) -> Result<AppSettings, String> {
+        let phase = self
+            .phase
+            .read()
+            .map_err(|_| "settings_state_unavailable")?;
+        if matches!(*phase, StartupStatus::Recovery { .. }) {
+            return Err("settings_recovery_required".into());
+        }
+        self.coordinator
+            .get()
+            .ok_or_else(|| "settings_not_initialized".to_owned())?
+            .save_with_snapshot(settings)
+            .map_err(failure_code)
+    }
+
     pub fn finish_startup(&self) -> Result<(), String> {
         let _initialization = self
             .initialization

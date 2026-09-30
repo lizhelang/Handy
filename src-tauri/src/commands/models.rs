@@ -70,16 +70,26 @@ pub async fn delete_model(
     transcription_manager: State<'_, Arc<TranscriptionManager>>,
     model_id: String,
 ) -> Result<(), String> {
-    // If deleting the active model, unload it and clear the setting
-    let settings = get_settings(&app_handle);
-    if settings.selected_model == model_id {
+    let _loading_guard = transcription_manager
+        .try_start_loading()
+        .ok_or_else(|| "Model load already in progress".to_owned())?;
+    // 先保存取消选择，失败时不得继续卸载或删除模型。
+    let mut settings = get_settings(&app_handle);
+    let was_selected = settings.selected_model == model_id;
+    if was_selected {
+        settings.selected_model = String::new();
+    }
+    // 未修改的分支同样核验磁盘；其他进程可能已把待删模型设为当前选择。
+    #[cfg(unix)]
+    crate::settings::write_settings_with_snapshot(&app_handle, settings)?;
+    #[cfg(not(unix))]
+    if was_selected {
+        write_settings(&app_handle, settings)?;
+    }
+    if was_selected {
         transcription_manager
             .unload_model()
             .map_err(|e| format!("Failed to unload model: {}", e))?;
-
-        let mut settings = get_settings(&app_handle);
-        settings.selected_model = String::new();
-        write_settings(&app_handle, settings);
     }
 
     model_manager
@@ -124,7 +134,10 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
     settings.selected_model = model_id.to_string();
     settings.onboarding_completed = true;
 
-    write_settings(app, settings);
+    #[cfg(unix)]
+    let mut compensation = crate::settings::write_settings_with_snapshot(app, settings)?;
+    #[cfg(not(unix))]
+    write_settings(app, settings)?;
 
     // Skip eager loading if unload is set to "Immediately" — the model
     // will be loaded on-demand during the next transcription.
@@ -149,10 +162,14 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
 
     // Load the model. On failure, revert the persisted selection.
     if let Err(e) = transcription_manager.load_model(model_id) {
-        let mut settings = get_settings(app);
-        settings.selected_model = old_model;
-        settings.onboarding_completed = old_onboarding_completed;
-        write_settings(app, settings);
+        #[cfg(not(unix))]
+        let mut compensation = get_settings(app);
+        compensation.selected_model = old_model;
+        compensation.onboarding_completed = old_onboarding_completed;
+        // Unix 的补偿使用本次保存返回的原版本，不读取较新配置覆盖用户后续修改。
+        if write_settings(app, compensation).is_err() {
+            return Err("model_load_failed_settings_compensation_unconfirmed".into());
+        }
         return Err(e.to_string());
     }
 
@@ -212,7 +229,7 @@ pub async fn set_active_custom_words_model(
 
     let mut settings = get_settings(&app_handle);
     settings.selected_custom_words_model = model_id.to_string();
-    write_settings(&app_handle, settings);
+    write_settings(&app_handle, settings)?;
     Ok(())
 }
 
