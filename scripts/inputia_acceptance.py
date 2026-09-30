@@ -289,7 +289,7 @@ def validate_execution_record(result, subject, root):
     producer = record["producer"]
     fields(producer, ("kind", "identity", "reviewer"), "producer")
     if producer["kind"] == "builtin":
-        require(producer["identity"] == "inputia-rust-contracts/v1" and result["id"] == "G1.rust"
+        require(producer["identity"] == "inputia-rust-contracts/v2" and result["id"] == "G1.rust"
                 and producer["reviewer"] is None, "执行器无权证明该案例")
     else:
         require(producer["kind"] == "reviewed" and nonempty(producer["identity"])
@@ -354,10 +354,17 @@ def run_rust(subject, root):
     skipped = 0
     blocked = False
     started_at = now()
-    for crate in ("inputia-core", "inputia-handy-runtime", "inputia-capi", "inputia-settings"):
+    suites = (
+        ("inputia-core", "sqlite-memory"), ("inputia-handy-runtime", None),
+        ("inputia-capi", None), ("inputia-rime", None), ("inputia-settings", None),
+        ("inputia-release", None), ("inputia-updater", "native-code-verification"),
+    )
+    for crate, features in suites:
         command = ["cargo", "test", "--locked", "--manifest-path", f"crates/{crate}/Cargo.toml"]
-        if crate == "inputia-core":
-            command += ["--features", "sqlite-memory"]
+        if features:
+            command += ["--features", features]
+        # 动态 Rime 测试的“环境缺失”历史分支会正常 return；必须收集输出并计为跳过。
+        command += ["--", "--nocapture"]
         commands.append(" ".join(command))
         try:
             result = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -366,6 +373,7 @@ def run_rust(subject, root):
             summaries = re.findall(r"test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored", content)
             passed = sum(int(s[0]) for s in summaries)
             skipped += sum(int(s[2]) for s in summaries)
+            skipped += len(re.findall(r"(?im)^\s*skip(?:ped)?[ :：]", content))
             failed += int(result.returncode != 0 or passed == 0)
         except (OSError, subprocess.TimeoutExpired) as error:
             content = f"固定测试命令未完成：{type(error).__name__}\n"
@@ -385,7 +393,7 @@ def run_rust(subject, root):
                          "architecture": platform.machine(), "model": "not-applicable"},
                 evidence=evidence, metrics={"failed_assertions": failed, "skipped_required": skipped})
     execution = directory / "execution.json"
-    write_report(execution, execution_payload(case, subject, {"kind": "builtin", "identity": "inputia-rust-contracts/v1", "reviewer": None}))
+    write_report(execution, execution_payload(case, subject, {"kind": "builtin", "identity": "inputia-rust-contracts/v2", "reviewer": None}))
     case["execution_record"] = {"path": execution.relative_to(root).as_posix(), "sha256": digest(execution)}
     return validate_report(report, root, subject)
 

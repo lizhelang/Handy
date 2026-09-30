@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from uuid import uuid4
 from pathlib import Path
@@ -206,6 +207,33 @@ class AcceptanceTests(unittest.TestCase):
         with patch.object(acceptance.subprocess, "check_output", side_effect=["a" * 40, " M source.rs"]):
             with self.assertRaisesRegex(acceptance.AcceptanceError, "干净工作区"):
                 acceptance.run_rust(self.subject, self.root)
+
+    def test_runner_includes_release_updater_and_cannot_hide_return_based_skips(self):
+        called = []
+        def execute(command, **kwargs):
+            called.append(command)
+            output = "test result: ok. 3 passed; 0 failed; 0 ignored\n"
+            if "crates/inputia-capi/Cargo.toml" in command:
+                output += "skip: required Rime runtime missing\n"
+            return subprocess.CompletedProcess(command, 0, output)
+        with patch.object(acceptance.subprocess, "check_output", side_effect=["a" * 40, "", "", "a" * 40]), \
+             patch.object(acceptance.subprocess, "run", side_effect=execute):
+            report = acceptance.run_rust(self.subject, self.root)
+        self.assertEqual(len(called), 7)
+        manifests = [command[command.index("--manifest-path") + 1] for command in called]
+        self.assertIn("crates/inputia-release/Cargo.toml", manifests)
+        updater = next(command for command in called if "crates/inputia-updater/Cargo.toml" in command)
+        self.assertIn("native-code-verification", updater)
+        self.assertTrue(all(command[-2:] == ["--", "--nocapture"] for command in called))
+        for command in called:
+            manifest = acceptance.ROOT / command[command.index("--manifest-path") + 1]
+            metadata = tomllib.loads(manifest.read_text())
+            if "--features" in command:
+                self.assertIn(command[command.index("--features") + 1], metadata["features"])
+        result = self.result("G1.rust", report)
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["metrics"]["skipped_required"], 1)
+        self.assertFalse(acceptance.summarize(report, "pre-public")["acceptance_passed"])
 
     def test_negative_latency_and_fractional_counts_are_not_evidence(self):
         self.passing("G7.keys")["metrics"]["ordinary_added_p95_ms"] = -1

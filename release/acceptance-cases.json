@@ -27,7 +27,7 @@
       "gate": "G1",
       "stage": "pre-public",
       "evidence_levels": ["integration"],
-      "description": "Rust Core/Runtime/CAPI/Settings 完整契约回归",
+      "description": "Rust Core/Runtime/CAPI/Rime/Settings/Release/Updater 完整契约与原生校验回归",
       "required": true,
       "metrics": {
         "failed_assertions": {
