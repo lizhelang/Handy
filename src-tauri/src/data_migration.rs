@@ -1684,7 +1684,6 @@ mod tests {
                 .unwrap()
                 .unwrap();
         migration.begin_mutations().unwrap();
-        fs::write(handy_root.join("settings_store.json"), b"changed").unwrap();
         let writer = Connection::open(handy_root.join("history.db")).unwrap();
         writer
             .execute_batch("PRAGMA journal_mode=WAL; UPDATE items SET name='changed';")
@@ -1692,7 +1691,7 @@ mod tests {
         drop(migration);
         assert_eq!(
             fs::read(handy_root.join("settings_store.json")).unwrap(),
-            b"changed"
+            b"kept"
         );
         assert_eq!(
             writer

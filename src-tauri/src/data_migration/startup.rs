@@ -4,6 +4,8 @@ use inputia_settings::store::InitializationIntent;
 use std::collections::BTreeSet;
 use tauri::Manager;
 
+pub(crate) mod v3;
+
 const MIGRATION_ID: &str = "control-settings-document-v2";
 const JOURNAL: &str = "active-startup.json";
 const CONTROL_SETTINGS_PENDING_NAME: &str = ".inputia-control-settings-pending.json";
@@ -389,6 +391,8 @@ where
             journal: journal.clone(),
         };
         if matches!(guard.journal.phase, Phase::Mutating | Phase::Restoring) {
+            validate_legacy_present_ownership(&guard)
+                .map_err(|e| classified(StartupFailureKind::RepairRequired, e))?;
             recover(&mut guard).map_err(|e| classified(StartupFailureKind::PendingRecovery, e))?;
         }
         // 读取到 terminal 记录也须重做同步，不能把上次目录 fsync 失败误作已确认耐久。
@@ -767,9 +771,48 @@ fn durable_tree(root: &Path) -> Result<()> {
     }
     sync_dir(root)
 }
+fn validate_legacy_present_ownership(guard: &StartupMigration) -> Result<()> {
+    // schema 2 没有普通保存的逐次许可，不能将崩溃后的手工修改倒推为本次迁移所有。
+    for pair in &guard.journal.pairs {
+        let root = guard.root(&pair.root_label)?;
+        let creation = guard
+            .journal
+            .creations
+            .iter()
+            .find(|c| c.domain == pair.domain);
+        for (name, baseline, marker) in [
+            (&pair.document_name, &pair.document, false),
+            (&pair.marker_name, &pair.marker, true),
+        ] {
+            let Original::Present { sha256, size, .. } = baseline else {
+                continue;
+            };
+            let current = observe(&checked_path(root, Path::new(name))?)?;
+            let Original::Present {
+                sha256: current_hash,
+                size: current_size,
+                ..
+            } = current
+            else {
+                anyhow::bail!("legacy settings source disappeared; preserve for repair");
+            };
+            let unchanged = current_hash == *sha256 && current_size == *size;
+            let initialized = !marker
+                && creation
+                    .is_some_and(|c| c.will_write_document && c.document_sha256 == current_hash);
+            anyhow::ensure!(
+                unchanged || initialized,
+                "legacy settings changed without write-ahead ownership; preserve for repair"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn recover(guard: &mut StartupMigration) -> Result<()> {
     ensure_legacy_pending_absent(&guard.source_roots)?;
     guard.revalidate()?;
+    validate_legacy_present_ownership(guard)?;
     verify_backup(&guard.outcome)?;
     // 源与固定隔离目标共同判定，rename 后 sync 失败时不可因源已不存在而略过。
     let mut new_files = Vec::new();

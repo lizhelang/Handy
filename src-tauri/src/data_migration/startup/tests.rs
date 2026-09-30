@@ -57,6 +57,13 @@ impl Fixture {
     fn put(&self, value: bool) {
         fs::write(self.settings(), valid_settings(value)).unwrap();
     }
+    fn authorized_put(&self, guard: &mut StartupMigration, value: bool) {
+        let document = valid_settings(value);
+        guard
+            .record_settings_initialization(&self.intent(&document, b"authorized marker", true))
+            .unwrap();
+        fs::write(self.settings(), document).unwrap();
+    }
     fn read(&self) -> Vec<u8> {
         fs::read(self.settings()).unwrap()
     }
@@ -79,6 +86,9 @@ impl Fixture {
             marker_name: ".inputia-control-settings-initialized.json".into(),
             store_id: "11111111-1111-4111-8111-111111111111".into(),
             original_document_sha256: fs::read(self.settings()).ok().map(|v| sha(&v)),
+            original_document_size: fs::read(self.settings()).ok().map(|v| v.len() as u64),
+            document_size: document.len() as u64,
+            marker_size: marker.len() as u64,
             document_sha256: sha(document),
             marker_sha256: sha(marker),
             will_write_document: write,
@@ -151,7 +161,7 @@ fn mutating_failure_restores_database_then_recovered_repair_survives() {
     let mut guard = f.prepare();
     let manifest = fs::read(&guard.outcome.manifest_path).unwrap();
     guard.begin_mutations().unwrap();
-    f.put(true);
+    f.authorized_put(&mut guard, true);
     let conn = Connection::open(&db).unwrap();
     conn.execute_batch("UPDATE items SET value='new';").unwrap();
     drop(conn);
@@ -189,7 +199,7 @@ fn recovery_crash_boundaries_are_idempotent_and_recovered_never_replays() {
         f.put(false);
         let mut guard = f.prepare();
         guard.begin_mutations().unwrap();
-        f.put(true);
+        f.authorized_put(&mut guard, true);
         drop(guard);
         inject(point);
         assert!(f.run(|| Ok(())).is_err());
@@ -208,7 +218,7 @@ fn next_backup_crash_keeps_previous_recovered_terminal() {
     f.put(false);
     let mut guard = f.prepare();
     guard.begin_mutations().unwrap();
-    f.put(true);
+    f.authorized_put(&mut guard, true);
     drop(guard);
     assert!(f.run(|| anyhow::bail!("pause after recovery")).is_err());
     let old = f.journal().attempt_id;
@@ -228,7 +238,7 @@ fn exact_manifest_is_used_not_a_newer_directory() {
     f.put(false);
     let mut guard = f.prepare();
     guard.begin_mutations().unwrap();
-    f.put(true);
+    f.authorized_put(&mut guard, true);
     drop(guard);
     fs::create_dir_all(f.backup.join("handy-data-zzzz")).unwrap();
     fs::write(
@@ -262,7 +272,7 @@ fn unknown_new_marker_is_preserved_before_any_other_restore() {
     drop(guard);
     assert_eq!(
         kind(&f.run(|| Ok(())).err().unwrap()),
-        StartupFailureKind::PendingRecovery
+        StartupFailureKind::RepairRequired
     );
     assert_eq!(f.read(), valid_settings(true));
     assert_eq!(fs::read(f.marker()).unwrap(), b"unknown marker");
@@ -309,13 +319,15 @@ fn marker_only_initialization_does_not_claim_existing_document() {
     fs::write(f.marker(), b"new marker").unwrap();
     f.put(true);
     drop(guard);
-    let guard = f.prepare();
-    drop(guard);
-    assert_eq!(f.read(), original);
-    assert!(!f.marker().exists());
+    assert_eq!(
+        kind(&f.run(|| Ok(())).err().unwrap()),
+        StartupFailureKind::RepairRequired
+    );
+    assert_eq!(f.read(), valid_settings(true));
+    assert_eq!(fs::read(f.marker()).unwrap(), b"new marker");
 }
 #[test]
-fn existing_pair_restores_both_bytes() {
+fn existing_pair_unknown_changes_are_preserved_for_repair() {
     let f = Fixture::new();
     f.put(false);
     fs::write(f.marker(), b"old marker").unwrap();
@@ -324,10 +336,12 @@ fn existing_pair_restores_both_bytes() {
     f.put(true);
     fs::write(f.marker(), b"changed marker").unwrap();
     drop(guard);
-    let guard = f.prepare();
-    drop(guard);
-    assert_eq!(f.read(), valid_settings(false));
-    assert_eq!(fs::read(f.marker()).unwrap(), b"old marker");
+    assert_eq!(
+        kind(&f.run(|| Ok(())).err().unwrap()),
+        StartupFailureKind::RepairRequired
+    );
+    assert_eq!(f.read(), valid_settings(true));
+    assert_eq!(fs::read(f.marker()).unwrap(), b"changed marker");
 }
 #[test]
 fn creation_intent_must_match_baseline_and_be_durable_before_source_write() {
@@ -541,7 +555,7 @@ fn armed_startup_still_requires_every_backup_payload_before_restore() {
     let mut guard = f.prepare();
     guard.begin_mutations().unwrap();
     let backup = guard.outcome.backup_dir.clone();
-    f.put(true);
+    f.authorized_put(&mut guard, true);
     drop(guard);
     fs::remove_file(backup.join("handy/settings_store.json")).unwrap();
     assert_eq!(
