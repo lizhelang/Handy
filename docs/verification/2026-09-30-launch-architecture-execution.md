@@ -125,3 +125,11 @@ P4 仍待原生下载/解包/安装器接线、验收后签署流程、离线根
 验证：发布库全套 24 项及 Clippy all-targets 严格检查通过；后台 URL边界/安装收据变化/维护中断 3 项通过；UI 更新专项原 3 项与新增虚拟时钟上限专项 1 项通过，TypeScript、局部 ESLint、24 语言 key 一致性与生产前端构建通过（保留已有大 chunk 提示）。锁文件仅移除失效 updater 依赖并同步 Nix，没有随本机镜像配置改写其他依赖来源。
 
 当前内置发布来源仍为 null，目录检查明确不可用；没有伪造正式根公钥/发布地址。安装许可固定 false，已装清单 sidecar 的耐久交付、实际配套安装器和正式发布操作仍待完成。这一批证明查询链路与负例处理，不代表安装或公开发布。
+
+### 第九批：Apple 原生代码身份校验
+
+新增独立 Swift Security C ABI 和 updater Rust 封装。校验绑定准确路径、事务 Subject、新/旧 release 用途、角色、bundle ID、Team、逐架构 CDHash、hardened runtime 与公证策略；目录归属、可写权限和链接逐层检查。Rust 固定目录句柄的树指纹与 Swift 观测的根 device/inode 必须一致，拒绝 A→B→A 路径替换混证。
+
+实施代理验证：Swift 43 项、原生 feature Rust 5 项、默认 Rust 4 项通过，两个配置的 all-targets Clippy 严格检查与格式检查通过。独立首轮指出祖先目录检查及跨语言根身份绑定缺口，修复后窄复核 CLEAR。测试均为策略、临时 ad-hoc 程序和变树负例，没有访问真实签名凭据。
+
+真实 Developer ID 与公证成功路径仍为 NOT_RUN。此包只提供代码验证证据，不提供默认通过的安装适配器；进程停写、TIS、数据库一致快照和完整安装后检查继续实施。

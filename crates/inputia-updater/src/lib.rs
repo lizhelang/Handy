@@ -4,6 +4,7 @@
 mod engine;
 mod filesystem;
 mod model;
+pub mod native_code;
 
 pub use engine::{artifact_set_digest, Transaction, Updater};
 pub use filesystem::{fingerprint, validate_archive_entries};

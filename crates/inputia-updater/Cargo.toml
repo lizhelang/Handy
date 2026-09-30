@@ -4,6 +4,10 @@ version = "0.0.1"
 edition = "2021"
 publish = false
 
+[features]
+default = []
+native-code-verification = []
+
 [dependencies]
 inputia-settings = { path = "../inputia-settings" }
 libc = "0.2"

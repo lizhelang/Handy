@@ -4,6 +4,12 @@
 
 **当前还不是可交付安装器。** 真实 Security / TIS / SQLite 适配器、已签名 bootstrap、登录恢复入口、受限 postcheck 通道、下载和归档解包器尚需原生 helper 接入。没有默认通过的生产适配器；不能把测试中的合成回执当作签名、数据库一致性或系统验收结果。
 
+## 原生静态代码证据
+
+`native_code::NativeCodeVerifier` 在启用 macOS 特性 `native-code-verification` 时调用预编译的公开 Security ABI。它绑定准确路径、事务、release、逐架构 Team/identifier/CDHash、runtime、受签 Info.plist 和角色 entitlement，显式要求 Developer ID + 公证条件，并在调用前后复核整棵树的预期摘要。结果 `VerifiedCodeEvidence` 不能从 JSON 直接构造。
+
+这部分尚未组合成完整 `NativeAdapter`；它不验证 release/pair 清单、不生成整个阶段的 `VerificationReceipt`，不停止进程或写数据库。不启用特性时明确返回 `NativeUnavailable`。详见 [原生合同](../../native/inputia-install-support/README.md)。临时 ad-hoc 负例通过不代表真实 Developer ID/公证正例已验收。
+
 ## 接口与授权边界
 
 ```rust,ignore
