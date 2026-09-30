@@ -377,13 +377,12 @@ enum InputiaCandidateRowLayout {
     var overflow = ideal - available
     let epsilon: CGFloat = 0.5
     while overflow > epsilon {
-      guard let widestIndex = fitted.indices.max(by: { fitted[$0] < fitted[$1] }) else {
+      guard let widestIndex = fitted.indices
+        .filter({ fitted[$0] - resolvedMinWidths[$0] > epsilon })
+        .max(by: { fitted[$0] < fitted[$1] }) else {
         break
       }
       let reducible = fitted[widestIndex] - resolvedMinWidths[widestIndex]
-      guard reducible > epsilon else {
-        break
-      }
       let reduction = min(reducible, overflow)
       fitted[widestIndex] -= reduction
       overflow -= reduction
@@ -400,7 +399,7 @@ private struct InputiaCandidateDisplayItem {
   let isHighlighted: Bool
 }
 
-private final class InputiaCandidateContentView: NSView {
+final class InputiaCandidateContentView: NSView {
   var padding = NSEdgeInsets(top: 2, left: 6, bottom: 2, right: 6)
 
   private var rows: [[InputiaCandidateDisplayItem]] = []
@@ -581,7 +580,11 @@ private final class InputiaCandidateContentView: NSView {
     }
     var widths = Array(repeating: minItemWidth, count: columnCount)
     for row in rows {
-      let idealWidths = rowIdealWidths(row)
+      // 所有行都按可选中状态预留标号宽度，切行只改变显示，不改变列宽。
+      let numberedRow = row.enumerated().map { column, item in
+        InputiaCandidateDisplayItem(number: column + 1, text: item.text, isHighlighted: column == 0)
+      }
+      let idealWidths = rowIdealWidths(numberedRow)
       for index in idealWidths.indices {
         widths[index] = max(widths[index], idealWidths[index])
       }
@@ -594,14 +597,7 @@ private final class InputiaCandidateContentView: NSView {
     guard columnCount > 0 else {
       return []
     }
-    var widths = Array(repeating: minItemWidth, count: columnCount)
-    for row in rows {
-      let minimumWidths = rowMinimumWidths(row)
-      for index in minimumWidths.indices {
-        widths[index] = max(widths[index], minimumWidths[index])
-      }
-    }
-    return widths
+    return (0..<columnCount).map { $0 == 0 ? minFirstItemWidth : minItemWidth }
   }
 
   private func fittedExpandedColumnWidths(into innerWidth: CGFloat) -> [CGFloat] {

@@ -1,0 +1,61 @@
+{
+  "release_directory": "/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-candidate-20260930-io8k3w0y",
+  "base_commit": "70687eac7861c7f1c48edefe295548f875fa2d5a",
+  "branch": "codex/unified-input-system",
+  "uncommitted_changes": true,
+  "version": "1.1.0",
+  "build": 84,
+  "installed": false,
+  "pair_preflight": true,
+  "source_sha256": {
+    "crates/inputia-handy-runtime/src/personalization.rs": "4394895d09b44a7a6bafab9c262d724884039fae788bfbea94a75cfb710386d7",
+    "crates/inputia-handy-runtime/src/personalization_wire.rs": "ab18eb7984ad273e5f7bef1e80f76148870ddfde16c4344665128a19039afb6c",
+    "crates/inputia-handy-runtime/tests/candidate_quality_replay.rs": "854772836bbc23e1819e0f032b30ee7a4e4d8c24990ff91557cca87c56c461ce",
+    "crates/inputia-handy-runtime/tests/personalization.rs": "0d2a25014232d3c3eb364f2f78d194ae6335788a9bd334ab01054f0b9740bc44",
+    "crates/inputia-handy-runtime/tests/personalization_scale.rs": "3c4572773dbec8ac523763f93566a36f314a6f7e4d383892a7de768aca8c00ce",
+    "crates/inputia-handy-runtime/tests/personalization_upgrade.rs": "3608615aea9dd5e99017d4c2a8f64a7230d2c0f0e45d364b04343cb3f970f9d6",
+    "crates/inputia-handy-runtime/tests/personalization_wire.rs": "935704063b3725de40af929f9251f8af95b00d078ea6d20dd89602a7717cd1e5",
+    "crates/inputia-rime/examples/candidate_quality_replay.rs": "04eed444429a09ca7d5b534ca564b32c5f36071e5107abce90379f6f1b2c5254",
+    "crates/inputia-rime/src/lib.rs": "4a1c62e444a6f607cdf2331a681bf2db139900c4276b38b82729e441f7910b78",
+    "crates/inputia-rime/tests/schema_smoke.rs": "82f6fe4cbb7752cf100ee1c72d9841fb32dcf8dd400f2233bd33bd6f7c7aa0d8",
+    "macos/InputiaInputMethod/Resources/RimeData/inputia_poetry.dict.yaml": "7ff1ad489213a32638e67c15ed4433f7daa6ad6505d90eeba54239c3fff69dc0",
+    "macos/InputiaInputMethod/Sources/InputiaInputMethod/InputiaPersonalization.swift": "752531a608288d43414a309043a42488f812beebc6e5661935d1c9baa3d6ebf7",
+    "macos/InputiaInputMethod/Sources/InputiaInputMethod/InputiaRustBridge.swift": "7ee4b4d63ddaddf2b91b7cdf328ca576401c3b48192a851cbae76d64b2d4a7cb",
+    "macos/InputiaInputMethod/Sources/InputiaInputMethod/InputiaVoiceInputLauncher.swift": "aedbd082d5b84670e1b4e85ccbe039f6e02f45cbbe9e16492c18ccda90895fc3",
+    "macos/InputiaInputMethod/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift": "4d03c2256d3b4e4a7c8af44142c5fbe3b5dd8e0f52b8ad2cc57379b9c41ab0fd",
+    "macos/InputiaInputMethod/Sources/InputiaInputMethod/main.swift": "c66149dbc1de681fbfec0d95b198c635ff1cd8d8c638bcc3c43aacb455dd22dc",
+    "macos/InputiaInputMethod/Tools/InputiaPersonalizationFlowSelfCheck.swift": "88d3733058b879a0f70f79123e76919dbcf881cf662e1efea1cdfebd2bcf846d",
+    "macos/InputiaInputMethod/Tools/InputiaPersonalizationSelfCheck.swift": "42d048b994459654e8167a85ca8d5bfe67a6b175c78ef79cd2231ffef1f95636",
+    "macos/InputiaInputMethod/Tools/generate_inputia_lexicons.py": "30d8925ee5642f4f84a2fe4df8d829007a39d7f9f1956c8d7821d6baca47f07b",
+    "macos/InputiaInputMethod/Tools/test_generate_inputia_lexicons.py": "38e9692fc47248a3a33a6217ce3e140ebb5ff849f289ae5556189f5916f4c230",
+    "macos/InputiaInputMethod/build.sh": "eec0b1b4e99bb8356634e8fe83c61bea3d6ccac9ff53de3b06fe6cf9af599790",
+    "native/local-decision/benchmark_candidates.py": "5e611e36ebec27382687767bcd3dbdf131354e95914be73799fa5b8a1d9e4219",
+    "src-tauri/InputiaReleaseInfo.plist": "fa234549a55d8e0637a6a3e422b4e75f53ec027ff78fa7051e5bea8ff933f839",
+    "src-tauri/src/personalization.rs": "1021ef07d58a70b03b1238a1cf88e19442209e34591190f66e56cf4a63e76d39",
+    "src-tauri/tauri.inputia-release.conf.json": "05b075721699b1e6907a23202f194f4cd1a1ce209369ce4122fd0770c0908b5c"
+  },
+  "apps": [
+    {
+      "name": "Inputia.app",
+      "bundle_id": "com.pais.handy.UnifiedCandidate",
+      "version": "1.1.0",
+      "build": "84",
+      "executable_sha256": "0b13313f347fb1c1a42aacaf55557fd92a6954e316537674ebbae7949845bcea"
+    },
+    {
+      "name": "InputiaUnifiedCandidate.app",
+      "bundle_id": "com.inputia.inputmethod.Inputia.UnifiedCandidate",
+      "version": "1.1.0",
+      "build": "84",
+      "executable_sha256": "682cfda27e91d65823f9c445156802c0c8a126c2ac75c15d3cbb8eb951348737"
+    },
+    {
+      "name": "Inputia 设置.app",
+      "bundle_id": "com.inputia.settings.UnifiedCandidate",
+      "version": "1.1.0",
+      "build": "84",
+      "executable_sha256": "1d5815e3c7b96a2cff3365934adc2a4cfae6dbada9f4c38c8e2a88524ded1bd3"
+    }
+  ],
+  "pair_manifest_sha256": "36ff6db51cce9c3e724112b5448e97e3d12f61cc501ebc38fb2e86e3ec9d4716"
+}

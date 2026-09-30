@@ -187,7 +187,7 @@ enum InputiaVoiceInputLauncher {
         }
       } else { InputiaPersonalizationDiagnostics.record("personal_transport", "expired") }
       let result = reply
-      DispatchQueue.main.async { completion(InputiaPermissionLifecycle.shared.epoch == permissionEpoch ? result : nil) }
+      InputiaPersonalMainDelivery.deliver { completion(InputiaPermissionLifecycle.shared.epoch == permissionEpoch ? result : nil) }
     }
   }
 
@@ -242,6 +242,7 @@ enum InputiaVoiceInputLauncher {
     targetBridge(.init(kind: "release", target_id: id)) { _ in }
   }
   static func targetBridge(_ command: InputiaTargetBridgeCommand,
+    personalAdmissionDelivery: Bool = false,
     completion: @escaping (InputiaTargetBridgeReply?) -> Void) {
     let epoch = InputiaPermissionLifecycle.shared.epoch
     targetQueue.async {
@@ -268,11 +269,13 @@ enum InputiaVoiceInputLauncher {
         targetConnection?.close(); targetConnection = nil
       }
       let value = result
-      DispatchQueue.main.async {
+      let deliver = {
         let allowed = InputiaPermissionLifecycle.shared.permits(epoch)
         if !allowed, command.kind == "capture", let abandoned = value?.target { releaseTarget(abandoned.target_id) }
         completion(allowed ? value : nil)
       }
+      if personalAdmissionDelivery { InputiaPersonalMainDelivery.deliver(deliver) }
+      else { DispatchQueue.main.async(execute: deliver) }
     }
   }
 

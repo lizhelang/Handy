@@ -23,6 +23,7 @@ fn request() -> PersonalizationRequest {
             }),
             learning_epoch: 1,
             input_code: "ba".into(),
+            schema_id: String::new(),
             context: "对".into(),
             context_id: "original-field".into(),
             candidates: vec![json!({"id":"rime:x:0","text":"吧","base_rank":0,"consumed_len":2})],
@@ -87,10 +88,47 @@ fn prediction_admission_carries_current_learning_epoch_and_exact_candidate() {
         context: "我觉得".into(),
         text: "可以".into(),
         prediction_id: "prediction-1".into(),
+        input_code: String::new(),
+        schema_id: String::new(),
     };
     assert!(r.validate_for(&peer()).is_ok());
     if let PersonalizationCommand::Admit { prediction_id, .. } = &mut r.personalization {
         *prediction_id = String::new()
+    }
+    assert!(r.validate_for(&peer()).is_err());
+}
+
+#[test]
+fn recall_admission_requires_schema_and_ascii_code_while_legacy_query_defaults_work() {
+    let mut legacy = serde_json::to_value(request()).unwrap();
+    legacy["personalization"]
+        .as_object_mut()
+        .unwrap()
+        .remove("schema_id");
+    let decoded: PersonalizationRequest = serde_json::from_value(legacy).unwrap();
+    assert!(decoded.validate_for(&peer()).is_ok());
+    let mut r = request();
+    let PersonalizationCommand::Query { target, .. } = r.personalization else {
+        unreachable!()
+    };
+    r.personalization = PersonalizationCommand::Admit {
+        target,
+        learning_epoch: 1,
+        context_id: "original-field".into(),
+        context: "语境".into(),
+        text: "已学词".into(),
+        prediction_id: "learned:stable-id".into(),
+        schema_id: "double_pinyin_flypy".into(),
+        input_code: "abcd".into(),
+    };
+    assert!(r.validate_for(&peer()).is_ok());
+    let mut no_schema = r.clone();
+    if let PersonalizationCommand::Admit { schema_id, .. } = &mut no_schema.personalization {
+        schema_id.clear();
+    }
+    assert!(no_schema.validate_for(&peer()).is_err());
+    if let PersonalizationCommand::Admit { input_code, .. } = &mut r.personalization {
+        *input_code = "拼音".into();
     }
     assert!(r.validate_for(&peer()).is_err());
 }

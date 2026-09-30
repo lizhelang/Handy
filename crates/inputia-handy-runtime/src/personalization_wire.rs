@@ -29,6 +29,10 @@ pub enum PersonalizationCommand {
         learning_epoch: u64,
         context_id: String,
         context: String,
+        #[serde(default)]
+        input_code: String,
+        #[serde(default)]
+        schema_id: String,
         text: String,
         prediction_id: String,
     },
@@ -36,6 +40,8 @@ pub enum PersonalizationCommand {
         target: Box<HostTargetToken>,
         learning_epoch: u64,
         input_code: String,
+        #[serde(default)]
+        schema_id: String,
         context: String,
         context_id: String,
         candidates: Vec<Value>,
@@ -47,6 +53,8 @@ pub enum PersonalizationCommand {
         event_id: String,
         context_id: String,
         input_code: String,
+        #[serde(default)]
+        schema_id: String,
         text: String,
         previous: String,
         explicit_selection: bool,
@@ -80,6 +88,8 @@ impl PersonalizationRequest {
                 learning_epoch,
                 context_id,
                 context,
+                input_code,
+                schema_id,
                 text,
                 prediction_id,
             } => {
@@ -87,6 +97,9 @@ impl PersonalizationRequest {
                     || context_id != &target.target_id
                     || target.field_id.as_deref() != Some(target.target_id.as_str())
                     || !bounded_context(context)
+                    || !clean(input_code, 256)
+                    || !clean(schema_id, 128)
+                    || (!input_code.is_empty() && (schema_id.is_empty() || !input_code.is_ascii()))
                     || !clean(text, 512)
                     || text.trim().is_empty()
                     || !clean(prediction_id, 256)
@@ -104,6 +117,7 @@ impl PersonalizationRequest {
                 target,
                 learning_epoch,
                 input_code,
+                schema_id,
                 context,
                 context_id,
                 candidates,
@@ -111,6 +125,7 @@ impl PersonalizationRequest {
             } => {
                 if *learning_epoch == 0
                     || !clean(input_code, 256)
+                    || !clean(schema_id, 128)
                     || !bounded_context(context)
                     || context_id != &target.target_id
                     || target.field_id.as_deref() != Some(target.target_id.as_str())
@@ -132,6 +147,7 @@ impl PersonalizationRequest {
                 event_id,
                 context_id,
                 input_code,
+                schema_id,
                 text,
                 previous,
                 original_rank,
@@ -142,6 +158,7 @@ impl PersonalizationRequest {
                     || !clean(event_id, 128)
                     || event_id.is_empty()
                     || !clean(input_code, 256)
+                    || !clean(schema_id, 128)
                     || !clean(text, 512)
                     || text.trim().is_empty()
                     || !bounded_context(previous)

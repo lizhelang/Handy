@@ -65,6 +65,8 @@ pub fn respond(app: &tauri::AppHandle, request: &PersonalizationRequest) -> Pers
         let value = match &request.personalization {
             PersonalizationCommand::Admit {
                 context,
+                input_code,
+                schema_id,
                 text,
                 prediction_id,
                 ..
@@ -72,7 +74,8 @@ pub fn respond(app: &tauri::AppHandle, request: &PersonalizationRequest) -> Pers
                 let current = model::query(
                     &root,
                     model::Query {
-                        input_code: String::new(),
+                        input_code: input_code.clone(),
+                        schema_id: schema_id.clone(),
                         context: context.clone(),
                         context_id,
                         source_app: source.into(),
@@ -81,7 +84,12 @@ pub fn respond(app: &tauri::AppHandle, request: &PersonalizationRequest) -> Pers
                         limit: 5,
                     },
                 )?;
-                if current["predictions"].as_array().is_none_or(|items| {
+                let collection = if input_code.is_empty() {
+                    "predictions"
+                } else {
+                    "recalled_candidates"
+                };
+                if current[collection].as_array().is_none_or(|items| {
                     !items
                         .iter()
                         .any(|item| item["id"] == *prediction_id && item["text"] == *text)
@@ -92,13 +100,15 @@ pub fn respond(app: &tauri::AppHandle, request: &PersonalizationRequest) -> Pers
             }
             PersonalizationCommand::Query {
                 input_code,
+                schema_id,
                 context,
                 candidates,
                 limit,
                 ..
             } => {
-                let q = model::Query {
+                let mut q = model::Query {
                     input_code: input_code.clone(),
+                    schema_id: schema_id.clone(),
                     context: context.clone(),
                     context_id,
                     source_app: source.into(),
@@ -107,18 +117,22 @@ pub fn respond(app: &tauri::AppHandle, request: &PersonalizationRequest) -> Pers
                         .map_err(|_| "invalid rank candidates")?,
                     limit: *limit,
                 };
+                // 可选本地模型只提供先验，不能在个人偏好/拒绝之后覆盖其结果。
+                let mut decision_reranked = false;
+                if let Some(ordered_ids) = local_decision_rerank(input_code, context, &q.candidates)
+                {
+                    if let Ok(mut reordered) = model::apply_rerank(&q.candidates, &ordered_ids) {
+                        for (rank, candidate) in reordered.iter_mut().enumerate() {
+                            candidate.base_rank = rank;
+                        }
+                        q.candidates = reordered;
+                        decision_reranked = true;
+                    }
+                }
                 let local_candidates = q.candidates.clone();
                 let mut v = model::query(&root, q)?;
-                if let Some(ordered_ids) =
-                    local_decision_rerank(input_code, context, &local_candidates)
-                {
-                    if let Ok(reordered) = model::apply_rerank(&local_candidates, &ordered_ids) {
-                        v["ordered_ids"] = json!(reordered
-                            .iter()
-                            .map(|candidate| candidate.id.clone())
-                            .collect::<Vec<_>>());
-                        v["decision_reranked"] = json!(true);
-                    }
+                if decision_reranked {
+                    v["decision_reranked"] = json!(true);
                 }
                 let current_ids: Vec<String> = serde_json::from_value(v["ordered_ids"].clone())
                     .map_err(|_| "invalid_candidate_order")?;
@@ -137,6 +151,7 @@ pub fn respond(app: &tauri::AppHandle, request: &PersonalizationRequest) -> Pers
             PersonalizationCommand::Feedback {
                 event_id,
                 input_code,
+                schema_id,
                 text,
                 previous,
                 explicit_selection,
@@ -149,6 +164,7 @@ pub fn respond(app: &tauri::AppHandle, request: &PersonalizationRequest) -> Pers
                     event_id: format!("{}:{event_id}", request.client_instance),
                     context_id,
                     input_code: input_code.clone(),
+                    schema_id: schema_id.clone(),
                     text: text.clone(),
                     previous: previous.clone(),
                     explicit_selection: *explicit_selection,
@@ -188,6 +204,10 @@ fn local_decision_rerank(
     context: &str,
     candidates: &[model::Candidate],
 ) -> Option<Vec<String>> {
+    let experimental = std::env::var("INPUTIA_EXPERIMENTAL_CANDIDATE_MODEL").ok();
+    if !model::experimental_candidate_model_enabled(experimental.as_deref()) {
+        return None;
+    }
     if candidates.is_empty() || candidates.len() > 64 {
         return None;
     }

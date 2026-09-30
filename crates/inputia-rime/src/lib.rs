@@ -18,6 +18,8 @@ const FALSE: Bool = 0;
 const TRUE: Bool = 1;
 const INITIAL_CANDIDATE_TARGET: usize = 10;
 const RIME_CANDIDATE_PAGE_SCAN_GUARD: usize = 256;
+const CORRECTION_CONFIDENCE_PENALTY: i32 = 32;
+const PARTIAL_CORRECTION_PENALTY: i32 = 32;
 const DEFAULT_SQUIRREL_DYLIB: &str =
     "/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib";
 const DEFAULT_SQUIRREL_SHARED_DATA: &str =
@@ -567,29 +569,62 @@ impl ChineseEngine for RimeEngine {
         let mut candidates = Vec::new();
         let mut seen_texts = HashSet::new();
         let minimum_count = minimum_count.max(1);
-
-        if self.config.spelling_correction {
-            for correction in spelling_correction_variants(composing) {
-                self.append_candidates_until(
-                    &correction,
-                    true,
-                    minimum_count,
-                    &mut candidates,
-                    &mut seen_texts,
-                );
-                if candidates.len() >= minimum_count {
-                    return candidates;
-                }
-            }
-        }
-        self.append_candidates_until(
+        let original_preedit = self.append_candidates_until(
             composing,
             false,
             minimum_count,
             &mut candidates,
             &mut seen_texts,
         );
-
+        let original_is_complete = original_preedit
+            .as_deref()
+            .is_some_and(|preedit| has_complete_pinyin_preedit(composing, preedit));
+        let mut corrections = Vec::new();
+        let mut correction_texts = HashSet::new();
+        if self.config.spelling_correction {
+            for correction in spelling_correction_variants(composing) {
+                let first = corrections.len();
+                self.append_candidates_until(
+                    &correction,
+                    true,
+                    minimum_count,
+                    &mut corrections,
+                    &mut correction_texts,
+                );
+                for candidate in &mut corrections[first..] {
+                    candidate.consumed_len = candidate.consumed_len.and_then(|consumed| {
+                        let suffix = correction.get(consumed..)?;
+                        composing
+                            .ends_with(suffix)
+                            .then(|| composing.len().checked_sub(suffix.len()))
+                            .flatten()
+                    });
+                    // 部分候选仍可选择，但不能靠改写输入的单字挤掉整词。
+                    if candidate.consumed_len != Some(composing.len()) {
+                        candidate.base_score -= PARTIAL_CORRECTION_PENALTY;
+                    }
+                }
+                if corrections.len() >= minimum_count {
+                    break;
+                }
+            }
+        }
+        if !corrections.is_empty() {
+            // 完整合法分节（如 tai nan、wo ai ni）应保留原拼写；只有原输入
+            // 含不完整音节时提升可信纠错。两路始终共同保留，避免候选池饥饿。
+            let penalized = if original_is_complete {
+                &mut corrections
+            } else {
+                &mut candidates
+            };
+            for candidate in penalized {
+                candidate.base_score -= CORRECTION_CONFIDENCE_PENALTY;
+            }
+            candidates.extend(corrections);
+            candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.base_score));
+            seen_texts.clear();
+            candidates.retain(|candidate| seen_texts.insert(candidate.text.clone()));
+        }
         candidates
     }
 
@@ -616,7 +651,7 @@ impl RimeEngine {
         minimum_count: usize,
         candidates: &mut Vec<Candidate>,
         seen_texts: &mut HashSet<String>,
-    ) {
+    ) -> Option<String> {
         let mut initial_preedit = None;
         for page in 0..RIME_CANDIDATE_PAGE_SCAN_GUARD {
             let snapshot = if corrected {
@@ -626,7 +661,7 @@ impl RimeEngine {
                 self.evaluate_incremental(composing, page)
             };
             let Ok(snapshot) = snapshot else {
-                return;
+                return initial_preedit;
             };
 
             if snapshot.candidates.is_empty() {
@@ -635,10 +670,15 @@ impl RimeEngine {
             // 翻页高亮单字候选时，Rime 可能合并 preedit 音节。使用第一页
             // 引擎给出的分节计算前缀长度，避免全拼被按双拼两键截断。
             let preedit = initial_preedit.get_or_insert_with(|| snapshot.preedit.clone());
+            if corrected && !has_complete_pinyin_preedit(composing, preedit) {
+                break;
+            }
 
             let mut added_candidates = 0;
             for mut candidate in snapshot.candidates {
-                if self.config.schema_id == "double_pinyin" {
+                if self.config.schema_id == "double_pinyin"
+                    || !is_double_pinyin_schema(&self.config.schema_id)
+                {
                     candidate.consumed_len =
                         preedit_consumed_len(composing, preedit, &candidate.text);
                 }
@@ -672,7 +712,38 @@ impl RimeEngine {
                 break;
             }
         }
+        initial_preedit
     }
+}
+
+/// 以 Rime 提供的分节判断是否完整拼写，不把声母简拼当作完整音节。
+/// 音节集合来自随包朙月拼音基础词典，不依赖或读取个人词库。
+fn has_complete_pinyin_preedit(input: &str, preedit: &str) -> bool {
+    static SYLLABLES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    let syllables = SYLLABLES.get_or_init(|| {
+        concat!(
+            "a ai an ang ao ba bai ban bang bao bei ben beng bi bian biang biao bie bin bing bo bu ",
+            "ca cai can cang cao ce cei cen ceng cha chai chan chang chao che chen cheng chi chong chou chu chua chuai chuan chuang chui chun chuo ci cong cou cu cuan cui cun cuo ",
+            "da dai dan dang dao de dei den deng di dia dian diao die din ding diu dong dou du duan dui dun duo e eh ei en eng er fa fan fang fei fen feng fiao fo fong fou fu ",
+            "ga gai gan gang gao ge gei gen geng gong gou gu gua guai guan guang gui gun guo ha hai han hang hao he hei hen heng hong hou hu hua huai huan huang hui hun huo ",
+            "ji jia jian jiang jiao jie jin jing jiong jiu ju juan jue jun ka kai kan kang kao ke kei ken keng kong kou ku kua kuai kuan kuang kui kun kuo ",
+            "la lai lan lang lao le lei leng li lia lian liang liao lie lin ling liu lo long lou lu luan lun luo lv lvan lve ma mai man mang mao me mei men meng mi mian miao mie min ming miu mo mou mu ",
+            "na nai nan nang nao ne nei nen neng ni nia nian niang niao nie nin ning niu nong nou nu nuan nun nuo nv nve o ou pa pai pan pang pao pei pen peng pi pia pian piao pie pin ping po pou pu ",
+            "qi qia qian qiang qiao qie qin qing qiong qiu qu quan que qun ran rang rao re ren reng ri rong rou ru rua ruan rui run ruo ",
+            "sa sai san sang sao se sei sen seng sha shai shan shang shao she shei shen sheng shi shou shu shua shuai shuan shuang shui shun shuo si song sou su suan sui sun suo ",
+            "ta tai tan tang tao te tei teng ti tian tiao tie ting tong tou tu tuan tui tun tuo wa wai wan wang wei wen weng wo wong wu ",
+            "xi xia xian xiang xiao xie xin xing xiong xiu xu xuan xue xun ya yai yan yang yao ye yi yin ying yo yong you yu yuan yue yun ",
+            "za zai zan zang zao ze zei zen zeng zha zhai zhan zhang zhao zhe zhei zhen zheng zhi zhong zhou zhu zhua zhuai zhuan zhuang zhui zhun zhuo zi zong zou zu zuan zui zun zuo"
+        ).split_whitespace().collect()
+    });
+    let normalized = preedit.to_lowercase().replace('ü', "v");
+    let parts: Vec<_> = normalized
+        .split(|ch: char| ch.is_whitespace() || ch == '\'')
+        .filter(|part| !part.is_empty())
+        .collect();
+    !parts.is_empty()
+        && parts.concat() == input.replace('\'', "")
+        && parts.iter().all(|part| syllables.contains(part))
 }
 
 fn paged_key_sequence(composing: &str, page: usize) -> String {
@@ -1335,6 +1406,17 @@ mod tests {
         assert!(spelling_correction_variants("tain").contains(&"tian".to_string()));
         assert!(spelling_correction_variants("zhonguo").contains(&"zhongguo".to_string()));
         assert!(spelling_correction_variants("zhongguo").is_empty());
+    }
+
+    #[test]
+    fn complete_pinyin_confidence_respects_native_syllable_boundaries() {
+        assert!(has_complete_pinyin_preedit("tainan", "tai nan"));
+        assert!(has_complete_pinyin_preedit("woaini", "wo ai ni"));
+        assert!(has_complete_pinyin_preedit("lvse", "lü se"));
+        assert!(!has_complete_pinyin_preedit("dagn", "da g n"));
+        assert!(!has_complete_pinyin_preedit("zhonguo", "zhon guo"));
+        assert!(!has_complete_pinyin_preedit("zg", "z g"));
+        assert!(!has_complete_pinyin_preedit("woaini", "wo ya ni"));
     }
 
     #[test]

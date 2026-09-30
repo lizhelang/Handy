@@ -347,6 +347,7 @@ struct InputiaPersonalCandidate: Codable, Equatable {
 struct InputiaPersonalPrediction: Codable, Equatable { let id: String; let text: String }
 struct InputiaPersonalResult: Decodable {
   let ordered_ids: [String]?
+  let recalled_candidates: [InputiaPersonalCandidate]?
   let predictions: [InputiaPersonalPrediction]?
   let context_id: String?
   let admitted: Bool?
@@ -357,6 +358,7 @@ struct InputiaPersonalCommand: Encodable {
   var target: InputiaVoiceTarget? = nil
   var learning_epoch: UInt64? = nil
   var input_code: String? = nil
+  var schema_id: String? = nil
   var context: String? = nil
   var context_id: String? = nil
   var candidates: [InputiaPersonalCandidate]? = nil

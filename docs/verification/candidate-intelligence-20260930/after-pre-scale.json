@@ -1,0 +1,187 @@
+{
+  "baseline": {
+    "top1": 8,
+    "top3": 22
+  },
+  "cases": 24,
+  "observations": [
+    {
+      "code": "heli",
+      "context": "项目的设计方案经过讨论后很",
+      "expected": "合理",
+      "native_rank": 1,
+      "rank": 1
+    },
+    {
+      "code": "heli",
+      "context": "检查设计方案是否",
+      "expected": "合理",
+      "native_rank": 1,
+      "rank": 1
+    },
+    {
+      "code": "heli",
+      "context": "公园里面的鱼儿再次游进了",
+      "expected": "河里",
+      "native_rank": 3,
+      "rank": 1
+    },
+    {
+      "code": "heli",
+      "context": "这些鱼儿一直生活在",
+      "expected": "河里",
+      "native_rank": 3,
+      "rank": 1
+    },
+    {
+      "code": "heli",
+      "context": "礼物重新包装后放回",
+      "expected": "盒里",
+      "native_rank": 4,
+      "rank": 1
+    },
+    {
+      "code": "heli",
+      "context": "把包装好的礼物收进",
+      "expected": "盒里",
+      "native_rank": 4,
+      "rank": 1
+    },
+    {
+      "code": "shishi",
+      "context": "项目计划讨论完成后正式",
+      "expected": "实施",
+      "native_rank": 1,
+      "rank": 1
+    },
+    {
+      "code": "shishi",
+      "context": "新的计划即将开始",
+      "expected": "实施",
+      "native_rank": 1,
+      "rank": 1
+    },
+    {
+      "code": "shishi",
+      "context": "警方整理证据后确认了",
+      "expected": "事实",
+      "native_rank": 2,
+      "rank": 1
+    },
+    {
+      "code": "shishi",
+      "context": "调查发现以下",
+      "expected": "事实",
+      "native_rank": 2,
+      "rank": 1
+    },
+    {
+      "code": "shishi",
+      "context": "这个问题暂时没有答案不妨再",
+      "expected": "试试",
+      "native_rank": 3,
+      "rank": 1
+    },
+    {
+      "code": "shishi",
+      "context": "遇到同样的问题可以",
+      "expected": "试试",
+      "native_rank": 3,
+      "rank": 1
+    },
+    {
+      "code": "gongshi",
+      "context": "数学课需要推导以下",
+      "expected": "公式",
+      "native_rank": 2,
+      "rank": 1
+    },
+    {
+      "code": "gongshi",
+      "context": "把数学笔记里的内容整理成",
+      "expected": "公式",
+      "native_rank": 2,
+      "rank": 1
+    },
+    {
+      "code": "gongshi",
+      "context": "经过讨论协商最终形成",
+      "expected": "共识",
+      "native_rank": 1,
+      "rank": 1
+    },
+    {
+      "code": "gongshi",
+      "context": "讨论之后大家终于达成",
+      "expected": "共识",
+      "native_rank": 1,
+      "rank": 1
+    },
+    {
+      "code": "gongshi",
+      "context": "部队正在加固防御",
+      "expected": "工事",
+      "native_rank": 3,
+      "rank": 1
+    },
+    {
+      "code": "gongshi",
+      "context": "沿线继续修筑新的",
+      "expected": "工事",
+      "native_rank": 3,
+      "rank": 1
+    },
+    {
+      "code": "quanli",
+      "context": "每个公民都应依法享有这些",
+      "expected": "权利",
+      "native_rank": 2,
+      "rank": 1
+    },
+    {
+      "code": "quanli",
+      "context": "保障公民应有的",
+      "expected": "权利",
+      "native_rank": 2,
+      "rank": 1
+    },
+    {
+      "code": "quanli",
+      "context": "对行政机关进行监督并约束其",
+      "expected": "权力",
+      "native_rank": 1,
+      "rank": 1
+    },
+    {
+      "code": "quanli",
+      "context": "行政机关依法行使",
+      "expected": "权力",
+      "native_rank": 1,
+      "rank": 1
+    },
+    {
+      "code": "quanli",
+      "context": "为了比赛继续拼搏并付出",
+      "expected": "全力",
+      "native_rank": 3,
+      "rank": 1
+    },
+    {
+      "code": "quanli",
+      "context": "决赛需要顽强拼搏竭尽",
+      "expected": "全力",
+      "native_rank": 3,
+      "rank": 1
+    }
+  ],
+  "personalized": {
+    "top1": 24,
+    "top3": 24
+  },
+  "query_ms": {
+    "p50": 1.592166,
+    "p95": 1.960416
+  },
+  "scope": "synthetic fixed pools; no user data; no live Rime; query timing excludes IMK and IPC",
+  "train_events": 72
+}

@@ -367,6 +367,95 @@ fn bundled_full_pinyin_promotes_spelling_corrections_when_available() {
 }
 
 #[test]
+fn bundled_correction_keeps_legal_pinyin_and_abbreviation_candidates() {
+    let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();
+    let Some(shared) = bundled_shared_data_dir() else {
+        eprintln!("skip: Inputia bundled RimeData is not available");
+        return;
+    };
+    let user = tempfile::tempdir().unwrap();
+    let engine = RimeEngine::open(
+        RimeEngineConfig::squirrel_luna_pinyin_simp(user.path()).with_shared_data_dir(shared),
+    )
+    .unwrap();
+    for code in ["tainan", "woaini", "hainandao", "zg", "nh", "woain"] {
+        let native = engine.evaluate(code).unwrap();
+        let candidates = engine.candidates(code);
+        assert_eq!(candidates[0].text, native.candidates[0].text, "{code}");
+        assert!(candidates[0].id.starts_with("rime:"), "{code}");
+        for original in native.candidates {
+            assert!(
+                candidates
+                    .iter()
+                    .any(|candidate| candidate.text == original.text),
+                "{code} lost native candidate {}",
+                original.text
+            );
+        }
+    }
+    for (code, expected) in [("woaini", "我爱你"), ("hainandao", "海南岛")] {
+        let candidates = engine.candidates(code);
+        assert_eq!(candidates[0].text, expected);
+        assert_eq!(candidates[0].consumed_len, Some(code.len()));
+        let selected = engine.select_candidate(code, 0, 0, &candidates[0]).unwrap();
+        assert_eq!(selected.commit, expected);
+        assert!(selected.composing.is_empty());
+    }
+}
+
+#[test]
+fn bundled_correction_keeps_native_alternatives_and_selectable_addresses() {
+    let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();
+    let Some(shared) = bundled_shared_data_dir() else {
+        eprintln!("skip: Inputia bundled RimeData is not available");
+        return;
+    };
+    let user = tempfile::tempdir().unwrap();
+    let engine = RimeEngine::open(
+        RimeEngineConfig::squirrel_luna_pinyin_simp(user.path()).with_shared_data_dir(shared),
+    )
+    .unwrap();
+    for (code, expected) in [
+        ("zhonguo", "中国"),
+        ("dagn", "当"),
+        ("hoa", "好"),
+        ("tain", "天"),
+    ] {
+        let native = engine.evaluate(code).unwrap();
+        let candidates = engine.candidates(code);
+        assert_eq!(candidates[0].text, expected);
+        assert!(candidates[0].id.starts_with("rime-correction:"));
+        assert_eq!(candidates[0].consumed_len, Some(code.len()));
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate.text == native.candidates[0].text));
+        let selected = engine.select_candidate(code, 0, 0, &candidates[0]).unwrap();
+        assert_eq!(selected.commit, expected);
+        assert!(selected.composing.is_empty());
+    }
+    let candidates = engine.candidates("tainan");
+    let correction = candidates
+        .iter()
+        .find(|candidate| candidate.text == "天安")
+        .unwrap();
+    assert!(correction.id.starts_with("rime-correction:"));
+    assert_eq!(correction.consumed_len, Some(6));
+    let selected = engine.select_candidate("tainan", 0, 0, correction).unwrap();
+    assert_eq!(selected.commit, "天安");
+    assert!(selected.composing.is_empty());
+
+    let candidates = engine.candidates("tainan");
+    let prefix = candidates
+        .iter()
+        .find(|candidate| candidate.text == "天" && candidate.id.starts_with("rime-correction:"))
+        .unwrap();
+    assert_eq!(prefix.consumed_len, Some(4));
+    let selected = engine.select_candidate("tainan", 0, 0, prefix).unwrap();
+    assert_eq!(selected.commit, "天");
+    assert_eq!(selected.composing, "an");
+}
+
+#[test]
 fn bundled_inputia_extension_lexicons_promote_poetry_idiom_and_rare_char_when_available() {
     let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();
     let Some(shared_data_dir) = bundled_shared_data_dir() else {

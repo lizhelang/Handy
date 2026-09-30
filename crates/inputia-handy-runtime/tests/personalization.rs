@@ -5,6 +5,7 @@ fn accept(root: &Path, id: &str, text: &str, previous: &str) -> Feedback {
     Feedback {
         event_id: id.into(),
         context_id: "target1".into(),
+        schema_id: String::new(),
         input_code: "ba".into(),
         text: text.into(),
         previous: previous.into(),
@@ -17,6 +18,7 @@ fn accept(root: &Path, id: &str, text: &str, previous: &str) -> Feedback {
 }
 fn query_for(root: &Path, context: &str, code: &str) -> Query {
     Query {
+        schema_id: String::new(),
         input_code: code.into(),
         context: context.into(),
         context_id: "target1".into(),
@@ -857,6 +859,7 @@ fn real_flypy_gr_pool_respects_compound_evidence_eligibility_and_personal_feedba
         .join("../../src-tauri/resources/personalization/base-lexicon.tsv");
     install_base_lexicon(root, &lexicon).unwrap();
     let request = |context: &str| Query {
+        schema_id: String::new(),
         input_code: "gr".into(),
         context: context.into(),
         context_id: "isolated-field".into(),
@@ -885,6 +888,7 @@ fn real_flypy_gr_pool_respects_compound_evidence_eligibility_and_personal_feedba
     let preference = Feedback {
         event_id: "prefer-guan".into(),
         context_id: "isolated-field".into(),
+        schema_id: String::new(),
         input_code: "gr".into(),
         text: "关".into(),
         previous: "图书".into(),
@@ -906,6 +910,7 @@ fn real_flypy_gr_pool_respects_compound_evidence_eligibility_and_personal_feedba
     let rejection = Feedback {
         event_id: "reject-guan".into(),
         context_id: "isolated-field".into(),
+        schema_id: String::new(),
         input_code: "gr".into(),
         text: "馆".into(),
         previous: "图书".into(),

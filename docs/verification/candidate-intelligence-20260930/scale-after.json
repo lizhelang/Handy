@@ -1,0 +1,119 @@
+{
+  "fixture": {
+    "anchor_rows": 2742496,
+    "database_bytes": 331194368,
+    "database_mib": 315.8515625,
+    "distinct_previous": 20000,
+    "max_anchors": 138,
+    "measures_imk": false,
+    "min_anchors": 131,
+    "personal_data": false,
+    "profile": "release",
+    "recent_context_templates": 128,
+    "records": 20000,
+    "setup_ms": 22323.872916,
+    "source_sha256": "4394895d09b44a7a6bafab9c262d724884039fae788bfbea94a75cfb710386d7"
+  },
+  "cases": [
+    {
+      "candidates": 32,
+      "contextual": false,
+      "evidence_limited_runs": 0,
+      "evidence_rows": 2528,
+      "max_ms": 6.474459,
+      "p50_ms": 6.08125,
+      "p95_ms": 6.356167,
+      "query_plan": [
+        "SEARCH evidence USING INDEX evidence_text (normalized=?)",
+        "USING INDEX sqlite_autoindex_forgotten_1 FOR IN-OPERATOR",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "samples": 20,
+      "sql_only_sample_ms": 3.4955
+    },
+    {
+      "candidates": 32,
+      "contextual": true,
+      "evidence_limited_runs": 20,
+      "evidence_rows": 4000,
+      "max_ms": 24.253083,
+      "p50_ms": 22.535791,
+      "p95_ms": 24.056957999999998,
+      "query_plan": [
+        "SCAN evidence USING INDEX evidence_active_recency",
+        "USING INDEX sqlite_autoindex_forgotten_1 FOR IN-OPERATOR",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "SEARCH evidence_anchors USING COVERING INDEX sqlite_autoindex_evidence_anchors_1 (event_id=? AND anchor=?)"
+      ],
+      "samples": 20,
+      "sql_only_sample_ms": 7.804958
+    },
+    {
+      "candidates": 64,
+      "contextual": false,
+      "evidence_limited_runs": 20,
+      "evidence_rows": 4000,
+      "max_ms": 11.077959,
+      "p50_ms": 10.584542,
+      "p95_ms": 11.036833,
+      "query_plan": [
+        "SEARCH evidence USING INDEX evidence_text (normalized=?)",
+        "USING INDEX sqlite_autoindex_forgotten_1 FOR IN-OPERATOR",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "samples": 20,
+      "sql_only_sample_ms": 7.684500000000001
+    },
+    {
+      "candidates": 64,
+      "contextual": true,
+      "evidence_limited_runs": 20,
+      "evidence_rows": 4000,
+      "max_ms": 27.500291999999998,
+      "p50_ms": 26.435958,
+      "p95_ms": 27.339790999999998,
+      "query_plan": [
+        "SCAN evidence USING INDEX evidence_active_recency",
+        "USING INDEX sqlite_autoindex_forgotten_1 FOR IN-OPERATOR",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "SEARCH evidence_anchors USING COVERING INDEX sqlite_autoindex_evidence_anchors_1 (event_id=? AND anchor=?)"
+      ],
+      "samples": 20,
+      "sql_only_sample_ms": 6.643042
+    }
+  ],
+  "sparse": [
+    {
+      "candidates": 32,
+      "evidence_limited": false,
+      "only_undone_anchor": false,
+      "p50_ms": 5.031667,
+      "p95_ms": 5.151625,
+      "samples": 5
+    },
+    {
+      "candidates": 64,
+      "evidence_limited": false,
+      "only_undone_anchor": false,
+      "p50_ms": 9.187667,
+      "p95_ms": 9.421708,
+      "samples": 5
+    },
+    {
+      "candidates": 32,
+      "evidence_limited": false,
+      "only_undone_anchor": true,
+      "p50_ms": 4.482417,
+      "p95_ms": 4.602875,
+      "samples": 5
+    },
+    {
+      "candidates": 64,
+      "evidence_limited": false,
+      "only_undone_anchor": true,
+      "p50_ms": 8.558708999999999,
+      "p95_ms": 8.728375,
+      "samples": 5
+    }
+  ]
+}

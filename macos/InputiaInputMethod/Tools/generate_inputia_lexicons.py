@@ -22,7 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = ROOT.parents[1]
-VERSION = "2026.07.09"
+VERSION = "2026.09.30"
 
 SOURCES = {
     "thuocl": {
@@ -297,6 +297,7 @@ def load_json(text: str) -> object:
 
 
 def add_poetry_layers(bucket: dict[str, Entry], line: str, char_pinyin: dict[str, str], base_weight: int) -> None:
+    # 只收录有来源依据的完整句、分句，不把任意连续子串当作词。
     full = clean_text(line)
     if 2 <= len(full) <= 16:
         add_with_generated_pinyin(bucket, full, char_pinyin, base_weight)
@@ -304,12 +305,6 @@ def add_poetry_layers(bucket: dict[str, Entry], line: str, char_pinyin: dict[str
         if len(segment) < 2:
             continue
         add_with_generated_pinyin(bucket, segment, char_pinyin, base_weight + min(len(segment), 8) * 45)
-        max_len = min(8, len(segment))
-        for length in range(max_len, 1, -1):
-            fragment_weight = max(800, base_weight - 1_000 + length * 80)
-            for start in range(0, len(segment) - length + 1):
-                fragment = segment[start : start + length]
-                add_with_generated_pinyin(bucket, fragment, char_pinyin, fragment_weight)
 
 
 def generate_idioms(cache_dir: Path, char_pinyin: dict[str, str], limit: int) -> dict[str, Entry]:
@@ -475,6 +470,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--idiom-limit", type=int, default=5_000)
     parser.add_argument("--poetry-limit", type=int, default=2_000)
+    parser.add_argument(
+        "--only-poetry",
+        action="store_true",
+        help="Only regenerate the packaged poetry dictionary; leave other dictionaries unchanged.",
+    )
     parser.add_argument("--classical-limit", type=int, default=3_000)
     parser.add_argument("--ext-char-limit", type=int, default=6_000)
     parser.add_argument(
@@ -493,6 +493,12 @@ def main() -> int:
 
     char_pinyin = parse_base_char_pinyin(args.base_dict)
     args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.only_poetry:
+        entries = generate_poetry(args.cache_dir, char_pinyin, args.poetry_limit)
+        write_dict(args.output_dir / "inputia_poetry.dict.yaml", "inputia_poetry", entries)
+        print(f"inputia_poetry: {len(entries)} entries")
+        return 0
 
     dictionaries = {
         "inputia_idiom": generate_idioms(args.cache_dir, char_pinyin, args.idiom_limit),

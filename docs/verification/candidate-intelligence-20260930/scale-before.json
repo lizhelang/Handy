@@ -1,0 +1,89 @@
+{
+  "fixture": {
+    "anchor_rows": 2742496,
+    "database_bytes": 330522624,
+    "database_mib": 315.2109375,
+    "distinct_previous": 20000,
+    "max_anchors": 138,
+    "measures_imk": false,
+    "min_anchors": 131,
+    "personal_data": false,
+    "profile": "release",
+    "recent_context_templates": 128,
+    "records": 20000,
+    "setup_ms": 24673.500208,
+    "source_sha256": "f68db649c2f780927e0761e0ee42bb56b3a9eb55e8bd6b931f204d1312803460"
+  },
+  "cases": [
+    {
+      "candidates": 32,
+      "contextual": false,
+      "evidence_limited_runs": 0,
+      "evidence_rows": 2528,
+      "max_ms": 11.16275,
+      "p50_ms": 9.551125,
+      "p95_ms": 10.292375,
+      "query_plan": [
+        "SCAN evidence",
+        "USING INDEX sqlite_autoindex_forgotten_1 FOR IN-OPERATOR",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "samples": 20,
+      "sql_only_sample_ms": 5.970625
+    },
+    {
+      "candidates": 32,
+      "contextual": true,
+      "evidence_limited_runs": 20,
+      "evidence_rows": 4000,
+      "max_ms": 733.490542,
+      "p50_ms": 716.407167,
+      "p95_ms": 721.137875,
+      "query_plan": [
+        "SCAN evidence",
+        "USING INDEX sqlite_autoindex_forgotten_1 FOR IN-OPERATOR",
+        "LIST SUBQUERY 2",
+        "SEARCH evidence_anchors USING COVERING INDEX evidence_anchor_lookup (anchor=?)",
+        "CREATE BLOOM FILTER",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "samples": 20,
+      "sql_only_sample_ms": 542.0544160000001
+    },
+    {
+      "candidates": 64,
+      "contextual": false,
+      "evidence_limited_runs": 20,
+      "evidence_rows": 4000,
+      "max_ms": 15.400208000000001,
+      "p50_ms": 14.345875,
+      "p95_ms": 15.02875,
+      "query_plan": [
+        "SCAN evidence",
+        "USING INDEX sqlite_autoindex_forgotten_1 FOR IN-OPERATOR",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "samples": 20,
+      "sql_only_sample_ms": 9.320791999999999
+    },
+    {
+      "candidates": 64,
+      "contextual": true,
+      "evidence_limited_runs": 20,
+      "evidence_rows": 4000,
+      "max_ms": 727.34825,
+      "p50_ms": 721.489917,
+      "p95_ms": 726.612458,
+      "query_plan": [
+        "SCAN evidence",
+        "USING INDEX sqlite_autoindex_forgotten_1 FOR IN-OPERATOR",
+        "LIST SUBQUERY 2",
+        "SEARCH evidence_anchors USING COVERING INDEX evidence_anchor_lookup (anchor=?)",
+        "CREATE BLOOM FILTER",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "samples": 20,
+      "sql_only_sample_ms": 541.294042
+    }
+  ]
+}

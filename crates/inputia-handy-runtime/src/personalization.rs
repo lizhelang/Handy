@@ -1,5 +1,5 @@
 //! 本地候选学习。只重排调用方给出的合法候选，学习证据可撤销且与正文收录独立。
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -27,6 +27,7 @@ fn root_gate(root: &Path) -> Result<RootGate> {
 }
 
 type Result<T> = std::result::Result<T, String>;
+const EVIDENCE_QUERY_LIMIT: usize = 4000;
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
@@ -52,6 +53,8 @@ pub struct Feedback {
     pub event_id: String,
     pub context_id: String,
     pub input_code: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub schema_id: String,
     pub text: String,
     #[serde(default)]
     pub previous: String,
@@ -80,6 +83,8 @@ pub struct Query {
     #[serde(default)]
     pub input_code: String,
     #[serde(default)]
+    pub schema_id: String,
+    #[serde(default)]
     pub context: String,
     pub context_id: String,
     pub source_app: String,
@@ -88,6 +93,11 @@ pub struct Query {
     pub candidates: Vec<Candidate>,
     #[serde(default = "default_limit")]
     pub limit: usize,
+}
+
+/// 当前候选模型仅供显式实验使用；未验证的模型不能拖慢默认打字路径。
+pub fn experimental_candidate_model_enabled(value: Option<&str>) -> bool {
+    value == Some("1")
 }
 
 /// 验证未来本地模型给出的候选二次排序。
@@ -186,6 +196,22 @@ fn db(root: &Path) -> Result<Connection> {
     if !has_revision {
         db.execute_batch("ALTER TABLE evidence ADD COLUMN origin_revision TEXT NOT NULL DEFAULT ''; UPDATE evidence SET origin_revision=COALESCE((SELECT revision FROM imports WHERE imports.origin=evidence.origin),'') WHERE origin<>'';").map_err(err)?;
     }
+    for column in ["source_app", "schema_id"] {
+        let present: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('evidence') WHERE name=?1)",
+                [column],
+                |row| row.get(0),
+            )
+            .map_err(err)?;
+        if !present {
+            db.execute_batch(&format!(
+                "ALTER TABLE evidence ADD COLUMN {column} TEXT NOT NULL DEFAULT '';"
+            ))
+            .map_err(err)?;
+        }
+    }
+    db.execute_batch("CREATE INDEX IF NOT EXISTS evidence_schema_code ON evidence(schema_id,code,created DESC); CREATE TABLE IF NOT EXISTS evidence_anchors(event_id TEXT NOT NULL,anchor TEXT NOT NULL,PRIMARY KEY(event_id,anchor)); CREATE INDEX IF NOT EXISTS evidence_anchor_lookup ON evidence_anchors(anchor,event_id); CREATE INDEX IF NOT EXISTS evidence_active_recency ON evidence((origin='') DESC,created DESC) WHERE undone=0;").map_err(err)?;
     Ok(db)
 }
 fn state(db: &Connection) -> Result<LearningPolicy> {
@@ -252,6 +278,247 @@ fn safe_app(app: &str) -> bool {
 fn valid_text(s: &str) -> bool {
     !s.trim().is_empty() && s.chars().count() <= 128 && !s.contains('\0')
 }
+fn valid_schema(schema: &str) -> bool {
+    schema.len() <= 128 && !schema.chars().any(char::is_control)
+}
+fn recall_code(code: &str) -> bool {
+    !code.is_empty() && code.is_ascii() && code.bytes().all(|b| b.is_ascii_graphic())
+}
+
+/// 拒绝只影响原有码形与语境；跨句式的弱关联不能扩大负反馈范围。
+fn rejection_context_matches(context: &str, previous: &str) -> bool {
+    if previous.is_empty() {
+        context.is_empty()
+    } else {
+        suffix_context(context, previous)
+    }
+}
+
+fn anchor_window(context: &str) -> &str {
+    let sentence = context
+        .rsplit(['。', '！', '？', '.', '!', '?', '\n', ';', '；'])
+        .next()
+        .unwrap_or("");
+    let start = sentence.char_indices().rev().nth(47).map_or(0, |(i, _)| i);
+    &sentence[start..]
+}
+
+/// 覆盖最后分句的完整 48 字窗口；英文保留词边界，中文使用全部 2–4 字片段。
+fn context_anchors(context: &str) -> Vec<(String, f64)> {
+    let chars: Vec<_> = anchor_window(context).chars().collect();
+    let mut anchors = Vec::new();
+    let mut seen = HashSet::new();
+    for end in (1..=chars.len()).rev() {
+        let distance = chars.len() - end;
+        if chars[end - 1].is_ascii_alphanumeric() {
+            if end < chars.len() && chars[end].is_ascii_alphanumeric() {
+                continue;
+            }
+            let mut start = end - 1;
+            while start > 0 && (chars[start - 1].is_ascii_alphanumeric() || chars[start - 1] == '_')
+            {
+                start -= 1;
+            }
+            let word: String = chars[start..end].iter().collect();
+            if word.len() >= 2 && seen.insert(word.clone()) {
+                anchors.push((word, 1.0 / (1.0 + distance as f64 / 12.0)));
+            }
+        } else {
+            for width in (2..=4).rev() {
+                if end < width {
+                    continue;
+                }
+                let span = &chars[end - width..end];
+                if !span
+                    .iter()
+                    .all(|c| matches!(*c as u32, 0x3400..=0x9fff | 0xf900..=0xfaff))
+                {
+                    continue;
+                }
+                let word: String = span.iter().collect();
+                if seen.insert(word.clone()) {
+                    anchors.push((word, (width as f64 / 4.0) / (1.0 + distance as f64 / 12.0)));
+                }
+            }
+        }
+    }
+    // 48 个连续汉字最多 47+46+45=138 个片段，余量覆盖混合文本的词边界。
+    anchors.truncate(144);
+    anchors
+}
+
+/// 完整语境优先，短后缀和近期词锚点仅提供较弱的可迁移证据。
+fn cached_context_affinity(
+    context: &str,
+    previous: &str,
+    current: &HashMap<String, f64>,
+    cache: &mut HashMap<String, f64>,
+) -> f64 {
+    // 完整上下文的精确匹配始终单独判断，不能与只有近句相同的弱关联混用。
+    if suffix_context(context, previous) {
+        return 1.0;
+    }
+    if context.is_empty() || previous.is_empty() {
+        return 0.0;
+    }
+    let window = anchor_window(previous);
+    *cache.entry(window.to_owned()).or_insert_with(|| {
+        context_anchors(window)
+            .into_iter()
+            .filter_map(|(anchor, weight)| {
+                current
+                    .get(&anchor)
+                    .map(|other| 0.6 * (weight * other).sqrt())
+            })
+            .fold(0.0, f64::max)
+    })
+}
+
+/// 每个请求锚点只做一次存在性索引查找，不展开常见词的全部历史 posting。
+fn present_anchors(db: &Connection, anchors: &[(String, f64)]) -> Result<Vec<String>> {
+    if anchors.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = format!(
+        "WITH requested(anchor) AS (VALUES {}) SELECT anchor FROM requested WHERE EXISTS (SELECT 1 FROM evidence_anchors AS existing WHERE existing.anchor=requested.anchor)",
+        vec!["(?)"; anchors.len()].join(",")
+    );
+    let mut stmt = db.prepare(&sql).map_err(err)?;
+    let rows = stmt
+        .query_map(
+            params_from_iter(anchors.iter().map(|(anchor, _)| anchor)),
+            |r| r.get(0),
+        )
+        .map_err(err)?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(err)
+}
+
+/// 少于预算加一时返回完整有效ID集；达到上限仅说明应采用密集查询计划。
+fn bounded_anchor_events(db: &Connection, anchors: &[String]) -> Result<Vec<String>> {
+    if anchors.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = format!(
+        "SELECT DISTINCT indexed.event_id FROM evidence_anchors AS indexed JOIN evidence AS learned ON learned.event_id=indexed.event_id WHERE indexed.anchor IN ({}) AND learned.undone=0 AND learned.normalized NOT IN(SELECT text FROM forgotten) LIMIT {}",
+        vec!["?"; anchors.len()].join(","), EVIDENCE_QUERY_LIMIT + 1
+    );
+    let mut stmt = db.prepare(&sql).map_err(err)?;
+    let rows = stmt
+        .query_map(params_from_iter(anchors), |row| row.get(0))
+        .map_err(err)?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(err)
+}
+
+fn scoped_rejected(db: &Connection, q: &Query, key: &str) -> Result<bool> {
+    let mut stmt = db.prepare("SELECT previous,weight FROM evidence WHERE normalized=?1 AND schema_id=?2 AND code=?3 AND (source_app=?4 OR source_app='') AND origin='' AND undone=0 AND created>?5 ORDER BY created DESC LIMIT 100").map_err(err)?;
+    let rows = stmt
+        .query_map(
+            params![
+                key,
+                q.schema_id,
+                q.input_code.clone(),
+                q.source_app,
+                now() - 14.0 * 86400.0
+            ],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)),
+        )
+        .map_err(err)?;
+    for row in rows {
+        let (previous, weight) = row.map_err(err)?;
+        if rejection_context_matches(&norm(&q.context), &previous) {
+            return Ok(weight < 0.0);
+        }
+    }
+    Ok(false)
+}
+
+/// 独立的准确码索引使召回与原生候选池无关，准入重查不会受池大小影响。
+fn recall_candidates(db: &Connection, q: &Query) -> Result<Vec<Candidate>> {
+    #[derive(Default)]
+    struct RecallStats {
+        evidence: Stats,
+        latest_accept: f64,
+        latest_reject: f64,
+    }
+    let code = q.input_code.clone();
+    if q.schema_id.is_empty() || !recall_code(&code) {
+        return Ok(vec![]);
+    }
+    let mut stmt = db.prepare("SELECT text,normalized,previous,source_app,weight,created FROM evidence WHERE schema_id=?1 AND code=?2 AND origin='' AND source_app<>'' AND undone=0 AND normalized NOT IN(SELECT text FROM forgotten) ORDER BY created DESC,event_id LIMIT 1000").map_err(err)?;
+    let rows = stmt
+        .query_map(params![q.schema_id, code], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, f64>(4)?,
+                r.get::<_, f64>(5)?,
+            ))
+        })
+        .map_err(err)?;
+    let context = norm(&q.context);
+    let current_anchors: HashMap<_, _> = context_anchors(&context).into_iter().collect();
+    let timestamp = now();
+    let mut stats: HashMap<String, RecallStats> = HashMap::new();
+    let mut affinities = HashMap::new();
+    for row in rows {
+        let (text, key, previous, app, weight, created) = row.map_err(err)?;
+        let record = stats.entry(key).or_default();
+        let s = &mut record.evidence;
+        if weight < 0.0 {
+            if app == q.source_app
+                && rejection_context_matches(&context, &previous)
+                && timestamp - created < 14.0 * 86400.0
+            {
+                record.latest_reject = record.latest_reject.max(created);
+            }
+            continue;
+        }
+        if app == q.source_app && rejection_context_matches(&context, &previous) {
+            record.latest_accept = record.latest_accept.max(created);
+        }
+        if s.text.is_empty() {
+            s.text = text;
+        }
+        let decay = (-((timestamp - created).max(0.0)) / (14.0 * 86400.0)).exp();
+        let contribution = weight * decay * if app == q.source_app { 1.0 } else { 0.35 };
+        s.frequency += contribution;
+        s.context += contribution
+            * cached_context_affinity(&context, &previous, &current_anchors, &mut affinities);
+    }
+    let mut eligible: Vec<_> = stats
+        .into_iter()
+        .filter(|(_, s)| s.evidence.frequency > 0.0 && s.latest_reject <= s.latest_accept)
+        .map(|(key, s)| (key, s.evidence))
+        .collect();
+    eligible.sort_by(|(left_key, left), (right_key, right)| {
+        let strength = |s: &Stats| s.frequency.ln_1p() + 1.5 * s.context.ln_1p();
+        strength(right)
+            .total_cmp(&strength(left))
+            .then_with(|| left_key.cmp(right_key))
+    });
+    let native: HashSet<_> = q.candidates.iter().map(|c| norm(&c.text)).collect();
+    // 先限定个人召回窗口再与原生池去重，Admit 不带原生池时仍能重查相同身份。
+    Ok(eligible
+        .into_iter()
+        .take(5)
+        .filter(|(key, _)| !native.contains(key))
+        .enumerate()
+        .map(|(rank, (key, s))| Candidate {
+            id: format!(
+                "learned:{}",
+                digest(&format!("{}\0{}\0{}", q.schema_id, code, key))
+            ),
+            text: s.text,
+            base_rank: rank,
+            consumed_len: q.input_code.len(),
+            match_type: "exact".into(),
+        })
+        .collect())
+}
 /// 接收经过身份及上屏确认的学习反馈；undo 使用原 accept 的 event_id。
 pub fn feedback(root: &Path, f: Feedback) -> Result<Value> {
     let gate = root_gate(root)?;
@@ -260,6 +527,7 @@ pub fn feedback(root: &Path, f: Feedback) -> Result<Value> {
         || f.event_id.len() > 256
         || f.context_id.len() > 256
         || f.input_code.len() > 256
+        || !valid_schema(&f.schema_id)
         || f.previous.chars().count() > 256
         || !safe_app(&f.source_app)
         || !valid_text(&f.text)
@@ -279,17 +547,21 @@ pub fn feedback(root: &Path, f: Feedback) -> Result<Value> {
         return Err("个人学习已关闭或反馈世代过期".into());
     }
     let text = norm(&f.text);
-    let binding = digest(
-        &json!([
-            f.context_id,
-            f.input_code,
-            f.text,
-            f.previous,
-            f.source_app,
-            f.learning_epoch
-        ])
-        .to_string(),
-    );
+    let mut binding_fields = json!([
+        f.context_id,
+        f.input_code,
+        f.text,
+        f.previous,
+        f.source_app,
+        f.learning_epoch
+    ]);
+    if !f.schema_id.is_empty() {
+        binding_fields
+            .as_array_mut()
+            .ok_or("invalid_feedback_binding")?
+            .push(json!(f.schema_id));
+    }
+    let binding = digest(&binding_fields.to_string());
     if f.operation == "undo" {
         let original: Option<String> = tx
             .query_row(
@@ -357,10 +629,20 @@ pub fn feedback(root: &Path, f: Feedback) -> Result<Value> {
         -2.0
     } else if f.explicit_selection && f.original_rank > 0 {
         2.5
+    } else if f.explicit_selection {
+        // 数字键/鼠标明确选择首项同样表达偏好，不能当作默认空格接受。
+        2.0
     } else {
         0.35
     };
-    tx.execute("INSERT INTO evidence(event_id,fingerprint,text,normalized,previous,code,weight,created) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![f.event_id,fingerprint,f.text,text,norm(&f.previous),norm(&f.input_code),weight,now()]).map_err(err)?;
+    tx.execute("INSERT INTO evidence(event_id,fingerprint,text,normalized,previous,code,weight,created,source_app,schema_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![f.event_id,fingerprint,f.text,text,norm(&f.previous),f.input_code,weight,now(),f.source_app,f.schema_id]).map_err(err)?;
+    for (anchor, _) in context_anchors(&norm(&f.previous)) {
+        tx.execute(
+            "INSERT OR IGNORE INTO evidence_anchors(event_id,anchor) VALUES(?1,?2)",
+            params![f.event_id, anchor],
+        )
+        .map_err(err)?;
+    }
     tx.execute(
         "INSERT INTO feedback_bindings VALUES(?1,?2)",
         params![f.event_id, binding],
@@ -516,12 +798,18 @@ struct Stats {
     context: f64,
     rejected: f64,
     text: String,
+    latest_accept: f64,
+    latest_reject: f64,
+}
+fn rejected_in_current_context(stats: &Stats) -> bool {
+    stats.latest_reject > stats.latest_accept
 }
 /// 只重排提供的候选；预测严格来自已学习的上下文关系或短语前缀。
 pub fn query(root: &Path, q: Query) -> Result<Value> {
     let gate = root_gate(root)?;
     let _guard = gate.lock().map_err(err)?;
     if q.input_code.len() > 256
+        || !valid_schema(&q.schema_id)
         || q.context.chars().count() > 512
         || q.context_id.len() > 256
         || q.candidates.len() > 100
@@ -540,41 +828,77 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
     let enabled = p.enabled && p.epoch == q.learning_epoch && safe_app(&q.source_app);
     let mut candidates = q.candidates.clone();
     let mut predictions = vec![];
+    let mut recalled_candidates: Vec<Candidate> = vec![];
     let mut skipped_origins = 0usize;
     let mut evidence_limited = false;
     let mut suppressed = HashSet::new();
     let mut validated: HashMap<(String, String), bool> = HashMap::new();
     if enabled {
         let context = norm(&q.context);
-        let code = norm(&q.input_code);
+        let code = q.input_code.clone();
         let mut scores: HashMap<String, Stats> = HashMap::new();
-        let mut sql="SELECT text,normalized,previous,code,weight,created,origin,origin_revision FROM evidence WHERE undone=0 AND normalized NOT IN(SELECT text FROM forgotten) AND (0".to_string();
+        let mut affinities = HashMap::new();
+        let anchors = context_anchors(&context);
+        let current_anchors: HashMap<_, _> = anchors.iter().cloned().collect();
+        // 分类探测与取证据必须共享快照；取完rows即结束，不能挡住后续
+        // 来源失效清理或发布前的策略世代复核。
+        let read_snapshot = db.unchecked_transaction().map_err(err)?;
+        let mut predicates = Vec::new();
         let mut args: Vec<rusqlite::types::Value> = vec![];
         if !q.candidates.is_empty() {
-            sql.push_str(" OR normalized IN (");
-            sql.push_str(&vec!["?"; q.candidates.len()].join(","));
-            sql.push(')');
+            predicates.push(format!(
+                "normalized IN ({})",
+                vec!["?"; q.candidates.len()].join(",")
+            ));
             for c in &q.candidates {
                 args.push(norm(&c.text).into());
             }
         }
+        let mut dense_anchor_matches = false;
         if !context.is_empty() {
+            let known_anchors = present_anchors(&db, &anchors)?;
+            let anchor_events = bounded_anchor_events(&db, &known_anchors)?;
+            dense_anchor_matches = anchor_events.len() > EVIDENCE_QUERY_LIMIT;
+            if dense_anchor_matches {
+                // 按最近证据流逐条检查锚点，保留原4000条语义；不先物化
+                // 常见中文锚点对应的数百万索引行，也不降低证据条数上限。
+                predicates.push(format!("EXISTS (SELECT 1 FROM evidence_anchors WHERE evidence_anchors.event_id=evidence.event_id AND anchor IN ({}))", vec!["?"; known_anchors.len()].join(",")));
+                args.extend(known_anchors.into_iter().map(Into::into));
+            } else if !anchor_events.is_empty() {
+                // 稀疏语境走主键ID集合，避免138个稀有/已撤销锚点导致全库
+                // 逐行探测。这里包含全部有效命中，而非截断后的采样结果。
+                predicates.push(format!(
+                    "event_id IN ({})",
+                    vec!["?"; anchor_events.len()].join(",")
+                ));
+                args.extend(anchor_events.into_iter().map(Into::into));
+            }
             let suffixes: Vec<_> = context
                 .char_indices()
                 .rev()
                 .take(256)
                 .map(|(i, _)| context[i..].to_string())
                 .collect();
-            sql.push_str(" OR previous IN (");
-            sql.push_str(&vec!["?"; suffixes.len()].join(","));
-            sql.push_str(") OR (normalized>=? AND normalized<?)");
+            predicates.push(format!(
+                "previous IN ({})",
+                vec!["?"; suffixes.len()].join(",")
+            ));
+            predicates.push("(normalized>=? AND normalized<?)".into());
             for suffix in suffixes {
                 args.push(suffix.into());
             }
             args.push(context.clone().into());
             args.push(format!("{context}\u{10ffff}").into());
         }
-        sql.push_str(") ORDER BY (origin='') DESC,created DESC LIMIT 4000");
+        if predicates.is_empty() {
+            predicates.push("0".into());
+        }
+        let index_hint = if dense_anchor_matches {
+            "INDEXED BY evidence_active_recency"
+        } else {
+            ""
+        };
+        let sql = format!("SELECT text,normalized,previous,code,weight,created,origin,origin_revision,source_app,schema_id FROM evidence {index_hint} WHERE undone=0 AND normalized NOT IN(SELECT text FROM forgotten) AND ({}) ORDER BY (origin='') DESC,created DESC LIMIT {EVIDENCE_QUERY_LIMIT}", predicates.join(" OR "));
         let rows = {
             let mut stmt = db.prepare(&sql).map_err(err)?;
             let rows = stmt
@@ -588,17 +912,32 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
                         r.get::<_, f64>(5)?,
                         r.get::<_, String>(6)?,
                         r.get::<_, String>(7)?,
+                        r.get::<_, String>(8)?,
+                        r.get::<_, String>(9)?,
                     ))
                 })
                 .map_err(err)?;
             rows.collect::<std::result::Result<Vec<_>, _>>()
                 .map_err(err)?
         };
-        evidence_limited = rows.len() == 4000;
+        read_snapshot.commit().map_err(err)?;
+        evidence_limited = rows.len() == EVIDENCE_QUERY_LIMIT;
 
         let mut skipped: HashSet<String> = HashSet::new();
         let timestamp = now();
-        for (text, key, previous, event_code, weight, created, origin, origin_revision) in rows {
+        for (
+            text,
+            key,
+            previous,
+            event_code,
+            weight,
+            created,
+            origin,
+            origin_revision,
+            source_app,
+            schema_id,
+        ) in rows
+        {
             let imported = !origin.is_empty();
             if imported {
                 let valid = if let Some(valid) =
@@ -617,25 +956,55 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
                     continue;
                 }
             }
+            // 旧证据仍能提供弱全局先验；不同已知方案不能共享码形偏好。
+            if !schema_id.is_empty() && !q.schema_id.is_empty() && schema_id != q.schema_id {
+                continue;
+            }
             let decay = (-((timestamp - created).max(0.0)) / (14.0 * 86400.0)).exp();
             let stat = scores.entry(key).or_default();
-            stat.text = text;
+            if stat.text.is_empty() {
+                stat.text = text;
+            }
             if weight < 0.0 {
-                stat.rejected += -weight * decay;
+                if schema_id == q.schema_id
+                    && event_code == code
+                    && (source_app.is_empty() || source_app == q.source_app)
+                    && rejection_context_matches(&context, &previous)
+                {
+                    stat.rejected += -weight * decay;
+                    if timestamp - created < 14.0 * 86400.0 {
+                        stat.latest_reject = stat.latest_reject.max(created);
+                    }
+                }
                 continue;
+            }
+            let app_weight = if source_app == q.source_app {
+                1.0
+            } else if source_app.is_empty() {
+                0.6
+            } else {
+                0.35
+            };
+            let contribution = weight * decay * if imported { 1.0 } else { app_weight };
+            if !imported
+                && schema_id == q.schema_id
+                && event_code == code
+                && (source_app.is_empty() || source_app == q.source_app)
+                && rejection_context_matches(&context, &previous)
+            {
+                stat.latest_accept = stat.latest_accept.max(created);
             }
             if code.is_empty() || event_code.is_empty() || event_code == code {
                 if imported {
-                    let contribution = (0.75 - stat.imported).max(0.0).min(weight * decay);
+                    let contribution = (0.75 - stat.imported).max(0.0).min(contribution);
                     stat.imported += contribution;
                     stat.frequency += contribution;
                 } else {
-                    stat.frequency += weight * decay;
+                    stat.frequency += contribution;
                 }
             }
-            if suffix_context(&context, &previous) {
-                stat.context += weight * decay;
-            }
+            stat.context += contribution
+                * cached_context_affinity(&context, &previous, &current_anchors, &mut affinities);
         }
         skipped_origins = skipped.len();
         let mut base_gains = HashMap::new();
@@ -643,25 +1012,25 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
             for c in &candidates {
                 let key = norm(&c.text);
                 // 明确拒绝占优时，公共词频不能把用户拒绝的词重新顶回来。
-                if scores
-                    .get(&key)
-                    .is_some_and(|s| s.rejected > s.frequency + s.context)
-                {
+                if scores.get(&key).is_some_and(|s| {
+                    rejected_in_current_context(s) || s.rejected > s.frequency + s.context
+                }) {
                     continue;
                 }
-                base_gains.insert(key, base_context_gain(&db, &context, &c.text)?);
+                base_gains.insert(key, base_context_gain(&db, &context, &c.text, &anchors)?);
             }
         }
         let gain = |c: &Candidate| -> f64 {
             scores
                 .get(&norm(&c.text))
                 .map(|s| {
-                    ((1.5 * s.frequency.ln_1p()
-                        + 2.0
-                            * s.context.ln_1p()
-                            * ((s.context + 0.5) / (s.frequency + 2.0)).min(1.0))
-                        - 2.0 * s.rejected.ln_1p())
-                    .clamp(-4.0, 6.0)
+                    if rejected_in_current_context(s) {
+                        return -4.0;
+                    }
+                    // 长期频率与当前语境各自限幅；频率不能占满语境的预算。
+                    // context 已含匹配强度，不能再按 context/frequency 二次折损。
+                    (1.5 * s.frequency.ln_1p()).min(6.0) + 4.0 * (1.0 - (-s.context / 2.0).exp())
+                        - (2.0 * s.rejected.ln_1p()).min(4.0)
                 })
                 .unwrap_or(0.0)
                 + base_gains.get(&norm(&c.text)).copied().unwrap_or(0.0)
@@ -678,7 +1047,7 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
             let mut group: Vec<_> = positions.iter().map(|i| candidates[*i].clone()).collect();
             group.sort_by(|a, b| {
                 // 引擎名次不是等间距的对数概率；递减间距保留先验顺序，
-                // 让有频率支持的组合词能跨过前几项，而不增加学习增益上限。
+                // 让有证据的组合词能跨过前几项；频率、语境分别使用有界增益。
                 (1.5 * (a.base_rank as f64).ln_1p() - gain(a))
                     .total_cmp(&(1.5 * (b.base_rank as f64).ln_1p() - gain(b)))
                     .then_with(|| a.base_rank.cmp(&b.base_rank))
@@ -687,10 +1056,11 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
                 candidates[*i] = c;
             }
         }
+        recalled_candidates = recall_candidates(&db, &q)?;
         if code.is_empty() {
             let mut proposed: HashMap<String, (String, f64)> = HashMap::new();
             for (key, s) in &scores {
-                if s.rejected > s.context + s.frequency {
+                if rejected_in_current_context(s) || s.rejected > s.context + s.frequency {
                     suppressed.insert(key.clone());
                     continue;
                 }
@@ -744,8 +1114,8 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
             .collect();
         for text in base_predictions(&db, &q.context, q.limit.clamp(1, 10))? {
             let key = norm(&text);
-            let negative: f64 = db.query_row("SELECT COALESCE(SUM(weight),0) FROM evidence WHERE normalized=?1 AND undone=0 AND origin='' AND created>?2",params![key,now()-14.0*86400.0],|r|r.get(0)).map_err(err)?;
-            if suppressed.contains(&key) || negative < 0.0 || !seen.insert(key) {
+            let rejected = scoped_rejected(&db, &q, &key)?;
+            if suppressed.contains(&key) || rejected || !seen.insert(key) {
                 continue;
             }
             if predictions.len() >= q.limit.clamp(1, 10) {
@@ -762,11 +1132,11 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
         || !bindings_current(&db, &validated)?
     {
         return Ok(
-            json!({"enabled":false,"epoch":final_policy.epoch,"ordered_ids":q.candidates.iter().map(|c|&c.id).collect::<Vec<_>>(),"predictions":[],"context_id":q.context_id,"invalidated":true}),
+            json!({"enabled":false,"epoch":final_policy.epoch,"ordered_ids":q.candidates.iter().map(|c|&c.id).collect::<Vec<_>>(),"predictions":[],"recalled_candidates":[],"context_id":q.context_id,"invalidated":true}),
         );
     }
     Ok(
-        json!({"enabled":enabled,"epoch":p.epoch,"ordered_ids":candidates.iter().map(|c|&c.id).collect::<Vec<_>>(),"predictions":predictions,"context_id":q.context_id,"skipped_unverified_sources":skipped_origins,"evidence_limited":evidence_limited,"warnings":if skipped_origins>0 {vec!["本次相关来源验证达到32条预算，其余来源未参与排序"]}else{vec![]}}),
+        json!({"enabled":enabled,"epoch":p.epoch,"ordered_ids":candidates.iter().map(|c|&c.id).collect::<Vec<_>>(),"predictions":predictions,"recalled_candidates":recalled_candidates,"context_id":q.context_id,"skipped_unverified_sources":skipped_origins,"evidence_limited":evidence_limited,"warnings":if skipped_origins>0 {vec!["本次相关来源验证达到32条预算，其余来源未参与排序"]}else{vec![]}}),
     )
 }
 fn status(root: &Path, db: &Connection) -> Result<Value> {
@@ -879,6 +1249,7 @@ pub fn manage(root: &Path, action: &str, payload: &Value) -> Result<Value> {
                 tx.execute("INSERT OR IGNORE INTO forgotten VALUES(?1)", [&key])
                     .map_err(err)?;
                 tx.execute("INSERT OR IGNORE INTO retired_events SELECT event_id FROM evidence WHERE normalized=?1",[&key]).map_err(err)?;
+                tx.execute("DELETE FROM evidence_anchors WHERE event_id IN(SELECT event_id FROM evidence WHERE normalized=?1)", [&key]).map_err(err)?;
                 tx.execute("DELETE FROM evidence WHERE normalized=?1", [&key])
                     .map_err(err)?;
             } else {
@@ -893,6 +1264,8 @@ pub fn manage(root: &Path, action: &str, payload: &Value) -> Result<Value> {
                 )
                 .map_err(err)?;
                 tx.execute("DELETE FROM evidence", []).map_err(err)?;
+                tx.execute("DELETE FROM evidence_anchors", [])
+                    .map_err(err)?;
                 tx.execute("DELETE FROM imports", []).map_err(err)?;
             }
             bump(&tx)?;
@@ -1159,7 +1532,12 @@ fn base_predictions(db: &Connection, context: &str, limit: usize) -> Result<Vec<
     Ok(vec![])
 }
 
-fn base_context_gain(db: &Connection, context: &str, text: &str) -> Result<f64> {
+fn base_context_gain(
+    db: &Connection,
+    context: &str,
+    text: &str,
+    anchors: &[(String, f64)],
+) -> Result<f64> {
     let context = norm(context);
     let text = norm(text);
     if context.is_empty() || text.is_empty() {
@@ -1171,11 +1549,21 @@ fn base_context_gain(db: &Connection, context: &str, text: &str) -> Result<f64> 
         .take(16)
         .map(|(i, _)| i)
         .collect();
-    for start in starts.into_iter().rev() {
-        let prefix = &context[start..];
-        if !suffix_context(&context, prefix) {
-            continue;
+    let mut prefixes: Vec<(String, f64)> = starts
+        .into_iter()
+        .rev()
+        .map(|start| context[start..].to_owned())
+        .filter(|prefix| suffix_context(&context, prefix))
+        .map(|prefix| (prefix, 1.0))
+        .collect();
+    let mut seen: HashSet<_> = prefixes.iter().map(|(prefix, _)| prefix.clone()).collect();
+    for (anchor, weight) in anchors {
+        if seen.insert(anchor.clone()) {
+            prefixes.push((anchor.clone(), 0.6 * weight));
         }
+    }
+    let mut weights = HashMap::new();
+    for (prefix, context_weight) in prefixes {
         let separator = if prefix
             .chars()
             .last()
@@ -1190,14 +1578,54 @@ fn base_context_gain(db: &Connection, context: &str, text: &str) -> Result<f64> 
             ""
         };
         let joined = format!("{prefix}{separator}{text}");
-        let frequency:Option<f64>=db.query_row("SELECT frequency FROM base_phrases WHERE normalized=?1 AND normalized NOT IN(SELECT text FROM forgotten) AND NOT EXISTS(SELECT 1 FROM forgotten WHERE text=?2)",params![joined,text],|r|r.get(0)).optional().map_err(err)?;
-        if let Some(freq) = frequency {
-            // 低频组合只有弱证据，不能因名次间距缩小而压过常用候选。
-            let reliability = freq / (freq + 50.0);
-            return Ok((freq.ln_1p() / 3.0).min(3.0) * reliability);
-        }
+        weights.insert(joined, context_weight);
     }
-    Ok(0.0)
+    if weights.is_empty() {
+        return Ok(0.0);
+    }
+    // 全句锚点一次索引查询，避免为每个候选发出上百次短查询。
+    let sql = format!("SELECT normalized,frequency FROM base_phrases WHERE normalized IN ({}) AND normalized NOT IN(SELECT text FROM forgotten) AND NOT EXISTS(SELECT 1 FROM forgotten WHERE text=?)", vec!["?"; weights.len()].join(","));
+    let mut args: Vec<String> = weights.keys().cloned().collect();
+    args.push(text);
+    let mut stmt = db.prepare(&sql).map_err(err)?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(args), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+        })
+        .map_err(err)?;
+    let mut strongest: f64 = 0.0;
+    for row in rows {
+        let (key, freq) = row.map_err(err)?;
+        // 低频组合只有弱证据，不能因名次间距缩小而压过常用候选。
+        let reliability = freq / (freq + 50.0);
+        strongest = strongest.max(
+            (freq.ln_1p() / 3.0).min(3.0) * reliability * weights.get(&key).copied().unwrap_or(0.0),
+        );
+    }
+    Ok(strongest)
+}
+
+#[cfg(test)]
+mod context_cache_tests {
+    use super::*;
+
+    #[test]
+    fn recent_clause_cache_does_not_share_exact_context_confidence() {
+        let context = "第一句话。项目开发方案";
+        let anchors = context_anchors(context).into_iter().collect();
+        let mut cache = HashMap::new();
+        let weak = cached_context_affinity(context, "其他前句。项目开发方案", &anchors, &mut cache);
+        assert!(weak > 0.0 && weak < 1.0);
+        assert_eq!(
+            cached_context_affinity(context, context, &anchors, &mut cache),
+            1.0
+        );
+        assert_eq!(
+            cached_context_affinity(context, "又一前句。项目开发方案", &anchors, &mut cache),
+            weak
+        );
+        assert_eq!(cache.len(), 1);
+    }
 }
 
 #[cfg(test)]
@@ -1216,6 +1644,7 @@ mod race_tests {
     use super::*;
     fn q(root: &Path, context: &str) -> Query {
         Query {
+            schema_id: String::new(),
             input_code: String::new(),
             context: context.into(),
             context_id: "target".into(),
@@ -1287,6 +1716,7 @@ mod race_tests {
                 Feedback {
                     event_id: "accept".into(),
                     context_id: "target".into(),
+                    schema_id: String::new(),
                     input_code: "".into(),
                     text: "待撤销秘密".into(),
                     previous: "前文".into(),

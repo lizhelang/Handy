@@ -1,0 +1,78 @@
+{
+  "scope": "fixed synthetic contexts, existing local model, no training; excludes app IPC",
+  "correct": 2,
+  "count": 6,
+  "usable_within_150ms": 0,
+  "cold_ms": 922,
+  "warm_p50_ms": 9.5,
+  "warm_max_ms": 12,
+  "wall_ms": 1184.83,
+  "observations": [
+    {
+      "input_code": "heli",
+      "context": "经过讨论大家觉得这个方案很",
+      "expected": "合理",
+      "selected": "盒里",
+      "correct": false,
+      "elapsed_ms": 12,
+      "confidence": 0.0632,
+      "abstained": true,
+      "error": null
+    },
+    {
+      "input_code": "heli",
+      "context": "小鱼从岸边跳回了",
+      "expected": "河里",
+      "selected": "盒里",
+      "correct": false,
+      "elapsed_ms": 10,
+      "confidence": 0.131,
+      "abstained": true,
+      "error": null
+    },
+    {
+      "input_code": "gongshi",
+      "context": "请推导这个数学",
+      "expected": "公式",
+      "selected": "公式",
+      "correct": true,
+      "elapsed_ms": 10,
+      "confidence": 0.2337,
+      "abstained": true,
+      "error": null
+    },
+    {
+      "input_code": "gongshi",
+      "context": "经过反复讨论协商终于达成",
+      "expected": "共识",
+      "selected": "公式",
+      "correct": false,
+      "elapsed_ms": 9,
+      "confidence": 0.2658,
+      "abstained": true,
+      "error": null
+    },
+    {
+      "input_code": "quanli",
+      "context": "每个公民依法享有的",
+      "expected": "权利",
+      "selected": "权力",
+      "correct": false,
+      "elapsed_ms": 8,
+      "confidence": 0.2645,
+      "abstained": true,
+      "error": null
+    },
+    {
+      "input_code": "quanli",
+      "context": "为了比赛胜利我们拼尽",
+      "expected": "全力",
+      "selected": "全力",
+      "correct": true,
+      "elapsed_ms": 8,
+      "confidence": 0.2276,
+      "abstained": true,
+      "error": null
+    }
+  ]
+}
