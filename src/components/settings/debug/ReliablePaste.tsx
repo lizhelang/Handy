@@ -24,11 +24,16 @@ export const ReliablePasteToggle: React.FC<ReliablePasteToggleProps> = ({
 
   return (
     <ToggleSwitch
-      checked={getSetting("reliable_paste") ?? false}
+      checked={osType === "macos" || (getSetting("reliable_paste") ?? false)}
+      disabled={osType === "macos"}
       onChange={(enabled) => updateSetting("reliable_paste", enabled)}
       isUpdating={isUpdating("reliable_paste")}
       label={t("settings.debug.reliablePaste.title")}
-      description={t("settings.debug.reliablePaste.description")}
+      description={t(
+        osType === "macos"
+          ? "settings.debug.reliablePaste.managedDescription"
+          : "settings.debug.reliablePaste.description",
+      )}
       descriptionMode={descriptionMode}
       grouped={grouped}
     />

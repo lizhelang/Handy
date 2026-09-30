@@ -66,6 +66,11 @@
       "failed": "The action failed. Your content is kept in history.",
       "updated": "Saved and synchronized.",
       "updateFailed": "Could not save. The record may have changed; refresh and try again."
+    },
+    "outputNotices": {
+      "heading": "Outputs needing attention",
+      "acknowledge": "Dismiss reminder",
+      "acknowledgeHelp": "Dismissing a reminder does not retry or undo insertion. Check the target before inserting again."
     }
   },
   "tray": {
@@ -660,7 +665,8 @@
       },
       "reliablePaste": {
         "title": "Dán đáng tin cậy (Beta)",
-        "description": "Chỉ khôi phục bảng nhớ tạm sau khi ứng dụng đích thực sự đọc bản chép lời, thay vì sau một độ trễ cố định. Nhằm khắc phục việc nội dung bảng nhớ tạm cũ bị dán khi hệ thống bị tải nặng. Cần một phương thức dán qua bảng nhớ tạm; chỉ dành cho macOS và Windows."
+        "description": "Chỉ khôi phục bảng nhớ tạm sau khi ứng dụng đích thực sự đọc bản chép lời, thay vì sau một độ trễ cố định. Nhằm khắc phục việc nội dung bảng nhớ tạm cũ bị dán khi hệ thống bị tải nặng. Cần một phương thức dán qua bảng nhớ tạm; chỉ dành cho macOS và Windows.",
+        "managedDescription": "On macOS, clipboard insertion always uses the protected transaction. Restoration follows the paste receipt instead of a fixed delay."
       },
       "recordingBuffer": {
         "title": "Bộ đệm ghi âm thêm",

@@ -66,6 +66,11 @@
       "failed": "The action failed. Your content is kept in history.",
       "updated": "Saved and synchronized.",
       "updateFailed": "Could not save. The record may have changed; refresh and try again."
+    },
+    "outputNotices": {
+      "heading": "Outputs needing attention",
+      "acknowledge": "Dismiss reminder",
+      "acknowledgeHelp": "Dismissing a reminder does not retry or undo insertion. Check the target before inserting again."
     }
   },
   "tray": {
@@ -660,7 +665,8 @@
       },
       "reliablePaste": {
         "title": "Colagem confiável (Beta)",
-        "description": "Restaura a área de transferência somente depois que o aplicativo de destino realmente lê a transcrição, em vez de após um atraso fixo. Serve para corrigir a colagem do conteúdo antigo da área de transferência quando o sistema está sobrecarregado. Requer um método de colar via área de transferência; apenas macOS e Windows."
+        "description": "Restaura a área de transferência somente depois que o aplicativo de destino realmente lê a transcrição, em vez de após um atraso fixo. Serve para corrigir a colagem do conteúdo antigo da área de transferência quando o sistema está sobrecarregado. Requer um método de colar via área de transferência; apenas macOS e Windows.",
+        "managedDescription": "On macOS, clipboard insertion always uses the protected transaction. Restoration follows the paste receipt instead of a fixed delay."
       },
       "recordingBuffer": {
         "title": "Buffer de gravação extra",

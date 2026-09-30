@@ -824,6 +824,8 @@ pub fn run(cli_args: CliArgs) {
             commands::clipboard::get_clipboard_items,
             commands::integration::get_unified_history,
             commands::integration::get_unified_output_receipt,
+            commands::integration::list_unresolved_unified_outputs,
+            commands::integration::acknowledge_unified_output_notice,
             commands::integration::retranscribe_unified_history_item,
             commands::integration::insert_unified_history_item,
             commands::integration::copy_unified_history_item,

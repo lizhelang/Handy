@@ -66,6 +66,11 @@
       "failed": "The action failed. Your content is kept in history.",
       "updated": "Saved and synchronized.",
       "updateFailed": "Could not save. The record may have changed; refresh and try again."
+    },
+    "outputNotices": {
+      "heading": "Outputs needing attention",
+      "acknowledge": "Dismiss reminder",
+      "acknowledgeHelp": "Dismissing a reminder does not retry or undo insertion. Check the target before inserting again."
     }
   },
   "tray": {
@@ -660,7 +665,8 @@
       },
       "reliablePaste": {
         "title": "Collage fiable (Beta)",
-        "description": "Restaure le presse-papiers uniquement après que l'application cible a réellement lu la transcription, au lieu d'attendre un délai fixe. Vise à corriger le collage de l'ancien contenu du presse-papiers lorsque le système est chargé. Nécessite une méthode de collage par presse-papiers ; macOS et Windows uniquement."
+        "description": "Restaure le presse-papiers uniquement après que l'application cible a réellement lu la transcription, au lieu d'attendre un délai fixe. Vise à corriger le collage de l'ancien contenu du presse-papiers lorsque le système est chargé. Nécessite une méthode de collage par presse-papiers ; macOS et Windows uniquement.",
+        "managedDescription": "On macOS, clipboard insertion always uses the protected transaction. Restoration follows the paste receipt instead of a fixed delay."
       },
       "recordingBuffer": {
         "title": "Tampon d'enregistrement supplémentaire",

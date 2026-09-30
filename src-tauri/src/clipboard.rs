@@ -788,6 +788,110 @@ pub fn paste_history_text(
     }
 }
 
+/// 明确配置的仅复制操作不要求输入框；成功只确认剪贴板写入。
+#[cfg(target_os = "macos")]
+pub(crate) fn copy_voice_text(
+    text: &str,
+    _app: &AppHandle,
+    validate: &mut dyn FnMut() -> Result<(), String>,
+) -> crate::paste_tx::HistoryPasteOutcome {
+    let snapshot = crate::paste_tx::ClipboardSnapshot {
+        change_count: objc2_app_kit::NSPasteboard::generalPasteboard().changeCount(),
+        items: vec![vec![(
+            "public.utf8-plain-text".into(),
+            text.as_bytes().to_vec(),
+        )]],
+    };
+    crate::paste_tx::publish_snapshot(snapshot, validate)
+}
+
+/// 已取得唯一输出权的语音适配器；任何错误都不切换第二路线。
+#[cfg(target_os = "macos")]
+pub(crate) fn paste_voice_text(
+    text: &str,
+    app: &AppHandle,
+    settings: &crate::settings::AppSettings,
+    validate: &mut dyn FnMut() -> Result<(), String>,
+    completion_guard: Box<dyn Fn() -> Result<(), String> + Send>,
+) -> crate::paste_tx::HistoryPasteOutcome {
+    use crate::paste_tx::HistoryPasteOutcome;
+    if let Err(error) = validate() {
+        return HistoryPasteOutcome::NotDispatched(error);
+    }
+    // 不截短用户设定的延时；超过短期许可的请求保留待插入，不迟到补发。
+    if settings.paste_delay_ms >= 2_000 {
+        return HistoryPasteOutcome::NotDispatched("paste delay exceeds output permit".into());
+    }
+    std::thread::sleep(Duration::from_millis(settings.paste_delay_ms));
+    if let Err(error) = validate() {
+        return HistoryPasteOutcome::NotDispatched(error);
+    }
+    let Some(state) = app.try_state::<EnigoState>() else {
+        return HistoryPasteOutcome::NotDispatched("input device unavailable".into());
+    };
+    let Ok(mut enigo) = state.0.try_lock() else {
+        return HistoryPasteOutcome::NotDispatched("input device busy".into());
+    };
+    let Some(enigo) = enigo.as_mut() else {
+        return HistoryPasteOutcome::NotDispatched("input device retired".into());
+    };
+    let result = match settings.paste_method {
+        PasteMethod::CtrlV | PasteMethod::CtrlShiftV | PasteMethod::ShiftInsert => {
+            return crate::paste_tx::paste_voice(
+                text,
+                app,
+                &settings.paste_method,
+                enigo,
+                crate::paste_tx::PasteCompletion {
+                    auto_submit: settings.auto_submit,
+                    auto_submit_key: settings.auto_submit_key,
+                    clipboard_handling: settings.clipboard_handling,
+                },
+                validate,
+                completion_guard,
+            );
+        }
+        PasteMethod::Direct => {
+            crate::paste_tx::guarded_dispatch(validate, || input::paste_text_direct(enigo, text))
+        }
+        PasteMethod::ExternalScript => {
+            let Some(path) = settings
+                .external_script_path
+                .as_ref()
+                .filter(|path| !path.is_empty())
+            else {
+                return HistoryPasteOutcome::NotDispatched(
+                    "external script is not configured".into(),
+                );
+            };
+            crate::paste_tx::guarded_dispatch(validate, || paste_via_external_script(text, path))
+        }
+        PasteMethod::None => {
+            return HistoryPasteOutcome::NotDispatched("automatic insertion disabled".into())
+        }
+    };
+    if result != HistoryPasteOutcome::Dispatched {
+        return result;
+    }
+    if settings.auto_submit {
+        std::thread::sleep(Duration::from_millis(50));
+        if let Err(error) =
+            completion_guard().and_then(|_| send_return_key(enigo, settings.auto_submit_key))
+        {
+            return HistoryPasteOutcome::PossiblyDispatched(error);
+        }
+    }
+    if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
+        let copy = copy_voice_text(text, app, &mut || completion_guard());
+        if copy != HistoryPasteOutcome::Dispatched {
+            return HistoryPasteOutcome::PossiblyDispatched(
+                "text dispatched but clipboard copy failed".into(),
+            );
+        }
+    }
+    HistoryPasteOutcome::Dispatched
+}
+
 pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     let permission_epoch = crate::input_permission::capture_epoch()?;
     let _permission_scope = crate::input_permission::RequestScope::enter(permission_epoch)?;

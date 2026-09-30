@@ -66,6 +66,11 @@
       "failed": "The action failed. Your content is kept in history.",
       "updated": "Saved and synchronized.",
       "updateFailed": "Could not save. The record may have changed; refresh and try again."
+    },
+    "outputNotices": {
+      "heading": "待處理的輸出結果",
+      "acknowledge": "不再提醒",
+      "acknowledgeHelp": "關閉提醒不會重試或復原插入。再次插入前，請先檢查目標輸入框。"
     }
   },
   "tray": {
@@ -660,7 +665,8 @@
       },
       "reliablePaste": {
         "title": "可靠貼上（Beta）",
-        "description": "在目標應用程式真正讀取轉錄文字之後才還原剪貼簿，而不是等待固定延遲。用於解決系統負載較高時貼上舊剪貼簿內容的問題。需要使用剪貼簿類的貼上方式；僅支援 macOS 與 Windows。"
+        "description": "在目標應用程式真正讀取轉錄文字之後才還原剪貼簿，而不是等待固定延遲。用於解決系統負載較高時貼上舊剪貼簿內容的問題。需要使用剪貼簿類的貼上方式；僅支援 macOS 與 Windows。",
+        "managedDescription": "macOS 的剪貼簿插入一律使用受保護交易，依據貼上回條還原剪貼簿，不再使用固定還原延遲。"
       },
       "recordingBuffer": {
         "title": "額外錄音緩衝",

@@ -66,6 +66,11 @@
       "failed": "The action failed. Your content is kept in history.",
       "updated": "Saved and synchronized.",
       "updateFailed": "Could not save. The record may have changed; refresh and try again."
+    },
+    "outputNotices": {
+      "heading": "Outputs needing attention",
+      "acknowledge": "Dismiss reminder",
+      "acknowledgeHelp": "Dismissing a reminder does not retry or undo insertion. Check the target before inserting again."
     }
   },
   "tray": {
@@ -655,7 +660,8 @@
       },
       "reliablePaste": {
         "title": "안정적인 붙여넣기 (Beta)",
-        "description": "고정된 지연 시간이 아니라 대상 앱이 실제로 전사된 텍스트를 읽은 뒤에만 클립보드를 복원합니다. 시스템 부하가 높을 때 이전 클립보드 내용이 붙여넣어지는 문제를 해결하기 위한 옵션입니다. 클립보드를 사용하는 붙여넣기 방법이 필요하며 macOS와 Windows에서만 지원됩니다."
+        "description": "고정된 지연 시간이 아니라 대상 앱이 실제로 전사된 텍스트를 읽은 뒤에만 클립보드를 복원합니다. 시스템 부하가 높을 때 이전 클립보드 내용이 붙여넣어지는 문제를 해결하기 위한 옵션입니다. 클립보드를 사용하는 붙여넣기 방법이 필요하며 macOS와 Windows에서만 지원됩니다.",
+        "managedDescription": "On macOS, clipboard insertion always uses the protected transaction. Restoration follows the paste receipt instead of a fixed delay."
       },
       "recordingBuffer": {
         "title": "추가 녹음 버퍼",

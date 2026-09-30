@@ -579,6 +579,31 @@ impl IntegrationStore {
     ) -> StoreResult<Option<crate::output_ledger::OutputRecord>> {
         Ok(crate::output_ledger::get(&self.conn, id)?)
     }
+    /// 查询待处理输出，不触发内容投影或任何原生输出副作用。
+    pub fn unresolved_output_notices(
+        &self,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> StoreResult<crate::output_ledger::OutputNoticePage> {
+        Ok(crate::output_ledger::list_unresolved_notices(
+            &self.conn, cursor, limit,
+        )?)
+    }
+
+    /// 提示已读单独提交；绝不删除、重置或重新授权输出账本。
+    pub fn acknowledge_output_notice(
+        &mut self,
+        operation_id: &str,
+        expected_state: crate::output_ledger::OutputState,
+    ) -> StoreResult<()> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        crate::output_ledger::acknowledge_notice(&tx, operation_id, expected_state)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn history_retention_policy(&self) -> StoreResult<HistoryRetentionPolicy> {
         let tx = self.conn.unchecked_transaction()?;
         let stored: Option<String> = tx

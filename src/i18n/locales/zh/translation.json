@@ -66,6 +66,11 @@
       "failed": "操作失败，内容已保留在历史记录中。",
       "updated": "已保存并同步。",
       "updateFailed": "无法保存，记录可能已变化。请刷新后重试。"
+    },
+    "outputNotices": {
+      "heading": "待处理的输出结果",
+      "acknowledge": "不再提醒",
+      "acknowledgeHelp": "关闭提醒不会重试或撤销插入。再次插入前，请先检查目标输入框。"
     }
   },
   "tray": {
@@ -660,7 +665,8 @@
       },
       "reliablePaste": {
         "title": "可靠粘贴（Beta）",
-        "description": "在目标应用程序真正读取转录文本之后再恢复剪贴板，而不是等待固定延迟。用于解决系统负载较高时粘贴旧剪贴板内容的问题。需要使用剪贴板类的粘贴方式；仅支持 macOS 和 Windows。"
+        "description": "在目标应用程序真正读取转录文本之后再恢复剪贴板，而不是等待固定延迟。用于解决系统负载较高时粘贴旧剪贴板内容的问题。需要使用剪贴板类的粘贴方式；仅支持 macOS 和 Windows。",
+        "managedDescription": "macOS 的剪贴板插入始终使用受保护事务，根据粘贴回执恢复剪贴板，不再使用固定恢复延时。"
       },
       "recordingBuffer": {
         "title": "额外录音缓冲",

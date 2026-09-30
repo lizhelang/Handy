@@ -66,6 +66,24 @@ pub(crate) fn guarded_dispatch(
     }
 }
 
+/// 持久复制在撤销后拒绝发布时恢复先前内容；可能已发布则不覆盖未知结果。
+/// restore 仍必须核验 changeCount，保留用户期间的新复制。
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn settle_preserved_text(
+    publish: impl FnOnce() -> HistoryPasteOutcome,
+    restore: impl FnOnce() -> Result<bool, String>,
+) -> HistoryPasteOutcome {
+    let outcome = publish();
+    if matches!(outcome, HistoryPasteOutcome::NotDispatched(_)) {
+        if let Err(error) = restore() {
+            return HistoryPasteOutcome::NotDispatched(format!(
+                "clipboard restore failed: {error}"
+            ));
+        }
+    }
+    outcome
+}
+
 /// 所有 item 的所有原始表示；不进行文本/图像优先级选择或格式转换。
 #[cfg(any(target_os = "macos", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,6 +130,28 @@ pub(crate) fn paste_history(
     validate: &mut dyn FnMut() -> Result<(), String>,
 ) -> HistoryPasteOutcome {
     platform::run_history(text, app, method, enigo, validate)
+}
+
+/// 语音保留自动发送/复制偏好，但后续 Enter 仍验证同一字段与短期许可。
+#[cfg(target_os = "macos")]
+pub(crate) fn paste_voice(
+    text: &str,
+    app: &tauri::AppHandle,
+    method: &crate::settings::PasteMethod,
+    enigo: &mut enigo::Enigo,
+    completion: PasteCompletion,
+    validate: &mut dyn FnMut() -> Result<(), String>,
+    completion_guard: Box<dyn Fn() -> Result<(), String> + Send>,
+) -> HistoryPasteOutcome {
+    platform::run_voice(
+        text,
+        app,
+        method,
+        enigo,
+        completion,
+        validate,
+        completion_guard,
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -296,6 +336,66 @@ pub(crate) fn try_reliable_paste(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn revoked_persistent_copy_restores_original_without_publishing_transcript() {
+        use std::cell::Cell;
+        let published = Cell::new(0);
+        let restored = Cell::new(0);
+        let result = settle_preserved_text(
+            || {
+                guarded_dispatch(&mut || Err("privacy revoked".into()), || {
+                    published.set(published.get() + 1);
+                    Ok(())
+                })
+            },
+            || {
+                restore_if_owned(
+                    7,
+                    || 7,
+                    || {
+                        restored.set(restored.get() + 1);
+                        Ok(())
+                    },
+                )
+            },
+        );
+        assert!(matches!(result, HistoryPasteOutcome::NotDispatched(_)));
+        assert_eq!(published.get(), 0);
+        assert_eq!(restored.get(), 1);
+    }
+
+    #[test]
+    fn rejected_copy_preserves_new_user_clipboard_and_unknown_publication_is_not_restored() {
+        use std::cell::Cell;
+        let restored = Cell::new(0);
+        let result = settle_preserved_text(
+            || HistoryPasteOutcome::NotDispatched("target changed".into()),
+            || {
+                restore_if_owned(
+                    7,
+                    || 8,
+                    || {
+                        restored.set(1);
+                        Ok(())
+                    },
+                )
+            },
+        );
+        assert!(matches!(result, HistoryPasteOutcome::NotDispatched(_)));
+        assert_eq!(restored.get(), 0);
+        assert!(matches!(
+            settle_preserved_text(
+                || HistoryPasteOutcome::PossiblyDispatched("write outcome unknown".into()),
+                || {
+                    restored.set(1);
+                    Ok(true)
+                },
+            ),
+            HistoryPasteOutcome::PossiblyDispatched(_)
+        ));
+        assert_eq!(restored.get(), 0);
+    }
 
     #[test]
     fn history_snapshot_keeps_all_items_and_formats_including_empty_bytes() {

@@ -236,6 +236,8 @@ struct OwnedVoiceSession {
 #[derive(Default)]
 struct VoiceProjection {
     context: Mutex<Option<VoiceRequest>>,
+    #[cfg(target_os = "macos")]
+    platform: Mutex<Option<crate::integration_output::PlatformVoiceContext>>,
 }
 
 const MAX_VOICE_SESSIONS: usize = 1024;
@@ -1232,6 +1234,18 @@ impl TranscriptionCoordinator {
             .and_then(|value| value.clone())
     }
 
+    /// 只移动一次 Start 时冻结的原字段；异步输出拥有租约，不会影响下一次录音。
+    #[cfg(target_os = "macos")]
+    pub(crate) fn take_platform_output_context(
+        &self,
+    ) -> Option<crate::integration_output::PlatformVoiceContext> {
+        self.voice_projection
+            .platform
+            .lock()
+            .ok()
+            .and_then(|mut value| value.take())
+    }
+
     /// Send a keyboard input event for a transcribe binding. `hold_threshold`
     /// only matters for [`ShortcutActivation::HoldOrToggle`].
     pub fn send_input(
@@ -1464,14 +1478,36 @@ fn run_effect(
             binding_id,
             hotkey_string,
         } => {
+            #[cfg(target_os = "macos")]
+            if let Ok(mut platform) = projection.platform.lock() {
+                *platform = if state.active_voice.is_none() {
+                    Some(crate::integration_output::PlatformVoiceContext::capture(
+                        app,
+                    ))
+                } else {
+                    None
+                };
+            }
             let started = start(app, &binding_id, &hotkey_string);
+            #[cfg(target_os = "macos")]
+            if !started {
+                if let Ok(mut platform) = projection.platform.lock() {
+                    platform.take();
+                }
+            }
             state.on_start_result(&binding_id, started);
         }
         Effect::Stop {
             binding_id,
             hotkey_string,
         } => stop(app, &binding_id, &hotkey_string),
-        Effect::Cancel => crate::utils::cancel_current_operation_raw(app),
+        Effect::Cancel => {
+            #[cfg(target_os = "macos")]
+            if let Ok(mut platform) = projection.platform.lock() {
+                platform.take();
+            }
+            crate::utils::cancel_current_operation_raw(app);
+        }
     }
     publish_projection(state, projection);
 }

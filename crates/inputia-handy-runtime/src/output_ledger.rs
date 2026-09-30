@@ -119,6 +119,22 @@ pub struct OutputRecord {
     pub state: OutputState,
 }
 
+/// 用户待处理提示只包含稳定身份和结果，不暴露正文、原字段或来源路径。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputNotice {
+    pub operation_id: String,
+    pub item_id: String,
+    pub state: OutputState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputNoticePage {
+    pub items: Vec<OutputNotice>,
+    pub next_cursor: Option<String>,
+}
+
+pub const MAX_NOTICE_PAGE_SIZE: u32 = 100;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecoverySummary {
     pub uncertain: usize,
@@ -167,7 +183,16 @@ pub fn initialize(connection: &Connection) -> Result<()> {
                 'prepared', 'dispatched', 'confirmed', 'dispatched_only',
                 'uncertain', 'pending_target', 'rejected'
             ))
-        );",
+        );
+        CREATE TABLE IF NOT EXISTS unified_output_notice_reads (
+            operation_id TEXT NOT NULL REFERENCES unified_output_operations(operation_id),
+            state TEXT NOT NULL CHECK(state IN ('uncertain', 'pending_target', 'rejected')),
+            intent_digest BLOB NOT NULL CHECK(length(intent_digest) = 32),
+            PRIMARY KEY(operation_id, state)
+        );
+        CREATE INDEX IF NOT EXISTS unified_output_notice_scan
+            ON unified_output_operations(operation_id)
+            WHERE state IN ('pending_target', 'uncertain', 'rejected');",
     )?;
     Ok(())
 }
@@ -208,6 +233,92 @@ pub fn get(connection: &Connection, operation_id: &str) -> Result<Option<OutputR
         })
     })
     .transpose()
+}
+
+/// 有界只读查询；游标是上一页末尾的操作 ID，与正文、时间和当前焦点无关。
+/// 未知结果只能在此发现，查询绝不准备或重新 claim 输出。
+pub fn list_unresolved_notices(
+    connection: &Connection,
+    cursor: Option<&str>,
+    limit: u32,
+) -> Result<OutputNoticePage> {
+    if limit == 0 || limit > MAX_NOTICE_PAGE_SIZE {
+        return Err(OutputLedgerError::InvalidIntent);
+    }
+    if let Some(cursor) = cursor {
+        Identifier::parse(cursor).map_err(|_| OutputLedgerError::InvalidIntent)?;
+    }
+    let mut statement = connection.prepare(
+        "SELECT operation.operation_id FROM unified_output_operations AS operation
+         WHERE operation.state IN ('pending_target', 'uncertain', 'rejected')
+         AND (?1 IS NULL OR operation.operation_id > ?1)
+         AND NOT EXISTS (
+             SELECT 1 FROM unified_output_notice_reads AS notice
+             WHERE notice.operation_id=operation.operation_id
+               AND notice.state=operation.state
+               AND notice.intent_digest=operation.intent_digest
+         )
+         ORDER BY operation.operation_id ASC LIMIT ?2",
+    )?;
+    let ids = statement
+        .query_map(params![cursor, i64::from(limit) + 1], |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let has_more = ids.len() > limit as usize;
+    let mut items = Vec::with_capacity(ids.len().min(limit as usize));
+    for id in ids.into_iter().take(limit as usize) {
+        // 沿用账本完整性校验；不得把损坏 intent_json 的任意字段带入 UI。
+        let record = get(connection, &id)?.ok_or(OutputLedgerError::CorruptRecord)?;
+        if !is_notice_state(record.state) {
+            return Err(OutputLedgerError::CorruptRecord);
+        }
+        items.push(OutputNotice {
+            operation_id: record.intent.operation_id,
+            item_id: record.intent.item_id,
+            state: record.state,
+        });
+    }
+    let next_cursor = if has_more {
+        items.last().map(|item| item.operation_id.clone())
+    } else {
+        None
+    };
+    Ok(OutputNoticePage { items, next_cursor })
+}
+
+/// 只确认用户已阅读特定结果。原输出账本、未知结果和重放禁令均不改变。
+/// 调用方使用同一写事务包住状态检查与已读写入，避免确认一个随后变化的状态。
+pub fn acknowledge_notice(
+    connection: &Connection,
+    operation_id: &str,
+    expected_state: OutputState,
+) -> Result<()> {
+    if !is_notice_state(expected_state) {
+        return Err(OutputLedgerError::InvalidTransition);
+    }
+    let record = get(connection, operation_id)?.ok_or(OutputLedgerError::NotFound)?;
+    if record.state != expected_state {
+        return Err(OutputLedgerError::InvalidTransition);
+    }
+    connection.execute(
+        "INSERT INTO unified_output_notice_reads(operation_id, state, intent_digest)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(operation_id, state) DO UPDATE SET intent_digest=excluded.intent_digest",
+        params![
+            operation_id,
+            expected_state.as_str(),
+            digest(&record.intent).as_slice()
+        ],
+    )?;
+    Ok(())
+}
+
+fn is_notice_state(state: OutputState) -> bool {
+    matches!(
+        state,
+        OutputState::PendingTarget | OutputState::Uncertain | OutputState::Rejected
+    )
 }
 
 /// 原子 Prepared → Dispatched；true 仅授予本事务唯一 claim。

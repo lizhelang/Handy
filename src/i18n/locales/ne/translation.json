@@ -66,6 +66,11 @@
       "failed": "The action failed. Your content is kept in history.",
       "updated": "Saved and synchronized.",
       "updateFailed": "Could not save. The record may have changed; refresh and try again."
+    },
+    "outputNotices": {
+      "heading": "Outputs needing attention",
+      "acknowledge": "Dismiss reminder",
+      "acknowledgeHelp": "Dismissing a reminder does not retry or undo insertion. Check the target before inserting again."
     }
   },
   "tray": {
@@ -667,7 +672,8 @@
       },
       "reliablePaste": {
         "title": "भरपर्दो पेस्ट (Beta)",
-        "description": "निश्चित ढिलाइपछि नभई, लक्षित एपले ट्रान्सक्रिप्सन साँच्चै पढेपछि मात्र क्लिपबोर्ड पुनर्स्थापना गर्नुहोस्। प्रणालीमा भार बढ्दा पुरानो क्लिपबोर्ड सामग्री पेस्ट हुने समस्या समाधान गर्न बनाइएको। क्लिपबोर्ड प्रयोग गर्ने पेस्ट विधि आवश्यक; macOS र Windows मा मात्र।"
+        "description": "निश्चित ढिलाइपछि नभई, लक्षित एपले ट्रान्सक्रिप्सन साँच्चै पढेपछि मात्र क्लिपबोर्ड पुनर्स्थापना गर्नुहोस्। प्रणालीमा भार बढ्दा पुरानो क्लिपबोर्ड सामग्री पेस्ट हुने समस्या समाधान गर्न बनाइएको। क्लिपबोर्ड प्रयोग गर्ने पेस्ट विधि आवश्यक; macOS र Windows मा मात्र।",
+        "managedDescription": "On macOS, clipboard insertion always uses the protected transaction. Restoration follows the paste receipt instead of a fixed delay."
       },
       "recordingBuffer": {
         "title": "अतिरिक्त रेकर्डिङ बफर",

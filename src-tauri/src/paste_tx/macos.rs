@@ -22,8 +22,7 @@ use objc2::runtime::ProtocolObject;
 use objc2::{define_class, msg_send, AnyThread, DefinedClass};
 use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPasteboardWriting};
 use objc2_foundation::{NSArray, NSData, NSInteger, NSObject, NSString};
-use tauri::{AppHandle, Manager};
-use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri::{AppHandle, Emitter, Manager};
 
 use super::{
     capture_snapshot, evaluate, guarded_dispatch, restore_if_owned, send_chord, ClipboardSnapshot,
@@ -99,6 +98,7 @@ impl HandyPasteProvider {
 
 struct MacPending {
     permission_epoch: u64,
+    completion_guard: Option<Box<dyn Fn() -> Result<(), String> + Send>>,
     state: Arc<Mutex<TxState>>,
     snapshot: ClipboardSnapshot,
     change_count: NSInteger,
@@ -256,25 +256,35 @@ fn settle(
         Err(_) => (false, true),
     };
 
-    // Auto-submit only once the target demonstrably read the transcript;
-    // pressing Enter after an unconfirmed paste could submit stale content.
-    if p.auto_submit
-        && receipt_seen
-        && crate::input_permission::check_epoch(p.permission_epoch).is_ok()
-    {
-        match enigo {
-            Some(e) => {
-                let _ = send_return_key(e, p.auto_submit_key);
+    // 回执仅允许尝试用户已启用的 Enter；派发前还要验证权限和原字段。
+    if p.auto_submit && receipt_seen {
+        let validate_completion = || {
+            crate::input_permission::check_epoch(p.permission_epoch)?;
+            if let Some(guard) = &p.completion_guard {
+                guard()?;
             }
-            None => {
-                if let Some(enigo_state) = app_handle.try_state::<EnigoState>() {
-                    if let Ok(mut e) = enigo_state.0.lock() {
-                        if let Some(e) = e.as_mut() {
-                            let _ = send_return_key(e, p.auto_submit_key);
-                        }
-                    }
-                }
-            }
+            Ok::<_, String>(())
+        };
+        let result = match enigo {
+            Some(e) => validate_completion().and_then(|_| send_return_key(e, p.auto_submit_key)),
+            None => app_handle
+                .try_state::<EnigoState>()
+                .ok_or_else(|| "input device unavailable".to_owned())
+                .and_then(|state| {
+                    let mut enigo = state
+                        .0
+                        .try_lock()
+                        .map_err(|_| "input device busy".to_owned())?;
+                    validate_completion()?;
+                    send_return_key(
+                        enigo.as_mut().ok_or("input device retired")?,
+                        p.auto_submit_key,
+                    )
+                }),
+        };
+        if let Err(error) = result {
+            error!("[reliable-paste] automatic submit withheld: {error}");
+            let _ = app_handle.emit("paste-error", ());
         }
     }
 
@@ -286,8 +296,45 @@ fn settle(
         // The user asked for the transcript to stay on the clipboard: replace
         // the concealed promise with plain text so clipboard managers record
         // it and it survives this app exiting.
-        let _ = app_handle.clipboard().write_text(&p.transcript);
-        info!("[reliable-paste] left transcript on clipboard as plain text");
+        let publication = super::settle_preserved_text(
+            || {
+                publish_snapshot(
+                    ClipboardSnapshot {
+                        change_count: p.change_count,
+                        items: vec![vec![(
+                            "public.utf8-plain-text".into(),
+                            p.transcript.as_bytes().to_vec(),
+                        )]],
+                    },
+                    || {
+                        crate::input_permission::check_epoch(p.permission_epoch)?;
+                        if let Some(guard) = &p.completion_guard {
+                            guard()?;
+                        }
+                        Ok(())
+                    },
+                )
+            },
+            || {
+                restore_snapshot(
+                    &NSPasteboard::generalPasteboard(),
+                    &p.snapshot,
+                    p.change_count,
+                )
+            },
+        );
+        match publication {
+            HistoryPasteOutcome::Dispatched => {
+                info!("[reliable-paste] left transcript on clipboard as plain text")
+            }
+            HistoryPasteOutcome::NotDispatched(error)
+            | HistoryPasteOutcome::PossiblyDispatched(error) => {
+                error!(
+                    "[reliable-paste] persistent clipboard publication was not confirmed: {error}"
+                );
+                let _ = app_handle.emit("paste-error", ());
+            }
+        }
     } else {
         match restore_snapshot(
             &NSPasteboard::generalPasteboard(),
@@ -296,13 +343,17 @@ fn settle(
         ) {
             Ok(true) => info!("[reliable-paste] restored all previous clipboard items/types"),
             Ok(false) => info!("[reliable-paste] clipboard changed during restore preparation"),
-            Err(error) => error!("[reliable-paste] complete clipboard restore failed: {error}"),
+            Err(error) => {
+                error!("[reliable-paste] complete clipboard restore failed: {error}");
+                let _ = app_handle.emit("paste-error", ());
+            }
         }
     }
 
     // Release the owner; any outstanding promise dies with the pasteboard
     // contents we just replaced (or with the external change).
     p.provider = None;
+    p.completion_guard = None;
 }
 
 /// If a previous transaction is still holding the clipboard, settle it now so
@@ -398,6 +449,7 @@ pub(super) fn run(
             clipboard_handling,
         },
         &mut || Ok(()),
+        None,
     ) {
         HistoryPasteOutcome::NotDispatched(error) => Err(error),
         HistoryPasteOutcome::PossiblyDispatched(error) => {
@@ -443,6 +495,40 @@ pub(super) fn run_history(
             clipboard_handling: ClipboardHandling::DontModify,
         },
         validate,
+        None,
+    )
+}
+
+pub(super) fn run_voice(
+    text: &str,
+    app_handle: &AppHandle,
+    paste_method: &PasteMethod,
+    enigo: &mut enigo::Enigo,
+    completion: PasteCompletion,
+    validate: &mut dyn FnMut() -> Result<(), String>,
+    completion_guard: Box<dyn Fn() -> Result<(), String> + Send>,
+) -> HistoryPasteOutcome {
+    // 未完成事务必须先自然结束，不把上次文本/自动发送带入本次字段。
+    match PENDING.try_lock() {
+        Ok(slot) => {
+            if let Some(pending) = slot.as_ref() {
+                if !pending.try_lock().is_ok_and(|pending| pending.settled) {
+                    return HistoryPasteOutcome::NotDispatched(
+                        "clipboard transaction pending".into(),
+                    );
+                }
+            }
+        }
+        Err(_) => return HistoryPasteOutcome::NotDispatched("clipboard transaction busy".into()),
+    }
+    run_inner(
+        text,
+        app_handle,
+        paste_method,
+        enigo,
+        completion,
+        validate,
+        Some(completion_guard),
     )
 }
 
@@ -453,6 +539,7 @@ fn run_inner(
     enigo: &mut enigo::Enigo,
     completion: PasteCompletion,
     validate: &mut dyn FnMut() -> Result<(), String>,
+    completion_guard: Option<Box<dyn Fn() -> Result<(), String> + Send>>,
 ) -> HistoryPasteOutcome {
     let permission_epoch = match crate::input_permission::capture_epoch() {
         Ok(epoch) => epoch,
@@ -534,6 +621,7 @@ fn run_inner(
 
     let pending = Arc::new(Mutex::new(MacPending {
         permission_epoch,
+        completion_guard,
         state,
         snapshot,
         change_count,

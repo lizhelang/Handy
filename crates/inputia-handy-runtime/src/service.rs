@@ -592,6 +592,75 @@ impl HistoryService {
         })
     }
 
+    /// Legacy 转写也按本次源记录取得稳定输出身份；不得伪造 Host 会话。
+    /// 相同源记录只准备一次自动输出。目标、动作或修订不同的重放会被账本拒绝。
+    pub fn prepare_saved_platform_result(
+        &self,
+        history_id: i64,
+        expected_text: String,
+        target_id: Option<String>,
+        expected_policy_epoch: Option<u64>,
+        action: crate::output_ledger::OutputAction,
+    ) -> ServiceResult<crate::output_ledger::OutputRecord> {
+        self.call(move |worker| {
+            use crate::output_ledger::{OutputAction, OutputIntent, OutputOutcome, OutputOwner};
+            use sha2::{Digest, Sha256};
+            if history_id <= 0
+                || expected_text.is_empty()
+                || !matches!(
+                    action,
+                    OutputAction::InsertText | OutputAction::CopyPlainText
+                )
+            {
+                return Err("invalid saved platform result".into());
+            }
+            worker.sync_once()?;
+            let source = worker
+                .sources
+                .iter()
+                .find(|source| source.source_table() == SourceTable::History)
+                .ok_or("history source unavailable")?;
+            let id = crate::store::item_id(source.store_id(), &history_id.to_string());
+            let item = worker
+                .store
+                .get(&id)
+                .map_err(|error| error.to_string())?
+                .ok_or("saved platform result is not projected")?;
+            if item.snapshot.source_kind != crate::store::SourceKind::Voice
+                || item.snapshot.text.as_deref() != Some(expected_text.as_str())
+            {
+                return Err("saved platform result changed before output preparation".into());
+            }
+            let policy_epoch = worker
+                .store
+                .policy_epoch()
+                .map_err(|error| error.to_string())?;
+            let intent = OutputIntent {
+                operation_id: format!("platform-{:x}", Sha256::digest(id.as_bytes())),
+                item_id: id,
+                revision: item.revision,
+                target_id,
+                owner: OutputOwner::Platform,
+                policy_epoch,
+                action,
+            };
+            let record = worker
+                .store
+                .prepare_output(&intent)
+                .map_err(|error| error.to_string())?;
+            if record.state == crate::output_ledger::OutputState::Prepared
+                && (expected_policy_epoch != Some(policy_epoch)
+                    || (action == OutputAction::InsertText && intent.target_id.is_none()))
+            {
+                return worker
+                    .store
+                    .finish_output(&intent, OutputOutcome::PendingTarget)
+                    .map_err(|error| error.to_string());
+            }
+            Ok(record)
+        })
+    }
+
     /// 只用于本次转写已保存的源记录；有待消费的源变更先完成投影再准备。
     pub fn prepare_voice_result(
         &self,
@@ -716,6 +785,33 @@ impl HistoryService {
     ) -> ServiceResult<Option<crate::output_ledger::OutputRecord>> {
         self.call(move |worker| worker.store.output_record(&id).map_err(|e| e.to_string()))
     }
+    /// 启动与显式刷新均只读持久结果，不用重放输出请求恢复 UI。
+    pub fn unresolved_output_notices(
+        &self,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> ServiceResult<crate::output_ledger::OutputNoticePage> {
+        self.call(move |worker| {
+            worker
+                .store
+                .unresolved_output_notices(cursor.as_deref(), limit)
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    pub fn acknowledge_output_notice(
+        &self,
+        operation_id: String,
+        expected_state: crate::output_ledger::OutputState,
+    ) -> ServiceResult<()> {
+        self.call(move |worker| {
+            worker
+                .store
+                .acknowledge_output_notice(&operation_id, expected_state)
+                .map_err(|error| error.to_string())
+        })
+    }
+
     pub fn indexed_item(&self, id: String) -> ServiceResult<Option<IndexedItem>> {
         self.call(move |worker| {
             worker.sync_once()?;

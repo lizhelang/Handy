@@ -1,3 +1,4 @@
+use crate::integration_output::{guarded_main_thread_call, main_thread_call, MainThreadError};
 use crate::managers::clipboard::ClipboardManager;
 use crate::managers::integration::IntegrationManager;
 use inputia_core::integration::events::Identifier;
@@ -96,6 +97,69 @@ pub async fn get_unified_output_receipt(
     .map_err(|_| "receipt lookup worker failed".to_owned())?
 }
 
+#[derive(Clone, Debug, Serialize, Type)]
+pub struct UnifiedOutputNotice {
+    pub operation_id: String,
+    pub item_id: String,
+    pub state: String,
+}
+
+#[derive(Clone, Debug, Serialize, Type)]
+pub struct UnifiedOutputNoticePage {
+    pub items: Vec<UnifiedOutputNotice>,
+    pub next_cursor: Option<String>,
+}
+
+/// 无正文的启动恢复查询；分页不会准备或派发任何输出。
+#[tauri::command]
+#[specta::specta]
+pub async fn list_unresolved_unified_outputs(
+    manager: State<'_, Arc<IntegrationManager>>,
+    cursor: Option<String>,
+    limit: Option<u32>,
+) -> Result<UnifiedOutputNoticePage, String> {
+    let service = manager.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let page = service.unresolved_output_notices(cursor, limit.unwrap_or(50))?;
+        Ok(UnifiedOutputNoticePage {
+            items: page
+                .items
+                .into_iter()
+                .map(|notice| UnifiedOutputNotice {
+                    state: output_result(notice.operation_id.clone(), notice.state).status,
+                    operation_id: notice.operation_id,
+                    item_id: notice.item_id,
+                })
+                .collect(),
+            next_cursor: page.next_cursor,
+        })
+    })
+    .await
+    .map_err(|_| "output notice lookup worker failed".to_owned())?
+}
+
+/// 用户关闭提示只记录已读；未知输出仍不可自动重试。
+#[tauri::command]
+#[specta::specta]
+pub async fn acknowledge_unified_output_notice(
+    manager: State<'_, Arc<IntegrationManager>>,
+    operation_id: String,
+    expected_state: String,
+) -> Result<(), String> {
+    let state = match expected_state.as_str() {
+        "pending_target" => OutputState::PendingTarget,
+        "uncertain" => OutputState::Uncertain,
+        "rejected" => OutputState::Rejected,
+        _ => return Err("invalid output notice state".into()),
+    };
+    let service = manager.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service.acknowledge_output_notice(operation_id, state)
+    })
+    .await
+    .map_err(|_| "output notice acknowledgment worker failed".to_owned())?
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn retranscribe_unified_history_item(
@@ -145,52 +209,6 @@ fn output_result(operation_id: String, state: OutputState) -> UnifiedOutputResul
         }
         .into(),
     }
-}
-
-enum MainThreadError {
-    NotStarted,
-    Unknown,
-}
-
-impl From<MainThreadError> for String {
-    fn from(value: MainThreadError) -> Self {
-        match value {
-            MainThreadError::NotStarted => "output task cancelled before starting",
-            MainThreadError::Unknown => "output task response is unknown",
-        }
-        .into()
-    }
-}
-
-fn guarded_main_thread_call<T: Send + 'static>(
-    app: &AppHandle,
-    work: impl FnOnce(crate::dispatch_gate::DispatchGate) -> T + Send + 'static,
-) -> Result<T, MainThreadError> {
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    let gate = crate::dispatch_gate::DispatchGate::new(std::time::Duration::from_secs(3));
-    let queued = gate.clone();
-    app.run_on_main_thread(move || {
-        if queued.start() {
-            let _ = sender.send(work(queued));
-        }
-    })
-    .map_err(|_| MainThreadError::NotStarted)?;
-    receiver
-        .recv_timeout(std::time::Duration::from_secs(3))
-        .map_err(|_| {
-            if gate.cancel_pending() {
-                MainThreadError::NotStarted
-            } else {
-                MainThreadError::Unknown
-            }
-        })
-}
-
-fn main_thread_call<T: Send + 'static>(
-    app: &AppHandle,
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, String> {
-    guarded_main_thread_call(app, |_| work()).map_err(String::from)
 }
 
 #[tauri::command]

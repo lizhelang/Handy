@@ -248,11 +248,11 @@ impl HostShortcutBroker {
                 debug!("Voice policy unavailable and no active host session; holding shortcut");
                 return ShortcutRouting::HostPending;
             }
-            // Ready policy but no host lease: fall back to local start/stop + paste.
+            // 策略就绪但无 Host 租约：走本地录音及平台输出账本，原字段不明则保留待插入。
             // Blocking here deadlocks Option+Space when AX cannot observe the focused
             // field (common in Electron) while Inputia remains selected.
             let _ = current_source;
-            debug!("No ready Inputia host target lease for voice shortcut; using legacy path");
+            debug!("No ready Inputia host target lease; using guarded platform voice output");
             return ShortcutRouting::Legacy;
         };
         if active.is_none() && !is_pressed {

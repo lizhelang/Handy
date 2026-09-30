@@ -859,6 +859,10 @@ impl ShortcutAction for TranscribeAction {
         let owned_voice = app
             .try_state::<TranscriptionCoordinator>()
             .and_then(|coordinator| coordinator.voice_output_context());
+        #[cfg(target_os = "macos")]
+        let platform_voice = app
+            .try_state::<TranscriptionCoordinator>()
+            .and_then(|coordinator| coordinator.take_platform_output_context());
 
         set_tray_state(app, TrayIconState::Transcribing);
         // Stop should give immediate visual feedback. Live streaming can keep
@@ -1033,15 +1037,18 @@ impl ShortcutAction for TranscribeAction {
                                 error!("Failed to save history entry: {}", err);
                             }
 
-                            if let Err(error) = input_permission_epoch
-                                .as_ref()
-                                .map_err(Clone::clone)
-                                .and_then(|epoch| crate::input_permission::check_epoch(*epoch))
-                            {
-                                debug!("Discarding stale transcription output: {error}");
-                                utils::hide_recording_overlay(&ah);
-                                set_tray_state(&ah, TrayIconState::Idle);
-                                return;
+                            // macOS Legacy 在账本中留下待插入结果，即使录音期间权限变化。
+                            if owned_voice.is_some() || cfg!(not(target_os = "macos")) {
+                                if let Err(error) = input_permission_epoch
+                                    .as_ref()
+                                    .map_err(Clone::clone)
+                                    .and_then(|epoch| crate::input_permission::check_epoch(*epoch))
+                                {
+                                    debug!("Discarding stale transcription output: {error}");
+                                    utils::hide_recording_overlay(&ah);
+                                    set_tray_state(&ah, TrayIconState::Idle);
+                                    return;
+                                }
                             }
                             if let Some(start) = owned_voice {
                                 // 归属在Stop时冻结；准备失败也不能落入平台paste成为第二所有者。
@@ -1072,52 +1079,107 @@ impl ShortcutAction for TranscribeAction {
                                 return;
                             }
 
-                            if processed.final_text.is_empty() {
+                            #[cfg(target_os = "macos")]
+                            {
+                                if !processed.final_text.is_empty() {
+                                    let result = match saved_entry {
+                                        Ok(entry) => {
+                                            let output_app = ah.clone();
+                                            let cancelled_audio = Arc::clone(&rm);
+                                            let cancelled = Arc::new(move || {
+                                                cancelled_audio
+                                                    .was_cancelled_since(cancel_generation)
+                                            });
+                                            tauri::async_runtime::spawn_blocking(move || {
+                                                crate::integration_output::dispatch_saved_platform_result(
+                                                    output_app, platform_voice, entry.id, processed.final_text, cancelled,
+                                                )
+                                            }).await.map_err(|_| "platform output worker interrupted".to_owned())
+                                                .and_then(|result| result)
+                                        }
+                                        Err(_) => Err("语音历史保存失败，未派发平台输出".into()),
+                                    };
+                                    match result {
+                                        Ok(output) => {
+                                            use inputia_handy_runtime::output_ledger::OutputState;
+                                            let state = match output.state {
+                                                OutputState::Confirmed => "confirmed",
+                                                OutputState::DispatchedOnly => "dispatched",
+                                                OutputState::PendingTarget
+                                                | OutputState::Prepared => "pending_target",
+                                                OutputState::Dispatched
+                                                | OutputState::Uncertain => "uncertain",
+                                                OutputState::Rejected => "rejected",
+                                            };
+                                            let _ = ah.emit(
+                                                "voice-output-result",
+                                                serde_json::json!({
+                                                    "operation_id": output.intent.operation_id,
+                                                    "item_id": output.intent.item_id,
+                                                    "state": state,
+                                                }),
+                                            );
+                                        }
+                                        Err(error) => {
+                                            error!("Platform voice output failed: {error}");
+                                            let _ = ah.emit("paste-error", ());
+                                        }
+                                    }
+                                }
                                 utils::hide_recording_overlay(&ah);
                                 set_tray_state(&ah, TrayIconState::Idle);
-                            } else {
-                                let ah_clone = ah.clone();
-                                let paste_time = Instant::now();
-                                let final_text = processed.final_text;
-                                let rm_for_paste = Arc::clone(&rm);
-                                let permission_epoch = input_permission_epoch;
-                                ah.run_on_main_thread(move || {
-                                    let _permission_scope = match permission_epoch
-                                        .and_then(crate::input_permission::RequestScope::enter)
-                                    {
-                                        Ok(scope) => scope,
-                                        Err(error) => {
-                                            debug!("Discarding stale queued paste: {error}");
+                            }
+                            #[cfg(not(target_os = "macos"))]
+                            {
+                                if processed.final_text.is_empty() {
+                                    utils::hide_recording_overlay(&ah);
+                                    set_tray_state(&ah, TrayIconState::Idle);
+                                } else {
+                                    let ah_clone = ah.clone();
+                                    let paste_time = Instant::now();
+                                    let final_text = processed.final_text;
+                                    let rm_for_paste = Arc::clone(&rm);
+                                    let permission_epoch = input_permission_epoch;
+                                    ah.run_on_main_thread(move || {
+                                        let _permission_scope = match permission_epoch
+                                            .and_then(crate::input_permission::RequestScope::enter)
+                                        {
+                                            Ok(scope) => scope,
+                                            Err(error) => {
+                                                debug!("Discarding stale queued paste: {error}");
+                                                utils::hide_recording_overlay(&ah_clone);
+                                                set_tray_state(&ah_clone, TrayIconState::Idle);
+                                                return;
+                                            }
+                                        };
+                                        if rm_for_paste.was_cancelled_since(cancel_generation) {
+                                            debug!(
+                                                "Transcription operation cancelled before paste"
+                                            );
                                             utils::hide_recording_overlay(&ah_clone);
                                             set_tray_state(&ah_clone, TrayIconState::Idle);
                                             return;
                                         }
-                                    };
-                                    if rm_for_paste.was_cancelled_since(cancel_generation) {
-                                        debug!("Transcription operation cancelled before paste");
+
+                                        match utils::paste(final_text, ah_clone.clone()) {
+                                            Ok(()) => debug!(
+                                                "Text pasted successfully in {:?}",
+                                                paste_time.elapsed()
+                                            ),
+                                            Err(e) => {
+                                                error!("Failed to paste transcription: {}", e);
+                                                let _ = ah_clone.emit("paste-error", ());
+                                            }
+                                        }
                                         utils::hide_recording_overlay(&ah_clone);
                                         set_tray_state(&ah_clone, TrayIconState::Idle);
-                                        return;
-                                    }
-
-                                    match utils::paste(final_text, ah_clone.clone()) {
-                                        Ok(()) => debug!(
-                                            "Text pasted successfully in {:?}",
-                                            paste_time.elapsed()
-                                        ),
-                                        Err(e) => {
-                                            error!("Failed to paste transcription: {}", e);
-                                            let _ = ah_clone.emit("paste-error", ());
-                                        }
-                                    }
-                                    utils::hide_recording_overlay(&ah_clone);
-                                    set_tray_state(&ah_clone, TrayIconState::Idle);
-                                })
-                                .unwrap_or_else(|e| {
-                                    error!("Failed to run paste on main thread: {:?}", e);
-                                    utils::hide_recording_overlay(&ah);
-                                    set_tray_state(&ah, TrayIconState::Idle);
-                                });
+                                    })
+                                    .unwrap_or_else(|e| {
+                                        error!("Failed to run paste on main thread: {:?}", e);
+                                        utils::hide_recording_overlay(&ah);
+                                        set_tray_state(&ah, TrayIconState::Idle);
+                                    });
+                                }
                             }
                         }
                         Err(err) => {
