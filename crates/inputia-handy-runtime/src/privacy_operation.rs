@@ -29,6 +29,7 @@ pub struct DomainReceipts {
     pub integration: bool,
     pub personalization: bool,
     pub readers: bool,
+    pub legacy_memory: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PrivacyOperation {
@@ -39,6 +40,7 @@ pub struct PrivacyOperation {
     pub state: PrivacyState,
     pub domain_receipts: DomainReceipts,
     pub failure: Option<String>,
+    pub coverage: crate::legacy_memory::MemoryCoverage,
 }
 impl PrivacyRequest {
     pub fn validate(&self) -> Result<()> {
@@ -77,7 +79,29 @@ fn err(_: rusqlite::Error) -> String {
 }
 pub(crate) fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS privacy_operations(operation_id TEXT PRIMARY KEY,scope TEXT NOT NULL,expected_epoch INTEGER NOT NULL,payload BLOB,digest BLOB NOT NULL,integration_digest BLOB NOT NULL,epoch INTEGER NOT NULL,personalization_epoch INTEGER,failure TEXT,completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN(0,1)));
- CREATE TABLE IF NOT EXISTS privacy_readers(reader_id TEXT PRIMARY KEY,epoch INTEGER NOT NULL,settled INTEGER NOT NULL DEFAULT 0 CHECK(settled IN(0,1)));").map_err(err)
+ CREATE TABLE IF NOT EXISTS privacy_readers(reader_id TEXT PRIMARY KEY,epoch INTEGER NOT NULL,settled INTEGER NOT NULL DEFAULT 0 CHECK(settled IN(0,1)));").map_err(err)?;
+    let columns: Vec<String> = db
+        .prepare("PRAGMA table_info(privacy_operations)")
+        .map_err(err)?
+        .query_map([], |r| r.get(1))
+        .map_err(err)?
+        .collect::<std::result::Result<_, _>>()
+        .map_err(err)?;
+    for (name, ty) in [
+        ("required_legacy", "INTEGER NOT NULL DEFAULT 0"),
+        ("coverage_version", "INTEGER NOT NULL DEFAULT 1"),
+        ("legacy_domain_uuid", "TEXT"),
+        ("legacy_epoch", "INTEGER"),
+    ] {
+        if !columns.iter().any(|v| v == name) {
+            db.execute(
+                &format!("ALTER TABLE privacy_operations ADD COLUMN {name} {ty}"),
+                [],
+            )
+            .map_err(err)?;
+        }
+    }
+    Ok(())
 }
 pub(crate) fn existing(
     db: &Connection,
@@ -128,6 +152,7 @@ pub(crate) fn accept(
     let mut sealed = nonce.to_vec();
     sealed.extend(payload);
     db.execute("INSERT INTO privacy_operations(operation_id,scope,expected_epoch,payload,digest,integration_digest,epoch) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![request.operation_id,request.kind(),request.expected_epoch,sealed,request.digest(key)?,integration_digest,epoch]).map_err(err)?;
+    db.execute("UPDATE privacy_operations SET required_legacy=COALESCE((SELECT CAST(value AS INTEGER) FROM integration_meta WHERE key='memory_required'),0),coverage_version=2,legacy_domain_uuid=(SELECT value FROM integration_meta WHERE key='memory_domain_uuid') WHERE operation_id=?1",[&request.operation_id]).map_err(err)?;
     Ok(())
 }
 pub(crate) fn request(db: &Connection, id: &str, key: &[u8]) -> Result<PrivacyRequest> {
@@ -198,7 +223,19 @@ pub(crate) fn get(db: &Connection, id: &str) -> Result<PrivacyOperation> {
         )
         .map_err(err)?;
     let integration = failure.as_deref() != Some("privacy_integration_unverified");
-    let personalization = personal.is_some() && failure.is_none();
+    let (required, legacy_epoch, version) = legacy_evidence(db, id)?;
+    let personalization = personal.is_some() && failure.as_deref().is_none_or(legacy_failure);
+    let legacy = required
+        && legacy_epoch == Some(epoch)
+        && version == 2
+        && !failure.as_deref().is_some_and(legacy_failure);
+    let coverage = if !required {
+        crate::legacy_memory::MemoryCoverage::PrimaryOnly
+    } else if version < 2 {
+        crate::legacy_memory::MemoryCoverage::LegacyCoverageUnresolved
+    } else {
+        crate::legacy_memory::MemoryCoverage::AllDomains
+    };
     Ok(PrivacyOperation {
         operation_id: id.into(),
         scope,
@@ -206,7 +243,7 @@ pub(crate) fn get(db: &Connection, id: &str) -> Result<PrivacyOperation> {
         epoch,
         state: if failure.is_some() {
             PrivacyState::PartialFailure
-        } else if completed && personalization && readers {
+        } else if completed && personalization && readers && (!required || legacy) {
             PrivacyState::Completed
         } else if personal.is_some() {
             PrivacyState::Processing
@@ -217,8 +254,10 @@ pub(crate) fn get(db: &Connection, id: &str) -> Result<PrivacyOperation> {
             integration,
             personalization,
             readers,
+            legacy_memory: legacy,
         },
         failure,
+        coverage,
     })
 }
 pub(crate) fn list(db: &Connection) -> Result<Vec<PrivacyOperation>> {
@@ -259,7 +298,7 @@ pub(crate) fn fail(db: &Connection, id: &str, reason: &str) -> Result<()> {
     Ok(())
 }
 pub(crate) fn settle(db: &Connection, id: &str) -> Result<()> {
-    db.execute("UPDATE privacy_operations SET completed=1,failure=NULL,payload=NULL WHERE operation_id=?1 AND personalization_epoch IS NOT NULL AND failure IS NULL AND NOT EXISTS(SELECT 1 FROM privacy_readers WHERE epoch<privacy_operations.epoch AND settled=0)",[id]).map_err(err)?;
+    db.execute("UPDATE privacy_operations SET completed=1,failure=NULL,payload=NULL WHERE operation_id=?1 AND personalization_epoch IS NOT NULL AND (required_legacy=0 OR (coverage_version=2 AND legacy_epoch=epoch AND legacy_domain_uuid IS NOT NULL)) AND failure IS NULL AND NOT EXISTS(SELECT 1 FROM privacy_readers WHERE epoch<privacy_operations.epoch AND settled=0)",[id]).map_err(err)?;
     Ok(())
 }
 pub(crate) fn reader_ids(db: &Connection) -> Result<Vec<String>> {
@@ -290,10 +329,102 @@ pub fn ensure_readable(root: &std::path::Path) -> Result<()> {
     let installed:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='privacy_operations' AND type='table')",[],|r|r.get(0)).map_err(err)?;
     if installed {
         let audit:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM integration_meta WHERE key='privacy_audit_pending' AND value='1')",[],|r|r.get(0)).map_err(err)?;
-        if audit || has_pending(&db)? {
+        if audit || has_primary_pending(&db)? {
             return Err("privacy_operation_pending".into());
         }
     }
+    Ok(())
+}
+fn legacy_failure(reason: &str) -> bool {
+    reason.starts_with("memory_") || reason == "legacy_coverage_unresolved"
+}
+pub(crate) fn has_primary_pending(db: &Connection) -> Result<bool> {
+    let mut q=db.prepare("SELECT operation_id,personalization_epoch,failure,epoch FROM privacy_operations WHERE completed=0").map_err(err)?;
+    let rows = q
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<u64>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, u64>(3)?,
+            ))
+        })
+        .map_err(err)?;
+    for row in rows {
+        let (_id, personal, failure, epoch) = row.map_err(err)?;
+        if personal.is_none()
+            || failure
+                .as_deref()
+                .is_some_and(|reason| !legacy_failure(reason))
+        {
+            return Ok(true);
+        }
+        let readers: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM privacy_readers WHERE epoch<?1 AND settled=0)",
+                [epoch],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        if readers {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+pub(crate) fn configure_legacy(
+    db: &Connection,
+    required: bool,
+    domain: Option<&str>,
+) -> Result<()> {
+    if !required {
+        return Ok(());
+    }
+    db.execute("INSERT INTO integration_meta VALUES('memory_required','1') ON CONFLICT(key) DO UPDATE SET value='1'",[]).map_err(err)?;
+    if let Some(domain) = domain {
+        let previous: Option<String> = db
+            .query_row(
+                "SELECT value FROM integration_meta WHERE key='memory_domain_uuid'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(err)?;
+        if previous.as_deref().is_some_and(|old| old != domain) {
+            return Err("memory_domain_conflict".into());
+        }
+        db.execute(
+            "INSERT OR IGNORE INTO integration_meta VALUES('memory_domain_uuid',?1)",
+            [domain],
+        )
+        .map_err(err)?;
+    }
+    db.execute("UPDATE privacy_operations SET required_legacy=1,coverage_version=CASE WHEN payload IS NULL THEN 1 ELSE 2 END,completed=0,failure=CASE WHEN payload IS NULL THEN 'legacy_coverage_unresolved' ELSE failure END WHERE required_legacy=0",[]).map_err(err)?;
+    Ok(())
+}
+pub(crate) fn legacy_evidence(db: &Connection, id: &str) -> Result<(bool, Option<u64>, u32)> {
+    db.query_row("SELECT required_legacy,legacy_epoch,coverage_version FROM privacy_operations WHERE operation_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)
+}
+pub(crate) fn legacy_domain(db: &Connection, id: &str) -> Result<Option<String>> {
+    db.query_row(
+        "SELECT legacy_domain_uuid FROM privacy_operations WHERE operation_id=?1",
+        [id],
+        |r| r.get(0),
+    )
+    .map_err(err)
+}
+pub(crate) fn bind_legacy(db: &Connection, id: &str, domain: &str) -> Result<()> {
+    if legacy_domain(db, id)?
+        .as_deref()
+        .is_some_and(|old| old != domain)
+    {
+        return Err("memory_domain_conflict".into());
+    }
+    db.execute("UPDATE privacy_operations SET legacy_domain_uuid=?2 WHERE operation_id=?1 AND payload IS NOT NULL AND coverage_version=2",params![id,domain]).map_err(err)?;
+    Ok(())
+}
+pub(crate) fn legacy_receipt(db: &Connection, id: &str, epoch: u64) -> Result<()> {
+    db.execute("UPDATE privacy_operations SET legacy_epoch=?2,failure=NULL WHERE operation_id=?1 AND epoch=?2 AND legacy_domain_uuid IS NOT NULL AND coverage_version=2",params![id,epoch]).map_err(err)?;
     Ok(())
 }
 #[cfg(test)]

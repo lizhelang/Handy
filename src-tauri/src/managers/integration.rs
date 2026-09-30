@@ -42,11 +42,26 @@ impl IntegrationManager {
         let profile_id = crate::candidate_profile::current()
             .map(|profile| profile.profile_id.clone())
             .unwrap_or_else(|| "handy-local".into());
-        let service = HistoryService::start(root, profile_id, move |generation| {
-            if (UnifiedHistoryUpdate { generation }).emit(&app).is_err() {
-                log::warn!("Unable to notify unified history change");
-            }
-        })
+        let memory_context = crate::candidate_profile::current()
+            .map(|profile| {
+                inputia_handy_runtime::legacy_memory::LegacyMemoryContext::handoff_required(
+                    profile.inputia_root.join("inputia_memory.db"),
+                    profile.profile_id.clone(),
+                )
+            })
+            .unwrap_or_else(
+                inputia_handy_runtime::legacy_memory::LegacyMemoryContext::unconfigured,
+            );
+        let service = HistoryService::start_with_memory(
+            root,
+            profile_id,
+            memory_context,
+            move |generation| {
+                if (UnifiedHistoryUpdate { generation }).emit(&app).is_err() {
+                    log::warn!("Unable to notify unified history change");
+                }
+            },
+        )
         .map_err(anyhow::Error::msg)?;
         // start 只创建后台线程；确认实际数据库/密钥初始化成功后，外层才能提交启动迁移标记。
         service.policy_epoch().map_err(anyhow::Error::msg)?;

@@ -1,0 +1,153 @@
+[
+  {
+    "request": {
+      "request_id": "request-1",
+      "client_instance": "host-1",
+      "server_instance": "server-1",
+      "policy_epoch": 2,
+      "memory_domain": {
+        "kind": "query",
+        "query_id": "query-1",
+        "query_generation": 9007199254740993,
+        "target": {
+          "target_id": "field-1",
+          "host_instance": "host-1",
+          "controller_id": "controller-1",
+          "activation_generation": 3,
+          "field_id": "field-1",
+          "selection_generation": 5,
+          "composition_generation": 8,
+          "source_app": "com.example.editor"
+        },
+        "composing": "ni/hao",
+        "query": {
+          "kind": "rank",
+          "candidate_texts": [
+            "你好",
+            "a\"b/c",
+            "emoji🙂"
+          ]
+        }
+      }
+    },
+    "sha256": "5cf506c72fd461a73c89d37be28fbb9d9e03691b45ca608c280f66a1e96e436e"
+  },
+  {
+    "request": {
+      "request_id": "request-1",
+      "client_instance": "host-1",
+      "server_instance": "server-1",
+      "policy_epoch": 2,
+      "memory_domain": {
+        "kind": "query",
+        "query_id": "query-1",
+        "query_generation": 9007199254740993,
+        "target": {
+          "target_id": "field-1",
+          "host_instance": "host-1",
+          "controller_id": "controller-1",
+          "activation_generation": 3,
+          "field_id": "field-1",
+          "selection_generation": 5,
+          "composition_generation": 8,
+          "source_app": "com.example.editor"
+        },
+        "composing": "ni/hao",
+        "query": {
+          "kind": "english_completion",
+          "prefix": "In",
+          "limit": 5
+        }
+      }
+    },
+    "sha256": "3b60f07fcce9fd2e5b9e0ef9d32fafff46cb752d6bcbd3cafbacad9f542b5e9e"
+  },
+  {
+    "request": {
+      "request_id": "request-1",
+      "client_instance": "host-1",
+      "server_instance": "server-1",
+      "policy_epoch": 2,
+      "memory_domain": {
+        "kind": "query",
+        "query_id": "query-1",
+        "query_generation": 9007199254740993,
+        "target": {
+          "target_id": "field-1",
+          "host_instance": "host-1",
+          "controller_id": "controller-1",
+          "activation_generation": 3,
+          "field_id": "field-1",
+          "selection_generation": 5,
+          "composition_generation": 8,
+          "source_app": "com.example.editor"
+        },
+        "composing": "ni/hao",
+        "query": {
+          "kind": "completion",
+          "prefix": "中文/\"",
+          "limit": 7
+        }
+      }
+    },
+    "sha256": "2639fb07671bc3bf511e7df0c57da2298b69c9a92daf14cc6fc861107e96aa02"
+  },
+  {
+    "request": {
+      "request_id": "request-1",
+      "client_instance": "host-1",
+      "server_instance": "server-1",
+      "policy_epoch": 2,
+      "memory_domain": {
+        "kind": "query",
+        "query_id": "query-1",
+        "query_generation": 9007199254740993,
+        "target": {
+          "target_id": "field-1",
+          "host_instance": "host-1",
+          "controller_id": "controller-1",
+          "activation_generation": 3,
+          "field_id": "field-1",
+          "selection_generation": 5,
+          "composition_generation": 8,
+          "source_app": null
+        },
+        "composing": "ni/hao",
+        "query": {
+          "kind": "clipboard",
+          "limit": 128
+        }
+      }
+    },
+    "sha256": "1e98ffef16913c04d516191d681a22c4089880d6538b8b9f08220bf187355d64"
+  },
+  {
+    "request": {
+      "request_id": "request-1",
+      "client_instance": "host-1",
+      "server_instance": "server-1",
+      "policy_epoch": 2,
+      "memory_domain": {
+        "kind": "query",
+        "query_id": "query-1",
+        "query_generation": 9007199254740993,
+        "target": {
+          "target_id": "field-1",
+          "host_instance": "host-1",
+          "controller_id": "controller-1",
+          "activation_generation": 3,
+          "field_id": "field-1",
+          "selection_generation": 5,
+          "composition_generation": 8,
+          "source_app": "com.example.editor"
+        },
+        "composing": "ni/hao",
+        "query": {
+          "kind": "voice_hotwords",
+          "limit": 12
+        }
+      }
+    },
+    "sha256": "ff09bc7c837a9e30076d37ac8f31c8f432e41c5c90910c9a641c22a55320622e"
+  }
+]

@@ -186,6 +186,18 @@ export function PersonalizationPanel() {
               ),
             })}
           </p>
+          <p>
+            {t("personalization.privacy.legacyReceipt", {
+              state: t(
+                operation.domain_receipts.legacy_memory
+                  ? "personalization.privacy.done"
+                  : "personalization.privacy.waiting",
+              ),
+            })}
+          </p>
+          <p className="mt-1 text-xs opacity-70">
+            {t(`personalization.privacy.coverage.${operation.coverage}`)}
+          </p>
           {operation.failure &&
             operation.failure !== "personalization_unavailable" &&
             operation.failure !== "privacy_verification_pending" && (

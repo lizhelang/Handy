@@ -18,8 +18,10 @@ export interface PrivacyOperation {
     integration: boolean;
     personalization: boolean;
     readers: boolean;
+    legacy_memory: boolean;
   };
   failure: string | null;
+  coverage: "primary_only" | "all_domains" | "legacy_coverage_unresolved";
 }
 export interface PrivacyStatus {
   epoch: number;

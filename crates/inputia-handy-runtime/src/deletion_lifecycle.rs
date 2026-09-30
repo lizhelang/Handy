@@ -69,6 +69,16 @@ pub enum AttachmentCleanup {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum LegacyMemoryCleanup {
+    NotConfigured,
+    Pending,
+    Completed,
+    Blocked,
+    CoverageUnresolved,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DeleteFailure {
     SourceIdentity,
     SourceRevision,
@@ -83,6 +93,7 @@ pub struct DeleteRecord {
     pub request: DeleteRequest,
     pub state: DeleteState,
     pub attachment_cleanup: AttachmentCleanup,
+    pub legacy_memory_cleanup: LegacyMemoryCleanup,
     pub last_failure: Option<DeleteFailure>,
 }
 
@@ -105,35 +116,56 @@ pub(crate) fn initialize(conn: &Connection) -> StoreResult<()> {
     if upgrade {
         conn.execute_batch("INSERT INTO integration_deletion_operations SELECT * FROM integration_deletion_operations_v1;DROP TABLE integration_deletion_operations_v1;")?;
     }
+    let columns: Vec<String> = conn
+        .prepare("PRAGMA table_info(integration_deletion_operations)")?
+        .query_map([], |r| r.get(1))?
+        .collect::<rusqlite::Result<_>>()?;
+    if !columns.iter().any(|v| v == "legacy_memory_cleanup") {
+        conn.execute("ALTER TABLE integration_deletion_operations ADD COLUMN legacy_memory_cleanup TEXT NOT NULL DEFAULT 'coverage_unresolved'",[])?;
+    }
     conn.execute_batch("CREATE INDEX IF NOT EXISTS integration_deletion_pending ON integration_deletion_operations(state,operation_id);")?;
     Ok(())
 }
 
+struct DeletionRow {
+    digest: Vec<u8>,
+    request_json: String,
+    state: String,
+    attachment_cleanup: String,
+    failure: Option<String>,
+    legacy: String,
+}
+
 pub(crate) fn get(conn: &Connection, operation_id: &str) -> StoreResult<Option<DeleteRecord>> {
-    let row: Option<(Vec<u8>, String, String, String, Option<String>)> = conn
+    let row: Option<DeletionRow> = conn
         .query_row(
-            "SELECT request_digest,request_json,state,attachment_cleanup,last_failure
+            "SELECT request_digest,request_json,state,attachment_cleanup,last_failure,legacy_memory_cleanup
          FROM integration_deletion_operations WHERE operation_id=?1",
             [operation_id],
             |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
+                Ok(DeletionRow {
+                    digest:row.get(0)?,request_json:row.get(1)?,state:row.get(2)?,
+                    attachment_cleanup:row.get(3)?,failure:row.get(4)?,legacy:row.get(5)?,
+                })
             },
         )
         .optional()?;
     row.map(
-        |(digest, request_json, state, attachment_cleanup, failure)| {
+        |DeletionRow {
+             digest,
+             request_json,
+             state,
+             attachment_cleanup,
+             failure,
+             legacy,
+         }| {
             let request: DeleteRequest = serde_json::from_str(&request_json)?;
             if request.operation_id != operation_id || request.digest()? != digest {
                 return Err(StoreError::Invalid("deletion request digest conflict"));
             }
             Ok(DeleteRecord {
                 request,
+                legacy_memory_cleanup: serde_json::from_value(serde_json::Value::String(legacy))?,
                 state: serde_json::from_value(serde_json::Value::String(state))?,
                 attachment_cleanup: serde_json::from_value(serde_json::Value::String(
                     attachment_cleanup,
@@ -161,11 +193,23 @@ pub(crate) fn prepare(conn: &Connection, request: &DeleteRequest) -> StoreResult
     conn.execute("INSERT INTO integration_deletion_operations(operation_id,request_digest,request_json,state,attachment_cleanup)
         VALUES(?1,?2,?3,'requested','not_started')",
         params![request.operation_id,digest,serde_json::to_string(request)?])?;
+    let required: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM integration_meta WHERE key='memory_required' AND value='1')",
+        [],
+        |r| r.get(0),
+    )?;
+    let legacy = if required {
+        LegacyMemoryCleanup::Pending
+    } else {
+        LegacyMemoryCleanup::NotConfigured
+    };
+    legacy_cleanup(conn, &request.operation_id, legacy)?;
     conn.execute("UPDATE integration_meta SET value=CAST(value AS INTEGER)+1 WHERE key='learning_generation'", [])?;
     Ok(DeleteRecord {
         request: request.clone(),
         state: DeleteState::Requested,
         attachment_cleanup: AttachmentCleanup::NotStarted,
+        legacy_memory_cleanup: legacy,
         last_failure: None,
     })
 }
@@ -258,4 +302,17 @@ pub(crate) fn transition(
             params![request.operation_id,state.as_str(),failure.as_ref().and_then(serde_json::Value::as_str)])?;
     }
     Ok(result)
+}
+
+pub(crate) fn legacy_cleanup(
+    conn: &Connection,
+    id: &str,
+    state: LegacyMemoryCleanup,
+) -> StoreResult<()> {
+    let value = serde_json::to_value(state)?;
+    conn.execute(
+        "UPDATE integration_deletion_operations SET legacy_memory_cleanup=?2 WHERE operation_id=?1",
+        params![id, value.as_str()],
+    )?;
+    Ok(())
 }

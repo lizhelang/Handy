@@ -1057,7 +1057,13 @@
       "done": "done",
       "waiting": "pending",
       "retry": "Retry the same forgetting operation",
-      "repair": "Completion evidence is missing or inconsistent. Personal learning stays paused until matching databases and keys are restored and verified. Original records are kept."
+      "repair": "Completion evidence is missing or inconsistent. Personal learning stays paused until matching databases and keys are restored and verified. Original records are kept.",
+      "legacyReceipt": "Legacy learning domain: {{state}}",
+      "coverage": {
+        "primary_only": "This receipt covers unified terms, personalization and registered readers only. This runtime has not taken ownership of the legacy input method learning database.",
+        "all_domains": "Completion covers unified terms, personalization, the legacy input method learning database and registered readers. Original history and explicit dictionary entries remain.",
+        "legacy_coverage_unresolved": "This historical receipt only proves the earlier two learning domains were processed. Legacy learning coverage is unresolved; its derived features are paused pending verified handoff and repair. Basic input and history remain available."
+      }
     }
   },
   "inputSettings": {

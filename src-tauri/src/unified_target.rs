@@ -1,4 +1,5 @@
-//! macOS 输出目标的进程内租约。只读取 AX 身份、角色和选区元数据，不读取正文。
+//! macOS 输出目标的进程内租约。普通目标接口只读取 AX 身份、角色和选区元数据。
+//! 独立的学习确认适配器仅在已授权的提交许可中读取有界精确范围，不读取全文。
 //!
 //! 必须在主线程建立、调用和销毁；主 CFRunLoop 必须持续运行。它不是按键路径 API。
 //! 注册表、观察器及 AX 强引用不跨 IPC；外部只能使用不可猜测的 opaque ID。
@@ -36,6 +37,13 @@ unsafe extern "C" {
     fn AXUIElementGetPid(element: Ref, pid: *mut c_int) -> c_int;
     fn AXUIElementCopyAttributeValue(element: Ref, attribute: Ref, value: *mut Ref) -> c_int;
     fn AXUIElementSetMessagingTimeout(element: Ref, timeout: f32) -> c_int;
+    fn AXUIElementCopyParameterizedAttributeValue(
+        element: Ref,
+        attribute: Ref,
+        parameter: Ref,
+        value: *mut Ref,
+    ) -> c_int;
+    fn AXValueCreate(kind: u32, value: *const c_void) -> Ref;
     fn AXValueGetTypeID() -> usize;
     fn AXValueGetType(value: Ref) -> u32;
     fn AXValueGetValue(value: Ref, kind: u32, result: *mut c_void) -> u8;
@@ -56,6 +64,9 @@ unsafe extern "C" {
     fn CFGetTypeID(value: Ref) -> usize;
     fn CFStringGetTypeID() -> usize;
     fn CFStringGetLength(value: Ref) -> isize;
+    fn CFStringGetCharacters(value: Ref, range: Selection, buffer: *mut u16);
+    fn CFNumberGetTypeID() -> usize;
+    fn CFNumberGetValue(value: Ref, kind: c_int, buffer: *mut c_void) -> u8;
     fn CFStringGetCString(value: Ref, buffer: *mut c_char, size: isize, encoding: u32) -> u8;
     fn CFStringCreateWithCString(allocator: Ref, text: *const c_char, encoding: u32) -> Ref;
     fn CFRunLoopGetMain() -> Ref;
@@ -501,6 +512,7 @@ unsafe extern "C" fn observe(_observer: Ref, element: Ref, name: Ref, context: *
 }
 
 struct Lease {
+    learning_field_instance: String,
     observer: Owned,
     _workspace: WorkspaceObservation,
     state: Box<Observation>,
@@ -611,7 +623,18 @@ impl TargetRegistry {
             focus_generation: 0,
             edit_generation: 0,
         };
+        let learning_field_instance = self
+            .leases
+            .values()
+            .find(|lease| {
+                lease.snapshot.process == snapshot.process
+                    && lease.state.field.equals(&state.field)
+                    && lease.state.window.equals(&state.window)
+            })
+            .map(|lease| lease.learning_field_instance.clone())
+            .unwrap_or_else(|| snapshot.opaque_id.clone());
         let lease = Lease {
+            learning_field_instance,
             observer,
             _workspace: workspace,
             state,
@@ -730,6 +753,140 @@ impl TargetRegistry {
         let now = Instant::now();
         self.leases.retain(|_, lease| now < lease.deadline);
         Ok(())
+    }
+}
+
+/// 学习确认专用；调用方先验证已认证owner、当前设置和权限epoch，且保持主线程查询预算。
+pub(crate) struct NativeLearningObserver<'a> {
+    registry: &'a TargetRegistry,
+    id: &'a str,
+}
+impl TargetRegistry {
+    pub(crate) fn learning_observer<'a>(&'a self, id: &'a str) -> NativeLearningObserver<'a> {
+        NativeLearningObserver { registry: self, id }
+    }
+}
+impl inputia_handy_runtime::memory_commit::LearningObserver for NativeLearningObserver<'_> {
+    fn checkpoint(
+        &mut self,
+    ) -> Result<inputia_handy_runtime::memory_commit::FieldCheckpoint, &'static str> {
+        use inputia_handy_runtime::memory_commit::{FieldCheckpoint, TextRange};
+        query_budget().map_err(|_| "memory_target_timeout")?;
+        self.registry
+            .validate_typed_field(self.id)
+            .map_err(|_| "memory_target_unverified")?;
+        let lease = self
+            .registry
+            .leases
+            .get(self.id)
+            .ok_or("memory_target_unverified")?;
+        let before_edit = lease.state.edit_generation.get();
+        let selected = selection(&lease.state.field).map_err(|_| "memory_range_unavailable")?;
+        let count = lease
+            .state
+            .field
+            .attribute(b"AXNumberOfCharacters\0")
+            .map_err(|_| "memory_range_unavailable")?;
+        let mut length = 0i64;
+        if unsafe {
+            CFGetTypeID(count.0) != CFNumberGetTypeID()
+                || CFNumberGetValue(count.0, 4, (&mut length as *mut i64).cast()) == 0
+        } || length < 0
+            || selected.location as u64 + selected.length as u64 > length as u64
+        {
+            return Err("memory_range_unavailable");
+        }
+        self.registry
+            .validate_typed_field(self.id)
+            .map_err(|_| "memory_target_unverified")?;
+        if before_edit != lease.state.edit_generation.get()
+            || selected != selection(&lease.state.field).map_err(|_| "memory_range_unavailable")?
+        {
+            return Err("memory_target_changed");
+        }
+        query_budget().map_err(|_| "memory_target_timeout")?;
+        if before_edit != lease.state.edit_generation.get()
+            || lease.state.activation.invalid.load(Ordering::SeqCst)
+            || lease.state.focus_generation.get() != lease.snapshot.focus_generation
+        {
+            return Err("memory_target_changed");
+        }
+        Ok(FieldCheckpoint {
+            field_instance: lease.learning_field_instance.clone(),
+            selection: TextRange {
+                location: selected.location as u64,
+                length: selected.length as u64,
+            },
+            document_units: length as u64,
+            focus_generation: lease.state.focus_generation.get(),
+            edit_generation: before_edit,
+        })
+    }
+    fn read_range(
+        &mut self,
+        range: inputia_handy_runtime::memory_commit::TextRange,
+    ) -> Result<Vec<u16>, &'static str> {
+        if range.length > inputia_handy_runtime::memory_commit::MAX_TEXT_BYTES as u64
+            || range.end()? > isize::MAX as u64
+        {
+            return Err("memory_range_invalid");
+        }
+        let before = self.checkpoint()?;
+        if range.end()? > before.document_units {
+            return Err("memory_range_invalid");
+        }
+        let lease = self
+            .registry
+            .leases
+            .get(self.id)
+            .ok_or("memory_target_unverified")?;
+        let native = Selection {
+            location: range.location as isize,
+            length: range.length as isize,
+        };
+        let parameter =
+            Owned::from_created(unsafe { AXValueCreate(4, (&native as *const Selection).cast()) })
+                .map_err(|_| "memory_range_unavailable")?;
+        let attribute = cf_string(b"AXStringForRange\0").map_err(|_| "memory_range_unavailable")?;
+        let mut value = ptr::null();
+        query_budget().map_err(|_| "memory_target_timeout")?;
+        let status = unsafe {
+            AXUIElementCopyParameterizedAttributeValue(
+                lease.state.field.0,
+                attribute.0,
+                parameter.0,
+                &mut value,
+            )
+        };
+        if status != 0 {
+            if !value.is_null() {
+                unsafe { CFRelease(value) };
+            }
+            return Err("memory_range_unsupported");
+        }
+        let value = Owned::from_created(value).map_err(|_| "memory_range_unavailable")?;
+        if unsafe {
+            CFGetTypeID(value.0) != CFStringGetTypeID()
+                || CFStringGetLength(value.0) != native.length
+        } {
+            return Err("memory_range_invalid");
+        }
+        let mut units = vec![0u16; range.length as usize];
+        unsafe {
+            CFStringGetCharacters(
+                value.0,
+                Selection {
+                    location: 0,
+                    length: native.length,
+                },
+                units.as_mut_ptr(),
+            )
+        };
+        if self.checkpoint()? != before {
+            return Err("memory_target_changed");
+        }
+        query_budget().map_err(|_| "memory_target_timeout")?;
+        Ok(units)
     }
 }
 

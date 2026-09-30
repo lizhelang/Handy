@@ -195,6 +195,20 @@ pub struct SnapshotView<'a> {
 }
 
 impl SnapshotView<'_> {
+    pub(crate) fn read_record(&self, record_id: &str) -> Result<Option<SnapshotRecord>> {
+        let table = self.source.table();
+        let snapshot = self.source.snapshot_sql("source_row");
+        let row:Option<(u64,Option<String>)>=self.connection.query_row(&format!("SELECT version.revision,CASE WHEN source_row.id IS NULL THEN NULL ELSE {snapshot} END FROM unified_source_versions version LEFT JOIN {table} source_row ON source_row.id=CAST(version.record_id AS INTEGER) WHERE version.record_id=?1"),[record_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+        row.map(|(revision, payload)| {
+            Ok(SnapshotRecord {
+                record_id: record_id.into(),
+                revision,
+                payload: payload.map(|p| serde_json::from_str(&p)).transpose()?,
+            })
+        })
+        .transpose()
+    }
+
     pub fn read_page(
         &self,
         after_record_id: Option<&str>,

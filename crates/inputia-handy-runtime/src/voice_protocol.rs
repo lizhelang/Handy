@@ -321,6 +321,7 @@ impl VoiceOutputRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum VoiceWireRequest {
+    Memory(crate::legacy_memory_wire::MemoryRequest),
     Personalization(crate::personalization_wire::PersonalizationRequest),
     TypedCapture(TypedCaptureRequest),
     TargetBridge(TargetBridgeRequest),

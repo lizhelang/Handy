@@ -100,23 +100,51 @@ cargo test --manifest-path crates/inputia-handy-runtime/Cargo.toml --offline --l
 普通候选抑制（reject/undo）仍保持原有上下文语义，不冒充跨域遗忘。
 
 - 接受事务在 `integration.db` 同时撤销共享贡献、保存重放屏障与域回执、推进一次全局 epoch，
-  并写入 `PrivacyOperation`。不在两个数据库之间假装拥有单一 SQLite 事务。
+  并写入 `PrivacyOperation` 的必需域集合。独立数据库分别提交，由真实回执恢复进度。
 - 个性化域独立保存 `operation_id + HMAC 请求摘要 → 本域 epoch` 回执；域提交后、协调日志更新前
   崩溃可幂等恢复。失败保留已完成进度，后台每 250 ms 尝试恢复。
 - 恢复载荷用既有学习密钥 AES-256-GCM 加密，完成后清除；操作摘要使用独立域前缀 HMAC。
   个性化旧明文遗忘标记迁移成本域密钥 HMAC，保留旧事件拒绝回执，不再次保存被遗忘正文。
-- 启动每页核验最多 32 条终态的统一域与个性化域独立回执。审计未完成时不发布“完成”；
+- 启动每页核验最多 32 条终态的所有必需域独立回执。审计未完成时不发布“完成”；
   已完成操作缺少域回执时标记部分失败并暂停学习，不重新删除后来新写入的证据。
 - Host 每秒刷新个性化策略，个人候选租约最长两秒；共享词条原有最长一秒租约也登记到协调服务。
   在线回复携带现有 `VoicePolicyBarrier`，主线程先清理候选、上下文和在途策略票据，再发送 ACK。
   ACK 只结算严格早于该 barrier epoch 的租约，避免同 Host 多连接的迟到 ACK 消除新租约。
   断连不冒充 ACK；服务重启后旧租约从启动时刻再保守等待两秒。
 
-状态为 `accepted`、`processing`、`partial_failure`、`completed`。只有两域回执及旧读者全部
+状态为 `accepted`、`processing`、`partial_failure`、`completed`。只有必需域回执及旧读者全部
 结算才显示完成。控制中心通过现有 `knowledge_request` 的 `privacy_status`、`privacy_begin`、
 `privacy_operation` 查询持久摘要，返回 operation ID、范围种类、epoch、各域状态和原因码，不返回词正文；
 超时重试必须复用原操作 ID 与参数。前端会展示启动恢复、完成范围和缺回执的修复提示。
 
-此范围移除两个学习库中的学习证据及共享贡献；原始历史、附件、公开基础词典及设置中手动添加的词条
+`coverage` 明确区分 `primary_only`（统一与个性化域）、`all_domains`（另含旧派生学习域）和
+`legacy_coverage_unresolved`。旧两域完成记录已清除恢复载荷时，不能反推出原词或补造第三域回执；
+升级后显示覆盖待修复，不自动执行范围更大的清理。第三域单独缺失交接或覆盖证据时，旧派生功能暂停，
+历史正文和基础输入仍可使用；整项操作不显示完成。
+
+此范围移除必需学习库中的学习证据及共享贡献；原始历史、附件、公开基础词典及设置中手动添加的词条
 会保留。磁盘备份、已发送给外部模型的上下文和磁盘介质物理擦除不在此操作范围。
 当前验收使用临时 SQLite、合成 socket/Swift 状态机与浏览器 IPC 夹具，不代表已安装 Host 的现场验收。
+
+## 旧派生学习域
+
+`HistoryService::start_with_memory` 接收后台解析的固定 profile 路径。`LegacyMemoryContext` 的公开生产入口
+目前只允许 `unconfigured` 或 `handoff_required`：没有 NativeAdapter 证明旧写者停止并交接所有权，
+不会打开 `inputia_memory.db`，也不会另建空库作为迁移成功证据。当前独占路径只由临时测试夹具构造。
+
+- `memory_query` 在同一个 worker job 内完成 epoch/启动审计/源同步门禁、精确 query 快照和读者登记；
+  租约最多两秒。缺域、域替换、运行中 epoch 或 generation 回退均阻止派生读取。
+- 计数沿用 Core 的 u32 饱和语义；快照 generation 从 1 开始。业务 tick 独立持久，并继承旧词与事件
+  的最高 tick，迁移后新词仍有正确的最近使用顺序。旧计数仅归于一次迁移来源，不伪造历史记录身份。
+- `memory_learn` 只接收 Rust 服务构造的 `VerifiedMemoryEvidence`，不接受客户端自报已验证。
+  operation、event、源 store/record/revision 都有幂等约束；贡献、事件和回执同事务提交。
+- `memory_import` 保留每源最多 2000 条的用户请求，每轮最多读取 128 条，贡献与游标同事务提交。
+  同源同修订再次导入不重复计数；任务绑定接受时的源库身份与 epoch，撤权后不换 epoch 自动续作。
+- 遗忘屏障使用独立命名空间和固定空白折叠/小写规范的 HMAC。显示文本保留大小写；新操作、新修订或
+  手动重导入不能复活已遗忘词。第三域提交后协调日志写入前崩溃，由原回执恢复，不二次删除新数据。
+- 源修订/墓碑先撤销旧贡献。删除摘要的 `legacy_memory_cleanup` 独立报告 `pending`、`completed`、
+  `blocked`、`coverage_unresolved` 或 `not_configured`；源/投影删除不等于第三域完成。旧迁移计数无法
+  证明属于哪条源记录时，报告来源覆盖待修复，不能把未知贡献当作已经清除。
+
+当前实现仍会在独占迁移时读取完整旧词表，并在派生查询前核对全部已登记源贡献；大库性能尚需后续有界
+审计/迁移优化。生产所有权交接、实际 Host 输入端到端验收另行完成。上述安全暂停不代表旧学习功能已上线。

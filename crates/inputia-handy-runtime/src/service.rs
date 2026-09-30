@@ -19,7 +19,7 @@ use inputia_core::integration::{
     privacy::{PrivacyContext, PrivacyPolicy},
     terms::HotwordBudget,
 };
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::{
     path::PathBuf,
     sync::{
@@ -80,12 +80,15 @@ fn mask_unverified_privacy(value: &mut crate::privacy_operation::PrivacyOperatio
             integration: false,
             personalization: false,
             readers: false,
+            legacy_memory: false,
         };
         value.failure = Some("privacy_verification_pending".into());
     }
 }
 
 struct Worker {
+    legacy_memory: crate::legacy_memory::LegacyMemory,
+    memory_deletion_cursor: Option<String>,
     privacy_root: PathBuf,
     privacy_audit_cursor: Option<String>,
     privacy_audit_complete: bool,
@@ -114,7 +117,7 @@ struct Worker {
 impl Worker {
     fn require_privacy_settled(&mut self) -> ServiceResult<()> {
         if !self.privacy_audit_complete
-            || crate::privacy_operation::has_pending(self.store.attachment_connection())?
+            || crate::privacy_operation::has_primary_pending(self.store.attachment_connection())?
         {
             Err("privacy_operation_pending".into())
         } else {
@@ -186,6 +189,48 @@ impl Worker {
                 }
             };
             privacy::personal_receipt(self.store.attachment_connection(), id, epoch)?;
+            let (required, legacy_claimed, coverage) =
+                privacy::legacy_evidence(self.store.attachment_connection(), id)?;
+            if required {
+                if coverage < 2 {
+                    return Err("legacy_coverage_unresolved".into());
+                }
+                let status = self.legacy_memory.status()?;
+                let domain = status.domain_uuid.ok_or_else(|| {
+                    status
+                        .reason
+                        .unwrap_or_else(|| "memory_handoff_required".into())
+                })?;
+                let operation = privacy::get(self.store.attachment_connection(), id)?;
+                let bound = privacy::legacy_domain(self.store.attachment_connection(), id)?;
+                if bound.is_none() && (completed || legacy_claimed.is_some()) {
+                    return Err("memory_domain_binding_missing".into());
+                }
+                if bound.as_deref().is_some_and(|old| old != domain) {
+                    return Err("memory_domain_conflict".into());
+                }
+                let received =
+                    self.legacy_memory
+                        .privacy_receipt(id, &digest, operation.epoch, &domain)?;
+                if !received {
+                    if completed || legacy_claimed.is_some() {
+                        return Err("memory_privacy_receipt_missing".into());
+                    }
+                    if audit {
+                        return Ok(());
+                    }
+                    let request = privacy::request(
+                        self.store.attachment_connection(),
+                        id,
+                        &self.learning_key,
+                    )?;
+                    privacy::bind_legacy(self.store.attachment_connection(), id, &domain)?;
+                    self.legacy_memory
+                        .apply_privacy(&request, &digest, operation.epoch)?;
+                }
+                privacy::bind_legacy(self.store.attachment_connection(), id, &domain)?;
+                privacy::legacy_receipt(self.store.attachment_connection(), id, operation.epoch)?;
+            }
             privacy::settle(self.store.attachment_connection(), id)
         })();
         if let Err(reason) = result {
@@ -431,6 +476,7 @@ impl Worker {
                 self.store
                     .transition_deletion(&request, DeleteState::ProjectionRevoked, None)
                     .map_err(|e| e.to_string())?;
+                self.settle_memory_deletion(&request)?;
                 self.attachments
                     .schedule_deletion(self.store.attachment_connection(), &request)
                     .map_err(|e| e.to_string())?;
@@ -467,6 +513,7 @@ impl Worker {
         } else {
             Ok(())
         };
+        self.recover_memory_deletion()?;
         self.next_deletion_recovery = Instant::now() + Duration::from_millis(250);
         result
     }
@@ -519,6 +566,7 @@ impl Worker {
                         return Err("deletion completion evidence missing or inconsistent".into());
                     }
                     self.record_deletion_attachments(request)?;
+                    self.settle_memory_deletion(request)?;
                     self.attachments
                         .schedule_deletion(self.store.attachment_connection(), request)
                         .map_err(|e| e.to_string())?;
@@ -591,6 +639,9 @@ impl Worker {
             }
         }
         if changed {
+            let _ = self
+                .legacy_memory
+                .reconcile_projection(self.store.attachment_connection());
             self.generation = self.generation.saturating_add(1);
             (self.changed)(self.generation);
         }
@@ -640,11 +691,40 @@ impl HistoryService {
             inputia_settings::maintenance::current_user_context().ok(),
         )
     }
+    pub fn start_with_memory(
+        root: PathBuf,
+        profile_id: String,
+        context: crate::legacy_memory::LegacyMemoryContext,
+        changed: impl Fn(u64) + Send + 'static,
+    ) -> ServiceResult<Self> {
+        Self::start_with_contexts(
+            root,
+            profile_id,
+            changed,
+            inputia_settings::maintenance::current_user_context().ok(),
+            context,
+        )
+    }
     fn start_with_attachment_context(
         root: PathBuf,
         profile_id: String,
         changed: impl Fn(u64) + Send + 'static,
         maintenance_user: Option<inputia_settings::maintenance::UserContext>,
+    ) -> ServiceResult<Self> {
+        Self::start_with_contexts(
+            root,
+            profile_id,
+            changed,
+            maintenance_user,
+            crate::legacy_memory::LegacyMemoryContext::unconfigured(),
+        )
+    }
+    fn start_with_contexts(
+        root: PathBuf,
+        profile_id: String,
+        changed: impl Fn(u64) + Send + 'static,
+        maintenance_user: Option<inputia_settings::maintenance::UserContext>,
+        legacy_context: crate::legacy_memory::LegacyMemoryContext,
     ) -> ServiceResult<Self> {
         let (sender, receiver) = mpsc::sync_channel::<Job>(32);
         let stopping = Arc::new(AtomicBool::new(false));
@@ -703,6 +783,30 @@ impl HistoryService {
                     attachments
                         .recover_imports(store.attachment_connection())
                         .map_err(|e| e.to_string())?;
+                    let previous_domain: Option<String> = store
+                        .attachment_connection()
+                        .query_row(
+                            "SELECT value FROM integration_meta WHERE key='memory_domain_uuid'",
+                            [],
+                            |r| r.get(0),
+                        )
+                        .optional()
+                        .map_err(|_| "memory_binding_unavailable")?;
+                    let legacy_memory = crate::legacy_memory::LegacyMemory::open(
+                        legacy_context.clone(),
+                        key,
+                        1,
+                        previous_domain.as_deref(),
+                    )
+                    .unwrap_or_else(|reason| {
+                        crate::legacy_memory::LegacyMemory::unavailable(legacy_context, key, reason)
+                    });
+                    let status = legacy_memory.status()?;
+                    crate::privacy_operation::configure_legacy(
+                        store.attachment_connection(),
+                        legacy_memory.configured(),
+                        status.domain_uuid.as_deref(),
+                    )?;
                     crate::privacy_operation::audit_gate(store.attachment_connection(), true)?;
                     let privacy_readers =
                         crate::privacy_operation::reader_ids(store.attachment_connection())?
@@ -718,6 +822,8 @@ impl HistoryService {
                             })
                             .collect();
                     Ok(Worker {
+                        legacy_memory,
+                        memory_deletion_cursor: None,
                         privacy_root: root.clone(),
                         privacy_audit_cursor: None,
                         privacy_audit_complete: false,
@@ -750,6 +856,7 @@ impl HistoryService {
                         let recovery = privacy.or_else(|| state.recover_deletions().err());
                         state.last_error = recovery.or_else(|| state.sync_once().err());
                         state.maintain_attachments();
+                        state.maintain_memory_imports();
                     }
                     match receiver.recv_timeout(Duration::from_millis(100)) {
                         Ok(job) => job(&mut worker),
@@ -1415,7 +1522,9 @@ impl HistoryService {
     pub fn issue_privacy_reader(&self, id: String, epoch: u64) -> ServiceResult<()> {
         self.call_metadata(move |worker| {
             if worker.store.policy_epoch().map_err(|e| e.to_string())? != epoch
-                || crate::privacy_operation::has_pending(worker.store.attachment_connection())?
+                || crate::privacy_operation::has_primary_pending(
+                    worker.store.attachment_connection(),
+                )?
             {
                 return Err("privacy_epoch_revoked".into());
             }
@@ -2679,5 +2788,814 @@ mod privacy_pipeline_tests {
             .unwrap();
         assert_ne!(marker, "不留明文秘密");
         assert_eq!(marker.len(), 64);
+    }
+}
+
+impl Worker {
+    fn prepare_memory(&mut self, expected_epoch: u64) -> ServiceResult<u64> {
+        self.require_privacy_settled()?;
+        if crate::privacy_operation::has_pending(self.store.attachment_connection())? {
+            return Err("memory_privacy_pending".into());
+        }
+        let source_cleanup:bool=self.store.attachment_connection().query_row("SELECT EXISTS(SELECT 1 FROM integration_deletion_operations WHERE state='projection_revoked' AND legacy_memory_cleanup NOT IN('completed','not_configured'))",[],|r|r.get(0)).map_err(|_|"memory_deletion_journal_unavailable")?;
+        if source_cleanup {
+            return Err("memory_source_cleanup_pending".into());
+        }
+        let status = self.legacy_memory.status()?;
+        if status.state != crate::legacy_memory::MemoryDomainState::Ready {
+            return Err(status
+                .reason
+                .unwrap_or_else(|| "memory_not_configured".into()));
+        }
+        let epoch = self.store.policy_epoch().map_err(|e| e.to_string())?;
+        if epoch != expected_epoch {
+            return Err("memory_epoch_revoked".into());
+        }
+        let generation = self.source_writes.generation.load(Ordering::Acquire);
+        if self.source_writes.active.load(Ordering::Acquire) != 0 {
+            return Err("memory_source_busy".into());
+        }
+        let mut caught_up = false;
+        for _ in 0..100 {
+            if !self.sync_once()? {
+                caught_up = true;
+                break;
+            }
+        }
+        if !caught_up
+            || self.source_writes.active.load(Ordering::Acquire) != 0
+            || self.source_writes.generation.load(Ordering::Acquire) != generation
+        {
+            return Err("memory_source_changed".into());
+        }
+        self.legacy_memory
+            .reconcile_projection(self.store.attachment_connection())?;
+        self.legacy_memory.advance_epoch(epoch)?;
+        Ok(generation)
+    }
+    fn memory_evidence(
+        &mut self,
+        store: &str,
+        record: &str,
+        revision: u64,
+        epoch: u64,
+    ) -> ServiceResult<crate::legacy_memory::VerifiedMemoryEvidence> {
+        let source = self
+            .sources
+            .iter_mut()
+            .find(|s| s.store_id() == store)
+            .ok_or("memory_source_unavailable")?;
+        let origin = if source.source_table() == SourceTable::History {
+            crate::legacy_memory::MemoryOrigin::Voice
+        } else {
+            crate::legacy_memory::MemoryOrigin::Clipboard
+        };
+        let current = source
+            .memory_record(record)
+            .map_err(|_| "memory_source_unavailable")?
+            .ok_or("memory_source_deleted")?;
+        if current.revision != revision {
+            return Err("memory_source_revision".into());
+        }
+        let value = current.payload.ok_or("memory_source_deleted")?;
+        if value.content_type != crate::store::ContentType::Text {
+            return Err("memory_source_not_text".into());
+        }
+        let text = value.text.ok_or("memory_source_not_text")?;
+        let app = value.source_app.unwrap_or_default();
+        if inputia_core::AppPolicy::default().excludes(&inputia_core::AppContext::new(&app)) {
+            return Err("memory_source_private".into());
+        }
+        crate::legacy_memory::VerifiedMemoryEvidence::source(
+            store.into(),
+            record.into(),
+            revision,
+            epoch,
+            origin,
+            text,
+            app,
+        )
+    }
+    fn maintain_memory_imports(&mut self) {
+        let next = self.legacy_memory.next_import();
+        let Ok(Some(crate::legacy_memory::PendingMemoryImport {
+            request,
+            clipboard,
+            cursor,
+            store,
+        })) = next
+        else {
+            return;
+        };
+        let work = (|| -> ServiceResult<()> {
+            let epoch = self.store.policy_epoch().map_err(|e| e.to_string())?;
+            if epoch != request.expected_epoch {
+                self.legacy_memory
+                    .apply_import_page(&request, clipboard, &[], &store, epoch)?;
+                return Ok(());
+            }
+            self.prepare_memory(epoch)?;
+            let source = self
+                .sources
+                .iter_mut()
+                .find(|s| s.store_id() == store)
+                .ok_or("memory_source_unavailable")?;
+            let (header, records) = source
+                .memory_page(cursor.as_deref(), 128)
+                .map_err(|_| "memory_source_unavailable")?;
+            self.legacy_memory.apply_import_page(
+                &request,
+                clipboard,
+                &records,
+                &header.store_id,
+                epoch,
+            )?;
+            Ok(())
+        })();
+        if let Err(reason) = work {
+            // 源写入/隐私正在推进时保留游标，下一轮重试；身份冲突不换源重跑。
+            if !matches!(
+                reason.as_str(),
+                "memory_source_busy"
+                    | "memory_source_changed"
+                    | "privacy_operation_pending"
+                    | "memory_privacy_pending"
+            ) {
+                let _ = self
+                    .legacy_memory
+                    .fail_import(&request.operation_id, &reason);
+            }
+        }
+    }
+}
+impl HistoryService {
+    pub fn memory_domain_status(&self) -> ServiceResult<crate::legacy_memory::MemoryDomainStatus> {
+        self.call_metadata(|worker|{let mut status=worker.legacy_memory.status()?;
+            let unresolved:bool=worker.store.attachment_connection().query_row("SELECT EXISTS(SELECT 1 FROM privacy_operations WHERE required_legacy=1 AND coverage_version<2)",[],|r|r.get(0)).map_err(|_|"memory_coverage_unavailable")?;
+            let source_pending:bool=worker.store.attachment_connection().query_row("SELECT EXISTS(SELECT 1 FROM integration_deletion_operations WHERE state='projection_revoked' AND legacy_memory_cleanup NOT IN('completed','not_configured'))",[],|r|r.get(0)).map_err(|_|"memory_deletion_journal_unavailable")?;
+            if source_pending && status.state==crate::legacy_memory::MemoryDomainState::Ready {status.state=crate::legacy_memory::MemoryDomainState::RepairRequired;status.reason=Some("memory_source_cleanup_pending".into());}
+            if unresolved{status.coverage=crate::legacy_memory::MemoryCoverage::LegacyCoverageUnresolved;status.reason=Some("legacy_coverage_unresolved".into());}
+            Ok(status)
+        })
+    }
+    /// 正文查询和读者登记属于同一队列工作，Host不能在登记之前取得旧词权重。
+    pub fn memory_query(
+        &self,
+        query: inputia_core::memory_snapshot::MemoryQuery,
+        expected_epoch: u64,
+        reader_id: String,
+    ) -> ServiceResult<crate::legacy_memory::MemoryQueryLease> {
+        self.call(move |worker| {
+            inputia_core::integration::events::Identifier::parse(&reader_id)
+                .map_err(|_| "memory_reader_invalid")?;
+            let generation = worker.prepare_memory(expected_epoch)?;
+            let result = worker.legacy_memory.query(&query, expected_epoch)?;
+            if worker.source_writes.active.load(Ordering::Acquire) != 0
+                || worker.source_writes.generation.load(Ordering::Acquire) != generation
+            {
+                return Err("memory_source_changed".into());
+            }
+            crate::privacy_operation::issue_reader(
+                worker.store.attachment_connection(),
+                &reader_id,
+                expected_epoch,
+            )?;
+            worker.privacy_readers.insert(
+                reader_id,
+                Instant::now() + Duration::from_millis(result.max_age_ms),
+            );
+            Ok(result)
+        })
+    }
+    pub fn memory_source_evidence(
+        &self,
+        store_id: String,
+        record_id: String,
+        revision: u64,
+        epoch: u64,
+    ) -> ServiceResult<crate::legacy_memory::VerifiedMemoryEvidence> {
+        self.call(move |worker| {
+            worker.prepare_memory(epoch)?;
+            worker.memory_evidence(&store_id, &record_id, revision, epoch)
+        })
+    }
+    pub fn memory_learn(
+        &self,
+        intent: crate::legacy_memory::MemoryIntent,
+        evidence: crate::legacy_memory::VerifiedMemoryEvidence,
+    ) -> ServiceResult<crate::legacy_memory::MemoryMutationReceipt> {
+        self.call(move |worker| {
+            worker.prepare_memory(intent.expected_epoch)?;
+            let verified = if evidence.store_id.starts_with("commit:") {
+                evidence
+            } else {
+                worker.memory_evidence(
+                    &evidence.store_id,
+                    &evidence.record_id,
+                    evidence.revision,
+                    evidence.epoch,
+                )?
+            };
+            worker.legacy_memory.apply_intent(&intent, &verified)
+        })
+    }
+    pub fn memory_import(
+        &self,
+        request: crate::legacy_memory::MemoryImportRequest,
+    ) -> ServiceResult<crate::legacy_memory::MemoryImportStatus> {
+        self.call(move |worker| {
+            worker.prepare_memory(request.expected_epoch)?;
+            let history = worker
+                .sources
+                .iter()
+                .find(|s| s.source_table() == SourceTable::History)
+                .map(|s| s.store_id().to_owned());
+            let clipboard = worker
+                .sources
+                .iter()
+                .find(|s| s.source_table() == SourceTable::Clipboard)
+                .map(|s| s.store_id().to_owned());
+            worker
+                .legacy_memory
+                .begin_import(&request, history.as_deref(), clipboard.as_deref())
+        })
+    }
+    pub fn memory_operation(
+        &self,
+        operation_id: String,
+    ) -> ServiceResult<Option<crate::legacy_memory::MemoryOperationStatus>> {
+        self.call_metadata(move |worker| worker.legacy_memory.operation(&operation_id))
+    }
+}
+
+#[cfg(all(test, unix))]
+mod legacy_memory_pipeline_tests {
+    use super::*;
+    use crate::{
+        legacy_memory::*,
+        privacy_operation::{PrivacyRequest, PrivacyScope, PrivacyState},
+    };
+    fn start(root: &std::path::Path, ready: bool) -> HistoryService {
+        HistoryService::start_with_contexts(
+            root.into(),
+            "memory-fixture".into(),
+            |_| {},
+            None,
+            if ready {
+                LegacyMemoryContext::fixture(root.join("memory.db"), "memory-fixture".into())
+            } else {
+                LegacyMemoryContext::handoff_required(
+                    root.join("memory.db"),
+                    "memory-fixture".into(),
+                )
+            },
+        )
+        .unwrap()
+    }
+    fn fixture() -> (tempfile::TempDir, HistoryService) {
+        let root = tempfile::tempdir().unwrap();
+        Connection::open(root.path().join("history.db")).unwrap().execute_batch("CREATE TABLE transcription_history(id INTEGER PRIMARY KEY AUTOINCREMENT,file_name TEXT,timestamp INTEGER,saved INTEGER,title TEXT,transcription_text TEXT,post_processed_text TEXT)").unwrap();
+        Connection::open(root.path().join("clipboard.db")).unwrap().execute_batch("CREATE TABLE clipboard_history(id INTEGER PRIMARY KEY AUTOINCREMENT,content_type TEXT,full_text TEXT,title TEXT,is_favorite INTEGER,is_pinned INTEGER,created_at INTEGER,image_path TEXT,source_app TEXT)").unwrap();
+        let service = start(root.path(), true);
+        service.synchronize().unwrap();
+        (root, service)
+    }
+    fn request(id: &str) -> PrivacyRequest {
+        PrivacyRequest {
+            operation_id: id.into(),
+            expected_epoch: 1,
+            scope: PrivacyScope::ForgetTerm {
+                term: "secret".into(),
+            },
+        }
+    }
+    fn await_primary(service: &HistoryService, id: &str) {
+        for _ in 0..100 {
+            if service
+                .privacy_operation(id.into())
+                .unwrap()
+                .domain_receipts
+                .personalization
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!(
+            "primary receipt missing: {:?}",
+            service.privacy_operation(id.into()).unwrap()
+        );
+    }
+    fn complete(service: &HistoryService, id: &str) {
+        for _ in 0..100 {
+            let state = service.privacy_operation(id.into()).unwrap();
+            if state.state == PrivacyState::Completed {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!(
+            "privacy not completed: {:?}",
+            service.privacy_operation(id.into()).unwrap()
+        );
+    }
+    fn insert(service: &HistoryService, root: &std::path::Path, text: &str) -> String {
+        let guard = service.begin_source_write();
+        Connection::open(root.join("history.db")).unwrap().execute("INSERT INTO transcription_history(id,file_name,timestamp,saved,title,transcription_text) VALUES(1,'',1,0,NULL,?1)",[text]).unwrap();
+        drop(guard);
+        service.synchronize().unwrap();
+        service
+            .call_metadata(|w| Ok(w.sources[0].store_id().to_owned()))
+            .unwrap()
+    }
+    fn learn(service: &HistoryService, store: &str, epoch: u64, text: &str) {
+        let e = service
+            .memory_source_evidence(store.into(), "1".into(), 1, epoch)
+            .unwrap();
+        service
+            .memory_learn(
+                MemoryIntent {
+                    operation_id: "source-learn".into(),
+                    event_id: "source-event".into(),
+                    expected_epoch: epoch,
+                    source: MemoryOrigin::Voice,
+                    text: text.into(),
+                },
+                e,
+            )
+            .unwrap();
+    }
+    #[test]
+    fn source_revision_and_deletion_revoke_derived_weights_before_next_query() {
+        let (root, service) = fixture();
+        let store = insert(&service, root.path(), "secret");
+        learn(&service, &store, 1, "secret");
+        let q = || inputia_core::memory_snapshot::MemoryQuery::VoiceHotwords { limit: 10 };
+        assert_eq!(
+            service
+                .memory_query(q(), 1, "host".into())
+                .unwrap()
+                .terms
+                .len(),
+            1
+        );
+        let guard = service.begin_source_write();
+        Connection::open(root.path().join("history.db"))
+            .unwrap()
+            .execute(
+                "UPDATE transcription_history SET transcription_text='changed' WHERE id=1",
+                [],
+            )
+            .unwrap();
+        assert!(service.memory_query(q(), 1, "host".into()).is_err());
+        drop(guard);
+        assert!(service
+            .memory_query(q(), 1, "host".into())
+            .unwrap()
+            .terms
+            .is_empty());
+        let revision = service.query(HistoryQuery::default()).unwrap()[0].revision;
+        let e = service
+            .memory_source_evidence(store, "1".into(), revision, 1)
+            .unwrap();
+        service
+            .memory_learn(
+                MemoryIntent {
+                    operation_id: "new-revision".into(),
+                    event_id: "new-event".into(),
+                    expected_epoch: 1,
+                    source: MemoryOrigin::Voice,
+                    text: "changed".into(),
+                },
+                e,
+            )
+            .unwrap();
+        service
+            .delete_source_record(SourceTable::History, "1".into())
+            .unwrap();
+        assert!(service
+            .memory_query(q(), 1, "host".into())
+            .unwrap()
+            .terms
+            .is_empty());
+    }
+    #[test]
+    fn third_domain_and_old_reader_are_both_required_for_completion() {
+        let (root, service) = fixture();
+        let store = insert(&service, root.path(), "secret");
+        learn(&service, &store, 1, "secret");
+        service
+            .memory_query(
+                inputia_core::memory_snapshot::MemoryQuery::VoiceHotwords { limit: 10 },
+                1,
+                "host".into(),
+            )
+            .unwrap();
+        service.begin_privacy(request("all-three")).unwrap();
+        await_primary(&service, "all-three");
+        let op = service.privacy_operation("all-three".into()).unwrap();
+        assert!(op.domain_receipts.legacy_memory, "{op:?}");
+        assert!(!op.domain_receipts.readers);
+        assert_ne!(op.state, PrivacyState::Completed);
+        service
+            .acknowledge_privacy_reader("host".into(), 2)
+            .unwrap();
+        complete(&service, "all-three");
+        assert!(service
+            .memory_query(
+                inputia_core::memory_snapshot::MemoryQuery::VoiceHotwords { limit: 10 },
+                2,
+                "host".into()
+            )
+            .unwrap()
+            .terms
+            .is_empty());
+    }
+    #[test]
+    fn old_primary_completion_is_not_promoted_to_three_domain_completion() {
+        let (root, service) = fixture();
+        drop(service);
+        // 模拟升级前只有两个域的服务，没有第三域绑定或恢复载荷。
+        let db = Connection::open(root.path().join("integration.db")).unwrap();
+        db.execute(
+            "DELETE FROM integration_meta WHERE key IN('memory_required','memory_domain_uuid')",
+            [],
+        )
+        .unwrap();
+        drop(db);
+        let service = HistoryService::start_with_attachment_context(
+            root.path().into(),
+            "memory-fixture".into(),
+            |_| {},
+            None,
+        )
+        .unwrap();
+        service.synchronize().unwrap();
+        service.begin_privacy(request("old-primary")).unwrap();
+        complete(&service, "old-primary");
+        drop(service);
+        let service = start(root.path(), true);
+        let op = service.privacy_operation("old-primary".into()).unwrap();
+        assert_eq!(op.coverage, MemoryCoverage::LegacyCoverageUnresolved);
+        assert_eq!(op.state, PrivacyState::PartialFailure);
+        assert!(!op.domain_receipts.legacy_memory);
+        assert!(service.privacy_readable().is_ok());
+        assert!(service.query(HistoryQuery::default()).is_ok());
+        assert!(service
+            .memory_query(
+                inputia_core::memory_snapshot::MemoryQuery::VoiceHotwords { limit: 10 },
+                2,
+                "host".into()
+            )
+            .is_err());
+    }
+    #[test]
+    fn completed_third_receipt_missing_after_restore_is_not_replayed() {
+        let (root, service) = fixture();
+        service.begin_privacy(request("restore-old")).unwrap();
+        complete(&service, "restore-old");
+        drop(service);
+        let db = Connection::open(root.path().join("memory.db")).unwrap();
+        db.execute("DELETE FROM memory_privacy_receipts", [])
+            .unwrap();
+        db.execute(
+            "INSERT INTO inputia_terms VALUES('new-content',1,0,0,1)",
+            [],
+        )
+        .unwrap();
+        drop(db);
+        let service = start(root.path(), true);
+        let op = service.privacy_operation("restore-old".into()).unwrap();
+        assert_eq!(op.state, PrivacyState::PartialFailure);
+        assert!(!op.domain_receipts.legacy_memory);
+        assert!(service.privacy_readable().is_ok());
+        let db = Connection::open(root.path().join("memory.db")).unwrap();
+        assert_eq!(
+            db.query_row(
+                "SELECT COUNT(*) FROM inputia_terms WHERE text='new-content'",
+                [],
+                |r| r.get::<_, usize>(0)
+            )
+            .unwrap(),
+            1
+        );
+    }
+    #[test]
+    fn handoff_failure_leaves_primary_history_available_but_never_claims_complete() {
+        let (root, service) = fixture();
+        drop(service);
+        let service = start(root.path(), false);
+        service.begin_privacy(request("handoff")).unwrap();
+        await_primary(&service, "handoff");
+        let op = service.privacy_operation("handoff".into()).unwrap();
+        assert!(op.domain_receipts.personalization, "{op:?}");
+        assert!(!op.domain_receipts.legacy_memory);
+        assert_eq!(op.state, PrivacyState::PartialFailure);
+        assert!(service.privacy_readable().is_ok());
+        assert!(service.query(HistoryQuery::default()).is_ok());
+        drop(service);
+        let service = start(root.path(), true);
+        complete(&service, "handoff");
+    }
+    #[test]
+    fn default_import_processes_two_thousand_records_across_bounded_pages() {
+        let (root, service) = fixture();
+        let guard = service.begin_source_write();
+        let mut db = Connection::open(root.path().join("history.db")).unwrap();
+        let tx = db.transaction().unwrap();
+        for id in 1..=2003 {
+            tx.execute("INSERT INTO transcription_history(id,file_name,timestamp,saved,transcription_text) VALUES(?1,'',1,0,?2)",rusqlite::params![id,format!("term{id}")]).unwrap();
+        }
+        tx.commit().unwrap();
+        drop(guard);
+        let req = MemoryImportRequest {
+            operation_id: "default-import".into(),
+            expected_epoch: 1,
+            selection: MemoryImportSelection::History,
+            limit: 2000,
+        };
+        service.memory_import(req.clone()).unwrap();
+        let mut last = None;
+        for _ in 0..500 {
+            last = service.memory_operation("default-import".into()).unwrap();
+            if matches!(&last,Some(MemoryOperationStatus::Import(s)) if s.state==MemoryImportState::Completed)
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let Some(MemoryOperationStatus::Import(status)) = last else {
+            panic!("missing import receipt")
+        };
+        assert_eq!(status.state, MemoryImportState::Completed);
+        assert_eq!(status.history_imported, 2000);
+        assert_eq!(service.memory_import(req).unwrap().history_imported, 2000);
+    }
+    #[test]
+    fn committed_third_receipt_resumes_after_journal_gap_without_deleting_again() {
+        let (root, service) = fixture();
+        service.issue_privacy_reader("hold".into(), 1).unwrap();
+        service.begin_privacy(request("gap")).unwrap();
+        await_primary(&service, "gap");
+        drop(service);
+        let journal = Connection::open(root.path().join("integration.db")).unwrap();
+        journal.execute("UPDATE privacy_operations SET legacy_epoch=NULL,completed=0 WHERE operation_id='gap'",[]).unwrap();
+        drop(journal);
+        let memory = Connection::open(root.path().join("memory.db")).unwrap();
+        memory
+            .execute(
+                "INSERT INTO inputia_terms VALUES('post-commit',1,0,0,99)",
+                [],
+            )
+            .unwrap();
+        drop(memory);
+        let service = start(root.path(), true);
+        service
+            .acknowledge_privacy_reader("hold".into(), 2)
+            .unwrap();
+        complete(&service, "gap");
+        let memory = Connection::open(root.path().join("memory.db")).unwrap();
+        assert_eq!(
+            memory
+                .query_row(
+                    "SELECT COUNT(*) FROM inputia_terms WHERE text='post-commit'",
+                    [],
+                    |r| r.get::<_, usize>(0)
+                )
+                .unwrap(),
+            1
+        );
+    }
+    #[test]
+    fn forged_third_terminal_phase_is_not_a_receipt() {
+        let (root, service) = fixture();
+        drop(service);
+        let service = start(root.path(), false);
+        service.begin_privacy(request("forged-third")).unwrap();
+        await_primary(&service, "forged-third");
+        drop(service);
+        let db = Connection::open(root.path().join("integration.db")).unwrap();
+        db.execute("UPDATE privacy_operations SET legacy_epoch=epoch,completed=1,failure=NULL WHERE operation_id='forged-third'",[]).unwrap();
+        drop(db);
+        let service = start(root.path(), true);
+        let op = service.privacy_operation("forged-third".into()).unwrap();
+        assert_ne!(op.state, PrivacyState::Completed);
+        assert!(!op.domain_receipts.legacy_memory);
+        let memory = Connection::open(root.path().join("memory.db")).unwrap();
+        assert_eq!(
+            memory
+                .query_row("SELECT COUNT(*) FROM memory_privacy_receipts", [], |r| {
+                    r.get::<_, usize>(0)
+                })
+                .unwrap(),
+            0
+        );
+    }
+    #[test]
+    fn source_delete_has_independent_receipt_and_missing_receipt_is_unresolved() {
+        let (root, service) = fixture();
+        let store = insert(&service, root.path(), "source-text");
+        learn(&service, &store, 1, "source-text");
+        service
+            .delete_source_record(SourceTable::History, "1".into())
+            .unwrap();
+        let records = service
+            .call_metadata(|w| w.store.deletion_audit_page(None).map_err(|e| e.to_string()))
+            .unwrap();
+        assert_eq!(
+            records[0].legacy_memory_cleanup,
+            crate::deletion_lifecycle::LegacyMemoryCleanup::Completed
+        );
+        drop(service);
+        let db = Connection::open(root.path().join("memory.db")).unwrap();
+        db.execute("DELETE FROM memory_source_revocations", [])
+            .unwrap();
+        db.execute("INSERT INTO inputia_terms VALUES('keep-new',1,0,0,99)", [])
+            .unwrap();
+        drop(db);
+        let service = start(root.path(), true);
+        let records = service
+            .call_metadata(|w| w.store.deletion_audit_page(None).map_err(|e| e.to_string()))
+            .unwrap();
+        assert_eq!(
+            records[0].legacy_memory_cleanup,
+            crate::deletion_lifecycle::LegacyMemoryCleanup::CoverageUnresolved
+        );
+        let db = Connection::open(root.path().join("memory.db")).unwrap();
+        assert_eq!(
+            db.query_row(
+                "SELECT COUNT(*) FROM inputia_terms WHERE text='keep-new'",
+                [],
+                |r| r.get::<_, usize>(0)
+            )
+            .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn restoring_only_old_memory_file_blocks_derived_reads_without_replaying_forget() {
+        let (root, service) = fixture();
+        let store = insert(&service, root.path(), "secret");
+        learn(&service, &store, 1, "secret");
+        drop(service);
+        let old = root.path().join("old-memory.db");
+        std::fs::copy(root.path().join("memory.db"), &old).unwrap();
+        let service = start(root.path(), true);
+        service.begin_privacy(request("real-restore")).unwrap();
+        complete(&service, "real-restore");
+        drop(service);
+        std::fs::copy(&old, root.path().join("memory.db")).unwrap();
+        let service = start(root.path(), true);
+        let op = service.privacy_operation("real-restore".into()).unwrap();
+        assert_eq!(op.state, PrivacyState::PartialFailure);
+        assert!(!op.domain_receipts.legacy_memory);
+        assert!(service.privacy_readable().is_ok());
+        assert!(service
+            .memory_query(
+                inputia_core::memory_snapshot::MemoryQuery::VoiceHotwords { limit: 10 },
+                2,
+                "host".into()
+            )
+            .is_err());
+        let db = Connection::open(root.path().join("memory.db")).unwrap();
+        assert_eq!(
+            db.query_row(
+                "SELECT COUNT(*) FROM inputia_terms WHERE text='secret'",
+                [],
+                |r| r.get::<_, usize>(0)
+            )
+            .unwrap(),
+            1
+        );
+    }
+    #[test]
+    fn accepted_old_epoch_import_is_revoked_and_never_relabelled_after_clear() {
+        let (root, service) = fixture();
+        insert(&service, root.path(), "secret");
+        service
+            .call_metadata(|w| {
+                let store = w.sources[0].store_id().to_owned();
+                let req = MemoryImportRequest {
+                    operation_id: "queued-old".into(),
+                    expected_epoch: 1,
+                    selection: MemoryImportSelection::History,
+                    limit: 2000,
+                };
+                w.legacy_memory.begin_import(&req, Some(&store), None)?;
+                w.store.begin_privacy(
+                    &w.learning_key,
+                    &PrivacyRequest {
+                        operation_id: "clear-before-worker".into(),
+                        expected_epoch: 1,
+                        scope: PrivacyScope::ClearLearned {},
+                    },
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        complete(&service, "clear-before-worker");
+        let status = service.memory_operation("queued-old".into()).unwrap();
+        assert!(matches!(
+            status,
+            Some(MemoryOperationStatus::Import(MemoryImportStatus {
+                state: MemoryImportState::Revoked,
+                applied_at_epoch: 1,
+                history_imported: 0,
+                ..
+            }))
+        ));
+        assert!(service
+            .memory_query(
+                inputia_core::memory_snapshot::MemoryQuery::VoiceHotwords { limit: 10 },
+                2,
+                "host".into()
+            )
+            .unwrap()
+            .terms
+            .is_empty());
+    }
+}
+
+impl Worker {
+    fn settle_memory_deletion(&mut self, request: &DeleteRequest) -> ServiceResult<()> {
+        use crate::deletion_lifecycle::{self as deletion, LegacyMemoryCleanup as State};
+        let record = deletion::get(self.store.attachment_connection(), &request.operation_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("deletion record missing")?;
+        let state = if !self.legacy_memory.configured() {
+            State::NotConfigured
+        } else if matches!(
+            record.legacy_memory_cleanup,
+            State::NotConfigured | State::CoverageUnresolved
+        ) {
+            State::CoverageUnresolved
+        } else if record.legacy_memory_cleanup == State::Completed {
+            if self
+                .legacy_memory
+                .verify_source_revocation(request)
+                .unwrap_or(false)
+            {
+                State::Completed
+            } else {
+                State::CoverageUnresolved
+            }
+        } else {
+            match self.legacy_memory.revoke_source(request) {
+                Ok(()) => State::Completed,
+                Err(_) => State::Blocked,
+            }
+        };
+        deletion::legacy_cleanup(
+            self.store.attachment_connection(),
+            &request.operation_id,
+            state,
+        )
+        .map_err(|e| e.to_string())
+    }
+}
+
+impl Worker {
+    fn recover_memory_deletion(&mut self) -> ServiceResult<()> {
+        if !self.legacy_memory.configured() {
+            return Ok(());
+        }
+        let db = self.store.attachment_connection();
+        let mut id:Option<String>=db.query_row("SELECT operation_id FROM integration_deletion_operations WHERE state='projection_revoked' AND legacy_memory_cleanup IN('pending','blocked') AND (?1 IS NULL OR operation_id>?1) ORDER BY operation_id LIMIT 1",[self.memory_deletion_cursor.as_deref()],|r|r.get(0)).optional().map_err(|_|"memory_deletion_journal_unavailable")?;
+        if id.is_none() && self.memory_deletion_cursor.take().is_some() {
+            id=db.query_row("SELECT operation_id FROM integration_deletion_operations WHERE state='projection_revoked' AND legacy_memory_cleanup IN('pending','blocked') ORDER BY operation_id LIMIT 1",[],|r|r.get(0)).optional().map_err(|_|"memory_deletion_journal_unavailable")?;
+        }
+        let Some(id) = id else { return Ok(()) };
+        self.memory_deletion_cursor = Some(id.clone());
+        let record = crate::deletion_lifecycle::get(db, &id)
+            .map_err(|e| e.to_string())?
+            .ok_or("deletion record missing")?;
+        let request = &record.request;
+        let valid = self
+            .store
+            .deletion_projection_revoked(request)
+            .map_err(|e| e.to_string())?
+            && self
+                .sources
+                .iter_mut()
+                .find(|s| s.store_id() == request.store_id)
+                .is_some_and(|s| {
+                    s.verify_deleted_record(
+                        &request.record_id,
+                        request.expected_revision,
+                        &request.operation_id,
+                    )
+                    .unwrap_or(false)
+                });
+        if valid {
+            self.settle_memory_deletion(request)
+        } else {
+            crate::deletion_lifecycle::legacy_cleanup(
+                self.store.attachment_connection(),
+                &id,
+                crate::deletion_lifecycle::LegacyMemoryCleanup::CoverageUnresolved,
+            )
+            .map_err(|e| e.to_string())
+        }
     }
 }

@@ -1645,7 +1645,10 @@ fn available_space(path: &Path) -> Result<u64> {
             return Err(AttachmentError::Paused(PauseReason::SpaceUnavailable));
         }
         let stat = unsafe { stat.assume_init() };
-        Ok((stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64))
+        // fsblkcnt_t/c_ulong 的宽度在 macOS 和 Linux、32/64 位目标之间不同。
+        #[allow(clippy::unnecessary_cast)]
+        let bytes = (stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64);
+        Ok(bytes)
     }
     #[cfg(not(unix))]
     {
@@ -1850,7 +1853,7 @@ mod tests {
             retained: false,
         };
         f.store
-            .reconcile(&mut f.conn, &[reference.clone()])
+            .reconcile(&mut f.conn, std::slice::from_ref(&reference))
             .unwrap();
         f.delete(&reference, "delete-external");
         let _ = f.gc().unwrap();
@@ -1873,11 +1876,11 @@ mod tests {
         fs::hard_link(&path, &evil).unwrap();
         assert!(f
             .store
-            .reconcile(&mut f.conn, &[reference.clone()])
+            .reconcile(&mut f.conn, std::slice::from_ref(&reference))
             .is_err());
         fs::remove_file(&evil).unwrap();
         f.store
-            .reconcile(&mut f.conn, &[reference.clone()])
+            .reconcile(&mut f.conn, std::slice::from_ref(&reference))
             .unwrap();
         f.delete(&reference, "delete-safe");
         fs::write(&path, b"foreign replacement").unwrap();
@@ -1891,7 +1894,7 @@ mod tests {
         let mut reference = f.reference(&asset, "1");
         reference.retained = true;
         f.store
-            .reconcile(&mut f.conn, &[reference.clone()])
+            .reconcile(&mut f.conn, std::slice::from_ref(&reference))
             .unwrap();
         let export = f
             .store
@@ -1913,7 +1916,7 @@ mod tests {
             .unwrap();
         f.store = AttachmentStore::new(f.root.path()).unwrap();
         f.store
-            .reconcile(&mut f.conn, &[reference.clone()])
+            .reconcile(&mut f.conn, std::slice::from_ref(&reference))
             .unwrap();
         assert!(f.store.read_leased(&f.conn, &active).is_err());
         assert_eq!(f.store.read_leased(&f.conn, &export).unwrap(), wav());
@@ -1994,7 +1997,7 @@ mod tests {
             let asset = f.import("record");
             let reference = f.reference(&asset, "1");
             f.store
-                .reconcile(&mut f.conn, &[reference.clone()])
+                .reconcile(&mut f.conn, std::slice::from_ref(&reference))
                 .unwrap();
             f.delete(&reference, "delete");
             let original = f
@@ -2035,7 +2038,7 @@ mod tests {
         let asset = f.import("record");
         let reference = f.reference(&asset, "1");
         f.store
-            .reconcile(&mut f.conn, &[reference.clone()])
+            .reconcile(&mut f.conn, std::slice::from_ref(&reference))
             .unwrap();
         f.delete(&reference, "delete");
         fs::remove_file(
@@ -2056,7 +2059,7 @@ mod tests {
         let asset = f.import("record");
         let reference = f.reference(&asset, "1");
         f.store
-            .reconcile(&mut f.conn, &[reference.clone()])
+            .reconcile(&mut f.conn, std::slice::from_ref(&reference))
             .unwrap();
         f.delete(&reference, "delete");
         let pin = f
@@ -2184,7 +2187,7 @@ mod tests {
         let first = f.import("first");
         let reference = f.reference(&first, "1");
         f.store
-            .reconcile(&mut f.conn, &[reference.clone()])
+            .reconcile(&mut f.conn, std::slice::from_ref(&reference))
             .unwrap();
         f.delete(&reference, "delete");
         assert!(f.gc().unwrap());
@@ -2308,7 +2311,7 @@ mod tests {
             let asset = f.import("asset");
             let reference = f.reference(&asset, "1");
             f.store
-                .reconcile(&mut f.conn, &[reference.clone()])
+                .reconcile(&mut f.conn, std::slice::from_ref(&reference))
                 .unwrap();
             f.delete(&reference, "delete");
             f.conn.execute_batch(mutation).unwrap();
@@ -2347,7 +2350,7 @@ mod tests {
         let one = f.import("one");
         let reference = f.reference(&one, "1");
         f.store
-            .reconcile(&mut f.conn, &[reference.clone()])
+            .reconcile(&mut f.conn, std::slice::from_ref(&reference))
             .unwrap();
         f.delete(&reference, "delete-one");
         fs::write(
@@ -2368,7 +2371,7 @@ mod tests {
         f.store.finish_import(&f.conn, "two").unwrap();
         let reference = f.reference(&two, "2");
         f.store
-            .reconcile_owner(&mut f.conn, &[reference.clone()])
+            .reconcile_owner(&mut f.conn, std::slice::from_ref(&reference))
             .unwrap();
         f.delete(&reference, "delete-two");
         let mut progressed = false;
@@ -2419,7 +2422,7 @@ mod tests {
         let reference = f.reference(&a, "1");
         f.store.finish_import(&f.conn, "a").unwrap();
         f.store
-            .reconcile(&mut f.conn, &[reference.clone()])
+            .reconcile(&mut f.conn, std::slice::from_ref(&reference))
             .unwrap();
         f.delete(&reference, "delete");
         assert!(!f.gc().unwrap());
@@ -2442,7 +2445,7 @@ mod tests {
         let asset = f.import("asset");
         let reference = f.reference(&asset, "1");
         f.store
-            .reconcile(&mut f.conn, &[reference.clone()])
+            .reconcile(&mut f.conn, std::slice::from_ref(&reference))
             .unwrap();
         f.delete(&reference, "delete");
         let raw: String = f

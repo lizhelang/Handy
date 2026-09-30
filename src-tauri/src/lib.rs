@@ -33,6 +33,8 @@ mod overlay;
 mod paste_tx;
 #[cfg(target_os = "macos")]
 mod personalization;
+#[cfg(target_os = "macos")]
+mod memory_domain;
 pub mod portable;
 mod secure_input;
 mod settings;

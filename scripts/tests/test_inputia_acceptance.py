@@ -224,12 +224,17 @@ class AcceptanceTests(unittest.TestCase):
         self.assertIn("crates/inputia-release/Cargo.toml", manifests)
         updater = next(command for command in called if "crates/inputia-updater/Cargo.toml" in command)
         self.assertIn("native-code-verification", updater)
+        capi = next(command for command in called if "crates/inputia-capi/Cargo.toml" in command)
+        self.assertIn("bundled-static-rime,managed-memory", capi)
+        rime = next(command for command in called if "crates/inputia-rime/Cargo.toml" in command)
+        self.assertIn("bundled-static-rime", rime)
         self.assertTrue(all(command[-2:] == ["--", "--nocapture"] for command in called))
         for command in called:
             manifest = acceptance.ROOT / command[command.index("--manifest-path") + 1]
             metadata = tomllib.loads(manifest.read_text())
             if "--features" in command:
-                self.assertIn(command[command.index("--features") + 1], metadata["features"])
+                for feature in command[command.index("--features") + 1].split(","):
+                    self.assertIn(feature, metadata["features"])
         result = self.result("G1.rust", report)
         self.assertEqual(result["status"], "FAIL")
         self.assertEqual(result["metrics"]["skipped_required"], 1)

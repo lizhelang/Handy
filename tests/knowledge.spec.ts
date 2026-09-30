@@ -163,8 +163,10 @@ async function mountKnowledge(page: Page, app = false) {
                   integration: true,
                   personalization: !harness.holdPrivacy,
                   readers: !harness.holdPrivacy,
+                  legacy_memory: !harness.holdPrivacy,
                 },
                 failure: null,
+                coverage: "all_domains",
               };
               harness.privacy.push(operation);
             }
@@ -795,10 +797,26 @@ test("privacy accepted and partial recovery remain visible and timeout retry kee
 
   await page.evaluate(() => {
     const operation = window.__KNOWLEDGE_TEST__.privacy[0];
+    operation.coverage = "legacy_coverage_unresolved";
+    operation.failure = "legacy_coverage_unresolved";
+    operation.domain_receipts.personalization = true;
+    operation.domain_receipts.readers = true;
+  });
+  await expect(
+    page.getByText(/Legacy learning coverage is unresolved/),
+  ).toBeVisible();
+  await expect(page.getByText(/Legacy learning domain: pending/)).toBeVisible();
+  await expect(
+    page.getByText("Learning evidence forgotten; active readers settled"),
+  ).not.toBeVisible();
+  await page.evaluate(() => {
+    const operation = window.__KNOWLEDGE_TEST__.privacy[0];
+    operation.coverage = "all_domains";
     operation.state = "completed";
     operation.failure = null;
     operation.domain_receipts.personalization = true;
     operation.domain_receipts.readers = true;
+    operation.domain_receipts.legacy_memory = true;
   });
   await expect(
     page.getByText("Learning evidence forgotten; active readers settled"),

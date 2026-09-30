@@ -1057,7 +1057,13 @@
       "done": "完成",
       "waiting": "等待中",
       "retry": "重试同一个遗忘操作",
-      "repair": "完成回执缺失或不一致，个人学习保持暂停。需要恢复配套数据库与密钥后重新核验；原始记录会保留。"
+      "repair": "完成回执缺失或不一致，个人学习保持暂停。需要恢复配套数据库与密钥后重新核验；原始记录会保留。",
+      "legacyReceipt": "Legacy learning domain: {{state}}",
+      "coverage": {
+        "primary_only": "This receipt covers unified terms, personalization and registered readers only. This runtime has not taken ownership of the legacy input method learning database.",
+        "all_domains": "Completion covers unified terms, personalization, the legacy input method learning database and registered readers. Original history and explicit dictionary entries remain.",
+        "legacy_coverage_unresolved": "This historical receipt only proves the earlier two learning domains were processed. Legacy learning coverage is unresolved; its derived features are paused pending verified handoff and repair. Basic input and history remain available."
+      }
     }
   },
   "inputSettings": {

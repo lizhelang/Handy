@@ -1,3 +1,4 @@
+pub mod legacy_memory;
 pub mod personalization_wire;
 use std::fmt;
 pub mod decision;
@@ -9,6 +10,8 @@ pub mod knowledge_cli;
 pub mod knowledge_connection;
 pub mod knowledge_history;
 pub mod learning;
+pub mod legacy_memory_wire;
+pub mod memory_commit;
 pub mod output_ledger;
 pub mod personalization;
 pub mod private_key;

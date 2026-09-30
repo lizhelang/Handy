@@ -58,6 +58,7 @@ impl Grant {
 struct Broker {
     native: TargetRegistry,
     grants: BTreeMap<String, Grant>,
+    memory_commits: inputia_handy_runtime::memory_commit::CommitRegistry,
 }
 thread_local! { static BROKER: RefCell<Option<Broker>> = const { RefCell::new(None) }; }
 
@@ -91,6 +92,7 @@ impl Broker {
         Ok(Self {
             native: TargetRegistry::new().map_err(reason)?,
             grants: BTreeMap::new(),
+            memory_commits: Default::default(),
         })
     }
     fn prune(&mut self, epoch: u64) {
@@ -106,6 +108,7 @@ impl Broker {
         let _ = self.native.prune();
     }
     fn release_id(&mut self, id: &str) {
+        self.memory_commits.retire_target(id);
         self.grants.remove(id);
         let _ = self.native.forget(id);
     }
@@ -267,6 +270,7 @@ fn on_main<T: Send + 'static>(
                 unified_target::with_query_budget(Duration::from_millis(300), || action(broker));
             // A timed-out capture cannot leak a capability/observer into the next request.
             if work_claim.load(Ordering::SeqCst) == 3 || Instant::now() >= deadline {
+                broker.memory_commits.clear();
                 let late: Vec<_> = broker
                     .grants
                     .keys()
@@ -283,6 +287,7 @@ fn on_main<T: Send + 'static>(
                     .compare_exchange(1, 2, Ordering::SeqCst, Ordering::SeqCst)
                     .is_err()
             {
+                broker.memory_commits.clear();
                 let late: Vec<_> = broker
                     .grants
                     .keys()
@@ -324,6 +329,127 @@ pub fn check(
         broker
             .validate(&owner, &server, &target, epoch, purpose, None)
             .map(|_| ())
+    })
+}
+
+/// 提交许可始终预取于后台；本函数不得由Host按键回调同步等待。
+pub fn prepare_memory_commit(
+    app: &tauri::AppHandle,
+    owner: &str,
+    server: &str,
+    target: &HostTargetToken,
+    policy_epoch: u64,
+    request: inputia_handy_runtime::memory_commit::FixedPlansRequest,
+    started: Instant,
+) -> Result<inputia_handy_runtime::memory_commit::PreparedFixedCommit, String> {
+    use inputia_handy_runtime::memory_commit::CommitIdentity;
+    let permission_epoch = crate::input_permission::capture_epoch()?;
+    let identity = CommitIdentity {
+        client_instance: owner.into(),
+        server_instance: server.into(),
+        permission_epoch,
+        policy_epoch,
+        target: target.clone(),
+    };
+    let prepared = on_main(app, move |broker| {
+        broker.validate(
+            &identity.client_instance,
+            &identity.server_instance,
+            &identity.target,
+            permission_epoch,
+            TargetBridgePurpose::Personalization,
+            None,
+        )?;
+        broker.memory_commits.retain_current(&identity);
+        let mut observer = broker.native.learning_observer(&identity.target.target_id);
+        let prepared = broker
+            .memory_commits
+            .prepare_fixed(identity.clone(), request, &mut observer)
+            .map_err(str::to_owned)?;
+        if let Err(error) = broker.validate(
+            &identity.client_instance,
+            &identity.server_instance,
+            &identity.target,
+            permission_epoch,
+            TargetBridgePurpose::Personalization,
+            None,
+        ) {
+            broker
+                .memory_commits
+                .retire_target(&identity.target.target_id);
+            return Err(error);
+        }
+        broker
+            .memory_commits
+            .constrain_deadline(&prepared.commit_id, started + Duration::from_millis(1_500))
+            .map_err(str::to_owned)?;
+        Ok(prepared)
+    })?;
+    let cleanup_app = app.clone();
+    let commit_id = prepared.commit_id.clone();
+    let remaining = Duration::from_millis(1_500).saturating_sub(started.elapsed());
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(remaining).await;
+        let _ = cleanup_app.run_on_main_thread(move || {
+            BROKER.with(|slot| {
+                if let Some(broker) = slot.borrow_mut().as_mut() {
+                    broker.memory_commits.retire_commit(&commit_id);
+                }
+            });
+        });
+    });
+    Ok(prepared)
+}
+/// 只选择提交前已经保存的计划；原字段精确读回后才能构造持久学习证据。
+pub fn confirm_memory_commit(
+    app: &tauri::AppHandle,
+    owner: &str,
+    server: &str,
+    target: &HostTargetToken,
+    policy_epoch: u64,
+    commit_id: String,
+    plan_id: String,
+    operation_id: String,
+) -> Result<inputia_handy_runtime::memory_commit::ConfirmedCommit, String> {
+    use inputia_handy_runtime::memory_commit::CommitIdentity;
+    let permission_epoch = crate::input_permission::capture_epoch()?;
+    let identity = CommitIdentity {
+        client_instance: owner.into(),
+        server_instance: server.into(),
+        permission_epoch,
+        policy_epoch,
+        target: target.clone(),
+    };
+    on_main(app, move |broker| {
+        broker.validate(
+            &identity.client_instance,
+            &identity.server_instance,
+            &identity.target,
+            permission_epoch,
+            TargetBridgePurpose::Personalization,
+            None,
+        )?;
+        broker.memory_commits.retain_current(&identity);
+        let mut observer = broker.native.learning_observer(&identity.target.target_id);
+        let confirmed = broker
+            .memory_commits
+            .confirm_fixed(
+                &identity,
+                &commit_id,
+                &plan_id,
+                &operation_id,
+                &mut observer,
+            )
+            .map_err(str::to_owned)?;
+        broker.validate(
+            &identity.client_instance,
+            &identity.server_instance,
+            &identity.target,
+            permission_epoch,
+            TargetBridgePurpose::Personalization,
+            None,
+        )?;
+        Ok(confirmed)
     })
 }
 
@@ -409,6 +535,19 @@ pub fn respond(app: &tauri::AppHandle, request: TargetBridgeRequest) -> TargetBr
         Err(error) => reply.code = Some(error),
     }
     reply
+}
+
+/// Host屏障ACK之外，还要清除此服务持有的提交计划和读回正文。
+pub fn clear_memory_commits(
+    app: &tauri::AppHandle,
+    owner: &str,
+    server: &str,
+) -> Result<(), String> {
+    let (owner, server) = (owner.to_owned(), server.to_owned());
+    on_main(app, move |broker| {
+        broker.memory_commits.retire_owner(&owner, &server);
+        Ok(())
+    })
 }
 
 /// Retirement has its own single queue slot: it must run even if an earlier query timed out.

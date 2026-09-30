@@ -356,7 +356,7 @@ def run_rust(subject, root):
     started_at = now()
     suites = (
         ("inputia-core", "sqlite-memory"), ("inputia-handy-runtime", None),
-        ("inputia-capi", None), ("inputia-rime", None), ("inputia-settings", None),
+        ("inputia-capi", "bundled-static-rime,managed-memory"), ("inputia-rime", "bundled-static-rime"), ("inputia-settings", None),
         ("inputia-release", None), ("inputia-updater", "native-code-verification"),
     )
     for crate, features in suites:

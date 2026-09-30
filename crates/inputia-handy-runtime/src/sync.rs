@@ -56,6 +56,39 @@ impl SourcePump {
         })
     }
 
+    pub(crate) fn memory_page(
+        &mut self,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<
+        (
+            crate::source::SnapshotHeader,
+            Vec<crate::source::SnapshotRecord>,
+        ),
+        SyncError,
+    > {
+        self.verify_file_identity()?;
+        let page = self
+            .outbox
+            .with_snapshot(&mut self.connection, self.source, |view| {
+                Ok((view.header.clone(), view.read_page(after, limit.min(128))?))
+            })?;
+        self.verify_file_identity()?;
+        Ok(page)
+    }
+    pub(crate) fn memory_record(
+        &mut self,
+        record_id: &str,
+    ) -> Result<Option<crate::source::SnapshotRecord>, SyncError> {
+        self.verify_file_identity()?;
+        let value = self
+            .outbox
+            .with_snapshot(&mut self.connection, self.source, |view| {
+                view.read_record(record_id)
+            })?;
+        self.verify_file_identity()?;
+        Ok(value)
+    }
     pub fn store_id(&self) -> &str {
         self.outbox.store_id()
     }
