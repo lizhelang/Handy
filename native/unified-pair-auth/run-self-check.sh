@@ -17,3 +17,8 @@ codesign --force --sign - --identifier com.inputia.synthetic.Host "$build_dir/Ho
 codesign --force --sign - --identifier com.inputia.synthetic.Host "$build_dir/RogueFixture"
 "$build_dir/HandyFixture" self-check "$build_dir/HostFixture" "$build_dir/RogueFixture"
 printf 'synthetic_build_directory=%s\n' "$build_dir"
+
+swiftc -warnings-as-errors -target "$(uname -m)-apple-macosx13.0" -parse-as-library \
+  "$source_dir/UnifiedPairAuth.swift" "$source_dir/ReleasePairAuthCheck.swift" \
+  -framework Security -o "$build_dir/ReleaseContractCheck"
+"$build_dir/ReleaseContractCheck" "$source_dir/fixtures"

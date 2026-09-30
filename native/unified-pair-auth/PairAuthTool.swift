@@ -312,6 +312,17 @@ struct PairAuthTool {
         try writeNew(key.publicKeyX963, args[2])
         print("build_key_created=true keychain_written=false"); return
       }
+      if args.count == 2, args[0] == "public-key" {
+        let key = try PairBuildKey(privateRepresentationForBuildOnly: read(args[1], limit: 97, privateKey: true))
+        print(key.publicKeyX963.map { String(format: "%02x", $0) }.joined()); return
+      }
+      if args.count == 4, args[0] == "sign-release" {
+        let key = try PairBuildKey(privateRepresentationForBuildOnly: read(args[1], limit: 97, privateKey: true))
+        let raw = try read(args[2], limit: 8192)
+        let payload = try JSONDecoder().decode(ReleasePairManifestPayload.self, from: raw)
+        guard try encode(payload) == raw else { try fail("noncanonical release signing input") }
+        try writeNew(key.sign(payload), args[3]); print("release_manifest_signed=true"); return
+      }
       if args.count == 4, args[0] == "sign" {
         let key = try PairBuildKey(privateRepresentationForBuildOnly: read(args[1], limit: 97, privateKey: true))
         let raw = try read(args[2], limit: 8192)
@@ -322,12 +333,19 @@ struct PairAuthTool {
       if args.count == 3, args[0] == "identity", let role = PairRole(rawValue: args[1]) {
         print(String(decoding: try encode(identity(args[2], role: role)), as: UTF8.self)); return
       }
-      if args.count == 6, args[0] == "bridge-fixture-manifest" {
+      if args.count == 6, ["bridge-fixture-manifest", "bridge-release-fixture-manifest"].contains(args[0]) {
         let key = try PairBuildKey(privateRepresentationForBuildOnly: read(args[1], limit: 97, privateKey: true))
         let handy = try identity(args[2], role: .handy)
         let host = try identity(args[3], role: .inputia)
         let weak = try identity(args[4], role: .inputia)
         guard host.identifier == weak.identifier else { try fail("fixture role identifiers") }
+        if args[0] == "bridge-release-fixture-manifest" {
+          let payload = ReleasePairManifestPayload(productID: "com.inputia", releaseID: "inputia-bridge-fixture",
+            keyID: "bridge-fixture-key", protocolMajor: 1,
+            peers: [handy, PairCodeIdentity(role: .inputia, identifier: host.identifier,
+              cdhashes: host.cdhashes + weak.cdhashes)])
+          try writeNew(key.sign(payload), args[5]); print("bridge_release_fixture_manifest_signed=true"); return
+        }
         let payload = PairManifestPayload(keyID: "bridge-fixture-key", runID: "trial-20260905",
           profileID: "unified-candidate:trial-20260905", protocolMajor: 1,
           peers: [handy, PairCodeIdentity(role: .inputia, identifier: host.identifier,

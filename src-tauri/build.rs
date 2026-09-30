@@ -45,6 +45,7 @@ fn build_unified_pair_trust() {
     use std::{env, path::PathBuf, process::Command};
     println!("cargo:rustc-check-cfg=cfg(unified_paired_build)");
     println!("cargo:rerun-if-env-changed=HANDY_UNIFIED_PAIR_BUILD");
+    println!("cargo:rerun-if-env-changed=INPUTIA_RELEASE_CONTEXT");
     println!("cargo:rerun-if-env-changed=TAURI_CONFIG");
     let candidate = env::var("TAURI_CONFIG").ok().is_some_and(|config| {
         let config: serde_json::Value =
@@ -66,16 +67,35 @@ fn build_unified_pair_trust() {
     let bytes = std::fs::read(&metadata).expect("read build-only public pair metadata");
     let parsed: serde_json::Value =
         serde_json::from_slice(&bytes).expect("parse public pair metadata");
-    let run = parsed["run_id"].as_str().expect("candidate run ID");
     let script = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
         .join("../native/unified-pair-auth/build_trust.py");
     println!("cargo:rerun-if-changed={}", metadata.display());
     println!("cargo:rerun-if-changed={}", script.display());
-    let generated = Command::new("/usr/bin/python3")
+    let mut generator = Command::new("/usr/bin/python3");
+    generator
         .arg(script)
         .arg("--metadata")
         .arg(&metadata)
-        .args(["--run-id", run, "--emit", "rust"])
+        .args(["--emit", "rust"]);
+    match parsed["schema_version"].as_u64() {
+        Some(1) => {
+            generator.args([
+                "--run-id",
+                parsed["run_id"].as_str().expect("candidate run ID"),
+            ]);
+        }
+        Some(2) => {
+            let context = env::var_os("INPUTIA_RELEASE_CONTEXT")
+                .expect("release pair requires fixed build context");
+            println!(
+                "cargo:rerun-if-changed={}",
+                PathBuf::from(&context).display()
+            );
+            generator.arg("--release-context").arg(context);
+        }
+        _ => panic!("unsupported pair build metadata schema"),
+    }
+    let generated = generator
         .output()
         .expect("generate embedded public pair trust");
     assert!(
