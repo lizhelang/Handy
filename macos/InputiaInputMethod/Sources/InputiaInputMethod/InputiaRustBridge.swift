@@ -198,7 +198,91 @@ struct InputiaBridgeOutcome {
   }
 }
 
+#if INPUTIA_PAIRED_BUILD
+@_silgen_name("inputia_memory_apply_policy")
+private func inputia_memory_apply_policy(_ json: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+@_silgen_name("inputia_session_memory_begin")
+private func inputia_session_memory_begin(_ session: UnsafeMutableRawPointer?, _ json: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+@_silgen_name("inputia_session_memory_install")
+private func inputia_session_memory_install(_ session: UnsafeMutableRawPointer?, _ json: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+@_silgen_name("inputia_session_memory_clear")
+private func inputia_session_memory_clear(_ session: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>?
+#endif
+
 final class InputiaRustBridge {
+  #if INPUTIA_PAIRED_BUILD
+  private static let memoryBridges = NSHashTable<InputiaRustBridge>.weakObjects()
+  private let memoryRequests = InputiaMemoryRequestGeneration()
+  private let memoryExpiries = InputiaMemoryExpiryRegistry()
+  private var memoryExpiryTasks: [String: DispatchWorkItem] = [:]
+  var memoryDidChange: ((InputiaMemoryQuery, InputiaBridgeOutcome) -> Void)?
+  var memoryDidExpire: (() -> Void)?
+  var managedMemoryEnabled: Bool { !diagnosticSettings }
+  func cancelManagedMemoryRequests() { memoryRequests.cancelPending() }
+  @discardableResult
+  func clearManagedMemory() -> Bool {
+    guard Thread.isMainThread else { return false }
+    memoryRequests.cancelPending()
+    memoryExpiries.clear()
+    memoryExpiryTasks.values.forEach { $0.cancel() }; memoryExpiryTasks.removeAll()
+    guard let session else { latestOutcome = .error; return true }
+    guard let raw = inputia_session_memory_clear(session) else { latestOutcome = .error; return false }
+    let outcome = consume(raw)
+    if !outcome.ok { latestOutcome = .error }
+    return outcome.ok
+  }
+  static func invalidateManagedMemory() {
+    for bridge in memoryBridges.allObjects { _ = bridge.clearManagedMemory() }
+  }
+  static func applyManagedMemoryPolicy(_ policy: InputiaMemoryPolicy) throws {
+    guard Thread.isMainThread, let json = String(data: try JSONEncoder().encode(policy), encoding: .utf8),
+      let raw = json.withCString({ inputia_memory_apply_policy($0) }) else { throw InputiaMemoryError.unavailable }
+    defer { inputia_string_free(raw) }
+    guard parseJsonString(String(cString: raw))?["ok"] as? Bool == true else { throw InputiaMemoryError.unavailable }
+    for bridge in memoryBridges.allObjects where !bridge.clearManagedMemory() { throw InputiaMemoryError.unavailable }
+  }
+  func requestManagedMemory(_ query: InputiaMemoryQuery, target: InputiaVoiceTarget,
+                            stillCurrent: @escaping () -> Bool,
+                            completion: @escaping (Bool) -> Void = { _ in }) {
+    guard Thread.isMainThread, managedMemoryEnabled else { completion(false); return }
+    InputiaVoiceBridge.shared.prepare { [weak self] prepared in
+      guard let self, stillCurrent(), case .success(let policy) = prepared, let session = self.session else { completion(false); return }
+      struct Begin: Encodable { let query: InputiaMemoryQuery; let composing: String }
+      struct Began: Decodable { let ok: Bool; let query: InputiaMemoryTicket? }
+      let started = ProcessInfo.processInfo.systemUptime
+      let generation = self.memoryRequests.value
+      guard let data = try? JSONEncoder().encode(Begin(query: query, composing: self.latestOutcome.composing)),
+        let json = String(data: data, encoding: .utf8),
+        let raw = json.withCString({ inputia_session_memory_begin(session, $0) }) else { completion(false); return }
+      let result = try? JSONDecoder().decode(Began.self, from: Data(String(cString: raw).utf8)); inputia_string_free(raw)
+      guard result?.ok == true, let ticket = result?.query, ticket.policy == policy else { completion(false); return }
+      InputiaVoiceBridge.shared.query(ticket: ticket, target: InputiaMemoryTarget(target), started: started) { [weak self] response in
+        guard let self, self.memoryRequests.accepts(generation), stillCurrent(),
+          case .success(let snapshot) = response, let current = self.session,
+          self.latestOutcome.composing == ticket.composing,
+          let data = try? JSONEncoder().encode(snapshot.installation(ticket: ticket)),
+          let json = String(data: data, encoding: .utf8),
+          let raw = json.withCString({ inputia_session_memory_install(current, $0) }) else { completion(false); return }
+        let dictionary = Self.parseJsonString(String(cString: raw)); inputia_string_free(raw)
+        guard let dictionary, dictionary["ok"] as? Bool == true else { completion(false); return }
+        let outcome = InputiaBridgeOutcome(dictionary: dictionary)
+        self.latestOutcome = outcome
+        let deadline = started + Double(snapshot.max_age_ms) / 1000
+        let expiry = self.memoryExpiries.install(kind: query.kind, deadline: deadline)
+        self.memoryExpiryTasks[query.kind]?.cancel()
+        let kind = query.kind
+        let task = DispatchWorkItem { [weak self] in
+          guard let self, self.memoryExpiries.retire(kind: kind, identity: expiry, now: ProcessInfo.processInfo.systemUptime) else { return }
+          _ = self.clearManagedMemory()
+          self.memoryDidExpire?()
+        }
+        self.memoryExpiryTasks[kind] = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline - ProcessInfo.processInfo.systemUptime), execute: task)
+        self.memoryDidChange?(query, outcome); completion(true)
+      }
+    }
+  }
+  #endif
   static let shared = InputiaRustBridge(settingsPath: defaultSettingsPath())
 
   private let settingsPath: String
@@ -226,6 +310,9 @@ final class InputiaRustBridge {
 
   private init(settingsPath: String, startInChineseMode: Bool = false, diagnostics: Bool = false) {
     self.settingsPath = settingsPath
+    #if INPUTIA_PAIRED_BUILD
+    Self.memoryBridges.add(self)
+    #endif
     diagnosticSettings = diagnostics
     do {
       if diagnostics { try Self.validateDiagnosticSettingsPath(settingsPath) }
@@ -589,6 +676,10 @@ final class InputiaRustBridge {
   }
 
   private func learn(source: Int32, text: String, bundleId: String, windowTitle: String? = nil) -> Bool {
+    #if INPUTIA_PAIRED_BUILD
+    // 配对宿主只有后台读回的许可确认可学习；旧同步入口不重复计数。
+    if managedMemoryEnabled { return false }
+    #endif
     guard let session else {
       return false
     }
@@ -726,6 +817,9 @@ final class InputiaRustBridge {
       settingsApplication = report; settingsApplicationDidChange?(report)
       return false
     }
+    #if INPUTIA_PAIRED_BUILD
+    cancelManagedMemoryRequests()
+    #endif
     activeSettings = snapshot
     cachedInputModeToggleShortcut = Self.inputModeToggleShortcut(in: snapshot.values)
     cachedScriptToggleShortcut = Self.scriptToggleShortcut(in: snapshot.values)

@@ -113,6 +113,7 @@ final class InputiaInputController: IMKInputController {
     let code: String
     let selection: NSRange
     let marked: NSRange
+    let managedField: String?
   }
   private var personalDeferredOrigin: PersonalDeferredOrigin?
   private var personalRecoveryToken: UInt64?
@@ -148,6 +149,7 @@ final class InputiaInputController: IMKInputController {
   private var typedRetainedOrigins: [String: TimeInterval] = [:]
   private var voicePermissionEpochs: [String: UInt64] = [:]
   func removeRetiredVoiceTarget(_ id: String) {
+    memoryTargetFields.removeValue(forKey: id)
     voiceTargetSnapshots.removeValue(forKey: id)
     voicePermissionEpochs.removeValue(forKey: id)
     if shortcutPreparedSnapshot?.targetID == id {
@@ -167,6 +169,8 @@ final class InputiaInputController: IMKInputController {
     let current = InputiaPermissionLifecycle.shared.epoch
     guard permissionEpoch != current else { return }
     permissionEpoch = current
+    _ = bridge.clearManagedMemory()
+    clearManagedMemoryDisplay()
     discardTypedCompositionOrigin()
     voiceActivationGeneration &+= 1
     for snapshot in voiceTargetSnapshots.values { InputiaVoiceInputLauncher.releaseTarget(snapshot.targetID) }
@@ -204,6 +208,23 @@ final class InputiaInputController: IMKInputController {
   private var sharedChineseSelection = InputiaSharedEnglishSelectionState()
   private var hotwordOverlay: (code: String, words: [String], base: [String], snapshot: InputiaExplicitHotwords.Snapshot, context: InputiaExplicitSelectionContext)?
   private var explicitEnglishCandidates: [String: (snapshot: InputiaExplicitHotwords.Snapshot, context: InputiaExplicitSelectionContext)] = [:]
+  private struct MemoryPreparedCommit {
+    let target: InputiaVoiceTarget
+    let policy: InputiaMemoryPolicy
+    let request: InputiaMemoryFixedRequest
+    let permit: InputiaMemoryPermit
+    let started: TimeInterval
+    let client: ObjectIdentifier
+    let activation: UInt64
+  }
+  private var memoryPreparedCommit: MemoryPreparedCommit?
+  private var memoryCommitExpiry: DispatchWorkItem?
+  private var memoryViewGeneration: UInt64 = 1
+  private var memoryFieldID: String?
+  private var memoryTargetFields: [String: String] = [:]
+  private var memorySelectionIntent: UUID?
+  private var memoryDisplayedTargets: [String: InputiaVoiceTargetSnapshot.Snapshot] = [:]
+  private var memoryDisplayedComposing: [String: String] = [:]
   private var sharedChineseOrder: (order: InputiaSharedCandidateOrder, candidates: [String], identity: String, target: InputiaVoiceTarget)?
   #endif
   private let bridge = InputiaRustBridge.makeDefault()
@@ -248,6 +269,12 @@ final class InputiaInputController: IMKInputController {
     }
 
     #if INPUTIA_PAIRED_BUILD
+    let selectionKey = event.type == .keyDown && (event.keyCode == keyCodeSpace || event.keyCode == keyCodeReturn
+      || event.keyCode == keyCodeKeypadEnter || event.keyCode == keyCodeTab
+      || event.charactersIgnoringModifiers.flatMap(Int.init).map { (1...9).contains($0) } == true)
+      && event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+    let changesInput = InputiaMemoryInputTransition.retiresPending(keyDown: event.type == .keyDown,
+      modeBoundary: event.type == .flagsChanged && [56, 60].contains(event.keyCode))
     synchronizePermissionEpoch()
     #endif
     if shouldUseSecureDirectMode(client) {
@@ -258,6 +285,12 @@ final class InputiaInputController: IMKInputController {
     }
     #if INPUTIA_PAIRED_BUILD
     if let deferred = deferPersonalInput(event, client: client) { return deferred }
+    if changesInput {
+      memorySelectionIntent = nil
+      if !selectionKey { retireMemoryCommit() }
+      memoryViewGeneration &+= 1
+      bridge.cancelManagedMemoryRequests()
+    }
     if event.type == .keyDown {
       if isPersonalRejectionShortcut(event), rejectPersonalCandidate(client: client) { return true }
       observePersonalKey(event, client: client)
@@ -617,6 +650,11 @@ final class InputiaInputController: IMKInputController {
   override func activateServer(_ sender: Any!) {
     InputiaHost.inputControllers.add(self)
     #if INPUTIA_PAIRED_BUILD
+    bridge.memoryDidExpire = { [weak self] in self?.clearManagedMemoryDisplay() }
+    _ = bridge.clearManagedMemory()
+    clearManagedMemoryDisplay()
+    #endif
+    #if INPUTIA_PAIRED_BUILD
     discardTypedCompositionOrigin()
     personalization.changed = { [weak self] in self?.clearPersonalDisplay() }
     personalization.policyChanged = { [weak self] in
@@ -657,6 +695,8 @@ final class InputiaInputController: IMKInputController {
 
   override func deactivateServer(_ sender: Any!) {
     #if INPUTIA_PAIRED_BUILD
+    _ = bridge.clearManagedMemory()
+    clearManagedMemoryDisplay()
     clearHotwordOverlay()
     explicitEnglishCandidates = [:]
     personalization.stop()
@@ -1054,6 +1094,8 @@ final class InputiaInputController: IMKInputController {
       _ = refreshHotwordPrefix(client: client)
       schedulePersonalization(client: client)
       scheduleSharedEnglishRefresh(client: client)
+      scheduleManagedRank(client: client)
+      prepareMemoryCommit(candidates: latestCandidates, prefix: "", client: client)
     }
     #endif
     return outcome.consumed
@@ -1084,8 +1126,15 @@ final class InputiaInputController: IMKInputController {
     }
   }
 
-  private func chooseNativeWithLearning(index: Int, explicit: Bool, client: IMKTextInput) -> Bool {
+  private func chooseNativeWithLearning(index: Int, explicit: Bool, client: IMKTextInput, memoryValidated: Bool = false) -> Bool {
     #if INPUTIA_PAIRED_BUILD
+    if !memoryValidated, memoryDisplayedTargets["rank"] != nil,
+      memoryDisplayedComposing["rank"] == bridge.latestOutcome.composing {
+      let before = bridge.latestOutcome
+      return admitManagedSelection("rank", client: client, stillValid: { [weak self] in
+        self?.bridge.latestOutcome.candidateIDs == before.candidateIDs && self?.bridge.latestOutcome.composing == before.composing
+      }) { [weak self] in _ = self?.chooseNativeWithLearning(index: index, explicit: explicit, client: client, memoryValidated: true) }
+    }
     let before = bridge.latestOutcome
     if before.candidates.indices.contains(index), before.candidateIDs.indices.contains(index),
       !before.candidateIDs[index].isEmpty, let pool = bridge.personalCandidatePool(),
@@ -1102,6 +1151,7 @@ final class InputiaInputController: IMKInputController {
     replacementRange: NSRange = emptyReplacementRange
   ) {
     #if INPUTIA_PAIRED_BUILD
+    let memoryConfirmation = takeMemoryConfirmation(text: text, replacement: replacementRange, client: client)
     let origin = typedOriginBeforeInsertion(client)
     let before = client.selectedRange()
     let marked = client.markedRange()
@@ -1110,6 +1160,7 @@ final class InputiaInputController: IMKInputController {
     #endif
     client.insertText(text, replacementRange: replacementRange)
     #if INPUTIA_PAIRED_BUILD
+    memoryConfirmation?()
     recordTypedCommit(text, client: client, start: start, origin: origin)
     recordPersonalCommit(text, client: client, start: start, origin: origin)
     #endif
@@ -1134,6 +1185,34 @@ final class InputiaInputController: IMKInputController {
       } else { latestCandidates = base }
       if let client = client() { updateCandidateWindow(client: client) }
     } else { InputiaHost.candidatePanel?.hide() }
+  }
+
+  /// 屏障不把旧排序换成新排序后继续接受同一数字；CAPI保留撤销选择闩锁。
+  func clearManagedMemoryDisplay() {
+    retireMemoryCommit()
+    memoryViewGeneration &+= 1
+    memoryFieldID = nil
+    memorySelectionIntent = nil
+    let displayed = Array(memoryDisplayedTargets.values)
+    memoryDisplayedTargets.removeAll(); memoryDisplayedComposing.removeAll()
+    for snapshot in displayed {
+      InputiaVoiceInputLauncher.releaseTarget(snapshot.targetID)
+      removeRetiredVoiceTarget(snapshot.targetID)
+    }
+    bridge.cancelManagedMemoryRequests()
+    personalRefreshGeneration &+= 1
+    if let pending = personalDeferredOrigin { _ = personalInputDeferral.finish(pending.token) }
+    personalDeferredOrigin = nil; personalRecoveryToken = nil; personalBoundaryProof = nil
+    pendingPersonalSelection = nil; personalUndo = nil; personalPhrase.reset(); personalization.reset()
+    personalCandidates = []; personalPredictions = []; personalCode = ""; personalOrderLockedCode = nil
+    sharedEnglishSelection.cancel(); sharedChineseSelection.cancel(); sharedChineseOrder = nil
+    sharedEnglishCandidates = [:]; explicitEnglishCandidates = [:]; hotwordOverlay = nil
+    sharedEnglishRefreshQueued = false
+    latestComposing = bridge.latestOutcome.composing
+    latestCandidates = []; expandedCandidates = []; expandedCandidateEntries = []; expandedActiveRowIndex = 0
+    recallCandidates = []; englishCompletionCandidates = []; englishCompletionPrefix = ""
+    candidatePanelExpanded = false; cachedAppContext = nil; pushedAppContext = nil
+    if InputiaHost.activeInputController === self { InputiaHost.candidatePanel?.hide() }
   }
 
   private func observePersonalKey(_ event: NSEvent, client: IMKTextInput) {
@@ -1324,7 +1403,7 @@ final class InputiaInputController: IMKInputController {
     let prediction = InputiaPersonalPrediction(id: candidate.id, text: candidate.text)
     let pending = PersonalDeferredOrigin(token: token, origin: origin, client: client,
       activation: voiceActivationGeneration, generation: localSelectionGeneration, epoch: personalization.epoch,
-      schemaID: bridge.schemaID, code: code, selection: selection, marked: client.markedRange())
+      schemaID: bridge.schemaID, code: code, selection: selection, marked: client.markedRange(), managedField: nil)
     personalDeferredOrigin = pending
     let candidateIDs = bridge.latestOutcome.candidateIDs
     DispatchQueue.main.asyncAfter(deadline: .now() + InputiaPersonalInputDeferral<NSEvent>.timeout) { [weak self] in
@@ -1373,8 +1452,8 @@ final class InputiaInputController: IMKInputController {
 
   private func deferredPersonalScopeMatches(_ pending: PersonalDeferredOrigin, composition: Bool) -> Bool {
     guard InputiaHost.activeInputController === self, voiceActivationGeneration == pending.activation,
-      personalization.epoch == pending.epoch, bridge.schemaID == pending.schemaID,
-      typedCompositionOrigin === pending.origin, let current = client(),
+      (pending.managedField != nil || personalization.epoch == pending.epoch), bridge.schemaID == pending.schemaID,
+      (pending.managedField.map { memoryFieldID == $0 } ?? (typedCompositionOrigin === pending.origin)), let current = client(),
       ObjectIdentifier(current as AnyObject) == ObjectIdentifier(pending.client as AnyObject),
       pending.origin.isCurrentForTypedOrigin(client: current, controllerID: voiceControllerID,
         activationGeneration: pending.activation) else { return false }
@@ -1451,8 +1530,11 @@ final class InputiaInputController: IMKInputController {
 
   private func personalReplayProofIsCurrent(_ proof: InputiaTargetBridgeReply?,
     pending: PersonalDeferredOrigin, composition: Bool) -> Bool {
-    InputiaPersonalInputDeferral<NSEvent>.allowsReplay(
-      proofReady: proof?.ready == true && proof?.target == pending.origin.inputiaTarget,
+    let managedFieldMatches = pending.managedField.map { field in
+      proof.map { reply in reply.field_instance.map { reply.server_instance + ":" + $0 == field } == true } ?? false
+    } ?? true
+    return InputiaPersonalInputDeferral<NSEvent>.allowsReplay(
+      proofReady: proof?.ready == true && proof?.target == pending.origin.inputiaTarget && managedFieldMatches,
       proofDeadline: proof?.deadline, now: ProcessInfo.processInfo.systemUptime,
       leaseMatches: proof.map { InputiaPermissionLifecycle.shared.matchesService(server: $0.server_instance,
         epoch: $0.permission_epoch) && InputiaPermissionLifecycle.shared.permits(pending.origin.permissionEpoch) } == true,
@@ -1930,6 +2012,201 @@ final class InputiaInputController: IMKInputController {
     else { InputiaHost.candidatePanel?.show(candidates: englishCompletionCandidates, near: englishCompletionRect) }
   }
 
+  private func retireMemoryCommit() {
+    memoryCommitExpiry?.cancel(); memoryCommitExpiry = nil
+    if let pending = memoryPreparedCommit {
+      InputiaVoiceInputLauncher.releaseTarget(pending.target.target_id)
+      removeRetiredVoiceTarget(pending.target.target_id)
+    }
+    memoryPreparedCommit = nil
+  }
+
+  /// 候选已可见后异步准备；用户按键从不等待 IPC，也不追认迟到的许可。
+  private func prepareMemoryCommit(candidates: [String], prefix: String, client: IMKTextInput) {
+    retireMemoryCommit()
+    guard bridge.managedMemoryEnabled, !candidates.isEmpty, candidates.count <= 64 else { return }
+    let range = prefix.isEmpty ? client.markedRange() : client.selectedRange()
+    guard range.location != NSNotFound, range.location >= 0, range.length >= 0,
+      prefix.isEmpty || range.length == 0 else { return }
+    guard let replaced = prefix.isEmpty ? client.attributedSubstring(from: range)?.string : "" else { return }
+    let inserted = candidates.compactMap { candidate -> String? in
+      if prefix.isEmpty { return candidate }
+      guard candidate.lowercased().hasPrefix(prefix.lowercased()), candidate.count > prefix.count else { return nil }
+      return String(candidate.dropFirst(prefix.count))
+    }
+    guard inserted.count == candidates.count, inserted.reduce(0, { $0 + $1.utf8.count }) <= 65_536 else { return }
+    let request = InputiaMemoryFixedRequest(replacement: .init(location: UInt64(range.location), length: UInt64(range.length)),
+      replaced_text: replaced, retained_prefix: prefix,
+      plans: inserted.enumerated().map { .init(candidate_id: "candidate-\($0.offset)", inserted_text: $0.element) })
+    let generation = memoryViewGeneration, activation = voiceActivationGeneration, identity = ObjectIdentifier(client as AnyObject)
+    prepareUnifiedVoiceTarget(client: client) { [weak self] target in
+      guard let self, let target else { return }
+      let started = ProcessInfo.processInfo.systemUptime
+      guard target.field_id != nil, self.memoryViewGeneration == generation else {
+        InputiaVoiceInputLauncher.releaseTarget(target.target_id); self.removeRetiredVoiceTarget(target.target_id); return
+      }
+      InputiaVoiceBridge.shared.management(.init(kind: "prepare_commit", target: InputiaMemoryTarget(target), request: request)) { [weak self] result in
+        guard let self, let client = self.client(), self.memoryViewGeneration == generation,
+          self.voiceActivationGeneration == activation, InputiaHost.activeInputController === self,
+          ObjectIdentifier(client as AnyObject) == identity,
+          (prefix.isEmpty ? client.markedRange() : client.selectedRange()) == range,
+          case .success(let reply) = result, reply.code == nil, reply.result?.kind == "prepared_commit",
+          let permit = reply.result?.permit,
+          (try? permit.validate(request: request, started: started, now: ProcessInfo.processInfo.systemUptime)) != nil else {
+          InputiaVoiceInputLauncher.releaseTarget(target.target_id); self?.removeRetiredVoiceTarget(target.target_id); return
+        }
+        self.retireMemoryCommit()
+        self.memoryPreparedCommit = .init(target: target,
+          policy: .init(server_instance: reply.server_instance, profile_id: reply.profile_id, policy_epoch: reply.policy_epoch),
+          request: request, permit: permit, started: started, client: identity, activation: activation)
+        let commitID = permit.commit_id
+        let expiry = DispatchWorkItem { [weak self] in
+          guard self?.memoryPreparedCommit?.permit.commit_id == commitID else { return }
+          self?.retireMemoryCommit()
+        }
+        self.memoryCommitExpiry = expiry
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, started + Double(permit.max_age_ms) / 1000 - ProcessInfo.processInfo.systemUptime), execute: expiry)
+      }
+    }
+  }
+
+  private func takeMemoryConfirmation(text: String, replacement: NSRange, client: IMKTextInput) -> (() -> Void)? {
+    guard let pending = memoryPreparedCommit else { return nil }
+    memoryCommitExpiry?.cancel(); memoryCommitExpiry = nil
+    memoryPreparedCommit = nil
+    let release = { [weak self] in
+      InputiaVoiceInputLauncher.releaseTarget(pending.target.target_id)
+      self?.removeRetiredVoiceTarget(pending.target.target_id)
+    }
+    let actual = replacement.location == NSNotFound ? client.selectedRange() : replacement
+    guard InputiaHost.activeInputController === self, pending.activation == voiceActivationGeneration,
+      pending.client == ObjectIdentifier(client as AnyObject), !IsSecureEventInputEnabled(),
+      InputiaPermissionLifecycle.shared.isReady, actual.location >= 0, actual.length >= 0,
+      pending.request.replacement == InputiaMemoryRange(location: UInt64(actual.location), length: UInt64(actual.length)),
+      pending.request.retained_prefix.isEmpty || pending.request.retained_prefix == englishCompletionPrefix,
+      pending.request.replaced_text.isEmpty || client.attributedSubstring(from: actual)?.string == pending.request.replaced_text,
+      (try? pending.permit.validate(request: pending.request, started: pending.started, now: ProcessInfo.processInfo.systemUptime)) != nil,
+      let candidate = pending.request.plans.first(where: { $0.inserted_text == text }),
+      let plan = pending.permit.plans.first(where: { $0.candidate_id == candidate.candidate_id }) else { release(); return nil }
+    return {
+      let operation = pending.permit.operation(plan: plan.plan_id)
+      InputiaVoiceBridge.shared.management(.init(kind: "confirm_commit", target: InputiaMemoryTarget(pending.target),
+        operation_id: operation, commit_id: pending.permit.commit_id, plan_id: plan.plan_id), expectedEpoch: pending.policy.policy_epoch) { result in
+        defer { release() }
+        guard case .success(let reply) = result, reply.code == nil, reply.result?.kind == "learn",
+          let receipt = reply.result?.receipt, receipt.operation_id == operation,
+          receipt.applied_at_epoch == pending.policy.policy_epoch else {
+          InputiaPersonalizationDiagnostics.record("memory_commit", "unconfirmed"); return
+        }
+        InputiaPersonalizationDiagnostics.record("memory_commit", receipt.state)
+      }
+    }
+  }
+
+  /// 目标由认证主程序采集；回复只属于这次输入、这个控制器和真实字段。
+  private func requestManagedMemory(_ query: InputiaMemoryQuery, client: IMKTextInput,
+                                    completion: @escaping () -> Void) {
+    guard bridge.managedMemoryEnabled, InputiaHost.activeInputController === self else { return }
+    let generation = memoryViewGeneration, activation = voiceActivationGeneration
+    let composing = bridge.latestOutcome.composing
+    let selection = client.selectedRange(), identity = ObjectIdentifier(client as AnyObject)
+    let current = { [weak self] in
+      guard let self, let client = self.client() else { return false }
+      return InputiaHost.activeInputController === self && self.memoryViewGeneration == generation
+        && self.voiceActivationGeneration == activation && self.bridge.latestOutcome.composing == composing
+        && ObjectIdentifier(client as AnyObject) == identity && client.selectedRange() == selection
+        && !IsSecureEventInputEnabled() && InputiaPermissionLifecycle.shared.isReady
+    }
+    prepareUnifiedVoiceTarget(client: client) { [weak self] target in
+      guard let self, let target else { return }
+      guard current(), let field = self.memoryTargetFields[target.target_id],
+        let snapshot = self.voiceTargetSnapshots[target.target_id] else {
+        InputiaVoiceInputLauncher.releaseTarget(target.target_id); self.removeRetiredVoiceTarget(target.target_id); return
+      }
+      guard self.memoryFieldID == field else {
+        InputiaVoiceInputLauncher.releaseTarget(target.target_id); self.removeRetiredVoiceTarget(target.target_id); return
+      }
+      self.bridge.requestManagedMemory(query, target: target, stillCurrent: current) { [weak self] installed in
+        guard let self else { InputiaVoiceInputLauncher.releaseTarget(target.target_id); return }
+        guard installed, current() else {
+          InputiaVoiceInputLauncher.releaseTarget(target.target_id); self.removeRetiredVoiceTarget(target.target_id); return
+        }
+        if let old = self.memoryDisplayedTargets[query.kind], old.targetID != target.target_id {
+          InputiaVoiceInputLauncher.releaseTarget(old.targetID); self.removeRetiredVoiceTarget(old.targetID)
+        }
+        self.memoryDisplayedTargets[query.kind] = snapshot
+        self.memoryDisplayedComposing[query.kind] = composing
+        completion()
+      }
+    }
+  }
+
+  private func managedDisplayCurrent(_ kind: String, client: IMKTextInput) -> Bool {
+    guard let snapshot = memoryDisplayedTargets[kind], InputiaHost.activeInputController === self else { return false }
+    return snapshot.isCurrentForShortcut(client: client, controllerID: voiceControllerID,
+      activationGeneration: voiceActivationGeneration,
+      isSensitiveApp: { self.bridge.isSensitiveApp(bundleId: $0, windowTitle: $1) },
+      windowTitle: { self.checkedWindowTitle(forBundleId: $0) })
+  }
+
+  /// 选择旧显示映射前核验原target，绝不重新capture新字段为旧候选背书。
+  private func admitManagedSelection(_ kind: String, client: IMKTextInput,
+                                     stillValid: @escaping () -> Bool, perform: @escaping () -> Void) -> Bool {
+    guard let snapshot = memoryDisplayedTargets[kind], let field = memoryTargetFields[snapshot.targetID],
+      managedDisplayCurrent(kind, client: client), stillValid() else {
+      _ = bridge.clearManagedMemory(); clearManagedMemoryDisplay(); return true
+    }
+    guard let token = personalInputDeferral.begin(now: ProcessInfo.processInfo.systemUptime) else { return true }
+    let pending = PersonalDeferredOrigin(token: token, origin: snapshot, client: client,
+      activation: voiceActivationGeneration, generation: localSelectionGeneration, epoch: personalization.epoch,
+      schemaID: bridge.schemaID, code: latestComposing, selection: client.selectedRange(), marked: client.markedRange(), managedField: field)
+    personalDeferredOrigin = pending
+    let intent = UUID(), generation = memoryViewGeneration
+    memorySelectionIntent = intent
+    DispatchQueue.main.asyncAfter(deadline: .now() + InputiaPersonalInputDeferral<NSEvent>.timeout) { [weak self] in
+      guard let self, self.personalInputDeferral.expired(token, now: ProcessInfo.processInfo.systemUptime) else { return }
+      self.voiceStatus = "输入框核验超时，已取消候选与排队输入"
+      self.finishDeferredPersonalInput(token)
+      self.memorySelectionIntent = nil
+    }
+    InputiaVoiceInputLauncher.targetBridge(.init(kind: "validate", target: snapshot.inputiaTarget, purpose: "shared_terms"),
+      personalAdmissionDelivery: true) { [weak self] reply in
+      guard let self, self.memorySelectionIntent == intent, self.personalInputDeferral.token == token else { return }
+      self.memorySelectionIntent = nil
+      guard self.memoryViewGeneration == generation, let reply,
+        self.personalReplayProofIsCurrent(reply, pending: pending, composition: true),
+        !self.personalInputDeferral.expired(token, now: ProcessInfo.processInfo.systemUptime),
+        InputiaMemorySelectionAdmission.matches(expected: InputiaMemoryTarget(snapshot.inputiaTarget), field: field,
+          returned: reply.target.map(InputiaMemoryTarget.init), server: reply.server_instance, returnedField: reply.field_instance,
+          ready: reply.ready, deadline: reply.deadline, now: ProcessInfo.processInfo.systemUptime),
+        self.memoryDisplayedTargets[kind] === snapshot,
+        self.managedDisplayCurrent(kind, client: client), stillValid() else {
+        self.voiceStatus = "输入框或候选已变化，已取消候选与排队输入"
+        self.finishDeferredPersonalInput(token)
+        _ = self.bridge.clearManagedMemory(); self.clearManagedMemoryDisplay(); return
+      }
+      guard let queued = self.personalInputDeferral.finish(token) else { return }
+      self.personalDeferredOrigin = nil; self.personalRecoveryToken = nil
+      perform()
+      if self.personalBoundaryWait.isWaiting { self.personalBoundaryProof = reply }
+      self.replayDeferredPersonalInput(queued, pending: pending, proof: reply)
+    }
+    return true
+  }
+
+  private func scheduleManagedRank(client: IMKTextInput) {
+    guard !candidatePanelExpanded, let pool = bridge.personalCandidatePool(limit: 64) else { return }
+    let texts = pool.candidates.map(\.text)
+    guard !texts.isEmpty, texts.count <= 64 else { return }
+    requestManagedMemory(.rank(texts), client: client) { [weak self, weak object = client as AnyObject] in
+      guard let self, let client = object as? IMKTextInput, !self.candidatePanelExpanded else { return }
+      self.syncHostState(with: self.bridge.latestOutcome)
+      self.updateCandidateWindow(client: client)
+      self.schedulePersonalization(client: client)
+      _ = self.refreshHotwordPrefix(client: client)
+    }
+  }
+
   private func prepareUnifiedVoiceTarget(client: IMKTextInput?, completion: @escaping (InputiaVoiceTarget?) -> Void) {
     pruneVoiceTargetSnapshots()
     synchronizePermissionEpoch()
@@ -1986,6 +2263,15 @@ final class InputiaInputController: IMKInputController {
       InputiaPersonalizationDiagnostics.record("capture_reply", "ok")
       let snapshot = InputiaVoiceTargetSnapshot.Snapshot(target: target, client: current, selection: selection,
         compositionGeneration: composition, localSelectionGeneration: localSelection, deadline: reply.deadline, permissionEpoch: epoch)
+      if let field = reply.field_instance {
+        let identity = reply.server_instance + ":" + field
+        if let previous = self.memoryFieldID, previous != identity {
+          _ = self.bridge.clearManagedMemory()
+          self.clearManagedMemoryDisplay()
+        }
+        self.memoryFieldID = identity
+        self.memoryTargetFields[target.target_id] = identity
+      }
       self.voiceTargetSnapshots[target.target_id] = snapshot
       self.voicePermissionEpochs[target.target_id] = epoch
       completion(target)
@@ -2440,6 +2726,17 @@ final class InputiaInputController: IMKInputController {
     }
     learnAndClearEnglishCompletion(client: client)
 
+    #if INPUTIA_PAIRED_BUILD
+    if bridge.managedMemoryEnabled {
+      clearClipboardRecall()
+      requestManagedMemory(.clipboard(9), client: client) { [weak self, weak object = client as AnyObject] in
+        guard let self, let client = object as? IMKTextInput else { return }
+        _ = self.presentClipboardRecall(self.bridge.clipboardCandidates(limit: 9), client: client)
+      }
+      return true
+    }
+    #endif
+
     if let clipboardText = NSPasteboard.general.string(forType: .string) {
       let normalizedText = clipboardText.trimmingCharacters(in: .whitespacesAndNewlines)
       if !normalizedText.isEmpty {
@@ -2451,7 +2748,10 @@ final class InputiaInputController: IMKInputController {
       }
     }
 
-    let candidates = bridge.clipboardCandidates(limit: 9)
+    return presentClipboardRecall(bridge.clipboardCandidates(limit: 9), client: client)
+  }
+
+  private func presentClipboardRecall(_ candidates: [String], client: IMKTextInput) -> Bool {
     guard !candidates.isEmpty else {
       clearClipboardRecall()
       return false
@@ -2501,6 +2801,17 @@ final class InputiaInputController: IMKInputController {
       return false
     }
     let text = recallCandidates[index]
+    #if INPUTIA_PAIRED_BUILD
+    if bridge.managedMemoryEnabled {
+      return admitManagedSelection("clipboard", client: client, stillValid: { [weak self] in
+        self?.recallCandidates.indices.contains(index) == true && self?.recallCandidates[index] == text
+          && self?.bridge.clipboardCandidates(limit: 9).contains(text) == true
+      }) { [weak self] in
+        client.insertText(text, replacementRange: emptyReplacementRange)
+        self?.clearClipboardRecall()
+      }
+    }
+    #endif
     client.insertText(text, replacementRange: emptyReplacementRange)
     inputiaDebugLog("clipboardRecallCommit index=\(index)")
     clearClipboardRecall()
@@ -2555,11 +2866,20 @@ final class InputiaInputController: IMKInputController {
     refreshEnglishCompletions(client: client)
   }
 
-  private func refreshEnglishCompletions(client: IMKTextInput, includeShared: Bool = false) {
+  private func refreshEnglishCompletions(client: IMKTextInput, includeShared: Bool = false, fetchManaged: Bool = true) {
     guard englishCompletionPrefix.count >= 2 else {
       hideEnglishCompletionCandidates()
       return
     }
+    #if INPUTIA_PAIRED_BUILD
+    if fetchManaged, bridge.managedMemoryEnabled {
+      let prefix = englishCompletionPrefix
+      requestManagedMemory(.englishCompletion(prefix, 5), client: client) { [weak self, weak object = client as AnyObject] in
+        guard let self, let client = object as? IMKTextInput, self.englishCompletionPrefix == prefix else { return }
+        self.refreshEnglishCompletions(client: client, includeShared: includeShared, fetchManaged: false)
+      }
+    }
+    #endif
     var candidates = bridge.completionCandidates(prefix: englishCompletionPrefix, limit: 5)
       .filter { completionSuffix(for: $0) != nil }
     #if INPUTIA_PAIRED_BUILD
@@ -2601,6 +2921,9 @@ final class InputiaInputController: IMKInputController {
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
     englishCompletionRect = inputRect
     InputiaHost.candidatePanel?.show(candidates: candidates, near: inputRect)
+    #if INPUTIA_PAIRED_BUILD
+    prepareMemoryCommit(candidates: candidates, prefix: englishCompletionPrefix, client: client)
+    #endif
     inputiaDebugLog("englishCompletionShown count=\(candidates.count)")
   }
 
@@ -2611,7 +2934,7 @@ final class InputiaInputController: IMKInputController {
     return commitEnglishCompletion(candidate, client: client)
   }
 
-  private func commitEnglishCompletion(_ candidate: String, client: IMKTextInput) -> Bool {
+  private func commitEnglishCompletion(_ candidate: String, client: IMKTextInput, memoryValidated: Bool = false) -> Bool {
     #if INPUTIA_PAIRED_BUILD
     if let explicit = explicitEnglishCandidates[candidate] {
       let expected = explicit.context
@@ -2631,16 +2954,26 @@ final class InputiaInputController: IMKInputController {
       return enqueueSharedEnglishSelection(candidate, identity: identity, client: client)
     }
     #endif
+    #if INPUTIA_PAIRED_BUILD
+    if bridge.managedMemoryEnabled, !memoryValidated {
+      let prefix = englishCompletionPrefix
+      return admitManagedSelection("english_completion", client: client, stillValid: { [weak self] in
+        self?.englishCompletionPrefix == prefix && self?.bridge.completionCandidates(prefix: prefix, limit: 5).contains(candidate) == true
+      }) { [weak self] in _ = self?.commitEnglishCompletion(candidate, client: client, memoryValidated: true) }
+    }
+    #endif
     guard let suffix = completionSuffix(for: candidate), !suffix.isEmpty else {
       clearEnglishCompletion()
       return false
     }
     #if INPUTIA_PAIRED_BUILD
+    let memoryConfirmation = takeMemoryConfirmation(text: suffix, replacement: client.selectedRange(), client: client)
     let origin = typedOriginBeforeInsertion(client)
     let typedStart = client.selectedRange().location
     #endif
     client.insertText(suffix, replacementRange: emptyReplacementRange)
     #if INPUTIA_PAIRED_BUILD
+    memoryConfirmation?()
     recordTypedCommit(suffix, client: client, start: typedStart, origin: origin)
     #endif
     let context = appContext(for: client)
@@ -2896,6 +3229,18 @@ struct InputiaInputMethodApp {
         exit(78)
       }
       #endif
+      InputiaMemoryBarrier.invalidate = {
+        InputiaVoiceBridge.shared.retirePending()
+        InputiaRustBridge.invalidateManagedMemory()
+        for controller in InputiaHost.inputControllers.allObjects { controller.clearManagedMemoryDisplay() }
+        InputiaHost.candidatePanel?.hide()
+      }
+      InputiaMemoryBarrier.clear = { policy in
+        InputiaVoiceBridge.shared.retirePending()
+        try InputiaRustBridge.applyManagedMemoryPolicy(policy)
+        for controller in InputiaHost.inputControllers.allObjects { controller.clearManagedMemoryDisplay() }
+        InputiaHost.candidatePanel?.hide()
+      }
       #endif
       if CommandLine.arguments.contains("--open-settings") {
         runSettingsOnly()

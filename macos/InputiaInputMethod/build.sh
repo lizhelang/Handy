@@ -358,6 +358,7 @@ if [[ -n "${INPUTIA_PAIR_BUILD_METADATA:-}" ]]; then
     --metadata "$INPUTIA_PAIR_BUILD_METADATA" "${pair_context_args[@]}" --emit swift > "$pair_source"
   PAIR_SWIFT_SOURCES=("$pair_source" "$ROOT_DIR/../../native/unified-pair-auth/UnifiedPairAuth.swift")
   HOST_SWIFT_DEFINES+=(-D INPUTIA_PAIRED_BUILD)
+  CAPI_FEATURE_ARGS+=(--features managed-memory)
 fi
 
 rm -rf "$APP_DIR" "$SETTINGS_APP_DIR"
@@ -372,6 +373,7 @@ fi
   "$ROOT_DIR/Sources/InputiaInputMethod/main.swift"
 
 /bin/bash "$ROOT_DIR/Tools/settings-store-self-check.sh"
+/bin/bash "$ROOT_DIR/Tools/managed-memory-self-check.sh"
 
 CAPI_LIB="$(run_cargo build --release --manifest-path "$CAPI_MANIFEST" "${CAPI_FEATURE_ARGS[@]}" --message-format=json-render-diagnostics |
   /usr/bin/python3 -c '
@@ -434,6 +436,8 @@ fi
   "${HOST_SWIFT_DEFINES[@]}" \
   "${PAIR_SWIFT_SOURCES[@]}" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRuntimeDiagnostics.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceBridge.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaMemoryImport.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaTypedCapture.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPersonalization.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExplicitHotwords.swift" \
@@ -448,6 +452,7 @@ fi
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceTargetSnapshot.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaFramedConnection.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaManagedMemory.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaCandidatePanel.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsWindow.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsStore.swift" \
@@ -591,6 +596,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceTargetSnapshot.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPermissionLifecycle.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaManagedMemory.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaFramedConnection.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "${PAIR_SWIFT_SOURCES[@]}" \
@@ -623,6 +629,7 @@ for check in InputiaVoiceServiceSelfCheck InputiaSharedTermsSelfCheck InputiaExp
     "$ROOT_DIR/Tools/$check.swift" \
     "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExplicitHotwords.swift" \
     "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
+    "$ROOT_DIR/Sources/InputiaInputMethod/InputiaManagedMemory.swift" \
     "$ROOT_DIR/Sources/InputiaInputMethod/InputiaFramedConnection.swift" \
     "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
     "$ROOT_DIR/../../native/unified-pair-auth/UnifiedPairAuth.swift" \

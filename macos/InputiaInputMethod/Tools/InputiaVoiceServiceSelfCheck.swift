@@ -48,6 +48,11 @@ struct InputiaVoiceServiceSelfCheck {
       precondition(encodedEdge["lease_epoch"] as? Int == 1)
     }
     print("inputia_host_shortcut_wire=pass modes=3 synthetic_encoding_only=true")
+    var memoryClears = 0
+    InputiaMemoryBarrier.clear = { policy in
+      precondition(policy.server_instance == "synthetic-server" && policy.profile_id == "synthetic-profile")
+      memoryClears += 1
+    }
     let state = SyntheticState()
     let good = InputiaVoicePolicyBarrier(barrier_id: String(repeating: "a", count: 64),
       version: InputiaVoiceTermsVersion(policy_epoch: 3, learning_generation: 7), clear_shared_personalization: true)
@@ -75,7 +80,16 @@ struct InputiaVoiceServiceSelfCheck {
         fatalError("invalid barrier accepted")
       } catch {}
     }
-    precondition(state.applied == 1 && sent == 1)
+    precondition(state.applied == 1 && sent == 1 && memoryClears == 1)
+    try InputiaVoiceServiceConnection.checkPolicy(good, minimumEpoch: 3, state: state) { sent += 1 }
+    precondition(memoryClears == 2 && sent == 2)
+    InputiaMemoryBarrier.clear = { _ in throw InputiaMemoryError.unavailable }
+    do {
+      try InputiaVoiceServiceConnection.checkPolicy(good, minimumEpoch: 3, state: state) { sent += 1 }
+      fatalError("failed process memory cleanup acknowledged")
+    } catch {}
+    precondition(sent == 2)
+    InputiaMemoryBarrier.clear = nil
     let raw = Data(#"{"barrier_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","version":{"policy_epoch":3,"learning_generation":7},"clear_shared_personalization":true}"#.utf8)
     let decoded = try JSONDecoder().decode(InputiaVoicePolicyBarrier.self, from: raw)
     precondition(decoded == good)
@@ -153,6 +167,6 @@ struct InputiaVoiceServiceSelfCheck {
       finished.signal()
     }
     precondition(finished.wait(timeout: .now() + 5) == .success)
-    print("inputia_voice_policy_client=pass checks=7 cleanup_before_ack=true failed_cleanup_no_ack=true synthetic_state_only=true actual_host_cache_not_tested=true")
+    print("inputia_voice_policy_client=pass same_epoch_recleared=true memory_cleanup_failure_no_ack=true cleanup_before_ack=true failed_cleanup_no_ack=true synthetic_state_only=true actual_host_cache_not_tested=true")
   }
 }

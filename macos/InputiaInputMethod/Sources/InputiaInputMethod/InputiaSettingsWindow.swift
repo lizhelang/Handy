@@ -803,6 +803,11 @@ final class InputiaSettingsWindowController: NSWindowController {
 
   private func importHandySources(includeHistory: Bool, includeClipboard: Bool) {
     guard persistControls() else { return }
+    #if INPUTIA_PAIRED_BUILD
+    let selection = includeHistory && includeClipboard ? "both" : (includeHistory ? "history" : "clipboard")
+    importStatusLabel.stringValue = "正在查询导入状态…"
+    InputiaMemoryImport.perform(selection: selection) { [weak self] status in self?.importStatusLabel.stringValue = status }
+    #else
     let bridge = InputiaRustBridge.makeDefault()
     let result = InputiaHandyMemorySync.sync(
       importer: bridge,
@@ -810,10 +815,15 @@ final class InputiaSettingsWindowController: NSWindowController {
       includeClipboard: includeClipboard
     )
     importStatusLabel.stringValue = "导入结果：" + result.summaryText
+    #endif
   }
 
   private func handyDataStatusText() -> String {
-    InputiaHandyMemorySync.statusText()
+    #if INPUTIA_PAIRED_BUILD
+    return "由已认证的学习服务导入；未确认的操作将使用原记录恢复"
+    #else
+    return InputiaHandyMemorySync.statusText()
+    #endif
   }
 
   @objc private func openSettingsFolder() {

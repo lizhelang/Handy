@@ -643,7 +643,7 @@ enum InputiaVoiceInputLauncher {
     }
   }
 
-  private static func openAuthenticatedConnection() throws -> InputiaVoiceServiceConnection {
+  static func openAuthenticatedConnection() throws -> InputiaVoiceServiceConnection {
     guard InputiaPermissionLifecycle.shared.allowsServiceConnection, InputiaPermissionLifecycle.shared.backgroundMaintenanceAllowsWork() else { throw InputiaVoiceServiceError.policy }
     let profile = InputiaProfile.current
     try profile.validateCandidatePaths()

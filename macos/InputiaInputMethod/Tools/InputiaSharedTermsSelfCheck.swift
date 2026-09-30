@@ -118,7 +118,10 @@ private final class ClearedState: InputiaSharedStateBarrierApplying {
     precondition(global.install(barrierEntry, ticket: global.ticket()))
     var uiCleared = false
     global.didClear = { uiCleared = true }
-    try! InputiaVoiceServiceConnection.checkPolicy(InputiaVoicePolicyBarrier(barrier_id: String(repeating: "a", count: 64), version: nextVersion, clear_shared_personalization: true), minimumEpoch: 3, state: ClearedState()) { precondition(uiCleared) }
+    var syntheticMemoryCleared = false
+    InputiaMemoryBarrier.clear = { _ in syntheticMemoryCleared = true }
+    try! InputiaVoiceServiceConnection.checkPolicy(InputiaVoicePolicyBarrier(barrier_id: String(repeating: "a", count: 64), version: nextVersion, clear_shared_personalization: true), minimumEpoch: 3, state: ClearedState()) { precondition(uiCleared && syntheticMemoryCleared) }
+    InputiaMemoryBarrier.clear = nil
     global.didClear = nil
     let done = DispatchSemaphore(value: 0)
     DispatchQueue.global().async {
