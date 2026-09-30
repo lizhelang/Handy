@@ -213,6 +213,12 @@ struct InputiaSettingsDocument: Codable {
 final class InputiaSettingsWindowController: NSWindowController {
   private let settingsURL: URL
   private var settingsDocument: InputiaSettingsDocument
+  private var settingsEdit: InputiaSettingsEdit?
+  private var displayedDocument: InputiaSettingsDocument?
+  private var pendingExternalImport: InputiaSettingsStore.ImportOperation?
+  private var statusTimer: Timer?
+  private var statusIsError = false
+  private let externalImportButton = NSButton(title: "查看并导入外部修改", target: nil, action: nil)
 
   private let schemaPopup = NSPopUpButton(frame: .zero, pullsDown: false)
   private let menuIconPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -239,7 +245,7 @@ final class InputiaSettingsWindowController: NSWindowController {
 
   init() {
     settingsURL = InputiaProfile.current.settings
-    settingsDocument = Self.loadDocument(from: settingsURL)
+    settingsDocument = InputiaSettingsDocument.defaultDocument(for: settingsURL)
 
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
@@ -252,8 +258,11 @@ final class InputiaSettingsWindowController: NSWindowController {
     window.center()
     super.init(window: window)
     window.contentView = makeContentView()
-    applyDocumentToControls()
+    reloadDocument()
+    statusTimer = Timer.scheduledTimer(withTimeInterval: 0.75, repeats: true) { [weak self] _ in self?.refreshApplicationStatus() }
   }
+
+  deinit { statusTimer?.invalidate() }
 
   @available(*, unavailable)
   required init?(coder: NSCoder) {
@@ -261,24 +270,32 @@ final class InputiaSettingsWindowController: NSWindowController {
   }
 
   override func showWindow(_ sender: Any?) {
-    settingsDocument = Self.loadDocument(from: settingsURL)
-    applyDocumentToControls()
+    if settingsEdit?.pending == nil && pendingExternalImport == nil { reloadDocument() }
     super.showWindow(sender)
   }
 
-  private static func loadDocument(from url: URL) -> InputiaSettingsDocument {
+  private func acceptSnapshot(_ snapshot: InputiaSettingsStore.Snapshot) throws {
+    var document = try snapshot.decode(InputiaSettingsDocument.self)
+    let sensitive = document.sensitiveBundleIds
+    document.sanitize(using: settingsURL)
+    document.sensitiveBundleIds = sensitive
+    settingsDocument = document
+    settingsEdit = InputiaSettingsEdit(snapshot)
+    statusIsError = false
+    externalImportButton.isHidden = true
+    InputiaSettingsCache.shared(path: settingsURL.path).publish(snapshot)
+    applyDocumentToControls()
+  }
+
+  private func reloadDocument() {
     do {
-      try InputiaProfile.current.validateSettingsPath(url.path)
-      if FileManager.default.fileExists(atPath: url.path) {
-        let data = try Data(contentsOf: url)
-        var document = try JSONDecoder().decode(InputiaSettingsDocument.self, from: data)
-        document.sanitize(using: url)
-        return document
-      }
+      try InputiaProfile.current.validateSettingsPath(settingsURL.path)
+      try acceptSnapshot(InputiaSettingsStore.read(path: settingsURL.path))
     } catch {
-      NSLog("Inputia failed to load settings: \(error)")
+      settingsEdit = nil
+      applyDocumentToControls()
+      showFailure(error)
     }
-    return InputiaSettingsDocument.defaultDocument(for: url)
   }
 
   private func makeContentView() -> NSView {
@@ -494,6 +511,10 @@ final class InputiaSettingsWindowController: NSWindowController {
   }
 
   private func makeFooter() -> NSView {
+    externalImportButton.target = self
+    externalImportButton.action = #selector(previewExternalSettings)
+    externalImportButton.bezelStyle = .rounded
+    externalImportButton.isHidden = true
     let saveButton = NSButton(title: "保存设置", target: self, action: #selector(saveSettings))
     saveButton.bezelStyle = .rounded
     saveButton.keyEquivalent = "\r"
@@ -536,7 +557,7 @@ final class InputiaSettingsWindowController: NSWindowController {
     buttonRow.detachesHiddenViews = false
     buttonRow.translatesAutoresizingMaskIntoConstraints = false
 
-    let footer = NSStackView(views: [statusLabel, buttonRow])
+    let footer = NSStackView(views: [statusLabel, externalImportButton, buttonRow])
     footer.orientation = .vertical
     footer.alignment = .leading
     footer.spacing = 8
@@ -628,6 +649,7 @@ final class InputiaSettingsWindowController: NSWindowController {
     sensitiveAppsTextView.string = settingsDocument.sensitiveBundleIds.joined(separator: "\n")
     importStatusLabel.stringValue = handyDataStatusText()
     statusLabel.stringValue = settingsURL.path
+    displayedDocument = documentFromControls()
   }
 
   @objc private func candidateStepperChanged() {
@@ -644,9 +666,8 @@ final class InputiaSettingsWindowController: NSWindowController {
     saveSettings()
   }
 
-  @objc private func saveSettings() {
+  private func documentFromControls() -> InputiaSettingsDocument {
     var next = settingsDocument
-    let previousIconVariant = settingsDocument.menuIconVariant ?? "pearl_16"
     next.schemaId = (schemaPopup.selectedItem?.representedObject as? String) ?? "luna_pinyin_simp"
     next.menuIconVariant = (menuIconPopup.selectedItem?.representedObject as? String) ?? "pearl_16"
     next.candidatePageSize = candidateStepper.integerValue
@@ -667,36 +688,88 @@ final class InputiaSettingsWindowController: NSWindowController {
       .components(separatedBy: .newlines)
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
       .filter { !$0.isEmpty }
-    next.sanitize(using: settingsURL)
+    return next
+  }
+
+  @objc private func saveSettings() { _ = persistControls() }
+
+  @discardableResult
+  private func persistControls() -> Bool {
+    guard pendingExternalImport == nil else {
+      showFailure(InputiaSettingsStore.Failure(code: "commit_uncertain")); return false
+    }
+    guard let edit = settingsEdit else {
+      statusLabel.stringValue = "设置尚未成功读取，请重新打开窗口或修复文件"
+      return false
+    }
+    let next = documentFromControls()
 
     do {
       try InputiaProfile.current.validateSettingsPath(settingsURL.path)
-      try FileManager.default.createDirectory(
-        at: settingsURL.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-      )
-      let encoder = JSONEncoder()
-      encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-      let encoded = try encoder.encode(next)
-      let data: Data
-      if InputiaProfile.current.isCandidate,
-         let dictionary = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] {
-        let isolated = try InputiaProfile.current.isolatedSettings(dictionary, settingsPath: settingsURL.path)
-        data = try JSONSerialization.data(withJSONObject: isolated, options: [.prettyPrinted, .sortedKeys])
-      } else {
-        data = encoded
+      let patch = try InputiaSettingsStore.dirtyPatch(from: displayedDocument ?? settingsDocument, to: next)
+      guard let result = try edit.apply(path: settingsURL.path, patch: patch) else { return true }
+      try acceptSnapshot(result.current)
+      if result.status != "saved" {
+        showFailure(InputiaSettingsStore.Failure(code: result.status))
+        return false
       }
-      try data.write(to: settingsURL, options: Data.WritingOptions.atomic)
-      settingsDocument = next
-      updateSpellingCorrectionAvailability(for: next.schemaId)
-      if (next.menuIconVariant ?? "pearl_16") != previousIconVariant {
-        statusLabel.stringValue = "已保存，菜单栏图标会在下次重装后生效"
-      } else {
-        statusLabel.stringValue = "已保存，输入法会自动热重载"
-      }
+      statusLabel.stringValue = "已保存版本 \(result.commitRevision ?? result.current.revision)，等待输入会话确认"
+      return true
     } catch {
-      statusLabel.stringValue = "保存失败"
-      NSLog("Inputia failed to save settings: \(error)")
+      showFailure(error)
+      return false
+    }
+  }
+
+  private func showFailure(_ error: Error) {
+    statusIsError = true
+    statusLabel.stringValue = error.localizedDescription
+    if let failure = error as? InputiaSettingsStore.Failure,
+      ["external_edit", "external_changed"].contains(failure.code) { externalImportButton.isHidden = false }
+  }
+
+  private func refreshApplicationStatus() {
+    guard window?.isVisible == true, !statusIsError, let edit = settingsEdit,
+      edit.pending == nil, pendingExternalImport == nil else { return }
+    let state = InputiaSettingsCache.shared(path: settingsURL.path).state
+    if let failure = state.failure { showFailure(InputiaSettingsStore.Failure(code: failure)); return }
+    if let current = state.snapshot, current.identity != edit.base.identity {
+      statusLabel.stringValue = "其他窗口已保存新版本；当前修改提交时会核对冲突"
+      return
+    }
+    statusLabel.stringValue = state.application?.summary(for: edit.base)
+      ?? "已保存版本 \(edit.base.revision)，等待输入会话确认"
+  }
+
+  @objc private func previewExternalSettings() {
+    guard settingsEdit?.pending == nil else { showFailure(InputiaSettingsStore.Failure(code: "commit_uncertain")); return }
+    do {
+      if pendingExternalImport == nil {
+        let external = try InputiaSettingsStore.inspectExternal(path: settingsURL.path)
+        let data = try JSONSerialization.data(withJSONObject: external.values, options: [.prettyPrinted, .sortedKeys])
+        let preview = NSTextView(frame: NSRect(x: 0, y: 0, width: 480, height: 240))
+        preview.isEditable = false; preview.isRichText = false
+        preview.string = String(decoding: data, as: UTF8.self)
+        let scroll = NSScrollView(frame: preview.frame)
+        scroll.hasVerticalScroller = true; scroll.documentView = preview
+        let alert = NSAlert()
+        alert.messageText = "导入外部修改的设置"
+        alert.informativeText = settingsURL.path + "\n请核对下面的实际内容；确认后保存为新的设置版本。"
+        alert.accessoryView = scroll
+        alert.addButton(withTitle: "确认导入"); alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        pendingExternalImport = .init(external)
+      }
+      guard let operation = pendingExternalImport else { return }
+      let result = try InputiaSettingsStore.importExternal(path: settingsURL.path, operation: operation)
+      pendingExternalImport = nil
+      try acceptSnapshot(result.current)
+      if result.status != "saved" { showFailure(InputiaSettingsStore.Failure(code: result.status)) }
+      else { statusLabel.stringValue = "已导入版本 \(result.commitRevision ?? result.current.revision)，等待输入会话确认" }
+    } catch {
+      if let failure = error as? InputiaSettingsStore.Failure,
+        ["invalid_request", "operation_mismatch", "revision_exhausted", "external_changed", "external_edit"].contains(failure.code) { pendingExternalImport = nil }
+      showFailure(error)
     }
   }
 
@@ -713,7 +786,7 @@ final class InputiaSettingsWindowController: NSWindowController {
   }
 
   private func importHandySources(includeHistory: Bool, includeClipboard: Bool) {
-    saveSettings()
+    guard persistControls() else { return }
     let bridge = InputiaRustBridge.makeDefault()
     let result = InputiaHandyMemorySync.sync(
       importer: bridge,
@@ -729,10 +802,6 @@ final class InputiaSettingsWindowController: NSWindowController {
 
   @objc private func openSettingsFolder() {
     guard (try? InputiaProfile.current.validateSettingsPath(settingsURL.path)) != nil else { return }
-    try? FileManager.default.createDirectory(
-      at: settingsURL.deletingLastPathComponent(),
-      withIntermediateDirectories: true
-    )
     NSWorkspace.shared.activateFileViewerSelecting([settingsURL])
   }
 

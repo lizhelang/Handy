@@ -640,6 +640,10 @@ final class InputiaInputController: IMKInputController {
     #endif
     resetShiftInputModeSession(reason: "activate")
     InputiaHost.activeInputController = self
+    InputiaHost.candidatePanel?.settingsDidApply = { [weak self] snapshot in
+      guard let self, InputiaHost.activeInputController === self else { return }
+      self.bridge.candidateDisplaySettingsApplied(snapshot)
+    }
     if let client = sender as? IMKTextInput {
       if shouldUseSecureDirectMode(client) {
         return
@@ -667,6 +671,7 @@ final class InputiaInputController: IMKInputController {
     resetShiftInputModeSession(reason: "deactivate")
     commitComposition(sender)
     if InputiaHost.activeInputController === self {
+      InputiaHost.candidatePanel?.settingsDidApply = nil
       InputiaHost.activeInputController = nil
     }
   }
@@ -2978,10 +2983,15 @@ final class InputiaInputMethodDiagnostics {
     let diagnostics = InputiaInputMethodDiagnostics()
     switch command {
     case "--explicit-hotwords-self-check":
+      #if INPUTIA_PAIRED_BUILD
       let words = InputiaExplicitHotwords.read(file: InputiaProfile.current.handyRoot.appendingPathComponent("settings_store.json"))
       let matches = InputiaHotwordPrefix.candidates(words, code: "lll").count
       print("explicit_hotwords loaded_count=\(words.count) prefix_matches=\(matches) voice_snapshot_required=false")
       return true
+      #else
+      fputs("explicit_hotwords unavailable: paired build required\n", stderr)
+      exit(2)
+      #endif
     case "--unified-runtime-self-check":
       InputiaRuntimeDiagnostics.run()
       return true

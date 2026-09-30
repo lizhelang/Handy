@@ -163,3 +163,13 @@ completed 需要共享域、个人域与读者三个回执齐备。启动分页�
 G1 固定 Rust 执行器升级至 v2，覆盖 Core、Runtime、CAPI、Rime、Settings、Release 和 Updater（启用原生代码验证 feature），并逐项保留日志。测试输出中旧动态 Rime 分支的 `skip:` 也计入未执行必需案例，不能因为测试函数正常返回就获得 PASS。案例说明同步到完整库范围。
 
 合成执行回归核实七个固定命令、真实 Cargo feature 名及“正常退出但跳过 Rime”仍 FAIL。发布/验收 Python 共 48 项通过。这是执行器回归，未在仍有并行改动的工作区生成固定最终制品的 G1 PASS，其他 G0–G10b 证据仍需后续实际执行。
+
+### 第十二批：原生设置入口接线
+
+原生窗口通过无 session C ABI 读取和 CAS 保存，只提交实际修改字段；首次确定拒绝后可以重新预览外部修改，曾经出现未知提交的请求在随后 busy/维护阻塞时继续保留原 operation ID。外部导入必须先预览，再绑定完整原始摘要确认。设置缓存按固定 profile 在后台刷新，键事件不再按文件修改时间同步重读。
+
+Rust bridge 先用准确 store/revision/digest 建立并验证新 session，成功后才释放旧 session；失败保留原输入能力并有界重试。组合输入期间延迟替换。快捷键确认来自实际配置，字体确认来自候选面板更新回调；不同 session 的旧版本、降级和等待组件分别展示。候选与诊断写路径严格绑定独立 profile，临时诊断不隐式加载或重写日用配置。
+
+实施代理验证：33 项合成 ABI/状态检查通过，普通与 v2 完整 Host typecheck 通过（保留既有 PermissionLifecycle weak-capture 提示）；最后诊断隔离改动的定向 typecheck、shell 语法及 diff 检查通过。独立复核关闭首次 external_edit 导入死路、未知后 busy 改 ID、失败替换旧会话及候选路径问题，最终 CLEAR。未启动日用 Host、修改用户设置或安装程序；原生窗口现场交互仍待真实制品验收。
+
+后续核查另发现仍保留的 `inputia_memory.db` 派生学习域尚未参与第十一批的 Completed 合同，且原生旧导入入口可达。该遗漏正在同一任务继续收敛；第十一批两域回归不代表全部学习副本已经覆盖，不据此放行隐私 gate。

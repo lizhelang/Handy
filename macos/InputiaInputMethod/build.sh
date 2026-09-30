@@ -371,6 +371,8 @@ fi
 /bin/zsh "$ROOT_DIR/Tools/verify-imk-event-route.sh" \
   "$ROOT_DIR/Sources/InputiaInputMethod/main.swift"
 
+/bin/bash "$ROOT_DIR/Tools/settings-store-self-check.sh"
+
 CAPI_LIB="$(run_cargo build --release --manifest-path "$CAPI_MANIFEST" "${CAPI_FEATURE_ARGS[@]}" --message-format=json-render-diagnostics |
   /usr/bin/python3 -c '
 import json, sys
@@ -448,6 +450,7 @@ fi
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaCandidatePanel.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsWindow.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsStore.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "${CAPI_LINK_ARGS[@]}" \
   -parse-as-library \
@@ -538,6 +541,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaInputTextRouter.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaShortcutClassifier.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsStore.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "${CAPI_LINK_ARGS[@]}" \
   -target "$TARGET_TRIPLE" \
@@ -548,6 +552,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "$ROOT_DIR/Tools/InputiaHandyMemorySyncSelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsStore.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "${CAPI_LINK_ARGS[@]}" \
   -target "$TARGET_TRIPLE" \
@@ -558,6 +563,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "$ROOT_DIR/Tools/InputiaCandidateIdentitySelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsStore.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "${CAPI_LINK_ARGS[@]}" \
   -target "$TARGET_TRIPLE" -framework AppKit \
@@ -625,6 +631,9 @@ for check in InputiaVoiceServiceSelfCheck InputiaSharedTermsSelfCheck InputiaExp
 done
 
 /usr/bin/swiftc \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsStore.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
+  "${CAPI_LINK_ARGS[@]}" \
   "$ROOT_DIR/Tools/InputiaCandidatePanelLayoutSelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaCandidatePanel.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExpandedCandidateGridNavigation.swift" \
@@ -637,6 +646,7 @@ done
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsWindow.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsStore.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "${CAPI_LINK_ARGS[@]}" \
   -target "$TARGET_TRIPLE" \
@@ -646,6 +656,7 @@ done
 /usr/bin/swiftc \
   "$ROOT_DIR/Tools/InputiaBridgePrivacySelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsStore.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "${CAPI_LINK_ARGS[@]}" \
   -target "$TARGET_TRIPLE" \
@@ -655,6 +666,7 @@ done
 /usr/bin/swiftc \
   "$ROOT_DIR/Tools/InputiaBridgeCandidateCountSelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsStore.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "${CAPI_LINK_ARGS[@]}" \
   -target "$TARGET_TRIPLE" \

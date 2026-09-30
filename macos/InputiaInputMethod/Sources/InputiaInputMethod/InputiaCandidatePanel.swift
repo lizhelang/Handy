@@ -51,8 +51,11 @@ final class InputiaCandidatePanel: NSPanel {
   private let collapsedMaxPanelHeight: CGFloat = 58
   private let expandedMaxPanelHeight: CGFloat = 220
   private let cursorOffset: CGFloat = 4
-  private var displaySettings = InputiaCandidateDisplaySettings.load()
-  private var displaySettingsModificationDate = InputiaCandidateDisplaySettings.modificationDate()
+  private let settingsCache = InputiaSettingsCache.shared(path: InputiaProfile.current.settings.path)
+  private var displaySettings = InputiaCandidateDisplaySettings(fontSize: 14)
+  private var displaySettingsIdentity: String?
+  private var displaySettingsSnapshot: InputiaSettingsStore.Snapshot?
+  var settingsDidApply: ((InputiaSettingsStore.Snapshot) -> Void)?
   private static let collapsedCandidateLimit = 9
   private static let expandedCandidateLimit = 40
 
@@ -115,6 +118,7 @@ final class InputiaCandidatePanel: NSPanel {
       primaryCandidateCount: primaryCandidateCount,
       activeRowIndex: activeRowIndex
     )
+    if let snapshot = displaySettingsSnapshot { settingsDidApply?(snapshot) }
     let preferredSize = candidateView.preferredSize(maxWidth: availablePanelWidth)
     let contentWidth = preferredSize.width
     let contentHeight = preferredSize.height
@@ -155,12 +159,10 @@ final class InputiaCandidatePanel: NSPanel {
   }
 
   private func reloadDisplaySettingsIfNeeded() {
-    let currentModificationDate = InputiaCandidateDisplaySettings.modificationDate()
-    guard currentModificationDate != displaySettingsModificationDate else {
-      return
-    }
-    displaySettingsModificationDate = currentModificationDate
-    displaySettings = InputiaCandidateDisplaySettings.load()
+    guard let snapshot = settingsCache.state.snapshot, snapshot.identity != displaySettingsIdentity else { return }
+    displaySettings = InputiaCandidateDisplaySettings.load(snapshot)
+    displaySettingsIdentity = snapshot.identity
+    displaySettingsSnapshot = snapshot
   }
 
   private static func normalizedAnchor(_ rect: NSRect) -> NSRect {
@@ -326,27 +328,11 @@ enum InputiaCandidateTextSupport {
 private struct InputiaCandidateDisplaySettings {
   let fontSize: CGFloat
 
-  static func load() -> Self {
-    guard
-      let data = try? Data(contentsOf: settingsURL()),
-      let object = try? JSONSerialization.jsonObject(with: data),
-      let dictionary = object as? [String: Any]
-    else {
-      return Self(fontSize: 14)
-    }
-    let rawSize = dictionary["candidate_font_size"] as? NSNumber
+  static func load(_ snapshot: InputiaSettingsStore.Snapshot) -> Self {
+    let rawSize = snapshot.values["candidate_font_size"] as? NSNumber
     return Self(fontSize: CGFloat(rawSize?.doubleValue ?? 14).clamped(to: 12...22))
   }
 
-  static func modificationDate() -> Date? {
-    try? FileManager.default.attributesOfItem(atPath: settingsURL().path)[.modificationDate] as? Date
-  }
-
-  private static func settingsURL() -> URL {
-    let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-      ?? URL(fileURLWithPath: NSTemporaryDirectory())
-    return baseURL.appendingPathComponent("Inputia/settings.json")
-  }
 }
 
 enum InputiaCandidateRowLayout {

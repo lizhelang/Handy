@@ -32,16 +32,6 @@ private func inputia_session_new_luna_pinyin_simp_with_memory(
   _ candidatePageSize: Int
 ) -> UnsafeMutableRawPointer?
 
-@_silgen_name("inputia_session_new_from_settings")
-private func inputia_session_new_from_settings(
-  _ settingsPath: UnsafePointer<CChar>
-) -> UnsafeMutableRawPointer?
-
-@_silgen_name("inputia_session_new_from_settings_without_memory")
-private func inputia_session_new_from_settings_without_memory(
-  _ settingsPath: UnsafePointer<CChar>
-) -> UnsafeMutableRawPointer?
-
 @_silgen_name("inputia_session_free")
 private func inputia_session_free(_ session: UnsafeMutableRawPointer?)
 
@@ -213,61 +203,77 @@ final class InputiaRustBridge {
 
   private let settingsPath: String
   private var session: UnsafeMutableRawPointer?
-  private var settingsModificationDate: Date?
+  private var settingsCache: InputiaSettingsCache?
+  private var activeSettings: InputiaSettingsStore.Snapshot?
+  private let settingsRetry = InputiaSettingsRetryGate()
+  private var diagnosticSettings = false
+  private var scriptEdit: InputiaSettingsEdit?
+  private var candidateDisplayIdentity: String?
+  struct SettingsApplication {
+    let snapshot: InputiaSettingsStore.Snapshot
+    let sessionOpened: Bool
+    let withoutMemory: Bool
+    let nativeFields: [String]
+    let failureCode: String?
+  }
+  private(set) var settingsApplication: SettingsApplication?
+  var settingsApplicationDidChange: ((SettingsApplication) -> Void)?
   private var cachedInputModeToggleShortcut = "shift"
   private var cachedScriptToggleShortcut = "control_shift_s"
   private(set) var schemaID = "luna_pinyin_simp"
   var usesNaturalDoublePinyin: Bool { schemaID == "double_pinyin" }
   private(set) var latestOutcome = InputiaBridgeOutcome.error
 
-  private init(settingsPath: String, startInChineseMode: Bool = false) {
+  private init(settingsPath: String, startInChineseMode: Bool = false, diagnostics: Bool = false) {
     self.settingsPath = settingsPath
-    Self.ensureSettingsFile(at: settingsPath)
-    settingsModificationDate = Self.modificationDate(for: settingsPath)
-    cachedInputModeToggleShortcut = Self.inputModeToggleShortcut(in: settingsPath)
-    cachedScriptToggleShortcut = Self.scriptToggleShortcut(in: settingsPath)
-    schemaID = Self.loadSettingsDictionary(path: settingsPath)?["schema_id"] as? String ?? "luna_pinyin_simp"
-    session = Self.openSettingsSession(settingsPath: settingsPath)
-    if startInChineseMode {
-      _ = setChineseMode()
-    }
+    diagnosticSettings = diagnostics
+    do {
+      if diagnostics { try Self.validateDiagnosticSettingsPath(settingsPath) }
+      else { try InputiaProfile.current.validateCandidatePaths(); try InputiaProfile.current.validateSettingsPath(settingsPath) }
+      let cache = InputiaSettingsCache.shared(path: settingsPath)
+      settingsCache = cache
+      let state = cache.state
+      if let snapshot = state.snapshot, settingsRetry.begin(identity: snapshot.identity, generation: state.generation) { _ = reloadSettings(snapshot: snapshot) }
+    } catch { NSLog("Inputia settings startup rejected") }
+    if startInChineseMode { _ = setChineseMode() }
   }
 
   static func makeDefault() -> InputiaRustBridge {
     InputiaRustBridge(settingsPath: defaultSettingsPath(), startInChineseMode: true)
   }
 
-  private init(userDataDir: String, memoryDbPath: String?) {
-    settingsPath = Self.defaultSettingsPath()
-    session = Self.openDirectSession(userDataDir: userDataDir, memoryDbPath: memoryDbPath)
-    if session == nil {
-      NSLog("Inputia Rust bridge failed to initialize session")
-    }
+  private init(directDiagnosticWithMemory: Bool) {
+    let path = Self.diagnosticSettingsPath()
+    settingsPath = path
+    diagnosticSettings = true
+    // direct ABI 诊断仍用直接构造器，但隐私基准也来自自己的 Caches 配置，绝不读日用配置。
+    guard let snapshot = Self.applyDiagnosticPatch(path: path,
+      patch: ["memory_enabled":directDiagnosticWithMemory, "privacy_learning_enabled":true]) else { return }
+    let cache = InputiaSettingsCache.shared(path: path)
+    cache.publish(snapshot)
+    settingsCache = cache
+    let root = URL(fileURLWithPath: path).deletingLastPathComponent()
+    let rime = root.appendingPathComponent("rime").path
+    let memory = root.appendingPathComponent("inputia_memory.db").path
+    guard (try? InputiaSettingsStore.validateRuntimePaths(snapshot,
+      expected: ["rime_user_data_dir":rime, "memory_db_path":memory],
+      required: ["rime_user_data_dir", "memory_db_path"])) != nil else { return }
+    session = Self.openDirectSession(userDataDir: rime, memoryDbPath: directDiagnosticWithMemory ? memory : nil)
+    if session != nil { activeSettings = snapshot }
   }
 
   static func temporaryDirectForDiagnostics() -> InputiaRustBridge {
-    let root = URL(fileURLWithPath: NSTemporaryDirectory())
-      .appendingPathComponent("InputiaDirectBridgeSelfCheck-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
-    return InputiaRustBridge(
-      userDataDir: root.appendingPathComponent("rime", isDirectory: true).path,
-      memoryDbPath: nil
-    )
+    InputiaRustBridge(directDiagnosticWithMemory: false)
   }
 
   static func temporaryForDiagnostics() -> InputiaRustBridge {
-    let root = URL(fileURLWithPath: NSTemporaryDirectory())
-      .appendingPathComponent("InputiaBridgeSelfCheck-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
-    return InputiaRustBridge(
-      userDataDir: root.appendingPathComponent("rime", isDirectory: true).path,
-      memoryDbPath: root.appendingPathComponent("inputia_memory.db").path
-    )
+    InputiaRustBridge(directDiagnosticWithMemory: true)
   }
 
   static func temporarySettingsForDiagnostics() -> InputiaRustBridge {
-    let root = URL(fileURLWithPath: NSTemporaryDirectory())
-      .appendingPathComponent("InputiaSettingsSelfCheck-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
-    return InputiaRustBridge(settingsPath: root.appendingPathComponent("settings.json").path)
+    InputiaRustBridge(settingsPath: diagnosticSettingsPath(), diagnostics: true)
   }
+
 
   deinit {
     inputia_session_free(session)
@@ -360,11 +366,10 @@ final class InputiaRustBridge {
 
   @discardableResult
   func reloadSettingsIfNeeded() -> Bool {
-    let currentModificationDate = Self.modificationDate(for: settingsPath)
-    guard currentModificationDate != settingsModificationDate else {
-      return false
-    }
-    return reloadSettings(newModificationDate: currentModificationDate)
+    guard latestOutcome.composing.isEmpty, let state = settingsCache?.state, let snapshot = state.snapshot,
+      snapshot.identity != activeSettings?.identity,
+      settingsRetry.begin(identity: snapshot.identity, generation: state.generation) else { return false }
+    return reloadSettings(snapshot: snapshot)
   }
 
   func inputModeToggleShortcut() -> String {
@@ -377,10 +382,33 @@ final class InputiaRustBridge {
 
   @discardableResult
   func toggleChineseScriptPreference() -> Bool {
-    guard Self.toggleChineseScript(in: settingsPath) else {
-      return false
-    }
-    return reloadSettings(newModificationDate: Self.modificationDate(for: settingsPath))
+    // Bool 表示快捷键已被认领；保存失败也不能把快捷键泄漏给目标应用。
+    guard let cache = settingsCache, let snapshot = cache.state.snapshot else { return true }
+    if scriptEdit?.pending == nil { scriptEdit = InputiaSettingsEdit(snapshot) }
+    let target = snapshot.values["chinese_script"] as? String == "traditional" ? "simplified" : "traditional"
+    do {
+      guard let result = try scriptEdit?.apply(path: settingsPath, patch: ["chinese_script": target]) else { return true }
+      cache.publish(result.current)
+      guard result.status == "saved" else {
+        NSLog("Inputia script preference conflicted; selection must be repeated")
+        return true
+      }
+      _ = reloadSettingsIfNeeded()
+      return true
+    } catch { NSLog("Inputia script preference save failed: \(error.localizedDescription)"); return true }
+  }
+
+  func candidateDisplaySettingsApplied(_ snapshot: InputiaSettingsStore.Snapshot) {
+    guard candidateDisplayIdentity != snapshot.identity else { return }
+    candidateDisplayIdentity = snapshot.identity
+    guard snapshot.identity == activeSettings?.identity, let session else { return }
+    _ = reportNativeApplication(session: session, snapshot: snapshot)
+  }
+
+  private func reportNativeApplication(session: UnsafeMutableRawPointer, snapshot: InputiaSettingsStore.Snapshot) -> Bool {
+    var fields = ["input_mode_toggle_shortcut", "script_toggle_shortcut", "shift_toggle_enabled"]
+    if candidateDisplayIdentity == snapshot.identity { fields.append("candidate_font_size") }
+    return InputiaSettingsStore.reportApplication(session: session, applied: fields)
   }
 
   func backspace() -> InputiaBridgeOutcome {
@@ -439,73 +467,40 @@ final class InputiaRustBridge {
     return ok
   }
 
-  static func debugSettingsReloadSelfCheck(settingsPath: String) -> [InputiaBridgeOutcome] {
-    let bridge = InputiaRustBridge(settingsPath: settingsPath, startInChineseMode: true)
-    var outcomes: [InputiaBridgeOutcome] = []
-    outcomes.append(bridge.toggleInputMode())
-    Self.writeSettings(
-      shiftToggleEnabled: false,
-      inputModeToggleShortcut: "none",
-      punctuationPreference: "english_in_chinese",
-      candidatePageSize: 7,
-      to: settingsPath
-    )
+  static func debugSettingsReloadSelfCheck(settingsPath _: String) -> [InputiaBridgeOutcome] {
+    let path = diagnosticSettingsPath()
+    let bridge = InputiaRustBridge(settingsPath: path, startInChineseMode: true, diagnostics: true)
+    var outcomes = [bridge.toggleInputMode()]
+    guard let snapshot = applyDiagnosticPatch(path: path, patch: ["shift_toggle_enabled":false,
+      "input_mode_toggle_shortcut":"none", "punctuation_preference":"english_in_chinese", "candidate_page_size":7]) else { return [.error] }
+    bridge.settingsCache?.publish(snapshot)
     bridge.reloadSettingsIfNeeded()
     outcomes.append(bridge.handleSpecial(keyShift))
     return outcomes
   }
 
-  static func debugCandidateCountFallbackSelfCheck(settingsPath: String) -> InputiaBridgeOutcome {
-    writeSettings(
-      shiftToggleEnabled: true,
-      punctuationPreference: "english_in_chinese",
-      candidatePageSize: 8,
-      to: settingsPath
-    )
-    let settingsURL = URL(fileURLWithPath: settingsPath)
-    if
-      let data = try? Data(contentsOf: settingsURL),
-      let object = try? JSONSerialization.jsonObject(with: data),
-      var dictionary = object as? [String: Any]
-    {
-      dictionary["schema_id"] = "double_pinyin"
-      let invalidMemoryURL = settingsURL.deletingLastPathComponent()
-        .appendingPathComponent("memory-as-directory", isDirectory: true)
-      try? FileManager.default.createDirectory(at: invalidMemoryURL, withIntermediateDirectories: true)
-      dictionary["memory_db_path"] = invalidMemoryURL.path
-      if let updated = try? JSONSerialization.data(
-        withJSONObject: dictionary,
-        options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-      ) {
-        try? updated.write(to: settingsURL, options: .atomic)
-      }
-    }
-
-    let bridge = InputiaRustBridge(settingsPath: settingsPath, startInChineseMode: true)
+  static func debugCandidateCountFallbackSelfCheck(settingsPath _: String) -> InputiaBridgeOutcome {
+    let path = diagnosticSettingsPath()
+    let invalidMemory = URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent("inputia_memory.db")
+    guard (try? validateDiagnosticSettingsPath(path)) != nil,
+      applyDiagnosticPatch(path: path, patch: ["candidate_page_size":8, "schema_id":"double_pinyin",
+        "memory_db_path":invalidMemory.path]) != nil,
+      (try? FileManager.default.createDirectory(at: invalidMemory, withIntermediateDirectories: true)) != nil else { return .error }
+    let bridge = InputiaRustBridge(settingsPath: path, startInChineseMode: true, diagnostics: true)
     var outcome = bridge.latestOutcome
-    for character in "yh" {
-      outcome = bridge.handle(character: character)
-    }
+    for character in "yh" { outcome = bridge.handle(character: character) }
     return outcome
   }
 
-  static func debugClipboardPrivacySelfCheck(settingsPath: String) -> [String: Bool] {
-    Self.writeSettings(
-      shiftToggleEnabled: true,
-      punctuationPreference: "english_in_chinese",
-      candidatePageSize: 7,
-      to: settingsPath
-    )
-    let bridge = InputiaRustBridge(settingsPath: settingsPath)
-    return [
-      "textedit": bridge.shouldReadClipboard(bundleId: "com.apple.TextEdit"),
+  static func debugClipboardPrivacySelfCheck(settingsPath _: String) -> [String: Bool] {
+    let path = diagnosticSettingsPath()
+    guard applyDiagnosticPatch(path: path, patch: ["memory_enabled":true, "privacy_learning_enabled":true,
+      "sensitive_bundle_ids":defaultSensitiveBundleIds]) != nil else { return [:] }
+    let bridge = InputiaRustBridge(settingsPath: path, diagnostics: true)
+    return ["textedit": bridge.shouldReadClipboard(bundleId: "com.apple.TextEdit"),
       "onepassword": bridge.shouldReadClipboard(bundleId: "com.1password.1password"),
       "unknown": bridge.shouldReadClipboard(bundleId: "unknown"),
-      "privateWindow": bridge.shouldReadClipboard(
-        bundleId: "com.apple.Safari",
-        windowTitle: "Private Browsing - Bank Login"
-      ),
-    ]
+      "privateWindow": bridge.shouldReadClipboard(bundleId: "com.apple.Safari", windowTitle: "Private Browsing - Bank Login")]
   }
 
   func debugCandidatePageSizeSelfCheck() -> InputiaBridgeOutcome {
@@ -565,7 +560,8 @@ final class InputiaRustBridge {
     guard !isSensitiveApp(bundleId: bundleId, windowTitle: windowTitle) else {
       return false
     }
-    let settings = Self.loadSettingsDictionary(path: settingsPath) ?? [:]
+    guard let settings = settingsCache?.state.snapshot?.values, let active = activeSettings?.values,
+      active["memory_enabled"] as? Bool == true, active["privacy_learning_enabled"] as? Bool == true else { return false }
     let memoryEnabled = settings["memory_enabled"] as? Bool ?? true
     let privacyLearningEnabled = settings["privacy_learning_enabled"] as? Bool ?? true
     return memoryEnabled && privacyLearningEnabled
@@ -575,11 +571,9 @@ final class InputiaRustBridge {
     guard !bundleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, bundleId != "unknown" else {
       return true
     }
-    Self.ensureSettingsFile(at: settingsPath)
-    let settings = Self.loadSettingsDictionary(path: settingsPath) ?? [:]
-    let sensitiveBundleIds = (settings["sensitive_bundle_ids"] as? [String]).flatMap { values in
-      values.isEmpty ? nil : values
-    } ?? Self.defaultSensitiveBundleIds
+    guard let settings = settingsCache?.state.snapshot?.values else { return true }
+    let sensitiveBundleIds = (settings["sensitive_bundle_ids"] as? [String] ?? Self.defaultSensitiveBundleIds)
+      + (activeSettings?.values["sensitive_bundle_ids"] as? [String] ?? Self.defaultSensitiveBundleIds)
     if sensitiveBundleIds.contains(bundleId) {
       return true
     }
@@ -718,31 +712,33 @@ final class InputiaRustBridge {
     return dictionary["imported"] as? Int
   }
 
-  private func reloadSettings(newModificationDate: Date?) -> Bool {
+  private func reloadSettings(snapshot: InputiaSettingsStore.Snapshot) -> Bool {
     let previousMode = latestOutcome.mode
-    let oldSession = session
-    session = nil
-    inputia_session_free(oldSession)
-
-    guard let newSession = Self.openSettingsSession(settingsPath: settingsPath) else {
-      NSLog("Inputia Rust bridge failed to reload settings session")
-      latestOutcome = .error
+    let path = settingsPath, diagnostics = diagnosticSettings
+    var opened: (session: UnsafeMutableRawPointer?, withoutMemory: Bool) = (nil, false)
+    let replaced = InputiaSettingsSessionSwap.replace(&session, open: {
+      opened = Self.openSettingsSession(settingsPath: path, snapshot: snapshot, diagnostics: diagnostics)
+      return opened.session
+    }, release: inputia_session_free)
+    guard replaced, let newSession = session else {
+      let report = SettingsApplication(snapshot: snapshot, sessionOpened: false, withoutMemory: false,
+        nativeFields: [], failureCode: "session_initialization_failed")
+      settingsApplication = report; settingsApplicationDidChange?(report)
       return false
     }
-
-    session = newSession
-    settingsModificationDate = newModificationDate
-    cachedInputModeToggleShortcut = Self.inputModeToggleShortcut(in: settingsPath)
-    cachedScriptToggleShortcut = Self.scriptToggleShortcut(in: settingsPath)
-    schemaID = Self.loadSettingsDictionary(path: settingsPath)?["schema_id"] as? String ?? "luna_pinyin_simp"
-
+    activeSettings = snapshot
+    cachedInputModeToggleShortcut = Self.inputModeToggleShortcut(in: snapshot.values)
+    cachedScriptToggleShortcut = Self.scriptToggleShortcut(in: snapshot.values)
+    schemaID = snapshot.values["schema_id"] as? String ?? "luna_pinyin_simp"
+    let reported = reportNativeApplication(session: newSession, snapshot: snapshot)
+    let report = SettingsApplication(snapshot: snapshot, sessionOpened: true, withoutMemory: opened.withoutMemory,
+      nativeFields: ["input_mode_toggle_shortcut", "script_toggle_shortcut", "shift_toggle_enabled"],
+      failureCode: !reported ? "application_receipt_unavailable" : (opened.withoutMemory ? "memory_unavailable" : nil))
+    settingsApplication = report; settingsApplicationDidChange?(report)
     switch previousMode {
-    case "Chinese":
-      _ = consume(inputia_session_set_input_mode(session, inputModeChinese))
-    case "English":
-      _ = consume(inputia_session_set_input_mode(session, inputModeEnglish))
-    default:
-      latestOutcome = InputiaBridgeOutcome.error
+    case "Chinese": _ = consume(inputia_session_set_input_mode(session, inputModeChinese))
+    case "English": _ = consume(inputia_session_set_input_mode(session, inputModeEnglish))
+    default: latestOutcome = .error
     }
     return true
   }
@@ -778,189 +774,64 @@ final class InputiaRustBridge {
     InputiaProfile.current.settings.path
   }
 
-  private static func modificationDate(for path: String) -> Date? {
-    guard
-      let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-      let date = attributes[.modificationDate] as? Date
-    else {
-      return nil
-    }
-    return date
-  }
-
-  private static func openSettingsSession(settingsPath: String) -> UnsafeMutableRawPointer? {
-    if InputiaProfile.current.isCandidate {
-      do {
-        try InputiaProfile.current.validateCandidatePaths()
-        try InputiaProfile.current.validateSettingsPath(settingsPath)
-        guard let original = loadSettingsDictionary(path: settingsPath), let bundledRimeDataPath else {
-          return nil
+  private static func openSettingsSession(settingsPath: String, snapshot: InputiaSettingsStore.Snapshot, diagnostics: Bool)
+    -> (session: UnsafeMutableRawPointer?, withoutMemory: Bool) {
+    do {
+      var expected: [String: String] = [:]
+      if diagnostics {
+        try validateDiagnosticSettingsPath(settingsPath)
+        let root = URL(fileURLWithPath: settingsPath).deletingLastPathComponent()
+        expected = ["rime_user_data_dir":root.appendingPathComponent("rime").path,
+          "memory_db_path":root.appendingPathComponent("inputia_memory.db").path]
+      } else if InputiaProfile.current.isCandidate {
+        let isolated = try InputiaProfile.current.isolatedSettings(snapshot.values, settingsPath: settingsPath)
+        for key in ["rime_user_data_dir", "memory_db_path", "integration_outbox_path", "integration_snapshot_dir",
+          "integration_policy_path", "integration_log_dir", "integration_profile_run_id"] {
+          if let value = isolated[key] as? String { expected[key] = value }
         }
-        var isolated = try InputiaProfile.current.isolatedSettings(original, settingsPath: settingsPath)
-        isolated["rime_shared_data_dir"] = bundledRimeDataPath
-        if !NSDictionary(dictionary: original).isEqual(to: isolated) {
-          let data = try JSONSerialization.data(withJSONObject: isolated, options: [.sortedKeys])
-          try data.write(to: URL(fileURLWithPath: settingsPath), options: .atomic)
-        }
-      } catch {
-        NSLog("Inputia candidate settings rejected")
-        return nil
       }
-    }
-    let session = settingsPath.withCString { pointer in
-      inputia_session_new_from_settings(pointer)
-    }
-    if session == nil {
-      NSLog("Inputia Rust bridge failed to initialize settings session; retrying without memory")
-      let fallback = settingsPath.withCString { pointer in
-        inputia_session_new_from_settings_without_memory(pointer)
-      }
-      if fallback == nil {
-        NSLog("Inputia Rust bridge failed to initialize settings session without memory")
-      }
-      return fallback
-    }
-    return session
+      try InputiaSettingsStore.validateRuntimePaths(snapshot, expected: expected,
+        required: expected.isEmpty ? [] : ["rime_user_data_dir", "memory_db_path"])
+    } catch { return (nil, false) }
+    if let session = InputiaSettingsStore.openSession(path: settingsPath, snapshot: snapshot,
+      sharedData: bundledRimeDataPath, withoutMemory: false) { return (session, false) }
+    let fallback = InputiaSettingsStore.openSession(path: settingsPath, snapshot: snapshot,
+      sharedData: bundledRimeDataPath, withoutMemory: true)
+    return (fallback, fallback != nil)
   }
 
-  private static func ensureSettingsFile(at path: String) {
-    guard (try? InputiaProfile.current.validateSettingsPath(path)) != nil else { return }
-    let url = URL(fileURLWithPath: path)
-    if FileManager.default.fileExists(atPath: path) {
-      patchSettingsFileIfNeeded(url: url)
-      return
-    }
-    writeSettings(
-      shiftToggleEnabled: true,
-      punctuationPreference: "english_in_chinese",
-      candidatePageSize: 7,
-      to: path
-    )
+  private static func inputModeToggleShortcut(in values: [String: Any]) -> String {
+    if let value = values["input_mode_toggle_shortcut"] as? String,
+      ["shift", "control_space", "none"].contains(value) { return value }
+    return values["shift_toggle_enabled"] as? Bool == false ? "none" : "shift"
   }
 
-  private static func patchSettingsFileIfNeeded(url: URL) {
-    guard
-      let data = try? Data(contentsOf: url),
-      let object = try? JSONSerialization.jsonObject(with: data),
-      var dictionary = object as? [String: Any]
-    else {
-      return
-    }
-
-    var changed = false
-    let existingSharedDataDir = dictionary["rime_shared_data_dir"] as? String
-    if existingSharedDataDir == nil
-      || !FileManager.default.fileExists(atPath: existingSharedDataDir ?? ""),
-      let bundledRimeDataPath
-    {
-      dictionary["rime_shared_data_dir"] = bundledRimeDataPath
-      changed = true
-    }
-    if dictionary["rime_user_data_dir"] == nil {
-      dictionary["rime_user_data_dir"] = url.deletingLastPathComponent().appendingPathComponent("rime").path
-      changed = true
-    }
-    if dictionary["memory_db_path"] == nil {
-      dictionary["memory_db_path"] = url.deletingLastPathComponent().appendingPathComponent("inputia_memory.db").path
-      changed = true
-    }
-    if dictionary["character_width_preference"] == nil {
-      dictionary["character_width_preference"] = "half_width"
-      changed = true
-    }
-    if dictionary["spelling_correction_enabled"] == nil {
-      dictionary["spelling_correction_enabled"] = true
-      changed = true
-    }
-    if dictionary["input_mode_toggle_shortcut"] == nil {
-      let shiftToggleEnabled = dictionary["shift_toggle_enabled"] as? Bool ?? true
-      dictionary["input_mode_toggle_shortcut"] = shiftToggleEnabled ? "shift" : "none"
-      changed = true
-    }
-    if dictionary["chinese_script"] == nil {
-      dictionary["chinese_script"] = "simplified"
-      changed = true
-    }
-    if dictionary["script_toggle_shortcut"] == nil {
-      dictionary["script_toggle_shortcut"] = "control_shift_s"
-      changed = true
-    }
-    var sensitiveBundleIds = (dictionary["sensitive_bundle_ids"] as? [String]) ?? []
-    for bundleId in Self.defaultSensitiveBundleIds where !sensitiveBundleIds.contains(bundleId) {
-      sensitiveBundleIds.append(bundleId)
-      changed = true
-    }
-    dictionary["sensitive_bundle_ids"] = sensitiveBundleIds
-
-    guard changed, let patched = try? JSONSerialization.data(
-      withJSONObject: dictionary,
-      options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-    ) else {
-      return
-    }
-    try? patched.write(to: url, options: .atomic)
-  }
-
-  private static func loadSettingsDictionary(path: String) -> [String: Any]? {
-    guard (try? InputiaProfile.current.validateSettingsPath(path)) != nil else { return nil }
-    let url = URL(fileURLWithPath: path)
-    guard
-      let data = try? Data(contentsOf: url),
-      let object = try? JSONSerialization.jsonObject(with: data),
-      let dictionary = object as? [String: Any]
-    else {
-      return nil
-    }
-    return dictionary
-  }
-
-  private static func inputModeToggleShortcut(in path: String) -> String {
-    guard let dictionary = loadSettingsDictionary(path: path) else {
-      return "shift"
-    }
-    if
-      let value = dictionary["input_mode_toggle_shortcut"] as? String,
-      ["shift", "control_space", "none"].contains(value)
-    {
-      return value
-    }
-    let shiftToggleEnabled = dictionary["shift_toggle_enabled"] as? Bool ?? true
-    return shiftToggleEnabled ? "shift" : "none"
-  }
-
-  private static func scriptToggleShortcut(in path: String) -> String {
-    guard let dictionary = loadSettingsDictionary(path: path) else {
-      return "control_shift_s"
-    }
-    if
-      let value = dictionary["script_toggle_shortcut"] as? String,
-      ["control_shift_s", "none"].contains(value)
-    {
-      return value
-    }
+  private static func scriptToggleShortcut(in values: [String: Any]) -> String {
+    if let value = values["script_toggle_shortcut"] as? String,
+      ["control_shift_s", "none"].contains(value) { return value }
     return "control_shift_s"
   }
 
-  private static func toggleChineseScript(in path: String) -> Bool {
+  private static var diagnosticSettingsRoot: URL {
+    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/Inputia/Diagnostics", isDirectory: true)
+  }
+  private static func diagnosticSettingsPath() -> String {
+    diagnosticSettingsRoot.appendingPathComponent(UUID().uuidString.lowercased()).appendingPathComponent("settings.json").path
+  }
+  private static func validateDiagnosticSettingsPath(_ path: String) throws {
     let url = URL(fileURLWithPath: path)
-    guard var dictionary = loadSettingsDictionary(path: path) else {
-      return false
+    guard url.lastPathComponent == "settings.json", UUID(uuidString: url.deletingLastPathComponent().lastPathComponent) != nil,
+      url.deletingLastPathComponent().deletingLastPathComponent().path == diagnosticSettingsRoot.path else {
+      throw InputiaSettingsStore.Failure(code: "unsafe_path")
     }
-    let current = dictionary["chinese_script"] as? String
-    dictionary["chinese_script"] = current == "traditional" ? "simplified" : "traditional"
-    guard let data = try? JSONSerialization.data(
-      withJSONObject: dictionary,
-      options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-    ) else {
-      return false
-    }
+  }
+  private static func applyDiagnosticPatch(path: String, patch: [String: Any]) -> InputiaSettingsStore.Snapshot? {
     do {
-      try data.write(to: url, options: .atomic)
-      return true
-    } catch {
-      NSLog("Inputia failed to toggle Chinese script: \(error)")
-      return false
-    }
+      try validateDiagnosticSettingsPath(path)
+      let edit = InputiaSettingsEdit(try InputiaSettingsStore.read(path: path))
+      guard let result = try edit.apply(path: path, patch: patch), result.status == "saved" else { return nil }
+      return result.current
+    } catch { return nil }
   }
 
   private static func isSensitiveWindowTitle(_ windowTitle: String?) -> Bool {
@@ -1032,50 +903,6 @@ final class InputiaRustBridge {
       return nil
     }
     return dictionary
-  }
-
-  private static func writeSettings(
-    shiftToggleEnabled: Bool,
-    inputModeToggleShortcut: String? = nil,
-    punctuationPreference: String,
-    candidatePageSize: Int,
-    characterWidthPreference: String = "half_width",
-    chineseScript: String = "simplified",
-    to path: String
-  ) {
-    guard (try? InputiaProfile.current.validateSettingsPath(path)) != nil else { return }
-    let url = URL(fileURLWithPath: path)
-    try? FileManager.default.createDirectory(
-      at: url.deletingLastPathComponent(),
-      withIntermediateDirectories: true
-    )
-    let shortcut = inputModeToggleShortcut ?? (shiftToggleEnabled ? "shift" : "none")
-    var dictionary: [String: Any] = [
-      "candidate_font_size": 14,
-      "candidate_page_size": candidatePageSize,
-      "character_width_preference": characterWidthPreference,
-      "chinese_script": chineseScript,
-      "input_mode_toggle_shortcut": shortcut,
-      "memory_enabled": true,
-      "memory_db_path": url.deletingLastPathComponent().appendingPathComponent("inputia_memory.db").path,
-      "privacy_learning_enabled": true,
-      "punctuation_preference": punctuationPreference,
-      "rime_user_data_dir": url.deletingLastPathComponent().appendingPathComponent("rime").path,
-      "schema_id": "luna_pinyin_simp",
-      "script_toggle_shortcut": "control_shift_s",
-      "sensitive_bundle_ids": Self.defaultSensitiveBundleIds,
-      "shift_toggle_enabled": shortcut == "shift",
-      "spelling_correction_enabled": true,
-    ]
-    if let bundledRimeDataPath {
-      dictionary["rime_shared_data_dir"] = bundledRimeDataPath
-    }
-    guard let isolated = try? InputiaProfile.current.isolatedSettings(dictionary, settingsPath: path) else { return }
-    let data = try? JSONSerialization.data(
-      withJSONObject: isolated,
-      options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-    )
-    try? data?.write(to: url, options: .atomic)
   }
 
   private static var bundledRimeDataPath: String? {
