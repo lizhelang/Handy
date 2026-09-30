@@ -17,6 +17,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod installation;
+pub mod maintenance;
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
@@ -232,6 +233,9 @@ pub unsafe extern "C" fn inputia_session_new_with_paths(
 pub unsafe extern "C" fn inputia_session_new_from_settings(
     settings_path: *const c_char,
 ) -> *mut InputiaSession {
+    if inputia_settings::maintenance::ensure_current_normal_start().is_err() {
+        return null_mut();
+    }
     let Some(settings_path) = (unsafe { optional_c_string(settings_path) }) else {
         return null_mut();
     };
@@ -253,6 +257,9 @@ pub unsafe extern "C" fn inputia_session_new_from_settings(
 pub unsafe extern "C" fn inputia_session_new_from_settings_without_memory(
     settings_path: *const c_char,
 ) -> *mut InputiaSession {
+    if inputia_settings::maintenance::ensure_current_normal_start().is_err() {
+        return null_mut();
+    }
     let Some(settings_path) = (unsafe { optional_c_string(settings_path) }) else {
         return null_mut();
     };
@@ -793,6 +800,9 @@ fn new_session(
 }
 
 fn new_session_with_options(options: SessionOptions) -> *mut InputiaSession {
+    if inputia_settings::maintenance::ensure_current_normal_start().is_err() {
+        return null_mut();
+    }
     let Ok(engine) = RimeEngine::open(options.rime) else {
         return null_mut();
     };

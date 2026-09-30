@@ -403,6 +403,12 @@ fi
   -o "$BUILD_DIR/unified-input-profile-self-check"
 
 /usr/bin/swiftc -parse-as-library \
+  "$ROOT_DIR/Tools/InputiaMaintenanceStartupSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaStartupMaintenance.swift" \
+  -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-maintenance-startup-self-check"
+"$BUILD_DIR/inputia-maintenance-startup-self-check"
+
+/usr/bin/swiftc -parse-as-library \
   "$ROOT_DIR/Tools/InputiaTypedCaptureSelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaTypedCapture.swift" \
   -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-typed-capture-self-check"
@@ -422,6 +428,7 @@ fi
 
 /usr/bin/swiftc \
   "$ROOT_DIR/Sources/InputiaInputMethod/main.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaStartupMaintenance.swift" \
   "${HOST_SWIFT_DEFINES[@]}" \
   "${PAIR_SWIFT_SOURCES[@]}" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRuntimeDiagnostics.swift" \
@@ -498,6 +505,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
 
 /usr/bin/swiftc \
   "$ROOT_DIR/SettingsLauncher/main.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaStartupMaintenance.swift" \
   "${SETTINGS_SWIFT_DEFINES[@]}" \
   "${PAIR_SWIFT_SOURCES[@]}" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \

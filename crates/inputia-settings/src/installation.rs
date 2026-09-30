@@ -258,6 +258,17 @@ pub fn read_owned_file(
     limit: usize,
     private_file: bool,
 ) -> Result<Vec<u8>, InstallationError> {
+    read_owned_file_with_mode(path, uid, limit, private_file, None)
+}
+
+#[cfg(unix)]
+pub(crate) fn read_owned_file_with_mode(
+    path: &Path,
+    uid: u32,
+    limit: usize,
+    private_file: bool,
+    exact_mode: Option<u32>,
+) -> Result<Vec<u8>, InstallationError> {
     use std::{
         ffi::CString,
         fs::File,
@@ -308,6 +319,7 @@ pub fn read_owned_file(
                 || meta.uid() != uid
                 || meta.nlink() != 1
                 || meta.mode() & if private_file { 0o077 } else { 0o022 } != 0
+                || exact_mode.is_some_and(|mode| meta.mode() & 0o7777 != mode)
                 || meta.len() > limit as u64
             {
                 return Err(InstallationError::UnsafePath);

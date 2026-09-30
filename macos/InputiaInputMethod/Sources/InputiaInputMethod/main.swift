@@ -2875,6 +2875,7 @@ struct InputiaInputMethodApp {
 
   static func main() {
     autoreleasepool {
+      InputiaStartupMaintenance.requireNormalStart()
       // 候选编译身份必须在创建IMK连接、设置窗口或诊断会话前与包身份一致。
       _ = InputiaProfile.current
       #if INPUTIA_PAIRED_BUILD

@@ -4,6 +4,8 @@
 
 当前导出：
 
+- `inputia_maintenance_startup_check`：无参数、无 session 的固定维护门禁；只有 `ok=true` 且 `normal_start_allowed=true` 才能继续普通启动。采用系统身份，不允许路径或环境变量覆盖。返回值由 `inputia_string_free` 释放。
+- `inputia_installation_load`：只读安装收据定位。
 - `inputia_session_new_luna_pinyin_simp`
 - `inputia_session_new_with_schema`
 - `inputia_session_new_with_paths`
@@ -36,6 +38,8 @@
 - `visible_candidates`
 
 这个 crate 依赖 `inputia-core` 和 `inputia-rime`，但 Host 只通过 C ABI 看见稳定函数和 JSON，不直接绑定 Rust 类型。
+
+所有 session 构造的共同入口及会创建 settings 的两个入口均先检查维护门禁；基础 fallback 不绕过。该检查不代替更新器对已经存活的 session / 进程执行停写和退出，也不构成可启动普通 writer 的 postcheck 许可。
 
 ## FFI 内存与生命周期合同
 

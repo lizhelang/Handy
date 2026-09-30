@@ -144,17 +144,7 @@ pub enum Action {
     ReleaseWrites,
     ReleaseRollback,
 }
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MaintenanceMarker {
-    pub schema_version: u32,
-    pub transaction_id: String,
-    pub installation_id: String,
-    pub old_release_id: Option<String>,
-    pub new_release_id: String,
-    pub epoch: String,
-    pub plan_sha256: String,
-}
+pub use inputia_settings::maintenance::MaintenanceMarker;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileEvidence {

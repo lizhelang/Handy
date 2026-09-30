@@ -164,6 +164,7 @@ private func candidateReport() -> String {
 @main
 struct InputiaSettingsLauncher {
   static func main() {
+    InputiaStartupMaintenance.requireNormalStart()
     if let candidate = matchingCandidate(), openSettingsApp(at: candidate.path) {
       return
     }

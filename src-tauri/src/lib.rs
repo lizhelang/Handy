@@ -678,6 +678,12 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(cli_args: CliArgs) {
+    // 普通 v1/v2 启动均先检查固定维护门禁；此时尚未打开 profile、设置或业务数据库。
+    #[cfg(target_os = "macos")]
+    if let Err(error) = inputia_settings::maintenance::ensure_current_normal_start() {
+        eprintln!("Inputia 启动已暂停：{error}");
+        std::process::exit(78);
+    }
     // Avoid ggml-metal residency-set teardown assertions when a native engine
     // outlives the Tauri shutdown sequence (#1902). This must happen before
     // transcribe-cpp initializes its Metal device. Advanced users can restore
