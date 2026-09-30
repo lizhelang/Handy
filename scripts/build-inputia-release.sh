@@ -3,24 +3,37 @@
 set -euo pipefail
 umask 077
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+RELEASE_PYTHON="${INPUTIA_RELEASE_PYTHON:-python3}"
 if [[ "${1:-}" == "--help" ]]; then
   cat <<'HELP'
-用法：scripts/build-inputia-release.sh
-必须显式提供：
+用法：scripts/build-inputia-release.sh [--preflight | --preflight-public | --build-local]
+默认只读预检；--build-local 才执行已有本机 v1 配对构建。
+本机构建必须显式提供：
   INPUTIA_PAIR_BUILD_METADATA  已有配对公开构建元数据的绝对路径
   INPUTIA_PAIR_PRIVATE_KEY     配对签名私钥的绝对路径（不复制、不输出内容）
   INPUTIA_CODESIGN_IDENTITY    已有稳定证书身份，不能为临时签名 -
 可选：
   INPUTIA_PROFILE_RUN_ID       默认 trial-20260905
   CARGO_TARGET_DIR             控制中心编译输出目录
-构建控制中心、输入法和设置组件，输出专属发布目录及配对清单，不安装。
+  INPUTIA_RELEASE_PYTHON       Python >= 3.11（默认 PATH python3）
+公共签名、公证、独立安装器和制品验收尚未完成时，公共预检始终阻断。
+本机构建输出不表示公开发布资格；不安装。
 HELP
   exit 0
 fi
-if [[ $# -ne 0 ]]; then
+if [[ $# -gt 1 ]]; then
   echo "未知参数；使用 --help 查看用法" >&2
   exit 2
 fi
+case "${1:---preflight}" in
+  --preflight) exec "$RELEASE_PYTHON" "$REPO_ROOT/scripts/inputia_release.py" preflight --mode local ;;
+  --preflight-public) exec "$RELEASE_PYTHON" "$REPO_ROOT/scripts/inputia_release.py" preflight --mode public ;;
+  --build-local) ;;
+  *) echo "未知参数；使用 --help 查看用法" >&2; exit 2 ;;
+esac
+# 元数据与工具链检查发生在读取签名输入及创建输出之前。
+"$RELEASE_PYTHON" "$REPO_ROOT/scripts/inputia_release.py" preflight --mode local
 : "${INPUTIA_PAIR_BUILD_METADATA:?必须提供配对公开构建元数据路径}"
 : "${INPUTIA_PAIR_PRIVATE_KEY:?必须提供配对签名私钥路径}"
 : "${INPUTIA_CODESIGN_IDENTITY:?必须提供已有稳定签名证书身份}"
@@ -40,7 +53,6 @@ for input_path in "$INPUTIA_PAIR_BUILD_METADATA" "$INPUTIA_PAIR_PRIVATE_KEY"; do
   fi
 done
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$REPO_ROOT"
 # 校验公开元数据合同；只生成公钥常量，不读取私钥。
 /usr/bin/python3 native/unified-pair-auth/build_trust.py \
@@ -49,8 +61,12 @@ BUILD_BASE="$HOME/Library/Application Support/HandyUnifiedBuilds"
 mkdir -p "$BUILD_BASE"
 RELEASE_DIR="$(/usr/bin/mktemp -d "$BUILD_BASE/release-XXXXXXXX")"
 chmod 700 "$RELEASE_DIR"
+METADATA_DIR="$RELEASE_DIR/metadata"
+"$RELEASE_PYTHON" scripts/inputia_release.py prepare --mode local --output-dir "$METADATA_DIR"
+export INPUTIA_RELEASE_CONTEXT="$METADATA_DIR/build-context.json"
+export INPUTIA_RELEASE_PYTHON="$RELEASE_PYTHON"
 SIGN_OVERLAY="$RELEASE_DIR/signing-overlay.json"
-/usr/bin/python3 - "$SIGN_OVERLAY" "$INPUTIA_CODESIGN_IDENTITY" "$RELEASE_DIR" "$INPUTIA_PROFILE_RUN_ID" <<'PY'
+"$RELEASE_PYTHON" - "$SIGN_OVERLAY" "$INPUTIA_CODESIGN_IDENTITY" "$RELEASE_DIR" "$INPUTIA_PROFILE_RUN_ID" <<'PY'
 import json
 import plistlib
 import sys
@@ -58,11 +74,15 @@ from pathlib import Path
 with Path("src-tauri/InputiaReleaseInfo.plist").open("rb") as stream:
     info = plistlib.load(stream)
 info["HandyProfileRunID"] = sys.argv[4]
+# 仅保留当前本机 v1 信任桥；渠道不进入不可变程序。
+info["HandyDevelopmentCandidate"] = True
 release_plist = Path(sys.argv[3]) / "InputiaReleaseInfo.plist"
 with release_plist.open("wb") as stream:
     plistlib.dump(info, stream)
 Path(sys.argv[1]).write_text(json.dumps({"bundle": {"macOS": {"signingIdentity": sys.argv[2], "infoPlist": str(release_plist)}}}) + "\n")
 PY
+"$RELEASE_PYTHON" scripts/inputia_release.py apply-plist --role control \
+  --plist "$RELEASE_DIR/InputiaReleaseInfo.plist" --context "$INPUTIA_RELEASE_CONTEXT"
 export HANDY_UNIFIED_PAIR_BUILD="$INPUTIA_PAIR_BUILD_METADATA"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/src-tauri/target}"
 # 固定绝对输出路径，避免 Rust/Tauri 对相对目录有不同解释。
@@ -89,6 +109,8 @@ IME_BUILD="$REPO_ROOT/macos/InputiaInputMethod/candidate-builds/$INPUTIA_PROFILE
 /usr/bin/ditto "$CONTROL_APP" "$RELEASE_DIR/Inputia.app"
 /usr/bin/ditto "$IME_BUILD/InputiaUnifiedCandidate.app" "$RELEASE_DIR/InputiaUnifiedCandidate.app"
 /usr/bin/ditto "$IME_BUILD/Inputia 候选设置.app" "$RELEASE_DIR/Inputia 设置.app"
+"$RELEASE_PYTHON" scripts/inputia_release.py verify-bundles \
+  --directory "$RELEASE_DIR" --context "$INPUTIA_RELEASE_CONTEXT"
 /usr/bin/swiftc -parse-as-library \
   native/unified-pair-auth/UnifiedPairAuth.swift \
   native/unified-pair-auth/PairAuthTool.swift \
@@ -100,6 +122,6 @@ IME_BUILD="$REPO_ROOT/macos/InputiaInputMethod/candidate-builds/$INPUTIA_PROFILE
   --build-tool "$RELEASE_DIR/PairAuthTool" \
   --private-key "$INPUTIA_PAIR_PRIVATE_KEY" \
   --manifest "$RELEASE_DIR/pair-manifest.json"
-printf 'releaseDirectory=%s\ncontrolApp=%s\ninputiaApp=%s\nsettingsApp=%s\npairManifest=%s\ninstalled=false\n' \
+printf 'releaseDirectory=%s\ncontrolApp=%s\ninputiaApp=%s\nsettingsApp=%s\npairManifest=%s\ninstalled=false\npublicReleaseEligible=false\n' \
   "$RELEASE_DIR" "$RELEASE_DIR/Inputia.app" "$RELEASE_DIR/InputiaUnifiedCandidate.app" \
   "$RELEASE_DIR/Inputia 设置.app" "$RELEASE_DIR/pair-manifest.json"

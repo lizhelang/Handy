@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://inputia.invalid/schema/release-attestation.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "product_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+    },
+    "release_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^inputia-[A-Za-z0-9._-]{1,180}$"
+    },
+    "manifest_digest": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "acceptance_report_digest": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "rollback_reports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "release_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^inputia-[A-Za-z0-9._-]{1,180}$"
+          },
+          "report_digest": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": ["release_id", "report_digest"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 1024,
+      "uniqueItems": true
+    },
+    "issued_at": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "product_id",
+    "release_id",
+    "manifest_digest",
+    "acceptance_report_digest",
+    "rollback_reports",
+    "issued_at"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,524 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://inputia.invalid/schema/release-manifest.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "product_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+    },
+    "release_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^inputia-[A-Za-z0-9._-]{1,180}$"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "build": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "source_commit": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "const": "macos"
+        },
+        "architecture": {
+          "type": "string",
+          "enum": ["arm64"]
+        },
+        "min_os": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}$"
+        },
+        "tested_os": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}$"
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        }
+      },
+      "required": ["platform", "architecture", "min_os", "tested_os"],
+      "additionalProperties": false
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["control", "ime", "settings", "updater", "bootstrap"]
+          },
+          "bundle_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[A-Za-z][A-Za-z0-9.-]{1,200}$"
+          },
+          "artifact": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 53687091200
+          },
+          "cdhashes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024,
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "minItems": 1,
+            "maxItems": 1024,
+            "uniqueItems": true
+          },
+          "signing_requirement": {
+            "type": "object",
+            "properties": {
+              "trust_domain": {
+                "const": "developer-id"
+              },
+              "team_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^[A-Z0-9]{10}$"
+              },
+              "bundle_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^[A-Za-z][A-Za-z0-9.-]{1,200}$"
+              }
+            },
+            "required": ["trust_domain", "team_id", "bundle_id"],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "role",
+          "bundle_id",
+          "artifact",
+          "sha256",
+          "size",
+          "cdhashes",
+          "signing_requirement"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 2,
+      "maxItems": 1024,
+      "uniqueItems": true
+    },
+    "protocol": {
+      "type": "object",
+      "properties": {
+        "supported_majors": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        }
+      },
+      "required": ["supported_majors", "capabilities"],
+      "additionalProperties": false
+    },
+    "stores": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/store"
+      },
+      "minItems": 1,
+      "maxItems": 1024,
+      "uniqueItems": true
+    },
+    "rollback_targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "release_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^inputia-[A-Za-z0-9._-]{1,180}$"
+          },
+          "artifact_digests": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024,
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "minItems": 1,
+            "maxItems": 1024,
+            "uniqueItems": true
+          },
+          "stores": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/store"
+            },
+            "minItems": 1,
+            "maxItems": 1024,
+            "uniqueItems": true
+          }
+        },
+        "required": ["release_id", "artifact_digests", "stores"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 1024,
+      "uniqueItems": true
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "digest": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "license": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "distribution_mode": {
+            "type": "string",
+            "enum": ["bundled", "download", "user-provided"]
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "digest",
+          "license",
+          "required",
+          "distribution_mode"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 1024,
+      "uniqueItems": true
+    },
+    "pair_manifest": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 2
+        },
+        "artifact": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "signer_key_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+        }
+      },
+      "required": ["schema", "artifact", "sha256", "signer_key_id"],
+      "additionalProperties": false
+    },
+    "updater": {
+      "type": "object",
+      "properties": {
+        "min_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "transaction_schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "migration_requirements": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+          },
+          "minItems": 0,
+          "maxItems": 1024,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "min_version",
+        "transaction_schema",
+        "migration_requirements"
+      ],
+      "additionalProperties": false
+    },
+    "distribution_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["installer-dmg", "installer-app-archive"]
+          },
+          "artifact": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 53687091200
+          }
+        },
+        "required": ["role", "artifact", "sha256", "size"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 1024,
+      "uniqueItems": true
+    },
+    "sbom_digest": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "product_id",
+    "release_id",
+    "version",
+    "build",
+    "source_commit",
+    "target",
+    "components",
+    "protocol",
+    "stores",
+    "rollback_targets",
+    "resources",
+    "pair_manifest",
+    "updater",
+    "distribution_artifacts",
+    "sbom_digest"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "store": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+        },
+        "readable_schema_range": {
+          "type": "object",
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          "required": ["min", "max"],
+          "additionalProperties": false
+        },
+        "writable_schema_range": {
+          "type": "object",
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          "required": ["min", "max"],
+          "additionalProperties": false
+        },
+        "migration_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+        },
+        "event_formats": {
+          "type": "object",
+          "properties": {
+            "readable_versions": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "minItems": 1,
+              "maxItems": 1024,
+              "uniqueItems": true
+            },
+            "writable_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            }
+          },
+          "required": ["readable_versions", "writable_version"],
+          "additionalProperties": false
+        },
+        "outbox_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "revision_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "privacy_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "readable_schema_range",
+        "writable_schema_range",
+        "migration_id",
+        "event_formats",
+        "outbox_capabilities",
+        "revision_capabilities",
+        "privacy_capabilities"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

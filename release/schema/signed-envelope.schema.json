@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://inputia.invalid/schema/signed-envelope.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "payload_kind": {
+      "type": "string",
+      "enum": ["manifest", "attestation", "feed"]
+    },
+    "payload": {
+      "type": "object"
+    },
+    "signatures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+          },
+          "algorithm": {
+            "const": "ecdsa-p256-sha256"
+          },
+          "signature_der_base64": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+          }
+        },
+        "required": ["key_id", "algorithm", "signature_der_base64"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 1024,
+      "uniqueItems": true
+    }
+  },
+  "required": ["schema_version", "payload_kind", "payload", "signatures"],
+  "additionalProperties": false
+}

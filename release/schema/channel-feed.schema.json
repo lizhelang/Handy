@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://inputia.invalid/schema/channel-feed.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "product_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+    },
+    "channel": {
+      "type": "string",
+      "enum": ["candidate", "stable"]
+    },
+    "platform": {
+      "const": "macos"
+    },
+    "architecture": {
+      "type": "string",
+      "enum": ["arm64"]
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "issued_at": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "expires_at": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "release_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^inputia-[A-Za-z0-9._-]{1,180}$"
+    },
+    "manifest_digest": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "attestation_digest": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "release_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "rollback": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "product_id",
+    "channel",
+    "platform",
+    "architecture",
+    "sequence",
+    "issued_at",
+    "expires_at",
+    "release_id",
+    "manifest_digest",
+    "attestation_digest",
+    "release_path",
+    "rollback"
+  ],
+  "additionalProperties": false
+}

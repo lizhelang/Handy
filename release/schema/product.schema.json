@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://inputia.invalid/schema/product.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "product_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "build": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "const": "macos"
+        },
+        "architectures": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["arm64"]
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "min_os": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}$"
+        },
+        "declared_os": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}$"
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        }
+      },
+      "required": ["platform", "architectures", "min_os", "declared_os"],
+      "additionalProperties": false
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["control", "ime", "settings"]
+          },
+          "bundle_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[A-Za-z][A-Za-z0-9.-]{1,200}$"
+          },
+          "app_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "input_source_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[A-Za-z][A-Za-z0-9.-]{1,200}$"
+          }
+        },
+        "required": ["role", "bundle_id", "app_name"],
+        "additionalProperties": false
+      },
+      "minItems": 2,
+      "maxItems": 1024,
+      "uniqueItems": true
+    },
+    "channels": {
+      "type": "object",
+      "properties": {
+        "candidate": {
+          "type": "object",
+          "properties": {
+            "feed_path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          },
+          "required": ["feed_path"],
+          "additionalProperties": false
+        },
+        "stable": {
+          "type": "object",
+          "properties": {
+            "feed_path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          },
+          "required": ["feed_path"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["candidate", "stable"],
+      "additionalProperties": false
+    },
+    "compatibility": {
+      "type": "object",
+      "properties": {
+        "required_stores": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "required_privacy_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "required_revision_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "required_outbox_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "required_stores",
+        "required_privacy_capabilities",
+        "required_revision_capabilities",
+        "required_outbox_capabilities"
+      ],
+      "additionalProperties": false
+    },
+    "pipeline": {
+      "type": "object",
+      "properties": {
+        "python_min": {
+          "const": "3.11"
+        },
+        "pair_trust_format": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "public_release_enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": ["python_min", "pair_trust_format", "public_release_enabled"],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "product_id",
+    "name",
+    "version",
+    "build",
+    "target",
+    "components",
+    "channels",
+    "compatibility",
+    "pipeline"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "product_id": "com.inputia",
+  "version": "1.1.0",
+  "build": 84,
+  "min_os": "13.0",
+  "components": [
+    {
+      "role": "control",
+      "bundle_id": "com.pais.handy.UnifiedCandidate",
+      "app_name": "Inputia.app"
+    },
+    {
+      "role": "ime",
+      "bundle_id": "com.inputia.inputmethod.Inputia.UnifiedCandidate",
+      "app_name": "InputiaUnifiedCandidate.app",
+      "input_source_id": "com.inputia.inputmethod.Inputia.UnifiedCandidate.Hans"
+    },
+    {
+      "role": "settings",
+      "bundle_id": "com.inputia.settings.UnifiedCandidate",
+      "app_name": "Inputia 设置.app"
+    }
+  ]
+}

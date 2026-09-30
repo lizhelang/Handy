@@ -18,6 +18,12 @@ if [[ "$IS_RELEASE" == "1" ]]; then
     echo "release requires paired candidate mode, public build metadata and a persistent signing certificate" >&2
     exit 2
   fi
+  if [[ -z "${INPUTIA_RELEASE_CONTEXT:-}" || ! -f "$INPUTIA_RELEASE_CONTEXT" ]]; then
+    echo "release requires build context from scripts/build-inputia-release.sh --build-local" >&2
+    exit 2
+  fi
+  RELEASE_PYTHON="${INPUTIA_RELEASE_PYTHON:-python3}"
+  "$RELEASE_PYTHON" "$ROOT_DIR/../../scripts/inputia_release.py" check-config >/dev/null
 fi
 if [[ "$IS_CANDIDATE" != "0" && "$IS_CANDIDATE" != "1" ]]; then
   echo "INPUTIA_UNIFIED_CANDIDATE must be 0 or 1" >&2
@@ -109,6 +115,15 @@ fi
 BUILD_USER="$(/usr/bin/id -un)"
 BUILD_GROUP="$(/usr/bin/id -gn)"
 MIN_MACOS_VERSION="13.0"
+if [[ "$IS_RELEASE" == "1" ]]; then
+  MIN_MACOS_VERSION="$("$RELEASE_PYTHON" - "$ROOT_DIR/../../release/generated/build-metadata.json" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    print(json.load(stream)["min_os"])
+PY
+)"
+fi
 TARGET_TRIPLE="$(uname -m)-apple-macos$MIN_MACOS_VERSION"
 CAPI_MANIFEST="$ROOT_DIR/../../crates/inputia-capi/Cargo.toml"
 CAPI_FEATURE_ARGS=()
@@ -437,9 +452,8 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   if [[ "$IS_RELEASE" == "1" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia" "$host_plist"
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia" "$host_plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 84" "$host_plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.1.0" "$host_plist"
-    /usr/libexec/PlistBuddy -c "Add :InputiaReleaseChannel string stable" "$host_plist"
+    "$RELEASE_PYTHON" "$ROOT_DIR/../../scripts/inputia_release.py" apply-plist \
+      --role ime --plist "$host_plist" --context "$INPUTIA_RELEASE_CONTEXT"
   fi
 fi
 cp -R "$ROOT_DIR/Resources/." "$RESOURCES_DIR/"
@@ -622,9 +636,8 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   if [[ "$IS_RELEASE" == "1" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia设置" "$settings_plist"
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia设置" "$settings_plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 84" "$settings_plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.1.0" "$settings_plist"
-    /usr/libexec/PlistBuddy -c "Add :InputiaReleaseChannel string stable" "$settings_plist"
+    "$RELEASE_PYTHON" "$ROOT_DIR/../../scripts/inputia_release.py" apply-plist \
+      --role settings --plist "$settings_plist" --context "$INPUTIA_RELEASE_CONTEXT"
   fi
 fi
 cp "$RESOURCES_DIR/Inputia.icns" "$SETTINGS_RESOURCES_DIR/Inputia.icns"

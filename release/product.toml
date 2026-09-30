@@ -1,0 +1,47 @@
+# 产品版本与稳定身份唯一源。此文件不表示制品已经验收或发布。
+schema_version = 1
+product_id = "com.inputia"
+name = "Inputia"
+version = "1.1.0"
+build = 84
+
+[target]
+platform = "macos"
+architectures = ["arm64"]
+min_os = "13.0"
+# 目标支持矩阵，真实通过情况来自绑定最终制品的验收报告。
+declared_os = ["13", "14", "15", "26"]
+
+[[components]]
+role = "control"
+bundle_id = "com.pais.handy.UnifiedCandidate"
+app_name = "Inputia.app"
+
+[[components]]
+role = "ime"
+bundle_id = "com.inputia.inputmethod.Inputia.UnifiedCandidate"
+app_name = "InputiaUnifiedCandidate.app"
+input_source_id = "com.inputia.inputmethod.Inputia.UnifiedCandidate.Hans"
+
+[[components]]
+role = "settings"
+bundle_id = "com.inputia.settings.UnifiedCandidate"
+app_name = "Inputia 设置.app"
+
+[channels.candidate]
+feed_path = "channels/candidate/macos/arm64.json"
+
+[channels.stable]
+feed_path = "channels/stable/macos/arm64.json"
+
+[compatibility]
+# 不以版本号或空能力列表冒充逐库兼容实测。
+required_stores = ["transcription", "clipboard", "integration", "personalization", "rime"]
+required_privacy_capabilities = ["deletion-barrier", "forgetting-barrier"]
+required_revision_capabilities = ["monotonic-revision"]
+required_outbox_capabilities = ["idempotent-consumer"]
+
+[pipeline]
+python_min = "3.11"
+pair_trust_format = 1
+public_release_enabled = false
