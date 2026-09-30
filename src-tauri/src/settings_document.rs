@@ -186,6 +186,7 @@ impl LoadedSettings {
             && self.home == previous.home
             && self.uid == previous.uid
             && self.snapshot.store_id == previous.snapshot.store_id
+            && self.snapshot.same_protocol(&previous.snapshot)
             && self.snapshot.revision.parse::<u64>().is_ok_and(|revision| {
                 previous
                     .snapshot

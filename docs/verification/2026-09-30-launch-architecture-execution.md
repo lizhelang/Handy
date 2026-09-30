@@ -357,3 +357,13 @@ Unix 控制中心在业务模块前严格预检并打开版本化设置协调器
 验证：Swift 输入源注入夹具 48 项、原 Security 自检 43 项、Rust 合同 3 项通过；native/default 配置 all-targets 严格 Clippy、Rust 格式、新 Swift lint、C header 语法与 diff 检查通过，独立修复窄审 CLEAR。未真实调用 TIS 切换、安装或操作日用进程/用户数据。
 
 边界：公共 TIS API 没有 CAS 或可靠动作归属，Observed 不授予完整停写许可，也不证明 guardian 已接管输入源崩溃恢复。真实 Apple 来源链正向、Developer ID 正向、固定 Updater main、完整 NativeAdapter 与真实切源验收仍未执行。
+
+### 第三十二批：原配置请求的跨进程耐久核心
+
+DocumentStore 可选启用固定私有请求日志，文档与 marker 使用 v2 协议并共同绑定 ledger UUID，读取快照也绑定协议身份。显式升级只接受完整旧协议，三文件目标摘要先经 observer 登记，再重新核实原件；部分升级状态交外层启动事务恢复。独立复核发现普通 apply/read 会在拒绝未激活前初始化旧文件，现 opt-in 领域只有带 observer 的初始化入口可以写入。
+
+配置 patch 和外部导入共用单槽准入。原请求先耐久登记，配置提交后以真实回执核对，再用不含 patch 的末态替换日志；任何准备不确定均不开始写配置。Active 阻止其他请求，同 ID 异摘要拒绝，外部导入绑定原预览摘要。回执过期保留原请求，末态本身不冒充提交证据。重启对账只处理配置，不重演设备操作、模型删除或文本插入。
+
+验证：设置核心原全套 29 项通过，新增修复后的 pending 范围最终 13 项通过，含 36 个激活/配置/导入错误注入窗口及 12 个自建子进程 SIGKILL 窗口；后台 settings 范围 54 项通过。严格 Clippy、格式与 diff 检查通过，独立最终窄审 CLEAR。原文件、marker 或日志缺失/错域、协议降级、未知 JSON/权限、预览变化均保留源文件并拒绝自动重置。
+
+边界：App 领域尚未开启此协议，接线前必须扩展启动三文件归属及逐次写前摘要登记，处理旧启动日志恢复链、Completed 后挂起请求和 ExternalImport 专用预检。当前不会把核心测试当作产品跨进程恢复已上线；也不宣称能识别全部文件连同外层记录协调回退，或已物理擦除旧文件块中的凭据。详细合同见 `docs/architecture/control-settings-durability.md`。

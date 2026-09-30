@@ -3,9 +3,11 @@
 pub mod application;
 mod external;
 mod files;
+mod pending;
 use crate::{installation::valid_uuid, maintenance, InputiaSettings};
 pub use external::{ExternalSnapshot, ImportRequest};
 use files::{Boundary, Files};
+pub use pending::{ActivationFile, LedgerActivationIntent, PendingStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -31,6 +33,8 @@ pub trait DocumentSchema {
     const FILE_NAME: &'static str;
     const MARKER_NAME: &'static str;
     const DOMAIN: &'static str;
+    /// 固定耐久请求日志；启用领域必须先通过显式、有归属登记的协议升级。
+    const PENDING_NAME: Option<&'static str> = None;
     /// dirty patch 所在的固定对象路径；主应用可选 ["settings"]，请求不能改变它。
     const PATCH_ROOT: &'static [&'static str] = &[];
     fn defaults(path: &Path) -> Result<Map<String, Value>>;
@@ -77,6 +81,8 @@ pub enum Error {
     RepairRequired,
     CommitUncertain,
     OperationMismatch,
+    PendingOperation,
+    PendingProtocolRequired,
     RevisionExhausted,
 }
 pub type Result<T> = std::result::Result<T, Error>;
@@ -99,8 +105,14 @@ pub struct Snapshot {
     pub revision: String,
     pub values_digest: String,
     pub values: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pending_protocol: Option<pending::Binding>,
 }
 impl Snapshot {
+    /// 协议身份也属于快照下限，防止同版本正文掩盖日志协议降级。
+    pub fn same_protocol(&self, previous: &Self) -> bool {
+        self.pending_protocol == previous.pending_protocol
+    }
     pub fn domain(&self) -> &str {
         &self.domain
     }
@@ -178,8 +190,10 @@ struct Header {
     revision: String,
     values_digest: String,
     receipts: Vec<Receipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pending_protocol: Option<pending::Binding>,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Marker {
     schema_version: u32,
@@ -189,7 +203,10 @@ struct Marker {
     )]
     domain: String,
     store_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pending_protocol: Option<pending::Binding>,
 }
+#[derive(Clone)]
 struct Document {
     source_digest: Option<String>,
     values: Map<String, Value>,
@@ -203,6 +220,7 @@ impl Document {
             revision: self.header.revision.clone(),
             values_digest: self.header.values_digest.clone(),
             values: Value::Object(self.values.clone()),
+            pending_protocol: self.header.pending_protocol.clone(),
         }
     }
     fn bytes(&self) -> Result<Vec<u8>> {
@@ -320,6 +338,9 @@ impl<S: DocumentSchema> DocumentStore<S> {
             || !safe_name(S::FILE_NAME)
             || !safe_name(S::MARKER_NAME)
             || S::FILE_NAME == S::MARKER_NAME
+            || S::PENDING_NAME.is_some_and(|name| {
+                !safe_name(name) || name == S::FILE_NAME || name == S::MARKER_NAME
+            })
             || !safe_name(S::DOMAIN)
             || S::PATCH_ROOT.len() > 4
             || S::PATCH_ROOT.iter().any(|key| {
@@ -366,7 +387,9 @@ impl<S: DocumentSchema> DocumentStore<S> {
             })
             .transpose()?;
         if marker.as_ref().is_some_and(|v| {
-            v.schema_version != 1 || v.domain != S::DOMAIN || !valid_uuid(&v.store_id)
+            !pending::valid_protocol::<S>(v.schema_version, v.pending_protocol.as_ref())
+                || v.domain != S::DOMAIN
+                || !valid_uuid(&v.store_id)
         }) {
             return Err(Error::RepairRequired);
         }
@@ -399,18 +422,23 @@ impl<S: DocumentSchema> DocumentStore<S> {
                     revision: "0".into(),
                     values_digest: digest(&Value::Object(values.clone()))?,
                     receipts: vec![],
+                    pending_protocol: None,
                 }
             }
         };
         let current = revision(&header.revision)?;
-        if header.schema_version != 1
+        if !pending::valid_protocol::<S>(header.schema_version, header.pending_protocol.as_ref())
             || header.domain != S::DOMAIN
             || !valid_uuid(&header.store_id)
             || header.receipts.len() > RECEIPT_LIMIT
-            || marker
-                .as_ref()
-                .is_some_and(|v| v.store_id != header.store_id)
+            || marker.as_ref().is_some_and(|v| {
+                v.store_id != header.store_id || v.pending_protocol != header.pending_protocol
+            })
         {
+            return Err(Error::RepairRequired);
+        }
+        // 协议启用后任何单文件缺失都要求整体恢复，不能重新制造 marker。
+        if header.pending_protocol.is_some() && marker.is_none() {
             return Err(Error::RepairRequired);
         }
         if !external && digest(&Value::Object(values.clone()))? != header.values_digest {
@@ -422,6 +450,7 @@ impl<S: DocumentSchema> DocumentStore<S> {
             let prior = revision(&floor.revision)?;
             if floor.domain != S::DOMAIN
                 || floor.store_id != header.store_id
+                || floor.pending_protocol != header.pending_protocol
                 || !is_digest(&floor.values_digest)
                 || current < prior
                 || (current == prior && floor.values_digest != header.values_digest)
@@ -461,6 +490,15 @@ impl<S: DocumentSchema> DocumentStore<S> {
             header,
             source_digest,
         };
+        self.check_pending_document(&document)?;
+        if S::PENDING_NAME.is_some()
+            && persist_initialization
+            && (migrated || marker.is_none())
+            && observer.is_none()
+        {
+            // 已选择耐久协议的领域只接受有启动归属登记的初始化。
+            return Err(Error::PendingProtocolRequired);
+        }
         if migrated || marker.is_none() {
             maintenance::ensure_normal_start(&self.home, self.uid)
                 .map_err(|_| Error::Maintenance)?;
@@ -476,6 +514,7 @@ impl<S: DocumentSchema> DocumentStore<S> {
                     schema_version: 1,
                     domain: S::DOMAIN.into(),
                     store_id: document.header.store_id.clone(),
+                    pending_protocol: None,
                 })
                 .map_err(|_| Error::InvalidDocument)?,
             )
@@ -567,7 +606,9 @@ impl<S: DocumentSchema> DocumentStore<S> {
         floor: Option<&Snapshot>,
         hook: &mut impl FnMut(Boundary) -> Result<()>,
     ) -> Result<ApplyResult> {
-        maintenance::ensure_normal_start(&self.home, self.uid).map_err(|_| Error::Maintenance)?;
+        self.apply_pending(request, floor, &mut |_, boundary| hook(boundary))
+    }
+    fn validate_patch(&self, request: &PatchRequest) -> Result<String> {
         let expected = revision(&request.expected_revision).map_err(|_| Error::InvalidRequest)?;
         if operation_base(&request.operation_id, &request.expected_store_id)? != expected
             || request.patch.is_empty()
@@ -590,13 +631,20 @@ impl<S: DocumentSchema> DocumentStore<S> {
         {
             return Err(Error::InvalidRequest);
         }
-        let request_digest =
-            digest(&serde_json::to_value(request).map_err(|_| Error::InvalidRequest)?)?;
-        let mut document = self.load_guarded(false, floor, true, None)?;
+        digest(&serde_json::to_value(request).map_err(|_| Error::InvalidRequest)?)
+    }
+    fn decide_patch(
+        &self,
+        request: &PatchRequest,
+        request_digest: &str,
+        document: &Document,
+    ) -> Result<pending::Decision> {
+        let expected = revision(&request.expected_revision).map_err(|_| Error::InvalidRequest)?;
+        let mut document = document.clone();
         if request.expected_store_id != document.header.store_id {
-            return Ok(ApplyResult::Conflict {
+            return Ok(pending::Decision::observed(ApplyResult::Conflict {
                 current: document.snapshot(),
-            });
+            }));
         }
         if let Some(receipt) = document
             .header
@@ -607,26 +655,24 @@ impl<S: DocumentSchema> DocumentStore<S> {
             if receipt.request_digest != request_digest {
                 return Err(Error::OperationMismatch);
             }
-            self.files
-                .confirm_durable(S::FILE_NAME, S::MARKER_NAME, hook)?;
-            return Ok(ApplyResult::Saved {
+            return Ok(pending::Decision::observed(ApplyResult::Saved {
                 commit_revision: receipt.revision.clone(),
                 replayed: true,
                 current: document.snapshot(),
-            });
+            }));
         }
         let current = revision(&document.header.revision)?;
         if expected != current {
             return if document.header.receipts.first().is_some_and(|v| {
                 revision(&v.revision).is_ok_and(|oldest| expected < oldest.saturating_sub(1))
             }) {
-                Ok(ApplyResult::OutcomeExpired {
+                Ok(pending::Decision::observed(ApplyResult::OutcomeExpired {
                     current: document.snapshot(),
-                })
+                }))
             } else {
-                Ok(ApplyResult::Conflict {
+                Ok(pending::Decision::observed(ApplyResult::Conflict {
                     current: document.snapshot(),
-                })
+                }))
             };
         }
         let mut target = &mut document.values;
@@ -645,19 +691,20 @@ impl<S: DocumentSchema> DocumentStore<S> {
         document.header.values_digest = digest(&Value::Object(document.values.clone()))?;
         document.header.receipts.push(Receipt {
             operation_id: request.operation_id.clone(),
-            request_digest,
+            request_digest: request_digest.into(),
             revision: document.header.revision.clone(),
             values_digest: document.header.values_digest.clone(),
         });
         if document.header.receipts.len() > RECEIPT_LIMIT {
             document.header.receipts.remove(0);
         }
-        maintenance::ensure_normal_start(&self.home, self.uid).map_err(|_| Error::Maintenance)?;
-        self.files.replace(S::FILE_NAME, &document.bytes()?, hook)?;
-        Ok(ApplyResult::Saved {
-            commit_revision: document.header.revision.clone(),
-            replayed: false,
-            current: document.snapshot(),
+        Ok(pending::Decision {
+            bytes: Some(document.bytes()?),
+            result: ApplyResult::Saved {
+                commit_revision: document.header.revision.clone(),
+                replayed: false,
+                current: document.snapshot(),
+            },
         })
     }
 }

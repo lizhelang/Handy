@@ -30,15 +30,25 @@ impl<S: DocumentSchema> DocumentStore<S> {
         })
     }
     pub fn import_external(&self, request: &ImportRequest) -> Result<ApplyResult> {
+        self.import_pending(request, &mut |_, _| Ok(()))
+    }
+    pub(super) fn validate_import(&self, request: &ImportRequest) -> Result<String> {
         let expected = revision(&request.expected_revision).map_err(|_| Error::InvalidRequest)?;
         if operation_base(&request.operation_id, &request.expected_store_id)? != expected
             || !is_digest(&request.observed_file_digest)
         {
             return Err(Error::InvalidRequest);
         }
-        let request_digest =
-            digest(&serde_json::json!({"action":"import_external","request":request}))?;
-        let mut document = self.load_internal(true)?;
+        digest(&serde_json::json!({"action":"import_external","request":request}))
+    }
+    pub(super) fn decide_import(
+        &self,
+        request: &ImportRequest,
+        request_digest: &str,
+        document: &Document,
+    ) -> Result<pending::Decision> {
+        let expected = revision(&request.expected_revision).map_err(|_| Error::InvalidRequest)?;
+        let mut document = document.clone();
         if request.expected_store_id != document.header.store_id {
             return Err(Error::RepairRequired);
         }
@@ -55,13 +65,11 @@ impl<S: DocumentSchema> DocumentStore<S> {
             if digest(&Value::Object(document.values.clone()))? != document.header.values_digest {
                 return Err(Error::ExternalEdit);
             }
-            self.files
-                .confirm_durable(S::FILE_NAME, S::MARKER_NAME, &mut |_| Ok(()))?;
-            return Ok(ApplyResult::Saved {
+            return Ok(pending::Decision::observed(ApplyResult::Saved {
                 commit_revision: receipt.revision.clone(),
                 replayed: true,
                 current: document.snapshot(),
-            });
+            }));
         }
         if expected != revision(&document.header.revision)?
             || document.source_digest.as_ref() != Some(&request.observed_file_digest)
@@ -79,20 +87,20 @@ impl<S: DocumentSchema> DocumentStore<S> {
         document.header.values_digest = next_digest;
         document.header.receipts.push(Receipt {
             operation_id: request.operation_id.clone(),
-            request_digest,
+            request_digest: request_digest.into(),
             revision: document.header.revision.clone(),
             values_digest: document.header.values_digest.clone(),
         });
         if document.header.receipts.len() > RECEIPT_LIMIT {
             document.header.receipts.remove(0);
         }
-        maintenance::ensure_normal_start(&self.home, self.uid).map_err(|_| Error::Maintenance)?;
-        self.files
-            .replace(S::FILE_NAME, &document.bytes()?, &mut |_| Ok(()))?;
-        Ok(ApplyResult::Saved {
-            commit_revision: document.header.revision.clone(),
-            replayed: false,
-            current: document.snapshot(),
+        Ok(pending::Decision {
+            bytes: Some(document.bytes()?),
+            result: ApplyResult::Saved {
+                commit_revision: document.header.revision.clone(),
+                replayed: false,
+                current: document.snapshot(),
+            },
         })
     }
 }
