@@ -59,6 +59,19 @@ struct Broker {
     native: TargetRegistry,
     grants: BTreeMap<String, Grant>,
     memory_commits: inputia_handy_runtime::memory_commit::CommitRegistry,
+    memory_spans: inputia_handy_runtime::memory_word_span::WordSpanRegistry,
+}
+#[path = "ime_memory_broker.rs"]
+mod memory_spans;
+pub use memory_spans::{
+    acknowledge_memory_word_span, checkpoint_memory_word_span, flush_word_span_revocations,
+    prepare_memory_word_span, record_memory_word_span, retire_memory_word_span,
+};
+
+impl Drop for Broker {
+    fn drop(&mut self) {
+        memory_spans::retain_revocations(self.memory_spans.revoke_all());
+    }
 }
 thread_local! { static BROKER: RefCell<Option<Broker>> = const { RefCell::new(None) }; }
 
@@ -93,6 +106,7 @@ impl Broker {
             native: TargetRegistry::new().map_err(reason)?,
             grants: BTreeMap::new(),
             memory_commits: Default::default(),
+            memory_spans: Default::default(),
         })
     }
     fn prune(&mut self, epoch: u64) {
@@ -109,6 +123,7 @@ impl Broker {
     }
     fn release_id(&mut self, id: &str) {
         self.memory_commits.retire_target(id);
+        memory_spans::retain_revocations(self.memory_spans.retire_target(id));
         self.grants.remove(id);
         let _ = self.native.forget(id);
     }
@@ -271,6 +286,7 @@ fn on_main<T: Send + 'static>(
             // A timed-out capture cannot leak a capability/observer into the next request.
             if work_claim.load(Ordering::SeqCst) == 3 || Instant::now() >= deadline {
                 broker.memory_commits.clear();
+                memory_spans::retain_revocations(broker.memory_spans.revoke_all());
                 let late: Vec<_> = broker
                     .grants
                     .keys()
@@ -288,6 +304,7 @@ fn on_main<T: Send + 'static>(
                     .is_err()
             {
                 broker.memory_commits.clear();
+                memory_spans::retain_revocations(broker.memory_spans.revoke_all());
                 let late: Vec<_> = broker
                     .grants
                     .keys()
@@ -464,6 +481,7 @@ pub fn respond(app: &tauri::AppHandle, request: TargetBridgeRequest) -> TargetBr
         valid_for_ms: 0,
         target: None,
         selection: None,
+        field_instance: None,
         dispatch_nonce: None,
         code: None,
     };
@@ -500,36 +518,55 @@ pub fn respond(app: &tauri::AppHandle, request: TargetBridgeRequest) -> TargetBr
         _ => PROOF_MS,
     };
     let result = match request.target_bridge {
-        TargetBridgeCommand::Status => Ok((None, None, None)),
+        TargetBridgeCommand::Status => Ok((None, None, None, None)),
         TargetBridgeCommand::Capture { draft } => on_main(app, move |broker| {
-            broker
-                .capture(&owner, &server, draft, epoch)
-                .map(|(target, selection)| (Some(target), selection, None))
+            let (target, selection) = broker.capture(&owner, &server, draft, epoch)?;
+            let field_instance = target
+                .field_id
+                .as_ref()
+                .map(|_| {
+                    broker
+                        .native
+                        .learning_field_instance(&target.target_id)
+                        .map_err(reason)
+                })
+                .transpose()?;
+            Ok((Some(target), selection, None, field_instance))
         }),
         TargetBridgeCommand::Validate {
             target,
             purpose,
             operation_id,
         } => on_main(app, move |broker| {
-            broker
-                .validate(
-                    &owner,
-                    &server,
-                    &target,
-                    epoch,
-                    purpose,
-                    operation_id.as_deref(),
-                )
-                .map(|nonce| (Some(target), None, nonce))
+            let nonce = broker.validate(
+                &owner,
+                &server,
+                &target,
+                epoch,
+                purpose,
+                operation_id.as_deref(),
+            )?;
+            let field_instance = target
+                .field_id
+                .as_ref()
+                .map(|_| {
+                    broker
+                        .native
+                        .learning_field_instance(&target.target_id)
+                        .map_err(reason)
+                })
+                .transpose()?;
+            Ok((Some(target), None, nonce, field_instance))
         }),
         TargetBridgeCommand::Release { .. } => unreachable!(),
     };
     match result {
-        Ok((target, selection, nonce)) => {
+        Ok((target, selection, nonce, field_instance)) => {
             reply.ready = true;
             reply.valid_for_ms = proof_ms;
             reply.target = target;
             reply.selection = selection;
+            reply.field_instance = field_instance;
             reply.dispatch_nonce = nonce;
         }
         Err(error) => reply.code = Some(error),
@@ -546,6 +583,7 @@ pub fn clear_memory_commits(
     let (owner, server) = (owner.to_owned(), server.to_owned());
     on_main(app, move |broker| {
         broker.memory_commits.retire_owner(&owner, &server);
+        memory_spans::retain_revocations(broker.memory_spans.retire_owner(&owner, &server));
         Ok(())
     })
 }

@@ -10,7 +10,7 @@ use inputia_handy_runtime::{
 };
 use inputia_settings::store::{Snapshot, Store};
 
-fn preferences() -> Result<Snapshot, String> {
+pub(crate) fn preferences() -> Result<Snapshot, String> {
     let profile = crate::candidate_profile::current().ok_or("memory_profile_unavailable")?;
     let user = inputia_settings::maintenance::current_user_context()
         .map_err(|_| "memory_settings_unavailable")?;
@@ -21,6 +21,11 @@ fn preferences() -> Result<Snapshot, String> {
     )
     .and_then(|store| store.read())
     .map_err(|_| "memory_settings_unavailable".into())
+}
+fn same_settings(first: &Snapshot, second: &Snapshot) -> bool {
+    first.store_id == second.store_id
+        && first.revision == second.revision
+        && first.values_digest == second.values_digest
 }
 fn allowed(snapshot: &Snapshot) -> Result<(), String> {
     let settings = snapshot
@@ -60,6 +65,22 @@ fn safe_code(code: &str) -> &'static str {
         "memory_range_unsupported" => "memory_range_unsupported",
         "memory_range_unavailable" => "memory_range_unavailable",
 
+        "memory_span_unknown" => "memory_span_unknown",
+        "memory_span_sealed" => "memory_span_sealed",
+        "memory_span_identity_changed" => "memory_span_identity_changed",
+        "memory_span_expired" => "memory_span_expired",
+        "memory_span_budget_exceeded" => "memory_span_budget_exceeded",
+        "memory_span_sequence_invalid" => "memory_span_sequence_invalid",
+        "memory_span_replay_conflict" => "memory_span_replay_conflict",
+        "memory_span_edit_invalid" => "memory_span_edit_invalid",
+        "memory_span_boundary_required" => "memory_span_boundary_required",
+        "memory_span_readback_unsupported" => "memory_span_readback_unsupported",
+        "memory_span_field_changed" => "memory_span_field_changed",
+        "memory_span_readback_changed" => "memory_span_readback_changed",
+        "memory_span_no_observed_change" => "memory_span_no_observed_change",
+        "memory_span_revocation_pending" => "memory_span_revocation_pending",
+        "memory_span_request_invalid" => "memory_span_request_invalid",
+        "memory_span_recovery_unavailable" => "memory_span_recovery_unavailable",
         _ => "memory_service_unavailable",
     }
 }
@@ -86,6 +107,26 @@ pub fn respond(
             return Ok(MemoryResult::Outcome {
                 operation: history.memory_operation(operation_id.clone())?,
             });
+        }
+        if let MemoryCommand::RetireWordSpan { span_id } = &request.memory_domain {
+            if let Some(inputia_handy_runtime::legacy_memory::MemoryOperationStatus::Learn(
+                receipt,
+            )) = history.memory_operation(format!("span-revoke-{span_id}"))?
+            {
+                if receipt.state
+                    == inputia_handy_runtime::legacy_memory::MemoryMutationState::Revoked
+                {
+                    return Ok(MemoryResult::WordSpanRetired {});
+                }
+            }
+            crate::ime_target_broker::retire_memory_word_span(
+                app,
+                &request.client_instance,
+                &request.server_instance,
+                span_id.clone(),
+            )?;
+            crate::ime_target_broker::flush_word_span_revocations(app, history)?;
+            return Ok(MemoryResult::WordSpanRetired {});
         }
         let settings = preferences()?;
         allowed(&settings)?;
@@ -175,6 +216,103 @@ pub fn respond(
                     })?,
                 })
             }
+            MemoryCommand::PrepareWordSpan { target } => {
+                history.privacy_readable()?;
+                if history.memory_domain_status()?.state
+                    != inputia_handy_runtime::legacy_memory::MemoryDomainState::Ready
+                {
+                    return Err("memory_handoff_required".into());
+                }
+                crate::ime_target_broker::flush_word_span_revocations(app, history)?;
+                let started = std::time::Instant::now();
+                history
+                    .issue_privacy_reader(request.client_instance.clone(), request.policy_epoch)?;
+                let permit = crate::ime_target_broker::prepare_memory_word_span(
+                    app,
+                    &request.client_instance,
+                    &request.server_instance,
+                    target,
+                    request.policy_epoch,
+                    started,
+                )?;
+                if !same_settings(&settings, &preferences()?)
+                    || history.policy_epoch()? != request.policy_epoch
+                {
+                    crate::ime_target_broker::retire_memory_word_span(
+                        app,
+                        &request.client_instance,
+                        &request.server_instance,
+                        permit.span_id,
+                    )?;
+                    crate::ime_target_broker::flush_word_span_revocations(app, history)?;
+                    return Err("memory_settings_changed".into());
+                }
+                Ok(MemoryResult::PreparedWordSpan { permit })
+            }
+            MemoryCommand::RecordWordSpan {
+                target,
+                span_id,
+                sequence,
+                edit,
+            } => {
+                let progress = crate::ime_target_broker::record_memory_word_span(
+                    app,
+                    &request.client_instance,
+                    &request.server_instance,
+                    target,
+                    request.policy_epoch,
+                    span_id.clone(),
+                    *sequence,
+                    edit.clone(),
+                )?;
+                Ok(MemoryResult::WordSpanProgress { progress })
+            }
+            MemoryCommand::CheckpointWordSpan {
+                target,
+                span_id,
+                operation_id,
+                through_sequence,
+                finish,
+            } => {
+                // checkpoint 重放也必须复核原许可的完整身份；单独查询历史结果使用 Outcome。
+                let started = std::time::Instant::now();
+                history
+                    .issue_privacy_reader(request.client_instance.clone(), request.policy_epoch)?;
+                let proof = crate::ime_target_broker::checkpoint_memory_word_span(
+                    app,
+                    &request.client_instance,
+                    &request.server_instance,
+                    target,
+                    request.policy_epoch,
+                    span_id.clone(),
+                    inputia_handy_runtime::memory_word_span::WordSpanCheckpoint {
+                        operation_id: operation_id.clone(),
+                        through_sequence: *through_sequence,
+                        finish: *finish,
+                    },
+                    started,
+                )?;
+                if !same_settings(&settings, &preferences()?)
+                    || history.policy_epoch()? != request.policy_epoch
+                {
+                    crate::ime_target_broker::clear_memory_commits(
+                        app,
+                        &request.client_instance,
+                        &request.server_instance,
+                    )?;
+                    return Err("memory_settings_changed".into());
+                }
+                let receipt = history.memory_apply_word_span(proof.clone())?;
+                if proof.sealed() && receipt.operation_id == proof.operation_id()
+                    && receipt.applied_at_epoch == proof.identity().policy_epoch
+                    && matches!(receipt.state, inputia_handy_runtime::legacy_memory::MemoryMutationState::Applied
+                        | inputia_handy_runtime::legacy_memory::MemoryMutationState::AlreadyContributed) {
+                    // 回执已耐久；主线程ACK失败只保留恢复token，不把真实提交伪装成未发生。
+                    let _ = crate::ime_target_broker::acknowledge_memory_word_span(app, proof);
+                }
+                Ok(MemoryResult::Learn { receipt })
+            }
+            MemoryCommand::RetireWordSpan { .. } => unreachable!(),
             MemoryCommand::PrepareCommit {
                 target,
                 request: plans,

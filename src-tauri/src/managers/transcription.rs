@@ -15,7 +15,6 @@ use inputia_core::integration::{
     terms::HotwordBudget,
 };
 use inputia_handy_runtime::{
-    service::HistoryService,
     store::TermSnapshot,
     voice_protocol::{VoiceRequest, VoiceTermsVersion},
 };
@@ -122,33 +121,66 @@ fn shared_prompt_lease_valid(elapsed: Duration, secure_input: bool, current: boo
 }
 
 struct SharedNativePrompt {
-    service: Arc<HistoryService>,
+    // 字段按声明顺序销毁：正文、观察线程、最后实际读者pin。
     snapshot: TermSnapshot,
     acquired_at: Instant,
+    watch: crate::native_prompt_watch::NativePromptWatch,
+    _reader: inputia_handy_runtime::native_readers::NativeReaderPin,
 }
 
 impl SharedNativePrompt {
     fn current(&self) -> bool {
-        // IPC 返回后才检查时间，超时绝不将过期快照交给原生引擎。
-        let current = self
-            .service
-            .term_snapshot_is_current(self.snapshot.clone())
-            .unwrap_or(false);
-        let secure_input = crate::secure_input::is_enabled_now();
-        shared_prompt_lease_valid(self.acquired_at.elapsed(), secure_input, current)
+        shared_prompt_lease_valid(
+            self.acquired_at.elapsed(),
+            crate::secure_input::is_enabled_now(),
+            self.watch.current(),
+        )
     }
-
     fn stream_current(&mut self) -> bool {
         validate_stream_prompt_lease(
             &mut self.acquired_at,
-            || {
-                self.service
-                    .term_snapshot_is_current(self.snapshot.clone())
-                    .unwrap_or(false)
-            },
+            || self.watch.current(),
             crate::secure_input::is_enabled_now,
         )
     }
+}
+
+fn merge_legacy_hotwords(explicit: &[String], shared: &[String], legacy: &[String]) -> Vec<String> {
+    let budget = HotwordBudget::default();
+    let explicit: std::collections::HashSet<_> = explicit.iter().map(|word| word.trim()).collect();
+    let mut result = shared.to_vec();
+    let mut seen: std::collections::HashSet<_> = result.iter().cloned().collect();
+    let mut bytes: usize = result.iter().map(String::len).sum();
+    let mut learned_count = result
+        .iter()
+        .filter(|word| !explicit.contains(word.as_str()))
+        .count();
+    let mut learned_bytes: usize = result
+        .iter()
+        .filter(|word| !explicit.contains(word.as_str()))
+        .map(String::len)
+        .sum();
+    for term in legacy {
+        if term.trim().is_empty()
+            || term.chars().count() > 32
+            || term.chars().any(char::is_control)
+            || term.contains("<|")
+            || term.contains("|>")
+            || seen.contains(term)
+            || result.len() >= budget.max_words
+            || bytes.saturating_add(term.len()) > budget.max_bytes
+            || learned_count >= budget.learned_max_words
+            || learned_bytes.saturating_add(term.len()) > budget.learned_max_bytes
+        {
+            continue;
+        }
+        bytes += term.len();
+        learned_bytes += term.len();
+        learned_count += 1;
+        seen.insert(term.clone());
+        result.push(term.clone());
+    }
+    result
 }
 
 fn native_prompt_extension(
@@ -1109,6 +1141,7 @@ impl TranscriptionManager {
         };
 
         if run_options.family.is_none() {
+            qwen_plan = None;
             shared_prompt = None;
         }
 
@@ -1127,13 +1160,25 @@ impl TranscriptionManager {
             // Read the backend string before beginning the stream — the
             // `Stream` borrows `session` mutably for its lifetime, so we can't
             // call `session.model()` once it exists.
+            let mut private_session = if shared_prompt.is_some() {
+                match session.model().session() {
+                    Ok(mut isolated) => {
+                        isolated
+                            .set_cancel_token(shared_prompt.as_ref().unwrap().watch.cancel_token());
+                        Some(isolated)
+                    }
+                    Err(_) => break 'stream false,
+                }
+            } else {
+                None
+            };
+            let session = private_session.as_mut().unwrap_or(session);
             let backend = session.model().backend();
 
             if shared_prompt
                 .as_ref()
                 .is_some_and(|shared| !shared.current())
             {
-                shared_prompt = None;
                 qwen_plan = qwen_context
                     .then(|| QwenContextPlan::from_custom_words(&settings.custom_words))
                     .filter(|plan| !plan.is_empty());
@@ -1142,6 +1187,7 @@ impl TranscriptionManager {
                     whisper_prompt,
                     qwen_plan.as_ref(),
                 );
+                shared_prompt = None;
             }
 
             // StreamOptions::default() uses CommitPolicy::Auto and lets the
@@ -1167,7 +1213,23 @@ impl TranscriptionManager {
             );
 
             let mut perf = StreamPerf::new();
-            while let Ok(cmd) = rx.recv() {
+            loop {
+                let cmd = match rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(cmd) => cmd,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        if shared_prompt
+                            .as_mut()
+                            .is_some_and(|shared| !shared.stream_current())
+                        {
+                            stream.reset();
+                            self.emit_stream_text("", "");
+                            self.stream_active.store(false, Ordering::Release);
+                            break 'stream false;
+                        }
+                        continue;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                };
                 match cmd {
                     StreamCmd::Feed(pcm) => {
                         self.touch_activity();
@@ -1303,6 +1365,10 @@ impl TranscriptionManager {
             true
         };
         // `stream` + the `&mut engine` borrow are released here.
+        // 一次性解码器已销毁；先释放所有提示副本，再结算原生读者，不能带着词表等待下一条控制消息。
+        drop(run_options);
+        drop(qwen_plan);
+        drop(shared_prompt);
 
         if !stream_started {
             // Stream never began (model doesn't support streaming or begin
@@ -1418,26 +1484,111 @@ impl TranscriptionManager {
         request: Option<&VoiceRequest>,
         explicit: &[String],
     ) -> Option<SharedNativePrompt> {
+        use inputia_core::memory_snapshot::{MemoryQuery, MemorySnapshot};
+        let request = request?;
         let (policy, context, terms) =
-            shared_prompt_privacy(request?, crate::secure_input::is_enabled_now())?;
+            shared_prompt_privacy(request, crate::secure_input::is_enabled_now())?;
         let service = self
             .app_handle
             .try_state::<Arc<crate::managers::integration::IntegrationManager>>()?
             .service
             .clone();
+        let settings = crate::memory_domain::preferences().ok()?;
+        let values = settings.settings().ok()?;
+        if !values.memory_enabled || !values.privacy_learning_enabled {
+            return None;
+        }
+        let (target, _) = request.strict_start_identity()?;
+        crate::ime_target_broker::check(
+            &self.app_handle,
+            &request.client_instance,
+            &request.server_instance,
+            target,
+            inputia_handy_runtime::voice_protocol::TargetBridgePurpose::Personalization,
+        )
+        .ok()?;
         let acquired_at = Instant::now();
-        let snapshot = service
+        let reader = inputia_handy_runtime::native_readers::NativeReaderPin::new().ok()?;
+        service
+            .issue_privacy_reader(reader.id().into(), request.policy_epoch)
+            .ok()?;
+        let mut snapshot = service
             .session_hotwords(policy, context, explicit.to_vec(), HotwordBudget::default())
             .ok()?;
-        if !shared_prompt_version_matches(&snapshot, terms)
-            || acquired_at.elapsed() >= SHARED_NATIVE_PROMPT_TTL
+        if !shared_prompt_version_matches(&snapshot, terms) {
+            return None;
+        }
+        let legacy_version = if service.memory_domain_status().ok()?.state
+            == inputia_handy_runtime::legacy_memory::MemoryDomainState::Ready
         {
+            let query = MemoryQuery::VoiceHotwords {
+                limit: HotwordBudget::default().learned_max_words,
+            };
+            let legacy = service
+                .memory_query(query.clone(), request.policy_epoch, reader.id().into())
+                .ok()?;
+            let version = (legacy.domain_uuid, legacy.generation, legacy.epoch);
+            let legacy = MemorySnapshot::new(query.clone(), legacy.terms)
+                .ok()?
+                .memory_for(&query, inputia_core::AppPolicy::default())
+                .ok()?;
+            snapshot.terms = merge_legacy_hotwords(
+                explicit,
+                &snapshot.terms,
+                &legacy.voice_hotwords(HotwordBudget::default().learned_max_words),
+            );
+            Some(version)
+        } else {
+            // 未交接的第三域不能被读取；已具备真实来源的共享词合同继续独立工作。
+            None
+        };
+        let version = TermSnapshot {
+            policy_epoch: snapshot.policy_epoch,
+            learning_generation: snapshot.learning_generation,
+            terms: Vec::new(),
+        };
+        let (app, service_check, request, target, explicit) = (
+            self.app_handle.clone(),
+            service.clone(),
+            request.clone(),
+            target.clone(),
+            explicit.to_vec(),
+        );
+        let watch = crate::native_prompt_watch::NativePromptWatch::start(move || {
+            let current_settings = crate::memory_domain::preferences().ok();
+            !crate::secure_input::is_enabled_now()
+                && current_settings.is_some_and(|current| {
+                    current.store_id == settings.store_id
+                        && current.revision == settings.revision
+                        && current.values_digest == settings.values_digest
+                })
+                && get_settings(&app).custom_words == explicit
+                && service_check
+                    .term_snapshot_is_current(version.clone())
+                    .unwrap_or(false)
+                && legacy_version.as_ref().is_none_or(|version| {
+                    service_check
+                        .memory_snapshot_is_current(version.0.clone(), version.1, version.2)
+                        .unwrap_or(false)
+                })
+                && crate::ime_target_broker::check(
+                    &app,
+                    &request.client_instance,
+                    &request.server_instance,
+                    &target,
+                    inputia_handy_runtime::voice_protocol::TargetBridgePurpose::Personalization,
+                )
+                .is_ok()
+        })
+        .ok()?;
+        if acquired_at.elapsed() >= SHARED_NATIVE_PROMPT_TTL || !watch.current() {
             return None;
         }
         Some(SharedNativePrompt {
-            service,
             snapshot,
             acquired_at,
+            watch,
+            _reader: reader,
         })
     }
 
@@ -1662,12 +1813,36 @@ impl TranscriptionManager {
                         let active_qwen_context = qwen_context_plan
                             .as_ref()
                             .filter(|_| model_accepts_qwen_context);
-                        let result = session.run(&audio, &run_options).map(|t| {
-                            // Whisper's audio-based LID (auto mode only;
-                            // `None` when a language hint was passed).
-                            model_detected_language = t.language;
-                            strip_qwen_context_echo(t.text, active_qwen_context)
-                        });
+                        // 含派生学习词的提示只进入一次性session；不能随常驻模型保留KV/提示上下文。
+                        let mut private_session = if shared_submitted {
+                            let mut isolated = session.model().session().map_err(|e| {
+                                anyhow::anyhow!("private transcription session: {e}")
+                            })?;
+                            isolated.set_cancel_token(
+                                shared_prompt.as_ref().unwrap().watch.cancel_token(),
+                            );
+                            Some(isolated)
+                        } else {
+                            None
+                        };
+                        let result = private_session
+                            .as_mut()
+                            .unwrap_or(session)
+                            .run(&audio, &run_options)
+                            .map(|t| {
+                                // Whisper's audio-based LID (auto mode only;
+                                // `None` when a language hint was passed).
+                                model_detected_language = t.language;
+                                strip_qwen_context_echo(t.text, active_qwen_context)
+                            });
+                        drop(private_session);
+                        if shared_submitted
+                            && shared_prompt
+                                .as_ref()
+                                .is_some_and(|shared| !shared.watch.current())
+                        {
+                            return Err(anyhow::anyhow!("transcription prompt was revoked"));
+                        }
                         // 原生调用返回后记录元数据，不在租约复核与提交之间执行日志I/O。
                         if shared_submitted {
                             if let Some(shared) = shared_prompt.as_ref() {
@@ -2915,6 +3090,25 @@ mod tests {
         assert!(shared_prompt_privacy(&stop, false).is_none());
     }
 
+    #[test]
+    fn legacy_native_hotwords_preserve_explicit_priority_and_share_one_learned_budget() {
+        let explicit = vec!["ManualTerm".into()];
+        let shared = vec!["ManualTerm".into(), "SharedTerm".into()];
+        let mut legacy = vec![
+            "ManualTerm".into(),
+            "SharedTerm".into(),
+            "<|im_start|>".into(),
+        ];
+        legacy.extend((0..100).map(|index| format!("Legacy{index}")));
+        let result = merge_legacy_hotwords(&explicit, &shared, &legacy);
+        assert_eq!(&result[..2], &shared);
+        assert_eq!(result.len(), 1 + HotwordBudget::default().learned_max_words);
+        assert_eq!(
+            result.iter().filter(|word| *word == "ManualTerm").count(),
+            1
+        );
+        assert!(!result.iter().any(|word| word.contains("<|")));
+    }
     #[test]
     fn shared_native_prompt_requires_both_session_versions() {
         let terms = VoiceTermsVersion {

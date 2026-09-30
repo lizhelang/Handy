@@ -388,6 +388,7 @@ impl LegacyMemory {
         CREATE TABLE IF NOT EXISTS memory_clock(singleton INTEGER PRIMARY KEY CHECK(singleton=1),tick INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS memory_operations(operation_id TEXT PRIMARY KEY,request_hmac BLOB NOT NULL,origin TEXT NOT NULL,epoch INTEGER NOT NULL,result TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS memory_event_receipts(event_id TEXT PRIMARY KEY,request_hmac BLOB NOT NULL);
+        CREATE TABLE IF NOT EXISTS memory_word_spans(span_id TEXT PRIMARY KEY,identity_hmac BLOB NOT NULL,revision INTEGER NOT NULL,epoch INTEGER NOT NULL,revoked INTEGER NOT NULL,sealed INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS memory_sources(store_id TEXT NOT NULL,record_id TEXT NOT NULL,revision INTEGER NOT NULL,deleted INTEGER NOT NULL,PRIMARY KEY(store_id,record_id));
         CREATE TABLE IF NOT EXISTS memory_contributions(store_id TEXT NOT NULL,record_id TEXT NOT NULL,revision INTEGER NOT NULL,event_id TEXT NOT NULL,term_hmac BLOB NOT NULL,text TEXT NOT NULL,source TEXT NOT NULL,typed_count INTEGER NOT NULL,voice_count INTEGER NOT NULL,clipboard_count INTEGER NOT NULL,tick INTEGER NOT NULL,PRIMARY KEY(store_id,record_id,revision,term_hmac));
         CREATE INDEX IF NOT EXISTS memory_contributions_text ON memory_contributions(text);
@@ -396,6 +397,20 @@ impl LegacyMemory {
         CREATE TABLE IF NOT EXISTS memory_source_revocations(operation_id TEXT PRIMARY KEY,request_hmac BLOB NOT NULL,domain_uuid TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS memory_privacy_receipts(operation_id TEXT PRIMARY KEY,request_hmac BLOB NOT NULL,epoch INTEGER NOT NULL,domain_uuid TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS memory_imports(operation_id TEXT PRIMARY KEY,request_hmac BLOB NOT NULL,request TEXT NOT NULL,result TEXT NOT NULL,history_cursor TEXT,clipboard_cursor TEXT,history_done INTEGER NOT NULL DEFAULT 0,clipboard_done INTEGER NOT NULL DEFAULT 0,history_store TEXT,clipboard_store TEXT,history_scanned INTEGER NOT NULL DEFAULT 0,clipboard_scanned INTEGER NOT NULL DEFAULT 0);").map_err(db_err)?;
+        let columns: Vec<String> = tx
+            .prepare("PRAGMA table_info(memory_word_spans)")
+            .map_err(db_err)?
+            .query_map([], |r| r.get(1))
+            .map_err(db_err)?
+            .collect::<std::result::Result<_, _>>()
+            .map_err(db_err)?;
+        if !columns.iter().any(|name| name == "sealed") {
+            tx.execute(
+                "ALTER TABLE memory_word_spans ADD COLUMN sealed INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(db_err)?;
+        }
         let existing:Option<(String,String,Vec<u8>,u32,u32)>=tx.query_row("SELECT domain_uuid,profile_id,key_id,normalization_version,schema_version FROM memory_domain_meta WHERE singleton=1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(db_err)?;
         let check = hmac(&key, b"key-id", b"");
         let domain = match existing {
@@ -425,6 +440,22 @@ impl LegacyMemory {
                 id
             }
         };
+        // 新单写者实例不继承内存许可；未sealed旧span必须先撤销，迟到证据不能复活。
+        let abandoned: Vec<String> = tx
+            .prepare("SELECT span_id FROM memory_word_spans WHERE revoked=0 AND sealed=0")
+            .map_err(db_err)?
+            .query_map([], |r| r.get(0))
+            .map_err(db_err)?
+            .collect::<std::result::Result<_, _>>()
+            .map_err(db_err)?;
+        for span in abandoned {
+            clear_span(&tx, &format!("commit:span:{span}"))?;
+            tx.execute(
+                "UPDATE memory_word_spans SET revoked=1,revision=revision+1 WHERE span_id=?1",
+                [span],
+            )
+            .map_err(db_err)?;
+        }
         // 版本用于失效快照；业务时钟独立继承旧词和事件的最近使用顺序。
         tx.execute_batch("UPDATE memory_domain_meta SET generation=MAX(1,generation) WHERE singleton=1;
         INSERT INTO memory_clock SELECT 1,MAX(COALESCE((SELECT MAX(last_used_tick) FROM inputia_terms),0),COALESCE((SELECT MAX(created_tick) FROM inputia_events),0),COALESCE((SELECT MAX(tick) FROM memory_contributions),0)) WHERE 1
@@ -1311,6 +1342,263 @@ impl LegacyMemory {
         )
         .transpose()
     }
+}
+
+fn span_identity(key: &[u8], identity: &crate::memory_commit::CommitIdentity) -> Result<Vec<u8>> {
+    Ok(hmac(
+        key,
+        b"word-span-identity",
+        &serde_json::to_vec(&(
+            &identity.client_instance,
+            &identity.server_instance,
+            identity.permission_epoch,
+            identity.policy_epoch,
+            &identity.target,
+        ))
+        .map_err(|_| "memory_span_identity_invalid")?,
+    ))
+}
+fn clear_span(db: &Connection, store: &str) -> Result<()> {
+    db.execute("DELETE FROM inputia_events WHERE id IN(SELECT event_row FROM memory_event_sources WHERE store_id=?1)",[store]).map_err(db_err)?;
+    db.execute(
+        "DELETE FROM memory_event_sources WHERE store_id=?1",
+        [store],
+    )
+    .map_err(db_err)?;
+    db.execute(
+        "DELETE FROM memory_contributions WHERE store_id=?1",
+        [store],
+    )
+    .map_err(db_err)?;
+    db.execute("DELETE FROM memory_sources WHERE store_id=?1", [store])
+        .map_err(db_err)?;
+    rebuild(db)
+}
+impl LegacyMemory {
+    pub(crate) fn apply_word_span(
+        &mut self,
+        verified: &crate::memory_word_span::VerifiedWordSpan,
+    ) -> Result<MemoryMutationReceipt> {
+        let identity = verified.identity();
+        self.require_epoch(identity.policy_epoch)?;
+        let app = identity
+            .target
+            .source_app
+            .as_deref()
+            .ok_or("memory_span_identity_invalid")?;
+        if AppPolicy::default().excludes(&AppContext::new(app)) {
+            return Err("memory_span_sensitive".into());
+        }
+        let identity_digest = span_identity(&self.key, identity)?;
+        let words: Vec<_> = verified
+            .words()
+            .iter()
+            .map(|word| (word.offset, word.text.as_str()))
+            .collect();
+        let request_digest = hmac(
+            &self.key,
+            b"word-span-revision",
+            &serde_json::to_vec(&(
+                verified.span_id(),
+                verified.operation_id(),
+                verified.revision(),
+                verified.sealed(),
+                &identity_digest,
+                words,
+            ))
+            .map_err(|_| "memory_span_request_invalid")?,
+        );
+        let domain = self.domain.clone().ok_or("memory_domain_missing")?;
+        let key = self.key;
+        let tx = self
+            .db
+            .as_mut()
+            .ok_or("memory_handoff_required")?
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_err)?;
+        if let Some(receipt) = span_replay(&tx, verified.operation_id(), &request_digest)? {
+            return Ok(receipt);
+        }
+        let prior: Option<(Vec<u8>, u64, bool, bool)> = tx
+            .query_row(
+                "SELECT identity_hmac,revision,revoked,sealed FROM memory_word_spans WHERE span_id=?1",
+                [verified.span_id()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?,r.get(3)?)),
+            )
+            .optional()
+            .map_err(db_err)?;
+        let previous = if let Some((digest, revision, revoked, sealed)) = prior {
+            if digest != identity_digest || revoked || sealed {
+                return Err("memory_span_revoked".into());
+            }
+            revision
+        } else {
+            0
+        };
+        if verified.revision() != previous + 1 {
+            return Err("memory_span_revision_conflict".into());
+        }
+        let store = format!("commit:span:{}", verified.span_id());
+        clear_span(&tx, &store)?;
+        let mut state = MemoryMutationState::Applied;
+        for word in verified.words() {
+            let evidence = VerifiedMemoryEvidence::source(
+                store.clone(),
+                word.offset.to_string(),
+                verified.revision(),
+                identity.policy_epoch,
+                MemoryOrigin::Typed,
+                word.text.clone(),
+                app.into(),
+            )?;
+            if contribute(&tx, &key, &evidence, verified.operation_id())?
+                == MemoryMutationState::Revoked
+            {
+                state = MemoryMutationState::Revoked;
+            }
+        }
+        tx.execute("INSERT INTO memory_word_spans VALUES(?1,?2,?3,?4,0,?5) ON CONFLICT(span_id) DO UPDATE SET revision=excluded.revision,sealed=excluded.sealed",params![verified.span_id(),identity_digest,verified.revision(),identity.policy_epoch,verified.sealed()]).map_err(db_err)?;
+        let receipt = span_finish(
+            &tx,
+            verified.operation_id(),
+            &request_digest,
+            identity.policy_epoch,
+            domain,
+            state,
+        )?;
+        tx.commit().map_err(db_err)?;
+        self.db()?;
+        Ok(receipt)
+    }
+    pub(crate) fn revoke_word_span(
+        &mut self,
+        revoked: &crate::memory_word_span::RevokedWordSpan,
+    ) -> Result<MemoryMutationReceipt> {
+        self.db()?;
+        let identity_digest = span_identity(&self.key, revoked.identity())?;
+        let digest = hmac(
+            &self.key,
+            b"word-span-revoke",
+            &serde_json::to_vec(&(revoked.span_id(), revoked.revision(), &identity_digest))
+                .map_err(|_| "memory_span_request_invalid")?,
+        );
+        let domain = self.domain.clone().ok_or("memory_domain_missing")?;
+        let tx = self
+            .db
+            .as_mut()
+            .ok_or("memory_handoff_required")?
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_err)?;
+        if let Some(receipt) = span_replay(&tx, revoked.operation_id(), &digest)? {
+            return Ok(receipt);
+        }
+        let prior: Option<(Vec<u8>, u64,bool,bool)> = tx
+            .query_row(
+                "SELECT identity_hmac,revision,sealed,revoked FROM memory_word_spans WHERE span_id=?1",
+                [revoked.span_id()],
+                |r| Ok((r.get(0)?, r.get(1)?,r.get(2)?,r.get(3)?)),
+            )
+            .optional()
+            .map_err(db_err)?;
+        if let Some((hash, revision, sealed, already_revoked)) = prior {
+            if hash != identity_digest {
+                return Err("memory_span_revision_conflict".into());
+            }
+            if sealed || already_revoked {
+                let receipt = span_finish(
+                    &tx,
+                    revoked.operation_id(),
+                    &digest,
+                    revoked.identity().policy_epoch,
+                    domain,
+                    if sealed {
+                        MemoryMutationState::AlreadyContributed
+                    } else {
+                        MemoryMutationState::Revoked
+                    },
+                )?;
+                tx.commit().map_err(db_err)?;
+                self.db()?;
+                return Ok(receipt);
+            }
+            if revision >= revoked.revision() {
+                return Err("memory_span_revision_conflict".into());
+            }
+        }
+        clear_span(&tx, &format!("commit:span:{}", revoked.span_id()))?;
+        tx.execute("INSERT INTO memory_word_spans VALUES(?1,?2,?3,?4,1,0) ON CONFLICT(span_id) DO UPDATE SET revision=excluded.revision,revoked=1",params![revoked.span_id(),identity_digest,revoked.revision(),revoked.identity().policy_epoch]).map_err(db_err)?;
+        let receipt = span_finish(
+            &tx,
+            revoked.operation_id(),
+            &digest,
+            revoked.identity().policy_epoch,
+            domain,
+            MemoryMutationState::Revoked,
+        )?;
+        tx.commit().map_err(db_err)?;
+        self.db()?;
+        Ok(receipt)
+    }
+}
+fn span_replay(db: &Connection, id: &str, digest: &[u8]) -> Result<Option<MemoryMutationReceipt>> {
+    let prior: Option<(Vec<u8>, String)> = db
+        .query_row(
+            "SELECT request_hmac,result FROM memory_operations WHERE operation_id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(db_err)?;
+    prior
+        .map(|(hash, raw)| {
+            if hash != digest {
+                return Err("memory_operation_conflict".into());
+            }
+            let MemoryOperationStatus::Learn(mut receipt) =
+                serde_json::from_str(&raw).map_err(|_| "memory_receipt_invalid")?
+            else {
+                return Err("memory_operation_conflict".into());
+            };
+            receipt.replayed = true;
+            Ok(receipt)
+        })
+        .transpose()
+}
+fn span_finish(
+    db: &Connection,
+    id: &str,
+    digest: &[u8],
+    epoch: u64,
+    domain: String,
+    state: MemoryMutationState,
+) -> Result<MemoryMutationReceipt> {
+    let generation = db
+        .query_row(
+            "SELECT generation FROM memory_domain_meta WHERE singleton=1",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(db_err)?;
+    let receipt = MemoryMutationReceipt {
+        operation_id: id.into(),
+        applied_at_epoch: epoch,
+        domain_uuid: domain,
+        generation,
+        state,
+        replayed: false,
+    };
+    db.execute(
+        "INSERT INTO memory_operations VALUES(?1,?2,'word_span',?3,?4)",
+        params![
+            id,
+            digest,
+            epoch,
+            serde_json::to_string(&MemoryOperationStatus::Learn(receipt.clone()))
+                .map_err(|_| "memory_receipt_invalid")?
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(receipt)
 }
 
 #[cfg(test)]

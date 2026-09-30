@@ -233,3 +233,15 @@ Swift 宿主接入受管 CAPI、服务查询、策略、导入及结果查询。
 实施代理验证：Swift 合同 35 项、临时文件系统导入/恢复 21 项通过；屏障、共享词缓存及显式热词合成协议自检通过。普通与 paired-v2 Host typecheck、明确启用 bundled-static-rime/managed-memory 的 CAPI 重建及完整临时 Host 链接通过，保留既有 PermissionLifecycle 捕获 warning。shell 语法、diff 检查通过。独立复核关闭导入耐久重试、过期正文、原字段绑定、keyUp 和异步选择吞键反例，最后窄复核 CLEAR。
 
 临时链接产物未运行或安装；上述证据不等于真实 AX 输入或学习效果验收。连续英文 WordSpan 宿主调用仍待下一批，旧写入者交接和真实日用迁移也未执行。
+
+### 第十八批：连续英文读回与语音原生读者生命周期
+
+WordSpan 在实际字段边界先取得短期许可，再记录有序追加/尾退格；checkpoint 核对原字段、完整 UTF-16 变化、caret、文档长度、左右锚点及读前读后代数。每个版本替换该 span 的全部贡献，跨 checkpoint 退格不会保留已删除词。封段需要闭合词边界和真实耐久回执；sealed 贡献保留，未封段许可到期、目标变化或进程重启会撤销，迟到证据不能恢复旧版本。正文只留在有界短期许可中，撤销队列只持精确身份元数据。
+
+后台定时恢复与许可创建共享唤醒代数，避免到期线程退出时丢失新任务。撤销必须先取得持久域回执再清队列；封段 ACK 失败仍可根据持久 sealed 记录恢复。复审发现 checkpoint 曾按裸 operation ID 提前返回结果，已移除；每次 checkpoint 重放仍须完整原身份证明，历史元数据另走 Outcome。
+
+语音热词统一取得读者登记，再获取共享域及可用的第三域快照。带学习内容的 Whisper/Qwen 调用使用一次性原生 session，释放顺序保证原生上下文、提示正文先释放，读者 pin 最后退出。读者仍被原生 session 持有时，过期或普通 ACK 均不能把隐私操作结算为 completed。独立 25ms 检查器在验证线程阻塞时也会取消；不支持及时停止的解码器仍需实际释放后才能完成遗忘，不承诺硬实时清零。
+
+验证：WordSpan 原 9 项临时库/字段回归和追加身份重放 1 项通过，后者覆盖 active/sealed 与 owner/target/epoch/server 共 8 个反例；第三域专项 24 项、wire 5 项通过。原生读者的过期/ACK 不得提前完成遗忘回归 1 项、后台撤销检查 6 项及热词预算合并 1 项通过。runtime all-targets 严格 Clippy、后台 cargo check、diff 检查通过。ASR 生命周期和 WordSpan 后台接线分别经过独立窄审，最后修复后的结论记录在对应提交证据中。
+
+依据依赖源码核对 Rust Session Drop 释放 C++ session，Whisper/Qwen 的会话析构释放各自 KV 上下文；这不是实际模型内存擦除或实时取消测量。本批未运行真实模型或读取用户字段。宿主 WordSpan 接线、生产旧库交接和大库延迟继续实施，不能据此宣称原生隐私或性能 gate 通过。

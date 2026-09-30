@@ -215,7 +215,10 @@ impl VoiceConnection {
                             .validate_for(&self.context.voice_peer(current))
                             .is_ok();
                     let stale = capability
-                        && !matches!(request.memory_domain, MemoryCommand::Outcome { .. })
+                        && !matches!(
+                            request.memory_domain,
+                            MemoryCommand::Outcome { .. } | MemoryCommand::RetireWordSpan { .. }
+                        )
                         && request.policy_epoch < current
                         && request
                             .validate_for(&self.context.voice_peer(request.policy_epoch))
@@ -436,6 +439,7 @@ impl VoiceConnection {
                         valid_for_ms: 0,
                         target: None,
                         selection: None,
+                        field_instance: None,
                         dispatch_nonce: None,
                         code: Some(code.into()),
                     });

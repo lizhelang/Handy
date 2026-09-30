@@ -850,6 +850,9 @@ pub struct TargetBridgeReply {
     pub target: Option<HostTargetToken>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selection: Option<TargetBridgeSelection>,
+    /// 仅服务端原生观察分配；用于区分同一IMK代理下的真实字段。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_instance: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dispatch_nonce: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

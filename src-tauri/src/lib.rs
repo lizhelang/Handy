@@ -26,6 +26,7 @@ mod llm_client;
 mod managers;
 mod memory;
 mod native_hotwords;
+mod native_prompt_watch;
 #[cfg(target_os = "macos")]
 // 原生后台与独立Rust诊断共享同一认证API；不注册为WebView可调用命令。
 pub mod native_pair_auth;

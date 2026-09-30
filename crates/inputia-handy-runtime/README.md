@@ -148,3 +148,30 @@ cargo test --manifest-path crates/inputia-handy-runtime/Cargo.toml --offline --l
 
 当前实现仍会在独占迁移时读取完整旧词表，并在派生查询前核对全部已登记源贡献；大库性能尚需后续有界
 审计/迁移优化。生产所有权交接、实际 Host 输入端到端验收另行完成。上述安全暂停不代表旧学习功能已上线。
+
+### 连续英文的有界读回证明
+
+`memory_word_span::WordSpanRegistry` 在输入之前读取真实折叠光标、字段实例和左右各最多 32 个 UTF-16
+单位的锚点。已有英文词中间不能开启新段，也不接受客户端发送既有前缀来补造许可。取得许可后，只记录
+严格连续 sequence 的追加与尾部回删；重复 sequence 必须保持原事件。正文上限为 8192 UTF-16 单位、
+64 KiB，每个活跃段最多 128 个已结束词、1024 个编辑事件和 32 次确认。
+
+`checkpoint` 核验整段真实读回、两侧锚点、原字段/焦点/光标/文档长度和读取前后稳定性。只有此步骤可
+续最长 1.5 秒的许可，重放旧确认不会重新计时。ASCII 字母、数字、下划线和短横线组成词；长度至少为
+2 且包含字母，尾部未出现本次新增结束边界的词不产生学习证据。
+
+- `memory_apply_word_span` 按稳定 span 来源和递增修订，在同一事务中替换全部词贡献、事件和操作回执。
+  同词不同位置保留各自次数；跨多次 checkpoint 的尾部回删会撤销旧集合，不叠加旧权重。
+- 普通确认使用 `word-span:<span_id>:<sequence>`；`finish=true` 使用附加 `:seal` 的操作身份。
+  finish 仍须重新完整读回并看到真实闭合尾边界。域的 sealed 状态与最终贡献同事务提交后，调用方才能
+  `acknowledge_seal`。sealed 记录是已经证实发生的输入事件，不随普通失焦或空闲到期删除。
+- 未封存许可到期、字段/权限/epoch 变化、读回不支持或预算超限时，registry 清除正文并保留有界撤销
+  token。后台调用 `memory_revoke_word_span` 幂等执行，再确认 token；不依赖下一次 checkpoint。
+  finish 已提交而 ACK 丢失时，域的真实 sealed 状态阻止误删。服务重启先撤销上次实例留下的所有
+  unsealed 贡献并留下 tombstone；迟到的旧证据不能恢复它。
+- sealed 重试正文缓存也仅存活于原短租约内；隐私撤销立即清除缓存。真正 Forget/Clear 仍清除 sealed
+  学习证据。`memory_snapshot_is_current` 只核快照身份、修订与当前来源/隐私门禁，不返回正文或续租。
+
+当前只支持一个有界活跃段内的跨 checkpoint 回删，不支持独立 sealed 段之间的反向编辑追踪或无限段
+滚动。预算耗尽时明确停止该段学习，正常输入继续；只有新的真实词边界可以取得新许可。测试使用合成
+Observer 与临时 SQLite，原生 broker、Host 事件接线和现场输入验收不能由这些单元测试代替。

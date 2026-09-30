@@ -628,6 +628,13 @@ impl TargetRegistry {
             .values()
             .find(|lease| {
                 lease.snapshot.process == snapshot.process
+                    && lease.state.focus_generation.get() == lease.snapshot.focus_generation
+                    && !lease.state.activation.invalid.load(Ordering::SeqCst)
+                    && lease
+                        .state
+                        .invalid
+                        .get()
+                        .is_none_or(|reason| reason == PendingReason::Edited)
                     && lease.state.field.equals(&state.field)
                     && lease.state.window.equals(&state.window)
             })
@@ -762,6 +769,13 @@ pub(crate) struct NativeLearningObserver<'a> {
     id: &'a str,
 }
 impl TargetRegistry {
+    pub(crate) fn learning_field_instance(&self, id: &str) -> Result<String, PendingReason> {
+        self.validate_typed_field(id)?;
+        self.leases
+            .get(id)
+            .map(|lease| lease.learning_field_instance.clone())
+            .ok_or(PendingReason::UnknownTarget)
+    }
     pub(crate) fn learning_observer<'a>(&'a self, id: &'a str) -> NativeLearningObserver<'a> {
         NativeLearningObserver { registry: self, id }
     }

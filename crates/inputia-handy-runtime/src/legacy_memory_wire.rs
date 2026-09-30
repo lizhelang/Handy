@@ -38,6 +38,25 @@ pub enum MemoryCommand {
         composing: String,
         query: MemoryQuery,
     },
+    PrepareWordSpan {
+        target: Box<HostTargetToken>,
+    },
+    RecordWordSpan {
+        target: Box<HostTargetToken>,
+        span_id: String,
+        sequence: u64,
+        edit: crate::memory_word_span::SpanEdit,
+    },
+    CheckpointWordSpan {
+        target: Box<HostTargetToken>,
+        span_id: String,
+        operation_id: String,
+        through_sequence: u64,
+        finish: bool,
+    },
+    RetireWordSpan {
+        span_id: String,
+    },
     PrepareCommit {
         target: Box<HostTargetToken>,
         request: crate::memory_commit::FixedPlansRequest,
@@ -92,6 +111,13 @@ impl MemoryRequest {
         {
             return Err(ProtocolError::InvalidEnvelope);
         }
+        if let MemoryCommand::RetireWordSpan { span_id } = &self.memory_domain {
+            return if identifier(span_id) {
+                Ok(())
+            } else {
+                Err(ProtocolError::InvalidEnvelope)
+            };
+        }
         if let MemoryCommand::Outcome { operation_id } = &self.memory_domain {
             return if identifier(operation_id) {
                 Ok(())
@@ -128,6 +154,48 @@ impl MemoryRequest {
                 }
                 Some(target)
             }
+            MemoryCommand::PrepareWordSpan { target } => Some(target),
+            MemoryCommand::RecordWordSpan {
+                target,
+                span_id,
+                sequence,
+                edit,
+            } => {
+                let valid_edit = match edit {
+                    crate::memory_word_span::SpanEdit::Append { text } => {
+                        !text.is_empty()
+                            && text.len() <= crate::memory_word_span::MAX_SPAN_BYTES
+                            && !text
+                                .chars()
+                                .any(|c| c.is_control() && !matches!(c, '\n' | '\t'))
+                    }
+                    crate::memory_word_span::SpanEdit::TailBackspace { units } => {
+                        (1..=crate::memory_word_span::MAX_SPAN_UNITS as u64).contains(units)
+                    }
+                };
+                if !identifier(span_id) || *sequence == 0 || !valid_edit {
+                    return Err(ProtocolError::InvalidEnvelope);
+                }
+                Some(target)
+            }
+            MemoryCommand::CheckpointWordSpan {
+                target,
+                span_id,
+                operation_id,
+                through_sequence,
+                finish,
+            } => {
+                let suffix = if *finish { ":seal" } else { "" };
+                if !identifier(span_id)
+                    || !identifier(operation_id)
+                    || *through_sequence == 0
+                    || operation_id != &format!("word-span:{span_id}:{through_sequence}{suffix}")
+                {
+                    return Err(ProtocolError::InvalidEnvelope);
+                }
+                Some(target)
+            }
+            MemoryCommand::RetireWordSpan { .. } => unreachable!(),
             MemoryCommand::PrepareCommit { target, request } => {
                 if request.plans.is_empty()
                     || request.plans.len() > 64
@@ -315,6 +383,13 @@ pub struct MemoryReply {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MemoryResult {
+    PreparedWordSpan {
+        permit: crate::memory_word_span::PreparedWordSpan,
+    },
+    WordSpanProgress {
+        progress: crate::memory_word_span::SpanProgress,
+    },
+    WordSpanRetired {},
     PreparedCommit {
         permit: crate::memory_commit::PreparedFixedCommit,
     },
@@ -496,6 +571,34 @@ mod tests {
             *operation_id = "commit:permit-1:plan-2".into();
         }
         assert!(value.validate_for(&peer()).is_err());
+    }
+    #[test]
+    fn word_span_seal_has_distinct_operation_identity_and_retirement_is_metadata_only() {
+        let mut value = request();
+        let MemoryCommand::Query { target, .. } = value.memory_domain else {
+            unreachable!()
+        };
+        value.memory_domain = MemoryCommand::CheckpointWordSpan {
+            target,
+            span_id: "span-1".into(),
+            operation_id: "word-span:span-1:3:seal".into(),
+            through_sequence: 3,
+            finish: true,
+        };
+        value.validate_for(&peer()).unwrap();
+        if let MemoryCommand::CheckpointWordSpan { finish, .. } = &mut value.memory_domain {
+            *finish = false;
+        }
+        assert!(value.validate_for(&peer()).is_err());
+        value.memory_domain = MemoryCommand::RetireWordSpan {
+            span_id: "span-1".into(),
+        };
+        value.policy_epoch = 1;
+        value.validate_for(&peer()).unwrap();
+        value.client_instance = "other-client".into();
+        assert!(value.validate_for(&peer()).is_err());
+        let raw = r#"{"kind":"retire_word_span","span_id":"span-1","text":"cannot-submit"}"#;
+        assert!(serde_json::from_str::<MemoryCommand>(raw).is_err());
     }
     #[test]
     fn query_identity_and_snapshot_budget_bound_delayed_results() {

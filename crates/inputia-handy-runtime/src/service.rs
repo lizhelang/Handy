@@ -130,7 +130,7 @@ impl Worker {
         let expired: Vec<_> = self
             .privacy_readers
             .iter()
-            .filter(|(_, deadline)| **deadline <= now)
+            .filter(|(id, deadline)| **deadline <= now && !crate::native_readers::is_pinned(id))
             .map(|(id, _)| id.clone())
             .collect();
         for id in expired {
@@ -1542,6 +1542,9 @@ impl HistoryService {
     }
     pub fn acknowledge_privacy_reader(&self, id: String, epoch: u64) -> ServiceResult<()> {
         self.call_metadata(move |worker| {
+            if crate::native_readers::is_pinned(&id) {
+                return Err("privacy_native_reader_busy".into());
+            }
             if worker.store.policy_epoch().map_err(|e| e.to_string())? != epoch {
                 return Err("privacy_ack_stale".into());
             }
@@ -2693,6 +2696,37 @@ mod privacy_pipeline_tests {
         completed(&service, "late-ack");
     }
     #[test]
+    fn native_decoder_pin_blocks_reader_expiry_until_actual_body_owner_drops() {
+        let (_root, service) = fixture();
+        let pin = crate::native_readers::NativeReaderPin::new().unwrap();
+        let id = pin.id().to_owned();
+        service.issue_privacy_reader(id.clone(), 1).unwrap();
+        service
+            .call_metadata(move |worker| {
+                worker
+                    .privacy_readers
+                    .insert(id, Instant::now() - Duration::from_millis(1));
+                Ok(())
+            })
+            .unwrap();
+        service
+            .begin_privacy(request("native-decoder-held"))
+            .unwrap();
+        service
+            .call_metadata(|worker| worker.recover_privacy())
+            .unwrap();
+        let result = service
+            .privacy_operation("native-decoder-held".into())
+            .unwrap();
+        assert!(!result.domain_receipts.readers);
+        assert_ne!(result.state, PrivacyState::Completed);
+        assert!(service
+            .acknowledge_privacy_reader(pin.id().into(), 2)
+            .is_err());
+        drop(pin);
+        completed(&service, "native-decoder-held");
+    }
+    #[test]
     fn startup_conservatively_expires_disconnected_old_reader() {
         let (root, service) = fixture();
         service
@@ -2967,6 +3001,26 @@ impl HistoryService {
             Ok(result)
         })
     }
+    /// 验证已发快照的当前性；只核元数据，不返回正文、不延长原租约。
+    pub fn memory_snapshot_is_current(
+        &self,
+        domain_uuid: String,
+        generation: u64,
+        epoch: u64,
+    ) -> ServiceResult<bool> {
+        self.call(move |worker| {
+            let source_generation = worker.prepare_memory(epoch)?;
+            let status = worker.legacy_memory.status()?;
+            Ok(
+                status.state == crate::legacy_memory::MemoryDomainState::Ready
+                    && status.domain_uuid.as_deref() == Some(domain_uuid.as_str())
+                    && status.generation == generation
+                    && status.policy_epoch == epoch
+                    && worker.source_writes.active.load(Ordering::Acquire) == 0
+                    && worker.source_writes.generation.load(Ordering::Acquire) == source_generation,
+            )
+        })
+    }
     pub fn memory_source_evidence(
         &self,
         store_id: String,
@@ -2998,6 +3052,23 @@ impl HistoryService {
             };
             worker.legacy_memory.apply_intent(&intent, &verified)
         })
+    }
+    /// 只接受原字段 registry 整段读回产生的证据；同 span 修订集合原子替换。
+    pub fn memory_apply_word_span(
+        &self,
+        verified: crate::memory_word_span::VerifiedWordSpan,
+    ) -> ServiceResult<crate::legacy_memory::MemoryMutationReceipt> {
+        self.call(move |worker| {
+            worker.prepare_memory(verified.identity().policy_epoch)?;
+            worker.legacy_memory.apply_word_span(&verified)
+        })
+    }
+    /// 旧 epoch 仍可撤销精确 span；这不会发放新的正文读取或学习许可。
+    pub fn memory_revoke_word_span(
+        &self,
+        revoked: crate::memory_word_span::RevokedWordSpan,
+    ) -> ServiceResult<crate::legacy_memory::MemoryMutationReceipt> {
+        self.call_metadata(move |worker| worker.legacy_memory.revoke_word_span(&revoked))
     }
     pub fn memory_import(
         &self,
@@ -3131,6 +3202,15 @@ mod legacy_memory_pipeline_tests {
         let store = insert(&service, root.path(), "secret");
         learn(&service, &store, 1, "secret");
         let q = || inputia_core::memory_snapshot::MemoryQuery::VoiceHotwords { limit: 10 };
+        let original = service
+            .memory_query(q(), 1, "snapshot-reader".into())
+            .unwrap();
+        assert!(service
+            .memory_snapshot_is_current(original.domain_uuid.clone(), original.generation, 1)
+            .unwrap());
+        assert!(!service
+            .memory_snapshot_is_current("wrong-domain".into(), original.generation, 1)
+            .unwrap());
         assert_eq!(
             service
                 .memory_query(q(), 1, "host".into())
@@ -3148,7 +3228,13 @@ mod legacy_memory_pipeline_tests {
             )
             .unwrap();
         assert!(service.memory_query(q(), 1, "host".into()).is_err());
+        assert!(service
+            .memory_snapshot_is_current(original.domain_uuid.clone(), original.generation, 1)
+            .is_err());
         drop(guard);
+        assert!(!service
+            .memory_snapshot_is_current(original.domain_uuid, original.generation, 1)
+            .unwrap());
         assert!(service
             .memory_query(q(), 1, "host".into())
             .unwrap()
