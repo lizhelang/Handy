@@ -135,6 +135,122 @@ fn lock(file: &File) -> Result<()> {
         Err(error.into())
     }
 }
+/// 固定目录和service.lock的合作排他；目标数据库尚未存在时也可持有。
+/// 不接受任意File，不提供Clone/dup/LOCK_UN；登记身份仅是文件事实，不发行来源授权。
+pub struct OwnedMemoryServiceLock {
+    root: PathBuf,
+    uid: u32,
+    pid: u32,
+    managed_identity: FileIdentity,
+    lock_identity: FileIdentity,
+    managed_directory: File,
+    service_lock: File,
+}
+impl OwnedMemoryServiceLock {
+    /// 只打开已登记的目录和锁；初次创建及其耐久登记由交接协议负责。
+    pub fn acquire(
+        root: &Path,
+        uid: u32,
+        managed_identity: FileIdentity,
+        lock_identity: FileIdentity,
+    ) -> Result<Self> {
+        let managed_directory = open(&root.join(DOMAIN_DIRECTORY), uid, false, true)?;
+        if FileIdentity::of(&managed_directory)? != managed_identity {
+            return Err(LeaseError::IdentityChanged);
+        }
+        let service_lock = open(
+            &root.join(DOMAIN_DIRECTORY).join("service.lock"),
+            uid,
+            true,
+            false,
+        )?;
+        if FileIdentity::of(&service_lock)? != lock_identity {
+            return Err(LeaseError::IdentityChanged);
+        }
+        lock(&service_lock)?;
+        let value = Self {
+            root: root.to_owned(),
+            uid,
+            pid: std::process::id(),
+            managed_identity,
+            lock_identity,
+            managed_directory,
+            service_lock,
+        };
+        value.assert_current()?;
+        Ok(value)
+    }
+    /// 父目录本身也必须保持同一实例，不能仅把原子文件搬到新目录后冒充同一命名空间。
+    pub fn assert_current(&self) -> Result<()> {
+        if self.pid != std::process::id() {
+            return Err(LeaseError::ProcessChanged);
+        }
+        for (held, path, identity, directory) in [
+            (
+                &self.managed_directory,
+                self.root.join(DOMAIN_DIRECTORY),
+                self.managed_identity,
+                true,
+            ),
+            (
+                &self.service_lock,
+                self.root.join(DOMAIN_DIRECTORY).join("service.lock"),
+                self.lock_identity,
+                false,
+            ),
+        ] {
+            let current = open(&path, self.uid, false, directory)?;
+            if FileIdentity::of(held)? != identity || FileIdentity::of(&current)? != identity {
+                return Err(LeaseError::IdentityChanged);
+            }
+        }
+        Ok(())
+    }
+    /// 包括恢复后的重复同步：锁内容、锁所在目录，以及该目录的父目录都耐久后才可推进。
+    pub fn sync_creation(&self) -> Result<()> {
+        self.assert_current()?;
+        self.service_lock.sync_all()?;
+        self.managed_directory.sync_all()?;
+        open(&self.root, self.uid, false, true)?.sync_all()?;
+        self.assert_current()
+    }
+    /// 消费完整锁对象，直接交给数据库租约；没有重新flock、dup或先释放再获取的窗口。
+    pub fn bind_database(self, binding: &MemoryFileBinding) -> Result<OwnedMemoryDomainLease> {
+        self.assert_current()?;
+        if binding.service_lock != self.lock_identity {
+            return Err(LeaseError::IdentityChanged);
+        }
+        let database = open(
+            &self.root.join(DOMAIN_DIRECTORY).join(DATABASE_NAME),
+            self.uid,
+            true,
+            false,
+        )?;
+        if FileIdentity::of(&database)? != binding.database {
+            return Err(LeaseError::IdentityChanged);
+        }
+        // macOS的flock与SQLite的fcntl锁会相互影响；目标FD只绑定实例，排他锁留在service.lock。
+        let fence = open(&self.root.join(OLD_DATABASE_NAME), self.uid, false, true)?;
+        let fence_record = open(
+            &self.root.join(OLD_DATABASE_NAME).join(FENCE_RECORD),
+            self.uid,
+            false,
+            false,
+        )?;
+        let value = OwnedMemoryDomainLease {
+            root: self.root.clone(),
+            uid: self.uid,
+            pid: self.pid,
+            binding: binding.clone(),
+            database,
+            fence,
+            fence_record,
+            service: self,
+        };
+        value.assert_current()?;
+        Ok(value)
+    }
+}
 /// 持有固定service.lock的flock及目标inode私有FD；只能close释放，不公开dup/LOCK_UN入口。
 /// 只证明合作锁排他；不声称阻挡任意同UID进程open，也不把JSON binding当origin授权。
 pub struct OwnedMemoryDomainLease {
@@ -143,67 +259,31 @@ pub struct OwnedMemoryDomainLease {
     pid: u32,
     binding: MemoryFileBinding,
     database: File,
-    service_lock: File,
     fence: File,
     fence_record: File,
+    service: OwnedMemoryServiceLock,
 }
 impl OwnedMemoryDomainLease {
     /// root只能由调用者已经验证的installation/profile resolver提供，不应接受wire任意路径。
     /// 本方法不创建文件；不存在源/目标绝不能推导成新profile或成功迁移。
     pub fn acquire(root: &Path, uid: u32, binding: &MemoryFileBinding) -> Result<Self> {
-        let service_lock = open(
-            &root.join(DOMAIN_DIRECTORY).join("service.lock"),
+        let managed = open(&root.join(DOMAIN_DIRECTORY), uid, false, true)?;
+        OwnedMemoryServiceLock::acquire(
+            root,
             uid,
-            true,
-            false,
-        )?;
-        if FileIdentity::of(&service_lock)? != binding.service_lock {
-            return Err(LeaseError::IdentityChanged);
-        }
-        lock(&service_lock)?;
-        let database = open(
-            &root.join(DOMAIN_DIRECTORY).join(DATABASE_NAME),
-            uid,
-            true,
-            false,
-        )?;
-        if FileIdentity::of(&database)? != binding.database {
-            return Err(LeaseError::IdentityChanged);
-        }
-        // macOS的flock与SQLite的fcntl锁会相互影响；目标FD只绑定实例，排他锁留在service.lock。
-        let fence = open(&root.join(OLD_DATABASE_NAME), uid, false, true)?;
-        let fence_record = open(
-            &root.join(OLD_DATABASE_NAME).join(FENCE_RECORD),
-            uid,
-            false,
-            false,
-        )?;
-        let value = Self {
-            root: root.to_owned(),
-            uid,
-            pid: std::process::id(),
-            binding: binding.clone(),
-            database,
-            service_lock,
-            fence,
-            fence_record,
-        };
-        value.assert_current()?;
-        Ok(value)
+            FileIdentity::of(&managed)?,
+            binding.service_lock,
+        )?
+        .bind_database(binding)
     }
     /// 逐次确认持有的实例仍绑定固定名字。fork继承的句柄不产生子进程使用权限。
     pub fn assert_current(&self) -> Result<()> {
         if self.pid != std::process::id() {
             return Err(LeaseError::ProcessChanged);
         }
+        self.service.assert_current()?;
         self.assert_database_current()?;
         for (held, path, identity, directory) in [
-            (
-                &self.service_lock,
-                self.root.join(DOMAIN_DIRECTORY).join("service.lock"),
-                self.binding.service_lock,
-                false,
-            ),
             (
                 &self.fence,
                 self.root.join(OLD_DATABASE_NAME),

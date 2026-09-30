@@ -4,8 +4,8 @@ use crate::{filesystem as fs, guardian::GuardianTransactionAuthority, Subject, T
 use inputia_settings::{
     installation::{InstallationReceipt, LocatedInstallation, LocatorContext},
     memory_domain::{
-        FileIdentity, MemoryFileBinding, OwnedMemoryDomainLease, DATABASE_NAME, DOMAIN_DIRECTORY,
-        FENCE_RECORD, OLD_DATABASE_NAME,
+        FileIdentity, MemoryFileBinding, OwnedMemoryDomainLease, OwnedMemoryServiceLock,
+        DATABASE_NAME, DOMAIN_DIRECTORY, FENCE_RECORD, OLD_DATABASE_NAME,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -93,6 +93,8 @@ struct Fence {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Journal {
+    schema: u32,
+    phase: LockPhase,
     fence: Fence,
     installation_id: String,
     profile_id: String,
@@ -106,6 +108,56 @@ struct Journal {
     frozen_sources: Option<Vec<Option<Content>>>,
     snapshot: Option<Content>,
     ready: bool,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LockPhase {
+    Bootstrap,
+    Bound,
+}
+// 旧schema独立严格解析；不能用默认phase把没有锁证据的旧文件当作Bound。
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyJournal {
+    fence: Fence,
+    installation_id: String,
+    profile_id: String,
+    managed_dir: Option<FileIdentity>,
+    archive_dir: Option<FileIdentity>,
+    staged_fence: Option<FileIdentity>,
+    fence_record: Option<FileIdentity>,
+    service_lock: Option<FileIdentity>,
+    workspace: Option<FileIdentity>,
+    staged_database: Option<FileIdentity>,
+    frozen_sources: Option<Vec<Option<Content>>>,
+    snapshot: Option<Content>,
+    ready: bool,
+}
+impl LegacyJournal {
+    fn into_current(self) -> Result<Journal> {
+        if self.managed_dir.is_none() || self.service_lock.is_none() {
+            return Err(HandoffError::RepairRequired(
+                "legacy_service_lock_evidence_missing",
+            ));
+        }
+        Ok(Journal {
+            schema: 2,
+            phase: LockPhase::Bound,
+            fence: self.fence,
+            installation_id: self.installation_id,
+            profile_id: self.profile_id,
+            managed_dir: self.managed_dir,
+            archive_dir: self.archive_dir,
+            staged_fence: self.staged_fence,
+            fence_record: self.fence_record,
+            service_lock: self.service_lock,
+            workspace: self.workspace,
+            staged_database: self.staged_database,
+            frozen_sources: self.frozen_sources,
+            snapshot: self.snapshot,
+            ready: self.ready,
+        })
+    }
 }
 /// 仅描述文件层事实，绝不以Ready等价于原生origin授权或完整QuiescenceReceipt。
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -206,22 +258,52 @@ impl LegacyMemoryHandoff {
             Err(crate::Error::MissingArtifact) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
-        let value: Journal = serde_json::from_slice(&raw)?;
-        if value.fence.schema != 1
+        let probe: serde_json::Value = serde_json::from_slice(&raw)?;
+        let value: Journal = if probe.get("schema").is_some() {
+            serde_json::from_slice(&raw)?
+        } else {
+            serde_json::from_slice::<LegacyJournal>(&raw)?.into_current()?
+        };
+        if value.schema != 2
+            || value.fence.schema != 1
             || value.fence.subject != self.authority.subject
             || value.fence.epoch != self.authority.marker.epoch
             || value.installation_id != self.location.receipt.installation_id
             || value.profile_id != self.location.receipt.profile_id
-            || value.fence.sources.len() != SOURCE_NAMES.len()
-            || value
-                .fence
-                .sources
-                .iter()
-                .zip(SOURCE_NAMES)
-                .any(|(s, name)| s.name != name)
-            || value.fence.sources[0].identity.is_none()
         {
             return Err(HandoffError::BindingMismatch);
+        }
+        match value.phase {
+            LockPhase::Bootstrap => {
+                if !value.fence.sources.is_empty()
+                    || value.archive_dir.is_some()
+                    || value.staged_fence.is_some()
+                    || value.fence_record.is_some()
+                    || value.workspace.is_some()
+                    || value.staged_database.is_some()
+                    || value.frozen_sources.is_some()
+                    || value.snapshot.is_some()
+                    || value.ready
+                    || (value.service_lock.is_some() && value.managed_dir.is_none())
+                {
+                    return Err(HandoffError::RepairRequired("bootstrap_has_domain_effects"));
+                }
+            }
+            LockPhase::Bound => {
+                if value.managed_dir.is_none()
+                    || value.service_lock.is_none()
+                    || value.fence.sources.len() != SOURCE_NAMES.len()
+                    || value
+                        .fence
+                        .sources
+                        .iter()
+                        .zip(SOURCE_NAMES)
+                        .any(|(s, name)| s.name != name)
+                    || value.fence.sources[0].identity.is_none()
+                {
+                    return Err(HandoffError::RepairRequired("bound_evidence_incomplete"));
+                }
+            }
         }
         Ok(Some(value))
     }
@@ -229,24 +311,14 @@ impl LegacyMemoryHandoff {
         if identity(&self.managed(), self.uid(), true)?.is_some() {
             return Err(HandoffError::RepairRequired("unclaimed_managed_directory"));
         }
-        let sources = SOURCE_NAMES
-            .into_iter()
-            .map(|name| {
-                Ok(Source {
-                    name: name.into(),
-                    identity: identity(&self.root().join(name), self.uid(), false)?,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        if sources[0].identity.is_none() {
-            return Err(HandoffError::LegacySourceMissing);
-        }
         let value = Journal {
+            schema: 2,
+            phase: LockPhase::Bootstrap,
             fence: Fence {
                 schema: 1,
                 subject: self.authority.subject.clone(),
                 epoch: self.authority.marker.epoch.clone(),
-                sources,
+                sources: Vec::new(),
             },
             installation_id: self.location.receipt.installation_id.clone(),
             profile_id: self.location.receipt.profile_id.clone(),
@@ -261,12 +333,97 @@ impl LegacyMemoryHandoff {
             snapshot: None,
             ready: false,
         };
+        self.authorize()?;
         fs::write_new(
             &self.root().join(JOURNAL),
             self.uid(),
             &serde_json::to_vec(&value)?,
         )?;
         Ok(value)
+    }
+    fn acquire_service(&self, journal: &Journal) -> Result<OwnedMemoryServiceLock> {
+        let directory = journal.managed_dir.ok_or(HandoffError::RepairRequired(
+            "managed_directory_unregistered",
+        ))?;
+        let lock = journal
+            .service_lock
+            .ok_or(HandoffError::RepairRequired("service_lock_unregistered"))?;
+        Ok(OwnedMemoryServiceLock::acquire(
+            self.root(),
+            self.uid(),
+            directory,
+            lock,
+        )?)
+    }
+    fn lock_operation_existing(&self) -> Result<std::fs::File> {
+        let (parent, name) = fs::parent(
+            &self.root().join(".legacy-memory-handoff.lock"),
+            self.uid(),
+            false,
+        )?;
+        let file = fs::open_child(&parent, &name, false)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file()
+            || metadata.uid() != self.uid()
+            || metadata.mode() & 0o077 != 0
+            || metadata.nlink() != 1
+        {
+            return Err(HandoffError::RepairRequired("unsafe_operation_lock"));
+        }
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            let error = std::io::Error::last_os_error();
+            return if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                Err(HandoffError::Busy)
+            } else {
+                Err(error.into())
+            };
+        }
+        Ok(file)
+    }
+    fn prepare_service_lock(
+        &self,
+        journal: &mut Journal,
+        fault: &mut dyn FnMut(&str) -> Result<()>,
+    ) -> Result<OwnedMemoryServiceLock> {
+        // 只有严格Bootstrap可创建锁命名空间；任何已知实例缺失/被替换都不重建。
+        if journal.phase == LockPhase::Bootstrap {
+            if journal.managed_dir.is_none() {
+                let mut field = None;
+                self.claim_directory(&self.managed(), &mut field)?;
+                journal.managed_dir = field;
+                fault("managed_created")?;
+                self.save(journal)?;
+                fault("managed_registered")?;
+            }
+            if journal.service_lock.is_none() {
+                self.check_identity(&self.managed(), journal.managed_dir, true)?;
+                let path = self.managed().join("service.lock");
+                if identity(&path, self.uid(), false)?.is_some() {
+                    return Err(HandoffError::RepairRequired("unclaimed_service_lock"));
+                }
+                self.authorize()?;
+                fs::write_new(&path, self.uid(), b"")?;
+                journal.service_lock = identity(&path, self.uid(), false)?;
+                fault("service_created")?;
+                self.save(journal)?;
+                fault("service_registered")?;
+            }
+        }
+        // Bound/Ready分支在这之前没有save、origin回调，也没有打开任何DB或sidecar。
+        let service = self.acquire_service(journal)?;
+        service.sync_creation()?;
+        fault("service_sync")?;
+        service.assert_current()?;
+        Ok(service)
+    }
+    fn authorize_locked(&self, service: &OwnedMemoryServiceLock) -> Result<()> {
+        self.authorize()?;
+        service.assert_current()?;
+        Ok(())
+    }
+    fn save_locked(&self, service: &OwnedMemoryServiceLock, journal: &Journal) -> Result<()> {
+        self.authorize_locked(service)?;
+        self.save(journal)
     }
     /// 文件层完成后仍由调用者持有origin能力；返回的租约仅是合作文件排他，不是runtime-ready。
     pub fn advance(&self, origin: &mut VerifiedLegacyOrigin) -> Result<OwnedMemoryDomainLease> {
@@ -286,28 +443,47 @@ impl LegacyMemoryHandoff {
             fs::lock(&self.root().join(".legacy-memory-handoff.lock"), self.uid())?;
         let mut journal = match self.load()? {
             Some(value) => value,
-            None => self.initialize()?,
+            None => {
+                let value = self.initialize()?;
+                fault("bootstrap_journal")?;
+                value
+            }
         };
-        fault("journal")?;
+        let service = self.prepare_service_lock(&mut journal, fault)?;
         let pre_paths = SOURCE_NAMES
             .iter()
             .map(|n| self.root().join(n))
             .collect::<Vec<_>>();
         (origin.check)(&pre_paths, false)?;
-        self.authorize()?;
-        let mut field = journal.managed_dir;
-        self.claim_directory(&self.managed(), &mut field)?;
-        journal.managed_dir = field;
-        self.save(&journal)?;
+        self.authorize_locked(&service)?;
+        if journal.phase == LockPhase::Bootstrap {
+            let sources = SOURCE_NAMES
+                .into_iter()
+                .map(|name| {
+                    Ok(Source {
+                        name: name.into(),
+                        identity: identity(&self.root().join(name), self.uid(), false)?,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            if sources[0].identity.is_none() {
+                return Err(HandoffError::LegacySourceMissing);
+            }
+            journal.fence.sources = sources;
+            journal.phase = LockPhase::Bound;
+            self.save_locked(&service, &journal)?;
+        }
+        fault("journal")?;
+        self.authorize_locked(&service)?;
         let mut field = journal.archive_dir;
-        self.claim_directory(&self.archive(), &mut field)?;
+        self.claim_directory_locked(&service, &self.archive(), &mut field)?;
         journal.archive_dir = field;
-        self.save(&journal)?;
+        self.save_locked(&service, &journal)?;
         if journal.staged_fence.is_none() {
             let mut field = None;
-            self.claim_directory(&self.staged_fence(), &mut field)?;
+            self.claim_directory_locked(&service, &self.staged_fence(), &mut field)?;
             journal.staged_fence = field;
-            self.save(&journal)?;
+            self.save_locked(&service, &journal)?;
         }
         let old = self.root().join(OLD_DATABASE_NAME);
         let fenced = identity(&old, self.uid(), true);
@@ -323,13 +499,14 @@ impl LegacyMemoryHandoff {
             if identity(&fence_record, self.uid(), false)?.is_some() {
                 return Err(HandoffError::RepairRequired("unclaimed_fence_record"));
             }
+            self.authorize_locked(&service)?;
             fs::write_new(
                 &fence_record,
                 self.uid(),
                 &serde_json::to_vec(&journal.fence)?,
             )?;
             journal.fence_record = identity(&fence_record, self.uid(), false)?;
-            self.save(&journal)?;
+            self.save_locked(&service, &journal)?;
         }
         self.check_identity(&fence_record, journal.fence_record, false)?;
         if serde_json::from_slice::<Fence>(&fs::read(&fence_record, self.uid(), 16_384)?)?
@@ -339,7 +516,7 @@ impl LegacyMemoryHandoff {
         }
         if !is_fenced {
             self.check_identity(&old, journal.fence.sources[0].identity, false)?;
-            self.authorize()?;
+            self.authorize_locked(&service)?;
             rename_effect(&old, &self.staged_fence(), self.uid(), true)?;
         }
         // 包括交换已生效但fsync/回执失败的重入：必须重新确认准确文件和两个父目录耐久。
@@ -351,6 +528,7 @@ impl LegacyMemoryHandoff {
             fault,
         )?;
         fault("fence")?;
+        self.authorize_locked(&service)?;
         // 永不自动撤fence；即使origin随后失败也保持旧路径无法SQLite打开。
         self.check_identity(&old, journal.staged_fence, true)?;
         for (index, source) in journal.fence.sources.iter().enumerate() {
@@ -364,7 +542,7 @@ impl LegacyMemoryHandoff {
             let to_id = identity(&to, self.uid(), false)?;
             match source.identity {
                 Some(expected) if from_id == Some(expected) && to_id.is_none() => {
-                    self.authorize()?;
+                    self.authorize_locked(&service)?;
                     rename_effect(&from, &to, self.uid(), false)?;
                 }
                 Some(expected) if from_id.is_none() && to_id == Some(expected) => {}
@@ -379,6 +557,7 @@ impl LegacyMemoryHandoff {
                 fault,
             )?;
             fault(&format!("archive_{index}"))?;
+            self.authorize_locked(&service)?;
         }
         let archived_paths = journal
             .fence
@@ -388,7 +567,7 @@ impl LegacyMemoryHandoff {
             .map(|s| self.archive().join(&s.name))
             .collect::<Vec<_>>();
         (origin.check)(&archived_paths, true)?;
-        self.authorize()?;
+        self.authorize_locked(&service)?;
         self.audit_sources(&journal)?;
         let frozen = journal
             .fence
@@ -411,16 +590,17 @@ impl LegacyMemoryHandoff {
             return Err(HandoffError::RepairRequired("frozen_source_changed"));
         }
         journal.frozen_sources = Some(frozen);
-        self.save(&journal)?;
+        self.save_locked(&service, &journal)?;
         fault("origin")?;
+        self.authorize_locked(&service)?;
         let workspace = self.managed().join("snapshot-source");
         let staged = self.managed().join("snapshot.sqlite");
         let target = self.managed().join(DATABASE_NAME);
         if journal.snapshot.is_none() {
             let mut field = journal.workspace;
-            self.claim_directory(&workspace, &mut field)?;
+            self.claim_directory_locked(&service, &workspace, &mut field)?;
             journal.workspace = field;
-            self.save(&journal)?;
+            self.save_locked(&service, &journal)?;
             for (source, expected) in journal.fence.sources.iter().zip(
                 journal
                     .frozen_sources
@@ -430,6 +610,7 @@ impl LegacyMemoryHandoff {
                 if let Some(expected) = expected {
                     let to = workspace.join(&source.name);
                     if identity(&to, self.uid(), false)?.is_none() {
+                        self.authorize_locked(&service)?;
                         fs::copy(&self.archive().join(&source.name), &to, self.uid())?;
                     }
                     if &content(&to, self.uid())? != expected {
@@ -443,12 +624,14 @@ impl LegacyMemoryHandoff {
                 {
                     return Err(HandoffError::RepairRequired("unclaimed_target"));
                 }
+                self.authorize_locked(&service)?;
                 fs::write_new(&staged, self.uid(), b"")?;
                 journal.staged_database = identity(&staged, self.uid(), false)?;
-                self.save(&journal)?;
+                self.save_locked(&service, &journal)?;
             }
             self.check_identity(&staged, journal.staged_database, false)?;
             fault("before_sqlite")?;
+            self.authorize_locked(&service)?;
             // SQLite会主动消费/删除热journal；任何未登记sidecar都必须在open前拒绝并保留。
             for (source, expected) in journal.fence.sources.iter().zip(
                 journal
@@ -464,20 +647,21 @@ impl LegacyMemoryHandoff {
                 }
             }
             absent_sidecars(&staged, self.uid())?;
-            self.authorize()?;
+            self.authorize_locked(&service)?;
             snapshot_sqlite(&workspace.join(OLD_DATABASE_NAME), &staged)?;
             self.check_identity(&staged, journal.staged_database, false)?;
             fs::sync_file(&staged, self.uid())?;
             journal.snapshot = Some(content(&staged, self.uid())?);
-            self.save(&journal)?;
+            self.save_locked(&service, &journal)?;
         }
         fault("snapshot")?;
+        self.authorize_locked(&service)?;
         match (
             identity(&staged, self.uid(), false)?,
             identity(&target, self.uid(), false)?,
         ) {
             (Some(id), None) if Some(id) == journal.staged_database => {
-                self.authorize()?;
+                self.authorize_locked(&service)?;
                 rename_effect(&staged, &target, self.uid(), false)?;
             }
             (None, Some(id)) if Some(id) == journal.staged_database => {}
@@ -486,27 +670,19 @@ impl LegacyMemoryHandoff {
         confirm_move(&staged, &target, self.uid(), "publish_sync", fault)?;
         absent_sidecars(&target, self.uid())?;
         fault("published")?;
+        self.authorize_locked(&service)?;
         if journal.snapshot.as_ref() != Some(&content(&target, self.uid())?) {
             return Err(HandoffError::RepairRequired("snapshot_content_changed"));
         }
-        let lock_path = self.managed().join("service.lock");
-        if journal.service_lock.is_none() {
-            if identity(&lock_path, self.uid(), false)?.is_some() {
-                return Err(HandoffError::RepairRequired("unclaimed_service_lock"));
-            }
-            fs::write_new(&lock_path, self.uid(), b"")?;
-            journal.service_lock = identity(&lock_path, self.uid(), false)?;
-            self.save(&journal)?;
-        }
-        self.check_identity(&lock_path, journal.service_lock, false)?;
         // 验证/backup都可能很慢；返回前再次核原生授权和完整盘面，日志不能自己充当证据。
         (origin.check)(&archived_paths, true)?;
-        self.authorize()?;
+        self.authorize_locked(&service)?;
         self.audit_sources(&journal)?;
         journal.ready = true;
-        self.save(&journal)?;
+        self.save_locked(&service, &journal)?;
         fault("ready")?;
-        let lease = OwnedMemoryDomainLease::acquire(self.root(), self.uid(), &binding(&journal)?)?;
+        self.authorize_locked(&service)?;
+        let lease = service.bind_database(&binding(&journal)?)?;
         (origin.check)(&archived_paths, true)?;
         self.authorize()?;
         lease.assert_current()?;
@@ -522,6 +698,15 @@ impl LegacyMemoryHandoff {
             *value = identity(path, self.uid(), true)?;
         }
         self.check_identity(path, *value, true)
+    }
+    fn claim_directory_locked(
+        &self,
+        service: &OwnedMemoryServiceLock,
+        path: &Path,
+        value: &mut Option<FileIdentity>,
+    ) -> Result<()> {
+        self.authorize_locked(service)?;
+        self.claim_directory(path, value)
     }
     fn check_identity(
         &self,
@@ -554,13 +739,35 @@ impl LegacyMemoryHandoff {
     }
     /// 元数据诊断从实际目录/目标实例核算；不泄露正文，不将日志ready暴露成生产完成。
     pub fn status(&self) -> Result<HandoffStatus> {
+        // 诊断不创建bootstrap/锁；有记录时也按handoff→service顺序排除live连接。
+        // 无journal时不需要创建operation锁，不触碰源库或目标库。
+        if self.load()?.is_none() {
+            return Ok(HandoffStatus {
+                path_fenced: false,
+                snapshot_published: false,
+                origin_proof_required: true,
+                production_connected: false,
+            });
+        }
+        let _operation_lock = self.lock_operation_existing()?;
         let journal = self.load()?;
         let (mut path_fenced, mut snapshot_published) = (false, false);
         if let Some(journal) = journal {
+            if journal.managed_dir.is_none() || journal.service_lock.is_none() {
+                return Ok(HandoffStatus {
+                    path_fenced: false,
+                    snapshot_published: false,
+                    origin_proof_required: true,
+                    production_connected: false,
+                });
+            }
+            let service = self.acquire_service(&journal)?;
+            service.assert_current()?;
             path_fenced = matches!(identity(&self.root().join(OLD_DATABASE_NAME), self.uid(), true), Ok(Some(id)) if Some(id) == journal.staged_fence);
             snapshot_published = journal.staged_database.is_some()
                 && identity(&self.managed().join(DATABASE_NAME), self.uid(), false)?
                     == journal.staged_database;
+            service.assert_current()?;
         }
         Ok(HandoffStatus {
             path_fenced,
