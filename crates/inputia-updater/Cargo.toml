@@ -11,6 +11,10 @@ native-code-verification = []
 [dependencies]
 inputia-settings = { path = "../inputia-settings" }
 libc = "0.2"
+rawzip = "=0.5.1"
+flate2 = { version = "=1.1.9", default-features = false, features = ["rust_backend"] }
+unicode-normalization = "=0.1.25"
+unicode-casefold = "=0.2.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

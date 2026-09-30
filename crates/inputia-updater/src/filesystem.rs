@@ -56,7 +56,7 @@ fn from_fd(fd: i32) -> Result<File> {
         Ok(unsafe { File::from_raw_fd(fd) })
     }
 }
-fn open_child(parent: &File, child: &CStr, directory: bool) -> Result<File> {
+pub(crate) fn open_child(parent: &File, child: &CStr, directory: bool) -> Result<File> {
     // SAFETY: 描述符与 NUL 名称在调用期间有效；拒绝符号链接和特殊阻塞文件。
     from_fd(unsafe {
         libc::openat(
@@ -226,6 +226,7 @@ fn feed(hasher: &mut Sha256, bytes: &[u8]) {
     hasher.update((bytes.len() as u64).to_le_bytes());
     hasher.update(bytes);
 }
+#[allow(clippy::too_many_arguments)] // 保持既有树摘要字节合同，仅附加取消检查。
 fn hash_node(
     mut file: File,
     relative: &Path,
@@ -234,7 +235,9 @@ fn hash_node(
     bytes: &mut u64,
     entries: &mut u64,
     nodes: &mut BTreeMap<PathBuf, NodeKind>,
+    check: &dyn Fn() -> Result<()>,
 ) -> Result<()> {
+    check()?;
     if relative.components().count() > 128 {
         return Err(Error::Invalid("tree depth budget"));
     }
@@ -274,6 +277,7 @@ fn hash_node(
                     bytes,
                     entries,
                     nodes,
+                    check,
                 )?;
             }
         }
@@ -287,10 +291,18 @@ fn hash_node(
         if *bytes > MAX_TREE_BYTES {
             return Err(Error::Invalid("tree byte budget"));
         }
-        let read = std::io::copy(
-            &mut (&mut file).take(before.len().saturating_add(1)),
-            &mut HashWriter(hasher),
-        )?;
+        let mut input = (&mut file).take(before.len().saturating_add(1));
+        let mut buffer = [0u8; 65536];
+        let mut read = 0;
+        loop {
+            check()?;
+            let n = input.read(&mut buffer)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+            read += n as u64;
+        }
         if read != before.len() {
             return Err(Error::ArtifactMismatch);
         }
@@ -307,19 +319,18 @@ fn hash_node(
     }
     Ok(())
 }
-struct HashWriter<'a>(&'a mut Sha256);
-impl Write for HashWriter<'_> {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.update(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
 pub fn fingerprint(path: &Path, uid: u32) -> Result<Fingerprint> {
     let (parent, leaf) = parent(path, uid, false)?;
     let file = open_child(&parent, &leaf, false)?;
+    fingerprint_file(file, uid, &|| Ok(()))
+}
+
+/// 固定已打开的根 fd，供可取消的归档解包验证复用。
+pub(crate) fn fingerprint_file(
+    file: File,
+    uid: u32,
+    check: &dyn Fn() -> Result<()>,
+) -> Result<Fingerprint> {
     let mut hasher = Sha256::new();
     hasher.update(b"Inputia-Artifact-Tree-v1\0");
     let (mut bytes, mut entries) = (0, 0);
@@ -332,6 +343,7 @@ pub fn fingerprint(path: &Path, uid: u32) -> Result<Fingerprint> {
         &mut bytes,
         &mut entries,
         &mut nodes,
+        check,
     )?;
     validate_links(&nodes)?;
     Ok(Fingerprint {
