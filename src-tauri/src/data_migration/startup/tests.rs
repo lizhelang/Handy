@@ -610,3 +610,65 @@ fn changed_quarantine_after_rename_failure_is_preserved_for_repair() {
     assert_eq!(fs::read(target).unwrap(), b"unknown new quarantine bytes");
     assert_eq!(f.journal().phase, Phase::Restoring);
 }
+
+#[test]
+fn every_legacy_phase_preserves_unknown_pending_instead_of_restoring_a_partial_domain() {
+    for phase in [
+        None,
+        Some(Phase::Prepared),
+        Some(Phase::Mutating),
+        Some(Phase::Restoring),
+        Some(Phase::Recovered),
+        Some(Phase::Completed),
+    ] {
+        let f = Fixture::new();
+        f.put(false);
+        if let Some(phase) = phase {
+            let mut guard = f.prepare();
+            guard.journal.phase = phase;
+            guard.persist().unwrap();
+            drop(guard);
+        }
+        f.put(true);
+        let pending = f.handy.join(CONTROL_SETTINGS_PENDING_NAME);
+        fs::write(&pending, b"unknown pending source must be preserved").unwrap();
+        let original = f.read();
+        let original_pending = fs::read(&pending).unwrap();
+        let original_journal = fs::read(f.backup.join(JOURNAL)).ok();
+        let error = f
+            .run(|| panic!("must reject before preflight or restore"))
+            .err()
+            .unwrap();
+        assert_eq!(kind(&error), StartupFailureKind::RepairRequired);
+        assert_eq!(f.read(), original);
+        assert_eq!(fs::read(&pending).unwrap(), original_pending);
+        assert_eq!(fs::read(f.backup.join(JOURNAL)).ok(), original_journal);
+        assert!(!f.handy.join("migration_restore_quarantine").exists());
+    }
+}
+
+#[test]
+fn late_unknown_pending_revokes_legacy_mutation_and_completion() {
+    for when in ["before_arm", "before_initialize", "before_complete"] {
+        let f = Fixture::new();
+        f.put(false);
+        let mut guard = f.prepare();
+        if when != "before_arm" {
+            guard.begin_mutations().unwrap();
+        }
+        let pending = f.handy.join(CONTROL_SETTINGS_PENDING_NAME);
+        fs::write(&pending, b"preserve").unwrap();
+        let original = f.read();
+        let original_journal = fs::read(f.backup.join(JOURNAL)).unwrap();
+        match when {
+            "before_arm" => assert!(guard.begin_mutations().is_err()),
+            "before_initialize" => assert!(guard
+                .record_settings_initialization(&f.intent(b"document", b"marker", true))
+                .is_err()),
+            _ => assert!(guard.complete().is_err()),
+        }
+        assert_eq!(f.read(), original);
+        assert_eq!(fs::read(&pending).unwrap(), b"preserve");
+        assert_eq!(fs::read(f.backup.join(JOURNAL)).unwrap(), original_journal);
+    }
+}

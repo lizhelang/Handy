@@ -6,6 +6,7 @@ use tauri::Manager;
 
 const MIGRATION_ID: &str = "control-settings-document-v2";
 const JOURNAL: &str = "active-startup.json";
+const CONTROL_SETTINGS_PENDING_NAME: &str = ".inputia-control-settings-pending.json";
 const JOURNAL_LIMIT: u64 = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,6 +197,7 @@ impl StartupMigration {
             .map_err(|e| classified(StartupFailureKind::PendingRecovery, e))
     }
     fn begin_inner(&mut self) -> Result<()> {
+        ensure_legacy_pending_absent(&self.source_roots)?;
         anyhow::ensure!(
             self.journal.phase == Phase::Prepared,
             "startup is not prepared"
@@ -220,6 +222,7 @@ impl StartupMigration {
             .map_err(|e| classified(StartupFailureKind::PendingRecovery, e))
     }
     fn record_inner(&mut self, intent: &InitializationIntent) -> Result<()> {
+        ensure_legacy_pending_absent(&self.source_roots)?;
         anyhow::ensure!(
             self.journal.phase == Phase::Mutating,
             "initialization is not armed"
@@ -257,6 +260,7 @@ impl StartupMigration {
     /// 仅全部 manager 成功初始化后调用；失败时仍由下一启动处理耐久日志。
     pub fn complete(&mut self) -> Result<()> {
         (|| {
+            ensure_legacy_pending_absent(&self.source_roots)?;
             anyhow::ensure!(
                 self.journal.phase == Phase::Mutating,
                 "startup never authorized mutation"
@@ -361,6 +365,9 @@ where
             root: root.into(),
         });
     }
+    // 当前 schema 2 不认识请求日志，任何 phase 都不能吸收或略过未知文件。
+    ensure_legacy_pending_absent(&roots)
+        .map_err(|e| classified(StartupFailureKind::RepairRequired, e))?;
     let journal_path = checked_path(backup, Path::new(JOURNAL))
         .map_err(|e| classified(StartupFailureKind::RepairRequired, e))?;
     let journal = match fs::symlink_metadata(&journal_path) {
@@ -465,6 +472,20 @@ fn new_attempt(
         Ok(Some(guard))
     })()
     .map_err(|e| classified(StartupFailureKind::RepairRequired, e))
+}
+/// 旧日志没有第三文件的基线或写入许可，不能只恢复前两份文件。
+/// 只检查目录项存在性，不读取未知正文，也不跟随链接或扫描大文件。
+fn ensure_legacy_pending_absent(roots: &[MigrationSourceRoot]) -> Result<()> {
+    let root = roots
+        .iter()
+        .find(|root| root.label == "handy")
+        .context("control settings root missing")?;
+    let path = checked_path(&root.root, Path::new(CONTROL_SETTINGS_PENDING_NAME))?;
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => anyhow::bail!("legacy startup journal cannot authorize pending settings file"),
+    }
 }
 fn has_backup(root: &Path) -> Result<bool> {
     let entries = match fs::read_dir(root) {
@@ -747,6 +768,7 @@ fn durable_tree(root: &Path) -> Result<()> {
     sync_dir(root)
 }
 fn recover(guard: &mut StartupMigration) -> Result<()> {
+    ensure_legacy_pending_absent(&guard.source_roots)?;
     guard.revalidate()?;
     verify_backup(&guard.outcome)?;
     // 源与固定隔离目标共同判定，rename 后 sync 失败时不可因源已不存在而略过。

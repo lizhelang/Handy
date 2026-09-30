@@ -81,3 +81,11 @@ flowchart TD
 - `Completed` 后再次启动遇到原挂起请求时，需要新的受控恢复 attempt；普通启动不应每次备份全部模型与录音。具体快照范围须固定并进入 manifest 合同。
 
 这些是接线阶段的待实现合同。当前 App 仍用原协议，不能把通用核心测试结果当成跨进程产品恢复已经上线。
+
+### 固定启动日志路径的兼容规则
+
+后续采用同一 `active-startup.json` 路径升级 schema 3，严格按版本分派解析器，保留 schema 2 的恢复链。不能用新增字段的默认值把旧日志自动当作新版。旧日志的所有阶段以及首次旧流程都拒绝固定 `.inputia-control-settings-pending.json` 目录项；不读取未知正文，也不把它吸收为新版基线。
+
+旧 `Mutating` / `Restoring` 必须先完成可信恢复并确认 `Recovered` 耐久，随后新备份和 manifest 全部耐久，才能原子发布 schema 3 `Prepared`。schema 2 没有逐次变更证明，现有文件的未知修改不能补造归属后覆盖；无法确认的旧状态要求修复。
+
+新版 `NoWork` 观察必须绑定三文件摘要。最终协调器在自己的设置锁内仍要拒绝未激活协议或 Active 请求，不能把一次早先的 NoWork 或普通 `Store.read()` 当作业务启动许可。恢复预检通过也不等于恢复完成，调用方必须处理原请求的 Conflict、OutcomeExpired 和未确认状态。
