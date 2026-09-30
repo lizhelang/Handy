@@ -373,6 +373,7 @@ struct InputiaPersonalCommand: Encodable {
   var prediction_id: String? = nil
 }
 struct InputiaPersonalReply: Decodable {
+  let privacy_barrier: InputiaVoicePolicyBarrier?
   let status: String
   let request_id: String
   let server_instance: String
@@ -565,6 +566,9 @@ private struct InputiaVoiceOutputReply: Decodable {
 final class InputiaVoiceServiceConnection {
   static let processInstance = UUID().uuidString
   private let connection: InputiaFramedConnection
+  private var privacyState: InputiaSharedStateBarrierApplying?
+  private static var appliedPrivacyEpoch: UInt64 = 0
+  private static var appliedPrivacyServer: String?
   let server: InputiaVoiceHello
   private(set) var locallyAppliedVersion: InputiaVoiceTermsVersion?
   static func sharedTermsConnectionMatches(server: String, primaryServer: String,
@@ -642,11 +646,12 @@ final class InputiaVoiceServiceConnection {
   }
 
   func synchronizePolicy(using state: InputiaSharedStateBarrierApplying) throws {
+    privacyState = state
     InputiaSharedTermsMemory.shared.clear()
     locallyAppliedVersion = nil
     do {
       let barrier = try connection.read(InputiaVoicePolicyBarrier.self)
-      try Self.applyAndAcknowledge(barrier, minimumEpoch: server.policy_epoch, state: state) { ack in
+      try Self.applyAndAcknowledge(barrier, minimumEpoch: server.policy_epoch, state: state, privacyServer: server.instance_id) { ack in
         try connection.write(ack)
       }
       // 仅说明本地应用并发送了ACK，不冒称服务已接纳Start或麦克风正在录音。
@@ -655,7 +660,7 @@ final class InputiaVoiceServiceConnection {
   }
 
   private static func applyAndAcknowledge(_ barrier: InputiaVoicePolicyBarrier, minimumEpoch: UInt64,
-                                          state: InputiaSharedStateBarrierApplying,
+                                          state: InputiaSharedStateBarrierApplying, privacyServer: String? = nil,
                                           send: (InputiaVoicePolicyAck) throws -> Void) throws {
     guard barrier.clear_shared_personalization, barrier.version.policy_epoch >= minimumEpoch,
           barrier.barrier_id.utf8.count == 64,
@@ -664,6 +669,14 @@ final class InputiaVoiceServiceConnection {
     }
     InputiaSharedTermsMemory.shared.clear()
     try state.applySharedStateBarrier(barrier)
+    // 主线程清理已呈现的候选、短上下文和在途票据后才能 ACK；后台不等待键入逻辑持锁。
+    let clear = {
+      if appliedPrivacyServer != privacyServer || appliedPrivacyEpoch < barrier.version.policy_epoch {
+        appliedPrivacyEpoch = barrier.version.policy_epoch; appliedPrivacyServer = privacyServer
+        NotificationCenter.default.post(name: Notification.Name("InputiaPrivacyRevoked"), object: nil)
+      }
+    }
+    if Thread.isMainThread { clear() } else { DispatchQueue.main.sync(execute: clear) }
     try send(InputiaVoicePolicyAck(barrier_id: barrier.barrier_id, version: barrier.version,
       shared_cache_cleared: true, offline_queue_revalidated: true))
   }
@@ -686,6 +699,11 @@ final class InputiaVoiceServiceConnection {
     let reply = try connection.read(InputiaPersonalReply.self)
     guard reply.status == "personalization", reply.request_id == id,
       reply.server_instance == server.instance_id else { throw InputiaVoiceServiceError.handshake }
+    if let barrier = reply.privacy_barrier {
+      guard let privacyState else { throw InputiaVoiceServiceError.policy }
+      try Self.applyAndAcknowledge(barrier, minimumEpoch: version.policy_epoch, state: privacyState, privacyServer: server.instance_id) { ack in try connection.write(ack) }
+      locallyAppliedVersion = barrier.version
+    }
     return reply
   }
 

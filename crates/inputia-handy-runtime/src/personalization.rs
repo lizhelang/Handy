@@ -185,6 +185,43 @@ fn db(root: &Path) -> Result<Connection> {
     db.busy_timeout(std::time::Duration::from_secs(2))
         .map_err(err)?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS learning_policy(id INTEGER PRIMARY KEY,enabled INTEGER NOT NULL,epoch INTEGER NOT NULL); INSERT OR IGNORE INTO learning_policy VALUES(1,1,1); CREATE TABLE IF NOT EXISTS evidence(event_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,text TEXT NOT NULL,normalized TEXT NOT NULL,previous TEXT NOT NULL,code TEXT NOT NULL,weight REAL NOT NULL,created REAL NOT NULL,undone INTEGER NOT NULL DEFAULT 0,origin TEXT NOT NULL DEFAULT '',origin_revision TEXT NOT NULL DEFAULT ''); CREATE INDEX IF NOT EXISTS evidence_text ON evidence(normalized); CREATE INDEX IF NOT EXISTS evidence_previous ON evidence(previous); CREATE INDEX IF NOT EXISTS evidence_origin ON evidence(origin); CREATE TABLE IF NOT EXISTS forgotten(text TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS imports(origin TEXT PRIMARY KEY,item_id TEXT NOT NULL,revision TEXT NOT NULL,kind TEXT NOT NULL); CREATE TABLE IF NOT EXISTS retired_events(event_id TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS feedback_bindings(event_id TEXT PRIMARY KEY,binding TEXT NOT NULL); CREATE TABLE IF NOT EXISTS base_phrases(normalized TEXT PRIMARY KEY,text TEXT NOT NULL,frequency REAL NOT NULL); CREATE TABLE IF NOT EXISTS base_meta(id INTEGER PRIMARY KEY,sha256 TEXT NOT NULL); CREATE TABLE IF NOT EXISTS reconcile_cursor(id INTEGER PRIMARY KEY,cursor TEXT NOT NULL);").map_err(err)?;
+    // 遗忘屏障只保留本域密钥摘要；升级时同事务迁移旧明文，不再新增词正文副本。
+    db.pragma_update(None, "secure_delete", true).map_err(err)?;
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS privacy_metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
+    )
+    .map_err(err)?;
+    let migrated: bool = db
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM privacy_metadata WHERE key='forgotten_hash_v1')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(err)?;
+    let privacy_key = crate::private_key::load_or_create(
+        &root.join("knowledge/personalization-privacy.key"),
+        !migrated,
+    )
+    .map_err(|_| "personalization_privacy_key_unavailable")?;
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &privacy_key);
+    db.create_scalar_function(
+        "privacy_term_digest",
+        1,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8
+            | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+        move |context| {
+            let value: String = context.get(0)?;
+            Ok(ring::hmac::sign(&key, norm(&value).as_bytes())
+                .as_ref()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>())
+        },
+    )
+    .map_err(err)?;
+    if !migrated {
+        db.execute_batch("BEGIN IMMEDIATE; UPDATE forgotten SET text=privacy_term_digest(text); INSERT INTO privacy_metadata VALUES('forgotten_hash_v1','1'); COMMIT;").map_err(err)?;
+    }
     let has_revision = {
         let mut stmt = db.prepare("PRAGMA table_info(evidence)").map_err(err)?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(1)).map_err(err)?;
@@ -229,6 +266,7 @@ fn state(db: &Connection) -> Result<LearningPolicy> {
 }
 /// 个人学习默认开启；不开启正文收录或外部共享。
 pub fn policy(root: &Path) -> Result<LearningPolicy> {
+    crate::privacy_operation::ensure_readable(root)?;
     let gate = root_gate(root)?;
     let _guard = gate.lock().map_err(err)?;
     if !root.join("knowledge/personalization.sqlite").exists() {
@@ -400,7 +438,7 @@ fn bounded_anchor_events(db: &Connection, anchors: &[String]) -> Result<Vec<Stri
         return Ok(Vec::new());
     }
     let sql = format!(
-        "SELECT DISTINCT indexed.event_id FROM evidence_anchors AS indexed JOIN evidence AS learned ON learned.event_id=indexed.event_id WHERE indexed.anchor IN ({}) AND learned.undone=0 AND learned.normalized NOT IN(SELECT text FROM forgotten) LIMIT {}",
+        "SELECT DISTINCT indexed.event_id FROM evidence_anchors AS indexed JOIN evidence AS learned ON learned.event_id=indexed.event_id WHERE indexed.anchor IN ({}) AND learned.undone=0 AND privacy_term_digest(learned.normalized) NOT IN(SELECT text FROM forgotten) LIMIT {}",
         vec!["?"; anchors.len()].join(","), EVIDENCE_QUERY_LIMIT + 1
     );
     let mut stmt = db.prepare(&sql).map_err(err)?;
@@ -446,7 +484,7 @@ fn recall_candidates(db: &Connection, q: &Query) -> Result<Vec<Candidate>> {
     if q.schema_id.is_empty() || !recall_code(&code) {
         return Ok(vec![]);
     }
-    let mut stmt = db.prepare("SELECT text,normalized,previous,source_app,weight,created FROM evidence WHERE schema_id=?1 AND code=?2 AND origin='' AND source_app<>'' AND undone=0 AND normalized NOT IN(SELECT text FROM forgotten) ORDER BY created DESC,event_id LIMIT 1000").map_err(err)?;
+    let mut stmt = db.prepare("SELECT text,normalized,previous,source_app,weight,created FROM evidence WHERE schema_id=?1 AND code=?2 AND origin='' AND source_app<>'' AND undone=0 AND privacy_term_digest(normalized) NOT IN(SELECT text FROM forgotten) ORDER BY created DESC,event_id LIMIT 1000").map_err(err)?;
     let rows = stmt
         .query_map(params![q.schema_id, code], |r| {
             Ok((
@@ -521,6 +559,7 @@ fn recall_candidates(db: &Connection, q: &Query) -> Result<Vec<Candidate>> {
 }
 /// 接收经过身份及上屏确认的学习反馈；undo 使用原 accept 的 event_id。
 pub fn feedback(root: &Path, f: Feedback) -> Result<Value> {
+    crate::privacy_operation::ensure_readable(root)?;
     let gate = root_gate(root)?;
     let _guard = gate.lock().map_err(err)?;
     if f.event_id.is_empty()
@@ -806,6 +845,7 @@ fn rejected_in_current_context(stats: &Stats) -> bool {
 }
 /// 只重排提供的候选；预测严格来自已学习的上下文关系或短语前缀。
 pub fn query(root: &Path, q: Query) -> Result<Value> {
+    crate::privacy_operation::ensure_readable(root)?;
     let gate = root_gate(root)?;
     let _guard = gate.lock().map_err(err)?;
     if q.input_code.len() > 256
@@ -898,7 +938,7 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
         } else {
             ""
         };
-        let sql = format!("SELECT text,normalized,previous,code,weight,created,origin,origin_revision,source_app,schema_id FROM evidence {index_hint} WHERE undone=0 AND normalized NOT IN(SELECT text FROM forgotten) AND ({}) ORDER BY (origin='') DESC,created DESC LIMIT {EVIDENCE_QUERY_LIMIT}", predicates.join(" OR "));
+        let sql = format!("SELECT text,normalized,previous,code,weight,created,origin,origin_revision,source_app,schema_id FROM evidence {index_hint} WHERE undone=0 AND privacy_term_digest(normalized) NOT IN(SELECT text FROM forgotten) AND ({}) ORDER BY (origin='') DESC,created DESC LIMIT {EVIDENCE_QUERY_LIMIT}", predicates.join(" OR "));
         let rows = {
             let mut stmt = db.prepare(&sql).map_err(err)?;
             let rows = stmt
@@ -1126,6 +1166,7 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
     }
     #[cfg(test)]
     checkpoint("query_finish");
+    crate::privacy_operation::ensure_readable(root)?;
     let final_policy = state(&db)?;
     if final_policy.epoch != p.epoch
         || final_policy.enabled != p.enabled
@@ -1166,7 +1207,7 @@ fn status(root: &Path, db: &Connection) -> Result<Value> {
         }
     }
     let filter =
-        format!("undone=0 AND normalized NOT IN(SELECT text FROM forgotten) AND ({permitted})");
+        format!("undone=0 AND privacy_term_digest(normalized) NOT IN(SELECT text FROM forgotten) AND ({permitted})");
     let sql=format!("SELECT text,sum(weight) AS score FROM evidence WHERE {filter} GROUP BY normalized ORDER BY score DESC LIMIT 100");
     let mut stmt = db.prepare(&sql).map_err(err)?;
     let rows = stmt
@@ -1219,8 +1260,121 @@ fn phrases(text: &str) -> Vec<String> {
     }
     out
 }
+/// 主服务已耐久接受后调用；本域写入、拒绝重放屏障和回执属于同一个事务。
+pub(crate) fn privacy_receipt(root: &Path, id: &str, digest: &[u8]) -> Result<Option<u64>> {
+    let path = root.join("knowledge/personalization.sqlite");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(err)?;
+    let present: bool = db
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='privacy_domain_receipts')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(err)?;
+    if !present {
+        return Ok(None);
+    }
+    let old: Option<(Vec<u8>, u64)> = db
+        .query_row(
+            "SELECT digest,result_epoch FROM privacy_domain_receipts WHERE operation_id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(err)?;
+    match old {
+        Some((old, epoch)) if old == digest => Ok(Some(epoch)),
+        Some(_) => Err("privacy_domain_conflict".into()),
+        None => Ok(None),
+    }
+}
+
+pub(crate) fn apply_privacy(
+    root: &Path,
+    request: &crate::privacy_operation::PrivacyRequest,
+    request_digest: &[u8],
+) -> Result<u64> {
+    request.validate()?;
+    if request_digest.len() != 32 {
+        return Err("privacy_domain_digest_invalid".into());
+    }
+    let gate = root_gate(root)?;
+    let _guard = gate.lock().map_err(err)?;
+    let mut db = db(root)?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS privacy_domain_receipts(operation_id TEXT PRIMARY KEY,digest BLOB NOT NULL,result_epoch INTEGER NOT NULL)").map_err(err)?;
+    let old: Option<(Vec<u8>, u64)> = db
+        .query_row(
+            "SELECT digest,result_epoch FROM privacy_domain_receipts WHERE operation_id=?1",
+            [&request.operation_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(err)?;
+    if let Some((digest, epoch)) = old {
+        return if digest == request_digest {
+            Ok(epoch)
+        } else {
+            Err("privacy_domain_conflict".into())
+        };
+    }
+    let tx = db
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(err)?;
+    if matches!(
+        request.scope,
+        crate::privacy_operation::PrivacyScope::ForgetTerm { .. }
+    ) {
+        let crate::privacy_operation::PrivacyScope::ForgetTerm { term: text } = &request.scope
+        else {
+            unreachable!()
+        };
+        let key = norm(text);
+        tx.execute(
+            "INSERT OR IGNORE INTO forgotten VALUES(privacy_term_digest(?1))",
+            [&key],
+        )
+        .map_err(err)?;
+        tx.execute("INSERT OR IGNORE INTO retired_events SELECT event_id FROM evidence WHERE normalized=?1 OR instr(lower(previous),?1)>0",[&key]).map_err(err)?;
+        tx.execute("DELETE FROM evidence_anchors WHERE event_id IN(SELECT event_id FROM evidence WHERE normalized=?1 OR instr(lower(previous),?1)>0)", [&key]).map_err(err)?;
+        tx.execute(
+            "DELETE FROM evidence WHERE normalized=?1 OR instr(lower(previous),?1)>0",
+            [&key],
+        )
+        .map_err(err)?;
+    } else {
+        tx.execute(
+            "INSERT OR IGNORE INTO retired_events SELECT event_id FROM evidence",
+            [],
+        )
+        .map_err(err)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO forgotten SELECT privacy_term_digest(normalized) FROM evidence",
+            [],
+        )
+        .map_err(err)?;
+        tx.execute("DELETE FROM evidence", []).map_err(err)?;
+        tx.execute("DELETE FROM evidence_anchors", [])
+            .map_err(err)?;
+        tx.execute("DELETE FROM imports", []).map_err(err)?;
+    }
+    bump(&tx)?;
+    let epoch = state(&tx)?.epoch;
+    tx.execute(
+        "INSERT INTO privacy_domain_receipts(operation_id,digest,result_epoch) VALUES(?1,?2,?3)",
+        params![request.operation_id, request_digest, epoch],
+    )
+    .map_err(err)?;
+    tx.commit().map_err(err)?;
+    Ok(epoch)
+}
+
 /// 本地管理动作；历史回填必须由用户显式调用。
 pub fn manage(root: &Path, action: &str, payload: &Value) -> Result<Value> {
+    crate::privacy_operation::ensure_readable(root)?;
     let gate = root_gate(root)?;
     let _guard = gate.lock().map_err(err)?;
     if action == "personalization_enabled" {
@@ -1236,40 +1390,7 @@ pub fn manage(root: &Path, action: &str, payload: &Value) -> Result<Value> {
     match action {
         "personalization_status" | "personalization_enabled" => {}
         "personalization_forget" | "personalization_clear" => {
-            let tx = db
-                .transaction_with_behavior(TransactionBehavior::Immediate)
-                .map_err(err)?;
-            if action == "personalization_forget" {
-                let text = payload
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .filter(|s| valid_text(s))
-                    .ok_or("忘记词条无效")?;
-                let key = norm(text);
-                tx.execute("INSERT OR IGNORE INTO forgotten VALUES(?1)", [&key])
-                    .map_err(err)?;
-                tx.execute("INSERT OR IGNORE INTO retired_events SELECT event_id FROM evidence WHERE normalized=?1",[&key]).map_err(err)?;
-                tx.execute("DELETE FROM evidence_anchors WHERE event_id IN(SELECT event_id FROM evidence WHERE normalized=?1)", [&key]).map_err(err)?;
-                tx.execute("DELETE FROM evidence WHERE normalized=?1", [&key])
-                    .map_err(err)?;
-            } else {
-                tx.execute(
-                    "INSERT OR IGNORE INTO retired_events SELECT event_id FROM evidence",
-                    [],
-                )
-                .map_err(err)?;
-                tx.execute(
-                    "INSERT OR IGNORE INTO forgotten SELECT normalized FROM evidence",
-                    [],
-                )
-                .map_err(err)?;
-                tx.execute("DELETE FROM evidence", []).map_err(err)?;
-                tx.execute("DELETE FROM evidence_anchors", [])
-                    .map_err(err)?;
-                tx.execute("DELETE FROM imports", []).map_err(err)?;
-            }
-            bump(&tx)?;
-            tx.commit().map_err(err)?;
+            return Err("privacy_operation_required".into())
         }
         "personalization_backfill" => {
             let import_policy = state(&db)?;
@@ -1381,7 +1502,7 @@ pub fn manage(root: &Path, action: &str, payload: &Value) -> Result<Value> {
                 for (i, text) in list.iter().enumerate() {
                     let key = norm(text);
                     let event = format!("import:{}", digest(&format!("{origin}:{revision}:{i}")));
-                    tx.execute("INSERT OR IGNORE INTO evidence(event_id,fingerprint,text,normalized,previous,code,weight,created,origin,origin_revision) SELECT ?1,?1,?2,?3,'','',0.25,?4,?5,?6 WHERE NOT EXISTS(SELECT 1 FROM forgotten WHERE text=?3)",params![event,text,key,now(),origin,revision]).map_err(err)?;
+                    tx.execute("INSERT OR IGNORE INTO evidence(event_id,fingerprint,text,normalized,previous,code,weight,created,origin,origin_revision) SELECT ?1,?1,?2,?3,'','',0.25,?4,?5,?6 WHERE NOT EXISTS(SELECT 1 FROM forgotten WHERE text=privacy_term_digest(?3))",params![event,text,key,now(),origin,revision]).map_err(err)?;
                 }
                 tx.commit().map_err(err)?;
                 imported += 1;
@@ -1492,7 +1613,7 @@ fn base_predictions(db: &Connection, context: &str, limit: usize) -> Result<Vec<
         if !suffix_context(&context, prefix) {
             continue;
         }
-        let mut stmt=db.prepare("SELECT text,frequency FROM base_phrases WHERE normalized>?1 AND normalized<?2 AND normalized NOT IN(SELECT text FROM forgotten) ORDER BY frequency DESC,normalized LIMIT 100").map_err(err)?;
+        let mut stmt=db.prepare("SELECT text,frequency FROM base_phrases WHERE normalized>?1 AND normalized<?2 AND privacy_term_digest(normalized) NOT IN(SELECT text FROM forgotten) ORDER BY frequency DESC,normalized LIMIT 100").map_err(err)?;
         let rows = stmt
             .query_map(params![prefix, format!("{prefix}\u{10ffff}")], |r| {
                 r.get::<_, String>(0)
@@ -1517,7 +1638,14 @@ fn base_predictions(db: &Connection, context: &str, limit: usize) -> Result<Vec<
                 continue;
             }
             let suffix = suffix.trim();
-            if !suffix.is_empty() && !forgotten.contains(&norm(suffix)) && seen.insert(norm(suffix))
+            if !suffix.is_empty()
+                && !forgotten.contains(
+                    &db.query_row("SELECT privacy_term_digest(?1)", [suffix], |r| {
+                        r.get::<_, String>(0)
+                    })
+                    .map_err(err)?,
+                )
+                && seen.insert(norm(suffix))
             {
                 output.push(suffix.to_owned());
             }
@@ -1584,7 +1712,7 @@ fn base_context_gain(
         return Ok(0.0);
     }
     // 全句锚点一次索引查询，避免为每个候选发出上百次短查询。
-    let sql = format!("SELECT normalized,frequency FROM base_phrases WHERE normalized IN ({}) AND normalized NOT IN(SELECT text FROM forgotten) AND NOT EXISTS(SELECT 1 FROM forgotten WHERE text=?)", vec!["?"; weights.len()].join(","));
+    let sql = format!("SELECT normalized,frequency FROM base_phrases WHERE normalized IN ({}) AND privacy_term_digest(normalized) NOT IN(SELECT text FROM forgotten) AND NOT EXISTS(SELECT 1 FROM forgotten WHERE text=privacy_term_digest(?))", vec!["?"; weights.len()].join(","));
     let mut args: Vec<String> = weights.keys().cloned().collect();
     args.push(text);
     let mut stmt = db.prepare(&sql).map_err(err)?;

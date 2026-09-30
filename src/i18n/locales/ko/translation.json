@@ -1046,6 +1046,18 @@
     },
     "moreHistory": "This source has more records. Continue the next batch explicitly.",
     "continueBackfill": "Learn the next batch",
-    "partialTerms": "Term and learning-event counts and the term list include only sources verified in this pass, not all imported records. The total import count is shown separately."
+    "partialTerms": "Term and learning-event counts and the term list include only sources verified in this pass, not all imported records. The total import count is shown separately.",
+    "privacy": {
+      "scope": "Forgetting removes learned evidence and shared terms in both learning stores, then waits for active readers to revoke or expire. Original history, attachments, and words explicitly added in Settings are kept.",
+      "accepted": "Forgetting accepted — revocation is durable",
+      "processing": "Verifying domain receipts and active readers",
+      "partial_failure": "Partially complete — recovery will retry automatically",
+      "completed": "Learning evidence forgotten; active readers settled",
+      "receipts": "Shared terms: {{integration}} · Personal learning: {{personalization}} · Readers: {{readers}}",
+      "done": "done",
+      "waiting": "pending",
+      "retry": "Retry the same forgetting operation",
+      "repair": "Completion evidence is missing or inconsistent. Personal learning stays paused until matching databases and keys are restored and verified. Original records are kept."
+    }
   }
 }

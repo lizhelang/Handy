@@ -1699,7 +1699,7 @@ fn validate(kind: AttachmentKind, bytes: &[u8]) -> Result<()> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::deletion_lifecycle::{AttachmentCleanup, DeleteRequest, DELETE_SCHEMA_VERSION};

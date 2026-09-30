@@ -1,3 +1,5 @@
+#[path = "support/privacy.rs"]
+mod privacy;
 use inputia_handy_runtime::{knowledge::KnowledgeStore, personalization::*, typed_history};
 use serde_json::json;
 use std::path::Path;
@@ -140,7 +142,7 @@ fn undo_replay_forget_clear_and_closed_policy() {
             .unwrap()
             .is_empty()
     );
-    manage(root, "personalization_forget", &json!({"text":"把"})).unwrap();
+    privacy::forget(root, Some("把"));
     assert!(
         query(root, query_for(root, "请", "")).unwrap()["predictions"]
             .as_array()
@@ -154,7 +156,7 @@ fn undo_replay_forget_clear_and_closed_policy() {
     assert!(feedback(root, f).is_err());
     set_enabled(root, true).unwrap();
     assert!(policy(root).unwrap().epoch > before.epoch);
-    manage(root, "personalization_clear", &json!({})).unwrap();
+    privacy::forget(root, None);
     assert_eq!(
         manage(root, "personalization_status", &json!({})).unwrap()["counts"]["events"],
         0
@@ -244,12 +246,7 @@ fn explicit_backfill_prefix_revision_delete_and_forget() {
     )
     .unwrap();
     manage(root, "personalization_backfill", &json!({"source":"typed"})).unwrap();
-    manage(
-        root,
-        "personalization_forget",
-        &json!({"text":"明天下午开会"}),
-    )
-    .unwrap();
+    privacy::forget(root, Some("明天下午开会"));
     manage(root, "personalization_backfill", &json!({"source":"typed"})).unwrap();
     assert_eq!(
         query(root, query_for(root, "明天", "")).unwrap()["predictions"],

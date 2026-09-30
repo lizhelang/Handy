@@ -3157,6 +3157,7 @@ dependencies = [
  "inputia-settings",
  "libc",
  "png 0.17.16",
+ "ring",
  "rusqlite",
  "serde",
  "serde_json",

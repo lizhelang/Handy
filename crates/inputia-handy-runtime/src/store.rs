@@ -1072,7 +1072,7 @@ impl IntegrationStore {
 
     /// 词屏障、贡献移除和统一策略版本同一事务，失败时全量回滚。
     pub fn forget_term(&mut self, key: &[u8], term: &str, expected_epoch: u64) -> StoreResult<u64> {
-        self.forget_term_transaction(key, term, expected_epoch, None)
+        self.forget_term_transaction(key, Some(term), expected_epoch, None, None)
     }
 
     pub fn forget_term_with_receipt(
@@ -1082,28 +1082,58 @@ impl IntegrationStore {
         term: &str,
         expected_epoch: u64,
     ) -> StoreResult<u64> {
-        self.forget_term_transaction(key, term, expected_epoch, Some(operation_id))
+        self.forget_term_transaction(key, Some(term), expected_epoch, Some(operation_id), None)
+    }
+
+    pub(crate) fn begin_privacy(
+        &mut self,
+        key: &[u8],
+        request: &crate::privacy_operation::PrivacyRequest,
+    ) -> Result<crate::privacy_operation::PrivacyOperation, String> {
+        use crate::privacy_operation::{self as privacy, PrivacyScope};
+        request.validate()?;
+        if let Some(previous) = privacy::existing(&self.conn, request, key)? {
+            return Ok(previous);
+        }
+        if privacy::has_pending(&self.conn)? {
+            return Err("privacy_operation_pending".into());
+        }
+        let id = Identifier::parse(request.operation_id.clone()).map_err(str::to_owned)?;
+        let term = match &request.scope {
+            PrivacyScope::ForgetTerm { term } => Some(term.as_str()),
+            PrivacyScope::ClearLearned {} => None,
+        };
+        self.forget_term_transaction(key, term, request.expected_epoch, Some(&id), Some(request))
+            .map_err(|e| e.to_string())?;
+        privacy::get(&self.conn, &request.operation_id)
     }
 
     fn forget_term_transaction(
         &mut self,
         key: &[u8],
-        term: &str,
+        term: Option<&str>,
         expected_epoch: u64,
         operation_id: Option<&Identifier>,
+        privacy: Option<&crate::privacy_operation::PrivacyRequest>,
     ) -> StoreResult<u64> {
         let ledger = LearningLedger::new(key)?;
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let digest = ledger.forget_digest(term, expected_epoch);
+        let digest = match term {
+            Some(term) => ledger.forget_digest(term, expected_epoch),
+            None => privacy
+                .ok_or(StoreError::Invalid("clear requires privacy operation"))?
+                .digest(key)
+                .map_err(|_| StoreError::Invalid("privacy request invalid"))?,
+        };
         if let Some(operation_id) = operation_id {
             let receipt: Option<(Vec<u8>, u64)> = tx.query_row(
                 "SELECT digest,result_epoch FROM learning_forget_receipts WHERE operation_id=?1",
                 [operation_id.as_str()], |row| Ok((row.get(0)?, row.get(1)?)),
             ).optional()?;
             if let Some((previous, result)) = receipt {
-                return if previous == digest {
+                return if previous == digest && privacy.is_none() {
                     Ok(result)
                 } else {
                     Err(StoreError::Learning(LearningError::ReplayConflict))
@@ -1121,7 +1151,31 @@ impl IntegrationStore {
             .checked_add(1)
             .ok_or(StoreError::Invalid("policy epoch overflow"))?;
         checked_number(next)?;
-        ledger.forget_term(&tx, term, next)?;
+        match term {
+            Some(term) => {
+                if privacy.is_some()
+                    && inputia_core::integration::terms::validate_term(
+                        term,
+                        inputia_core::integration::terms::TermEvidence::ExplicitUserTerm,
+                    )
+                    .is_err()
+                {
+                    // 个性化域允许单字/较长短语；它们从未满足共享术语准入，但仍需统一撤销旧epoch。
+                    ledger.advance_epoch(&tx, next)?;
+                } else {
+                    ledger.forget_term(&tx, term, next)?;
+                }
+            }
+            None => {
+                // 清空保留词屏障与事件回执；旧源/事件不能靠重新导入恢复已遗忘贡献。
+                tx.execute("INSERT OR REPLACE INTO learning_forgotten(term_id,epoch) SELECT DISTINCT term_id,?1 FROM learning_contributions",[next])?;
+                ledger.clear(&tx, next)?;
+            }
+        }
+        if let Some(request) = privacy {
+            crate::privacy_operation::accept(&tx, key, request, next, &digest)
+                .map_err(|_| StoreError::Invalid("privacy acceptance failed"))?;
+        }
         tx.execute("UPDATE integration_meta SET value=CAST(value AS INTEGER)+1 WHERE key='learning_generation'",[])?;
         tx.execute(
             "UPDATE integration_meta SET value=?1 WHERE key='policy_epoch'",
@@ -1256,6 +1310,8 @@ impl IntegrationStore {
         conn.pragma_update(None, "synchronous", "FULL")?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         crate::deletion_lifecycle::initialize(&tx)?;
+        crate::privacy_operation::initialize(&tx)
+            .map_err(|_| StoreError::Invalid("privacy journal unavailable"))?;
         tx.commit()?;
         Ok(Self { conn })
     }

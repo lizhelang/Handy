@@ -7,6 +7,7 @@ use inputia_handy_runtime::{
 };
 use serde_json::json;
 use std::collections::BTreeMap;
+use tauri::Manager;
 
 pub fn respond(app: &tauri::AppHandle, request: &PersonalizationRequest) -> PersonalizationReply {
     let mut reply = PersonalizationReply {
@@ -17,8 +18,13 @@ pub fn respond(app: &tauri::AppHandle, request: &PersonalizationRequest) -> Pers
         epoch: 0,
         result: None,
         code: None,
+        privacy_barrier: None,
     };
     let result = (|| -> Result<(), String> {
+        let integration = app
+            .try_state::<std::sync::Arc<crate::managers::integration::IntegrationManager>>()
+            .ok_or("privacy_service_unavailable")?;
+        integration.service.privacy_readable()?;
         let root = crate::portable::app_data_dir(app).map_err(|e| e.to_string())?;
         let policy = model::policy(&root)?;
         reply.enabled = policy.enabled;
@@ -190,6 +196,7 @@ pub fn respond(app: &tauri::AppHandle, request: &PersonalizationRequest) -> Pers
             reply.epoch = current.epoch;
             return Err("personalization_policy_changed".into());
         }
+        integration.service.privacy_readable()?;
         reply.result = Some(value);
         Ok(())
     })();

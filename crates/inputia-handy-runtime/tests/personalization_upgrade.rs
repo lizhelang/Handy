@@ -1,3 +1,5 @@
+#[path = "support/privacy.rs"]
+mod privacy;
 use inputia_handy_runtime::personalization::{self as model, Candidate, Feedback, Query};
 use serde_json::json;
 use std::path::Path;
@@ -85,7 +87,7 @@ fn recall_is_exact_bounded_deduplicated_and_revalidated_after_undo_forget() {
     let mut undo = event(root, "e0", "术语0");
     undo.operation = "undo".into();
     model::feedback(root, undo).unwrap();
-    model::manage(root, "personalization_forget", &json!({"text":"术语1"})).unwrap();
+    privacy::forget(root, Some("术语1"));
     let current = model::query(root, query(root)).unwrap();
     assert!(current["recalled_candidates"]
         .as_array()

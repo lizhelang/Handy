@@ -73,7 +73,24 @@ impl OutputPermit {
     }
 }
 
+fn mask_unverified_privacy(value: &mut crate::privacy_operation::PrivacyOperation, verified: bool) {
+    if !verified && value.state == crate::privacy_operation::PrivacyState::Completed {
+        value.state = crate::privacy_operation::PrivacyState::Processing;
+        value.domain_receipts = crate::privacy_operation::DomainReceipts {
+            integration: false,
+            personalization: false,
+            readers: false,
+        };
+        value.failure = Some("privacy_verification_pending".into());
+    }
+}
+
 struct Worker {
+    privacy_root: PathBuf,
+    privacy_audit_cursor: Option<String>,
+    privacy_audit_complete: bool,
+    privacy_readers: std::collections::HashMap<String, Instant>,
+    next_privacy_recovery: Instant,
     output_generation: Arc<AtomicU64>,
     source_writes: Arc<SourceWrites>,
     _writer_lease: std::fs::File,
@@ -95,6 +112,87 @@ struct Worker {
 }
 
 impl Worker {
+    fn require_privacy_settled(&mut self) -> ServiceResult<()> {
+        if !self.privacy_audit_complete
+            || crate::privacy_operation::has_pending(self.store.attachment_connection())?
+        {
+            Err("privacy_operation_pending".into())
+        } else {
+            Ok(())
+        }
+    }
+    fn recover_privacy(&mut self) -> ServiceResult<()> {
+        use crate::privacy_operation as privacy;
+        let now = Instant::now();
+        let expired: Vec<_> = self
+            .privacy_readers
+            .iter()
+            .filter(|(_, deadline)| **deadline <= now)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in expired {
+            privacy::settle_reader(self.store.attachment_connection(), &id, None)?;
+            self.privacy_readers.remove(&id);
+        }
+        if !self.privacy_audit_complete {
+            let ids = privacy::audit_page(
+                self.store.attachment_connection(),
+                self.privacy_audit_cursor.as_deref().unwrap_or(""),
+            )?;
+            let end = ids.len() < 32;
+            for id in ids {
+                self.advance_privacy(&id, true)?;
+                self.privacy_audit_cursor = Some(id);
+            }
+            self.privacy_audit_complete = end;
+            if end {
+                privacy::audit_gate(self.store.attachment_connection(), false)?;
+            }
+        }
+        if now < self.next_privacy_recovery {
+            return Ok(());
+        }
+        self.next_privacy_recovery = now + Duration::from_millis(250);
+        for id in privacy::pending(self.store.attachment_connection())? {
+            self.advance_privacy(&id, false)?;
+        }
+        Ok(())
+    }
+    fn advance_privacy(&mut self, id: &str, audit: bool) -> ServiceResult<()> {
+        use crate::privacy_operation as privacy;
+        let result = (|| -> ServiceResult<()> {
+            privacy::verify_integration(self.store.attachment_connection(), id)?;
+            let (digest, claimed, completed) =
+                privacy::evidence(self.store.attachment_connection(), id)?;
+            let receipt = crate::personalization::privacy_receipt(&self.privacy_root, id, &digest)?;
+            let epoch = match receipt {
+                Some(epoch) if claimed.is_none_or(|value| value == epoch) => epoch,
+                Some(_) => return Err("privacy_domain_conflict".into()),
+                None if completed || claimed.is_some() => {
+                    return Err("privacy_domain_receipt_missing".into())
+                }
+                None => {
+                    if audit {
+                        return Ok(());
+                    }
+                    self.revoke_outputs();
+                    let request = privacy::request(
+                        self.store.attachment_connection(),
+                        id,
+                        &self.learning_key,
+                    )?;
+                    crate::personalization::apply_privacy(&self.privacy_root, &request, &digest)
+                        .map_err(|_| "personalization_unavailable".to_string())?
+                }
+            };
+            privacy::personal_receipt(self.store.attachment_connection(), id, epoch)?;
+            privacy::settle(self.store.attachment_connection(), id)
+        })();
+        if let Err(reason) = result {
+            privacy::fail(self.store.attachment_connection(), id, &reason)?;
+        }
+        Ok(())
+    }
     fn record_deletion_attachments(&mut self, request: &DeleteRequest) -> ServiceResult<()> {
         let source = self
             .sources
@@ -605,7 +703,26 @@ impl HistoryService {
                     attachments
                         .recover_imports(store.attachment_connection())
                         .map_err(|e| e.to_string())?;
+                    crate::privacy_operation::audit_gate(store.attachment_connection(), true)?;
+                    let privacy_readers =
+                        crate::privacy_operation::reader_ids(store.attachment_connection())?
+                            .into_iter()
+                            .map(|id| {
+                                (
+                                    id,
+                                    Instant::now()
+                                        + Duration::from_millis(
+                                            crate::privacy_operation::READER_LEASE_MS,
+                                        ),
+                                )
+                            })
+                            .collect();
                     Ok(Worker {
+                        privacy_root: root.clone(),
+                        privacy_audit_cursor: None,
+                        privacy_audit_complete: false,
+                        privacy_readers,
+                        next_privacy_recovery: Instant::now(),
                         attachments,
                         attachment_audit: None,
                         attachment_pause: Some(PauseReason::SourceAuditPending),
@@ -629,7 +746,8 @@ impl HistoryService {
                 while !stop.load(Ordering::Acquire) {
                     if let Ok(state) = &mut worker {
                         // 先恢复删除屏障再接收下一项工作；重启不依赖 UI 重放请求。
-                        let recovery = state.recover_deletions().err();
+                        let privacy = state.recover_privacy().err();
+                        let recovery = privacy.or_else(|| state.recover_deletions().err());
                         state.last_error = recovery.or_else(|| state.sync_once().err());
                         state.maintain_attachments();
                     }
@@ -1170,6 +1288,7 @@ impl HistoryService {
 
     pub fn list_terms(&self, limit: u32, offset: u64) -> ServiceResult<Vec<LearnedTermView>> {
         self.call(move |worker| {
+            worker.require_privacy_settled()?;
             worker
                 .store
                 .list_terms(limit, offset)
@@ -1191,6 +1310,7 @@ impl HistoryService {
             {
                 return Ok(ApplyContribution::Replay);
             }
+            worker.require_privacy_settled()?;
             worker.sync_once()?;
             worker.revoke_outputs();
             let result = worker
@@ -1213,6 +1333,7 @@ impl HistoryService {
         context: PrivacyContext,
     ) -> ServiceResult<ApplyContribution> {
         self.call(move |worker| {
+            worker.require_privacy_settled()?;
             worker.revoke_outputs();
             worker.sync_once()?;
             let result = worker
@@ -1234,30 +1355,95 @@ impl HistoryService {
         term: String,
         expected_epoch: u64,
     ) -> ServiceResult<u64> {
-        let operation_id = inputia_core::integration::events::Identifier::parse(operation_id)
-            .map_err(str::to_owned)?;
-        self.call(move |worker| {
-            worker.revoke_outputs();
-            worker.sync_once()?;
-            let epoch = worker
-                .store
-                .forget_term_with_receipt(
-                    &worker.learning_key,
-                    &operation_id,
-                    &term,
-                    expected_epoch,
-                )
-                .map_err(|error| error.to_string())?;
-            worker.generation = worker.generation.saturating_add(1);
-            (worker.changed)(worker.generation);
-            Ok(epoch)
+        self.begin_privacy(crate::privacy_operation::PrivacyRequest {
+            operation_id,
+            scope: crate::privacy_operation::PrivacyScope::ForgetTerm { term },
+            expected_epoch,
         })
+        .map(|operation| operation.epoch)
         .map_err(|error| {
             if error == "history service request timed out" {
                 "forget outcome unknown; retry with the same operation_id and arguments".into()
             } else {
                 error
             }
+        })
+    }
+
+    /// 接受事务完成便返回；后台独立恢复各域，调用超时复用同一 operation_id。
+    pub fn begin_privacy(
+        &self,
+        request: crate::privacy_operation::PrivacyRequest,
+    ) -> ServiceResult<crate::privacy_operation::PrivacyOperation> {
+        self.call_metadata(move |worker| {
+            if !worker.privacy_audit_complete {
+                return Err("privacy_verification_pending".into());
+            }
+            worker.revoke_outputs();
+            let result = worker.store.begin_privacy(&worker.learning_key, &request)?;
+            worker.generation = worker.generation.saturating_add(1);
+            (worker.changed)(worker.generation);
+            Ok(result)
+        })
+    }
+    pub fn privacy_operations(
+        &self,
+    ) -> ServiceResult<Vec<crate::privacy_operation::PrivacyOperation>> {
+        self.call_metadata(|worker| {
+            let mut values = crate::privacy_operation::list(worker.store.attachment_connection())?;
+            for value in &mut values {
+                mask_unverified_privacy(value, worker.privacy_audit_complete);
+            }
+            Ok(values)
+        })
+    }
+    pub fn privacy_operation(
+        &self,
+        id: String,
+    ) -> ServiceResult<crate::privacy_operation::PrivacyOperation> {
+        self.call_metadata(move |worker| {
+            let mut value =
+                crate::privacy_operation::get(worker.store.attachment_connection(), &id)?;
+            mask_unverified_privacy(&mut value, worker.privacy_audit_complete);
+            Ok(value)
+        })
+    }
+    pub fn privacy_readable(&self) -> ServiceResult<()> {
+        self.call_metadata(|worker| worker.require_privacy_settled())
+    }
+    /// 租约在发送正文之前登记；Host 的期限从更早的请求发起时刻算起，不能被网络延迟延长。
+    pub fn issue_privacy_reader(&self, id: String, epoch: u64) -> ServiceResult<()> {
+        self.call_metadata(move |worker| {
+            if worker.store.policy_epoch().map_err(|e| e.to_string())? != epoch
+                || crate::privacy_operation::has_pending(worker.store.attachment_connection())?
+            {
+                return Err("privacy_epoch_revoked".into());
+            }
+            crate::privacy_operation::issue_reader(
+                worker.store.attachment_connection(),
+                &id,
+                epoch,
+            )?;
+            worker.privacy_readers.insert(
+                id,
+                Instant::now() + Duration::from_millis(crate::privacy_operation::READER_LEASE_MS),
+            );
+            Ok(())
+        })
+    }
+    pub fn acknowledge_privacy_reader(&self, id: String, epoch: u64) -> ServiceResult<()> {
+        self.call_metadata(move |worker| {
+            if worker.store.policy_epoch().map_err(|e| e.to_string())? != epoch {
+                return Err("privacy_ack_stale".into());
+            }
+            if crate::privacy_operation::settle_reader(
+                worker.store.attachment_connection(),
+                &id,
+                Some(epoch),
+            )? {
+                worker.privacy_readers.remove(&id);
+            }
+            Ok(())
         })
     }
 
@@ -1649,6 +1835,7 @@ impl HistoryService {
         budget: HotwordBudget,
     ) -> ServiceResult<TermSnapshot> {
         self.call(move |worker| {
+            worker.require_privacy_settled()?;
             worker
                 .store
                 .term_snapshot(&worker.learning_key, &policy, context, &explicit, budget)
@@ -1658,6 +1845,7 @@ impl HistoryService {
 
     pub fn term_snapshot_is_current(&self, snapshot: TermSnapshot) -> ServiceResult<bool> {
         self.call(move |worker| {
+            worker.require_privacy_settled()?;
             worker
                 .store
                 .term_snapshot_is_current(&snapshot)
@@ -1698,6 +1886,15 @@ impl Drop for HistoryService {
 
 #[cfg(test)]
 mod output_permit_tests {
+    fn wait_for_privacy(service: &super::HistoryService, id: &str) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while service.privacy_operation(id.into()).unwrap().state
+            != crate::privacy_operation::PrivacyState::Completed
+        {
+            assert!(std::time::Instant::now() < end);
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
     use super::*;
 
     #[test]
@@ -1759,6 +1956,7 @@ mod output_permit_tests {
         service
             .forget_term("forget-sync".into(), "Inputia".into(), 1)
             .unwrap();
+        wait_for_privacy(&service, "forget-sync");
         clipboard
             .execute_batch("DROP TABLE unified_source_outbox;")
             .unwrap();
@@ -1904,6 +2102,7 @@ mod output_permit_tests {
                 .unwrap(),
             2
         );
+        wait_for_privacy(&service, "forget-1");
         assert!(!service.term_snapshot_is_current(snapshot).unwrap());
         assert!(service.list_terms(10, 0).unwrap().is_empty());
         assert_eq!(
@@ -2270,5 +2469,215 @@ mod attachment_pipeline_tests {
         service.release_attachment(lease).unwrap();
         maintain(&service);
         assert!(!path.exists());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod privacy_pipeline_tests {
+    use super::*;
+    use crate::privacy_operation::{PrivacyRequest, PrivacyScope, PrivacyState};
+    fn fixture() -> (tempfile::TempDir, HistoryService) {
+        let root = tempfile::tempdir().unwrap();
+        Connection::open(root.path().join("history.db")).unwrap().execute_batch("CREATE TABLE transcription_history(id INTEGER PRIMARY KEY AUTOINCREMENT,file_name TEXT,timestamp INTEGER,saved INTEGER,title TEXT,transcription_text TEXT,post_processed_text TEXT)").unwrap();
+        Connection::open(root.path().join("clipboard.db")).unwrap().execute_batch("CREATE TABLE clipboard_history(id INTEGER PRIMARY KEY AUTOINCREMENT,content_type TEXT,full_text TEXT,title TEXT,is_favorite INTEGER,is_pinned INTEGER,created_at INTEGER,image_path TEXT,source_app TEXT)").unwrap();
+        let service = start(root.path());
+        service.synchronize().unwrap();
+        (root, service)
+    }
+    fn start(root: &std::path::Path) -> HistoryService {
+        HistoryService::start_with_attachment_context(
+            root.into(),
+            "privacy-fixture".into(),
+            |_| {},
+            None,
+        )
+        .unwrap()
+    }
+    fn request(id: &str) -> PrivacyRequest {
+        PrivacyRequest {
+            operation_id: id.into(),
+            scope: PrivacyScope::ForgetTerm {
+                term: "不留明文秘密".into(),
+            },
+            expected_epoch: 1,
+        }
+    }
+    fn completed(service: &HistoryService, id: &str) {
+        let until = Instant::now() + Duration::from_secs(4);
+        loop {
+            if service.privacy_operation(id.into()).unwrap().state == PrivacyState::Completed {
+                return;
+            }
+            assert!(Instant::now() < until);
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+    #[test]
+    fn startup_pages_do_not_advertise_unverified_completion() {
+        let (root, service) = fixture();
+        service
+            .call_metadata(|worker| {
+                for n in 0..33 {
+                    let request = PrivacyRequest {
+                        operation_id: format!("audit-{n:02}"),
+                        scope: PrivacyScope::ClearLearned {},
+                        expected_epoch: worker.store.policy_epoch().unwrap(),
+                    };
+                    worker.store.begin_privacy(&worker.learning_key, &request)?;
+                    worker.advance_privacy(&request.operation_id, false)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        drop(service);
+        Connection::open(root.path().join("knowledge/personalization.sqlite"))
+            .unwrap()
+            .execute(
+                "DELETE FROM privacy_domain_receipts WHERE operation_id='audit-32'",
+                [],
+            )
+            .unwrap();
+        let service = start(root.path());
+        let status = service.privacy_operation("audit-32".into()).unwrap();
+        assert_ne!(status.state, PrivacyState::Completed);
+        assert!(!status.domain_receipts.personalization);
+        let status = service.privacy_operation("audit-32".into()).unwrap();
+        assert_eq!(status.state, PrivacyState::PartialFailure);
+    }
+    #[test]
+    fn forged_phase_without_domain_receipt_is_not_completion_evidence() {
+        let (root, service) = fixture();
+        std::fs::write(root.path().join("knowledge"), b"blocked").unwrap();
+        service.begin_privacy(request("forged")).unwrap();
+        drop(service);
+        Connection::open(root.path().join("integration.db")).unwrap().execute("UPDATE privacy_operations SET completed=1,personalization_epoch=2,failure=NULL WHERE operation_id='forged'",[]).unwrap();
+        std::fs::remove_file(root.path().join("knowledge")).unwrap();
+        let service = start(root.path());
+        assert_eq!(
+            service.privacy_operation("forged".into()).unwrap().state,
+            PrivacyState::PartialFailure
+        );
+        assert!(service.privacy_readable().is_err());
+        assert!(!root
+            .path()
+            .join("knowledge/personalization.sqlite")
+            .exists());
+    }
+    #[test]
+    fn late_initial_ack_cannot_erase_new_same_epoch_reader() {
+        let (_root, service) = fixture();
+        // B 已发出 e1 barrier，A 随后拿到 e1；B 的 ACK 最后才到。
+        service.issue_privacy_reader("host".into(), 1).unwrap();
+        service
+            .acknowledge_privacy_reader("host".into(), 1)
+            .unwrap();
+        let result = service.begin_privacy(request("late-ack")).unwrap();
+        assert_eq!(result.epoch, 2);
+        thread::sleep(Duration::from_millis(350));
+        let result = service.privacy_operation("late-ack".into()).unwrap();
+        assert!(result.domain_receipts.personalization);
+        assert!(!result.domain_receipts.readers);
+        assert_ne!(result.state, PrivacyState::Completed);
+        service
+            .acknowledge_privacy_reader("host".into(), 2)
+            .unwrap();
+        completed(&service, "late-ack");
+    }
+    #[test]
+    fn startup_conservatively_expires_disconnected_old_reader() {
+        let (root, service) = fixture();
+        service
+            .issue_privacy_reader("shared-terms-only-host".into(), 1)
+            .unwrap();
+        service.begin_privacy(request("restart-reader")).unwrap();
+        drop(service);
+        let restart = Instant::now();
+        let service = start(root.path());
+        assert!(
+            !service
+                .privacy_operation("restart-reader".into())
+                .unwrap()
+                .domain_receipts
+                .readers
+        );
+        completed(&service, "restart-reader");
+        assert!(
+            restart.elapsed() >= Duration::from_millis(crate::privacy_operation::READER_LEASE_MS)
+        );
+        assert!(service.privacy_readable().is_ok());
+    }
+    #[test]
+    fn missing_completed_domain_receipt_blocks_without_redeleting_new_data() {
+        let (root, service) = fixture();
+        service.begin_privacy(request("old-complete")).unwrap();
+        completed(&service, "old-complete");
+        drop(service);
+        let db = Connection::open(root.path().join("knowledge/personalization.sqlite")).unwrap();
+        db.execute("DELETE FROM privacy_domain_receipts", [])
+            .unwrap();
+        db.execute("INSERT INTO evidence(event_id,fingerprint,text,normalized,previous,code,weight,created) VALUES('new','digest','不留明文秘密','不留明文秘密','','',1,0)",[]).unwrap();
+        let service = start(root.path());
+        let operation = service.privacy_operation("old-complete".into()).unwrap();
+        assert_eq!(operation.state, PrivacyState::PartialFailure);
+        assert!(!operation.domain_receipts.personalization);
+        assert!(service.privacy_readable().is_err());
+        assert_eq!(
+            db.query_row("SELECT COUNT(*) FROM evidence", [], |r| r.get::<_, u32>(0))
+                .unwrap(),
+            1
+        );
+    }
+    #[test]
+    fn partial_failure_is_durable_and_recovers_after_domain_becomes_available() {
+        let (root, service) = fixture();
+        std::fs::write(root.path().join("knowledge"), b"blocked directory").unwrap();
+        service.begin_privacy(request("blocked-domain")).unwrap();
+        thread::sleep(Duration::from_millis(350));
+        assert_eq!(
+            service
+                .privacy_operation("blocked-domain".into())
+                .unwrap()
+                .state,
+            PrivacyState::PartialFailure
+        );
+        drop(service);
+        std::fs::remove_file(root.path().join("knowledge")).unwrap();
+        let service = start(root.path());
+        completed(&service, "blocked-domain");
+        assert_eq!(service.policy_epoch().unwrap(), 2);
+    }
+    #[test]
+    fn accepted_payload_is_encrypted_and_completed_payload_removed() {
+        let (root, service) = fixture();
+        service.issue_privacy_reader("host".into(), 1).unwrap();
+        let req = request("no-plaintext");
+        service.begin_privacy(req.clone()).unwrap();
+        let db = Connection::open(root.path().join("integration.db")).unwrap();
+        let payload: Vec<u8> = db
+            .query_row("SELECT payload FROM privacy_operations", [], |r| r.get(0))
+            .unwrap();
+        assert!(!payload
+            .windows("不留明文秘密".len())
+            .any(|part| part == "不留明文秘密".as_bytes()));
+        service
+            .acknowledge_privacy_reader("host".into(), 2)
+            .unwrap();
+        completed(&service, "no-plaintext");
+        assert!(db
+            .query_row("SELECT payload IS NULL FROM privacy_operations", [], |r| {
+                r.get::<_, bool>(0)
+            })
+            .unwrap());
+        assert_eq!(
+            service.begin_privacy(req).unwrap().state,
+            PrivacyState::Completed
+        );
+        let personal =
+            Connection::open(root.path().join("knowledge/personalization.sqlite")).unwrap();
+        let marker: String = personal
+            .query_row("SELECT text FROM forgotten", [], |r| r.get(0))
+            .unwrap();
+        assert_ne!(marker, "不留明文秘密");
+        assert_eq!(marker.len(), 64);
     }
 }

@@ -12,6 +12,7 @@ pub mod learning;
 pub mod output_ledger;
 pub mod personalization;
 pub mod private_key;
+pub mod privacy_operation;
 pub mod protocol;
 pub mod service;
 pub mod source;

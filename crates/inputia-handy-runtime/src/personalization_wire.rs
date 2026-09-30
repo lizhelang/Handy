@@ -74,6 +74,8 @@ pub struct PersonalizationReply {
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub privacy_barrier: Option<crate::voice_protocol::VoicePolicyBarrier>,
 }
 
 impl PersonalizationRequest {

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import type { PrivacyOperation } from "../src/lib/privacyOperations";
 
 declare global {
   interface Window {
@@ -6,6 +7,8 @@ declare global {
       calls: { action: string; payload: Record<string, unknown> }[];
       fail: string;
       clipboard: string;
+      privacy: PrivacyOperation[];
+      holdPrivacy: boolean;
     };
   }
 }
@@ -24,6 +27,8 @@ async function mountKnowledge(page: Page, app = false) {
       calls: [] as { action: string; payload: Record<string, unknown> }[],
       fail: "",
       clipboard: "",
+      privacy: [] as PrivacyOperation[],
+      holdPrivacy: false,
     };
     let personalization = {
       enabled: true,
@@ -136,16 +141,42 @@ async function mountKnowledge(page: Page, app = false) {
           const payload = args?.payload as Record<string, unknown>;
           harness.calls.push({ action, payload });
           if (harness.fail === action) throw "synthetic failure";
-          if (action.startsWith("personalization_")) {
-            if (action === "personalization_enabled")
-              personalization.enabled = payload.enabled as boolean;
-            if (
-              action === "personalization_forget" ||
-              action === "personalization_clear"
-            ) {
+          if (action === "privacy_status")
+            return {
+              epoch: harness.privacy.length ? 2 : 1,
+              operations: structuredClone(harness.privacy),
+            };
+          if (action === "privacy_begin") {
+            let operation = harness.privacy.find(
+              (operation) => operation.operation_id === payload.operation_id,
+            );
+            if (!operation) {
+              operation = {
+                operation_id: payload.operation_id as string,
+                scope: (
+                  payload.scope as { kind: "forget_term" | "clear_learned" }
+                ).kind,
+                expected_epoch: payload.expected_epoch as number,
+                epoch: 2,
+                state: harness.holdPrivacy ? "accepted" : "completed",
+                domain_receipts: {
+                  integration: true,
+                  personalization: !harness.holdPrivacy,
+                  readers: !harness.holdPrivacy,
+                },
+                failure: null,
+              };
+              harness.privacy.push(operation);
+            }
+            if (!harness.holdPrivacy) {
               personalization.learned_terms = [];
               personalization.counts = { terms: 0, events: 0, imports: 0 };
             }
+            return operation;
+          }
+          if (action.startsWith("personalization_")) {
+            if (action === "personalization_enabled")
+              personalization.enabled = payload.enabled as boolean;
             if (action === "personalization_backfill")
               personalization.backfill_summary = {
                 imported: 2,
@@ -660,7 +691,7 @@ test("forget and clear require confirmation, retain data on failure and refresh 
   expect(
     await page.evaluate(() =>
       window.__KNOWLEDGE_TEST__.calls.filter(
-        (c) => c.action === "personalization_forget",
+        (c) => c.action === "privacy_begin",
       ),
     ),
   ).toEqual([]);
@@ -668,7 +699,7 @@ test("forget and clear require confirmation, retain data on failure and refresh 
     .getByRole("button", { name: "Forget 示例词", exact: true })
     .click();
   await page.evaluate(() => {
-    window.__KNOWLEDGE_TEST__.fail = "personalization_forget";
+    window.__KNOWLEDGE_TEST__.fail = "privacy_begin";
   });
   await page.getByRole("button", { name: "Confirm learning change" }).click();
   await expect(page.getByRole("alert")).toContainText("synthetic failure");
@@ -687,12 +718,12 @@ test("forget and clear require confirmation, retain data on failure and refresh 
   expect(
     await page.evaluate(() =>
       window.__KNOWLEDGE_TEST__.calls.filter(
-        (c) => c.action === "personalization_clear",
+        (c) => c.action === "privacy_begin",
       ),
     ),
   ).toEqual([]);
   await page.evaluate(() => {
-    window.__KNOWLEDGE_TEST__.fail = "personalization_clear";
+    window.__KNOWLEDGE_TEST__.fail = "privacy_begin";
   });
   await page.getByRole("button", { name: "Confirm learning change" }).click();
   await expect(page.getByRole("alert")).toContainText("synthetic failure");
@@ -707,4 +738,69 @@ test("forget and clear require confirmation, retain data on failure and refresh 
     page.getByRole("group", { name: "Confirm learning change" }),
   ).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("privacy accepted and partial recovery remain visible and timeout retry keeps operation identity", async ({
+  page,
+}) => {
+  await mountKnowledge(page);
+  await page.evaluate(() => {
+    window.__KNOWLEDGE_TEST__.holdPrivacy = true;
+    window.__KNOWLEDGE_TEST__.fail = "privacy_begin";
+  });
+  await page
+    .getByRole("button", { name: "Forget 示例词", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Confirm learning change" }).click();
+  await expect(
+    page.getByRole("button", { name: "Retry the same forgetting operation" }),
+  ).toBeVisible();
+  const first = await page.evaluate(
+    () =>
+      window.__KNOWLEDGE_TEST__.calls.find(
+        (call) => call.action === "privacy_begin",
+      )?.payload,
+  );
+  await page.evaluate(() => {
+    window.__KNOWLEDGE_TEST__.fail = "";
+  });
+  await page
+    .getByRole("button", { name: "Retry the same forgetting operation" })
+    .click();
+  const calls = await page.evaluate(() =>
+    window.__KNOWLEDGE_TEST__.calls
+      .filter((call) => call.action === "privacy_begin")
+      .map((call) => call.payload),
+  );
+  expect(calls.at(-1)).toEqual(first);
+  await expect(
+    page.getByText("Forgetting accepted — revocation is durable"),
+  ).toBeVisible();
+  await expect(page.getByText(/Original history, attachments/)).toBeVisible();
+  await page.evaluate(() => {
+    const operation = window.__KNOWLEDGE_TEST__.privacy[0];
+    operation.state = "partial_failure";
+    operation.failure = "personalization_unavailable";
+  });
+  await expect(
+    page.getByText("Partially complete — recovery will retry automatically"),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    window.__KNOWLEDGE_TEST__.privacy[0].failure =
+      "privacy_domain_receipt_missing";
+  });
+  await expect(
+    page.getByText(/Completion evidence is missing or inconsistent/),
+  ).toBeVisible();
+
+  await page.evaluate(() => {
+    const operation = window.__KNOWLEDGE_TEST__.privacy[0];
+    operation.state = "completed";
+    operation.failure = null;
+    operation.domain_receipts.personalization = true;
+    operation.domain_receipts.readers = true;
+  });
+  await expect(
+    page.getByText("Learning evidence forgotten; active readers settled"),
+  ).toBeVisible();
 });

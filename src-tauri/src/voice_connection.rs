@@ -151,6 +151,9 @@ impl VoiceConnection {
                 .map_err(|_| ConnectionError::PolicySync)?;
             self.context
                 .acknowledge_policy(current.clone(), &current)
+                .map_err(|_| ConnectionError::PolicySync)?;
+            history
+                .acknowledge_privacy_reader(self.client.instance_id.clone(), current.policy_epoch)
                 .map_err(|_| ConnectionError::PolicySync)
         })();
         if result.is_err() {
@@ -185,25 +188,60 @@ impl VoiceConnection {
                     use inputia_handy_runtime::personalization_wire::{
                         PersonalizationReply, CAPABILITY,
                     };
-                    let accepted = history.policy_epoch().ok().is_some_and(|epoch| {
-                        request
-                            .validate_for(&self.context.voice_peer(epoch))
+                    let current = history
+                        .policy_epoch()
+                        .map_err(|_| ConnectionError::PolicyUnavailable)?;
+                    // 旧连接只能取撤销屏障；其 query/feedback 不进入模型。
+                    let accepted = request.policy_epoch <= current
+                        && request
+                            .validate_for(&self.context.voice_peer(request.policy_epoch))
                             .is_ok()
-                    }) && self.client.capabilities.iter().any(|c| c == CAPABILITY);
-                    let reply = match (accepted, app) {
+                        && self.client.capabilities.iter().any(|c| c == CAPABILITY);
+                    let stale = accepted && request.policy_epoch != current;
+                    let mut reply = match (accepted && !stale, app) {
                         (true, Some(app)) => crate::personalization::respond(app, &request),
                         _ => PersonalizationReply {
                             status: "personalization".into(),
-                            request_id: request.request_id,
-                            server_instance: request.server_instance,
+                            request_id: request.request_id.clone(),
+                            server_instance: request.server_instance.clone(),
                             enabled: false,
                             epoch: 0,
                             result: None,
-                            code: Some("personalization_unauthorized".into()),
+                            code: Some("personalization_revoked".into()),
+                            privacy_barrier: None,
                         },
                     };
+                    if stale {
+                        reply.privacy_barrier=Some(inputia_handy_runtime::voice_protocol::VoicePolicyBarrier::new(history.voice_terms_version().map_err(|_|ConnectionError::PolicyUnavailable)?).map_err(|_|ConnectionError::PolicySync)?);
+                    } else if reply.enabled && matches!(request.personalization,inputia_handy_runtime::personalization_wire::PersonalizationCommand::Policy) {
+                        if history.issue_privacy_reader(self.client.instance_id.clone(),current).is_err() {
+                            reply.enabled=false;reply.result=None;reply.code=Some("privacy_epoch_revoked".into());
+                        }
+                    }
                     transport::write_frame(&mut self.stream, &reply)
-                        .map_err(|_| ConnectionError::ControlFrame)
+                        .map_err(|_| ConnectionError::ControlFrame)?;
+                    if let Some(barrier) = reply.privacy_barrier {
+                        self.context.invalidate_policy();
+                        let ack: inputia_handy_runtime::voice_protocol::VoicePolicyAcknowledgement =
+                            transport::read_frame(&mut self.stream)
+                                .map_err(|_| ConnectionError::PolicySync)?;
+                        let current = history
+                            .voice_terms_version()
+                            .map_err(|_| ConnectionError::PolicyUnavailable)?;
+                        barrier
+                            .validate_ack(&ack, &current)
+                            .map_err(|_| ConnectionError::PolicySync)?;
+                        self.context
+                            .acknowledge_policy(current.clone(), &current)
+                            .map_err(|_| ConnectionError::PolicySync)?;
+                        history
+                            .acknowledge_privacy_reader(
+                                self.client.instance_id.clone(),
+                                current.policy_epoch,
+                            )
+                            .map_err(|_| ConnectionError::PolicySync)?;
+                    }
+                    Ok(())
                 }
                 VoiceWireRequest::TypedCapture(request) => {
                     use inputia_handy_runtime::voice_protocol::{
@@ -381,6 +419,9 @@ impl VoiceConnection {
                         if crate::settings::get_settings(app).custom_words != custom_words {
                             return Err(VoiceReplyError::Unauthorized);
                         }
+                        history
+                            .issue_privacy_reader(self.client.instance_id.clone(), epoch)
+                            .map_err(|_| VoiceReplyError::Unauthorized)?;
                         Ok(SharedTermsReply::SharedTerms {
                             request_id: request.request_id,
                             lease_id: lease.lease_id,

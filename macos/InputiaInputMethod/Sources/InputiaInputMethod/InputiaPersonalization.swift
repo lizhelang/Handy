@@ -218,6 +218,8 @@ final class InputiaPersonalization {
   private var enabled = false
   private var deadline: TimeInterval = 0
   private var timer: Timer?
+  private var privacyRevision: UInt64 = 0
+  private var privacyObserver: NSObjectProtocol?
   private var policyBusy = false
   private var queryBusy = false
   private var feedbackCount = 0
@@ -243,11 +245,17 @@ final class InputiaPersonalization {
   var allowed: Bool { enabled && ProcessInfo.processInfo.systemUptime < deadline }
   func start() {
     guard timer == nil else { return }
+    privacyObserver = NotificationCenter.default.addObserver(forName: Notification.Name("InputiaPrivacyRevoked"), object: nil, queue: nil) { [weak self] _ in
+      guard let self else { return }; self.privacyRevision &+= 1; self.enabled = false; self.deadline = 0; self.reset(); self.policyChanged?()
+    }
     poll()
-    timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in self?.poll() }
+    timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.poll() }
     if let timer { RunLoop.main.add(timer, forMode: .common) }
   }
-  func stop() { timer?.invalidate(); timer = nil; enabled = false; reset() }
+  func stop() { timer?.invalidate(); timer = nil; enabled = false; reset()
+    if let privacyObserver { NotificationCenter.default.removeObserver(privacyObserver) }; privacyObserver = nil
+  }
+  deinit { if let privacyObserver { NotificationCenter.default.removeObserver(privacyObserver) } }
   func reset() { cache.removeAll(); context.reset(); invalidateView() }
   func invalidateView() {
     resultsFrozen = false
@@ -264,17 +272,19 @@ final class InputiaPersonalization {
     guard !policyBusy else { return }
     policyBusy = true
     let start = ProcessInfo.processInfo.systemUptime
-    InputiaVoiceInputLauncher.personalization(.init(kind: "policy"), deadline: start + 3) { [weak self] reply in
+    let privacyVersion = privacyRevision
+    InputiaVoiceInputLauncher.personalization(.init(kind: "policy"), deadline: start + 2) { [weak self] reply in
       guard let self else { return }; self.policyBusy = false
+      guard self.privacyRevision == privacyVersion else { return }
       InputiaPersonalizationDiagnostics.record("policy", reply?.code ?? (reply == nil ? "no_reply" : "ok"),
-        flags: (reply?.enabled == true ? 1 : 0) | (ProcessInfo.processInfo.systemUptime < start + 3 ? 2 : 0) | (self.timer != nil ? 4 : 0))
+        flags: (reply?.enabled == true ? 1 : 0) | (ProcessInfo.processInfo.systemUptime < start + 2 ? 2 : 0) | (self.timer != nil ? 4 : 0))
       guard self.timer != nil || self.allowed else { return }
-      guard let reply, ProcessInfo.processInfo.systemUptime < start + 3 else {
+      guard let reply, ProcessInfo.processInfo.systemUptime < start + 2 else {
         self.enabled = false; self.reset(); return
       }
       if self.epoch != reply.epoch || self.server != reply.server_instance || !reply.enabled { self.reset() }
       self.epoch = reply.epoch; self.server = reply.server_instance
-      self.enabled = reply.enabled; self.deadline = start + 3
+      self.enabled = reply.enabled; self.deadline = start + 2
       self.policyChanged?()
       let expiry = self.deadline
       DispatchQueue.main.asyncAfter(deadline: .now() + max(0, expiry - ProcessInfo.processInfo.systemUptime)) { [weak self] in

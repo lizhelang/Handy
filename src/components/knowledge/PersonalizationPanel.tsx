@@ -1,6 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  beginPrivacyOperation,
+  getPrivacyStatus,
+  type PrivacyOperation,
+  type PrivacyRequest,
+  type PrivacyScope,
+} from "@/lib/privacyOperations";
 
 interface BackfillSummary {
   imported?: number;
@@ -34,6 +41,12 @@ const button =
 export function PersonalizationPanel() {
   const { t } = useTranslation();
   const [status, setStatus] = useState<PersonalizationStatus>();
+  const [operations, setOperations] = useState<PrivacyOperation[]>([]);
+  const retryRequest = useRef<PrivacyRequest>();
+  const [privacyRetry, setPrivacyRetry] = useState(false);
+  const privacyPending = operations.some(
+    (operation) => operation.state !== "completed",
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [source, setSource] = useState("typed");
@@ -55,6 +68,72 @@ export function PersonalizationPanel() {
       setBusy(false);
     }
   };
+  const forget = async (scope: PrivacyScope) => {
+    setBusy(true);
+    setError("");
+    try {
+      const current = await getPrivacyStatus();
+      const payload = retryRequest.current ?? {
+        operation_id: crypto.randomUUID(),
+        scope,
+        expected_epoch: current.epoch,
+      };
+      retryRequest.current = payload;
+      const operation = await beginPrivacyOperation(payload);
+      setOperations((previous) => [
+        operation,
+        ...previous.filter(
+          (item) => item.operation_id !== operation.operation_id,
+        ),
+      ]);
+      retryRequest.current = undefined;
+      setPrivacyRetry(false);
+      setConfirm(undefined);
+      setStatus(undefined);
+      if (operation.state === "completed") setStatus(await request("status"));
+    } catch (cause) {
+      setError(String(cause));
+      setPrivacyRetry(retryRequest.current !== undefined);
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    let loadedCompletion = "";
+    const refresh = async () => {
+      try {
+        const next = await getPrivacyStatus();
+        if (!active) return;
+        setOperations(next.operations);
+        const pending = next.operations.some(
+          (operation) => operation.state !== "completed",
+        );
+        const completion = next.operations
+          .filter((operation) => operation.state === "completed")
+          .map((operation) => operation.operation_id)
+          .join(":");
+        if (!pending && completion && completion !== loadedCompletion) {
+          const nextStatus = await request("status");
+          if (active) {
+            setStatus(nextStatus);
+            setError("");
+          }
+        }
+        if (!pending) loadedCompletion = completion;
+      } catch (cause) {
+        if (active && !String(cause).includes("privacy_operation_pending"))
+          setError(String(cause));
+      }
+      if (active) timer = setTimeout(() => void refresh(), 750);
+    };
+    void refresh();
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, []);
   useEffect(() => {
     let active = true;
     request("status")
@@ -62,7 +141,8 @@ export function PersonalizationPanel() {
         if (active) setStatus(value);
       })
       .catch((cause) => {
-        if (active) setError(String(cause));
+        if (active && !String(cause).includes("privacy_operation_pending"))
+          setError(String(cause));
       });
     return () => {
       active = false;
@@ -77,6 +157,53 @@ export function PersonalizationPanel() {
       <p className="my-2 text-sm opacity-65">
         {t("personalization.description")}
       </p>
+      <p className="my-2 text-sm opacity-65">
+        {t("personalization.privacy.scope")}
+      </p>
+      {operations.slice(0, 5).map((operation) => (
+        <div
+          key={operation.operation_id}
+          role="status"
+          className="my-2 rounded-lg border border-mid-gray/20 p-3 text-sm"
+        >
+          <strong>{t(`personalization.privacy.${operation.state}`)}</strong>
+          <p>
+            {t("personalization.privacy.receipts", {
+              integration: t(
+                operation.domain_receipts.integration
+                  ? "personalization.privacy.done"
+                  : "personalization.privacy.waiting",
+              ),
+              personalization: t(
+                operation.domain_receipts.personalization
+                  ? "personalization.privacy.done"
+                  : "personalization.privacy.waiting",
+              ),
+              readers: t(
+                operation.domain_receipts.readers
+                  ? "personalization.privacy.done"
+                  : "personalization.privacy.waiting",
+              ),
+            })}
+          </p>
+          {operation.failure &&
+            operation.failure !== "personalization_unavailable" &&
+            operation.failure !== "privacy_verification_pending" && (
+              <p>{t("personalization.privacy.repair")}</p>
+            )}
+        </div>
+      ))}
+      {privacyRetry && (
+        <button
+          className={button}
+          disabled={busy || privacyPending}
+          onClick={() => {
+            if (retryRequest.current) void forget(retryRequest.current.scope);
+          }}
+        >
+          {t("personalization.privacy.retry")}
+        </button>
+      )}
       {error && (
         <p role="alert" className="my-2 text-sm text-red-500">
           {t("knowledge.error", { error })}
@@ -90,7 +217,7 @@ export function PersonalizationPanel() {
       {!status ? (
         <button
           className={button}
-          disabled={busy}
+          disabled={busy || privacyPending}
           onClick={() => void run(() => request("status"))}
         >
           {t(error ? "personalization.retry" : "knowledge.loading")}
@@ -101,7 +228,7 @@ export function PersonalizationPanel() {
             <input
               type="checkbox"
               checked={status.enabled}
-              disabled={busy}
+              disabled={busy || privacyPending}
               onChange={(event) =>
                 void run(() =>
                   request("enabled", { enabled: event.target.checked }),
@@ -220,7 +347,7 @@ export function PersonalizationPanel() {
                 <span className="min-w-0 break-words text-sm">{term.text}</span>
                 <button
                   className={button}
-                  disabled={busy}
+                  disabled={busy || privacyPending}
                   aria-label={t("personalization.forgetTerm", {
                     text: term.text,
                   })}
@@ -240,7 +367,7 @@ export function PersonalizationPanel() {
           )}
           <button
             className={button}
-            disabled={busy}
+            disabled={busy || privacyPending}
             onClick={() => setConfirm({ kind: "clear" })}
           >
             {t("personalization.clear")}
@@ -264,34 +391,38 @@ export function PersonalizationPanel() {
               <div className="flex gap-2">
                 <button
                   className={button}
-                  disabled={busy}
+                  disabled={busy || privacyPending}
                   onClick={() =>
-                    void run(() => {
-                      if (confirm.kind === "backfill")
-                        setStatus((current) =>
-                          current
-                            ? { ...current, backfill_summary: null }
-                            : current,
-                        );
-                      return confirm.kind === "backfill"
-                        ? request("backfill", {
-                            source,
-                            limit,
-                            ...(confirm.cursor
-                              ? { cursor: confirm.cursor }
-                              : {}),
-                          })
-                        : confirm.kind === "forget"
-                          ? request("forget", { text: confirm.text })
-                          : request("clear");
-                    })
+                    confirm.kind !== "backfill"
+                      ? void forget(
+                          confirm.kind === "forget"
+                            ? { kind: "forget_term", term: confirm.text ?? "" }
+                            : { kind: "clear_learned" },
+                        )
+                      : void run(() => {
+                          if (confirm.kind === "backfill")
+                            setStatus((current) =>
+                              current
+                                ? { ...current, backfill_summary: null }
+                                : current,
+                            );
+                          return confirm.kind === "backfill"
+                            ? request("backfill", {
+                                source,
+                                limit,
+                                ...(confirm.cursor
+                                  ? { cursor: confirm.cursor }
+                                  : {}),
+                              })
+                            : request("status");
+                        })
                   }
                 >
                   {t("personalization.confirm")}
                 </button>
                 <button
                   className={button}
-                  disabled={busy}
+                  disabled={busy || privacyPending}
                   onClick={() => setConfirm(undefined)}
                 >
                   {t("knowledge.cancel")}

@@ -84,6 +84,16 @@ pub async fn knowledge_request(
                 manager.service.synchronize()?;
             }
         }
+        if action.starts_with("privacy_") {
+            let manager=worker_app.try_state::<std::sync::Arc<crate::managers::integration::IntegrationManager>>().ok_or("privacy_service_unavailable")?;
+            let service=&manager.service;
+            return match action.as_str() {
+                "privacy_status"=>Ok(serde_json::json!({"epoch":service.policy_epoch()?,"operations":service.privacy_operations()?})),
+                "privacy_begin"=>serde_json::to_value(service.begin_privacy(serde_json::from_value(payload).map_err(|_|"privacy_request_invalid")?)?).map_err(|_|"privacy_reply_invalid".into()),
+                "privacy_operation"=>serde_json::to_value(service.privacy_operation(payload.get("operation_id").and_then(Value::as_str).ok_or("privacy_operation_missing")?.into())?).map_err(|_|"privacy_reply_invalid".into()),
+                _=>Err("privacy_action_unknown".into()),
+            };
+        }
         if action.starts_with("personalization_") {
             return inputia_handy_runtime::personalization::manage(&root, &action, &payload);
         }

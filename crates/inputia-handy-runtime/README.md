@@ -91,3 +91,32 @@ cargo test --manifest-path crates/inputia-handy-runtime/Cargo.toml --offline --l
 ```
 
 只读导入示例仍可通过 `examples/import_probe.rs` 使用单独的探针输出库；不要把探针目标指向实际用户库。
+
+## 跨域真正遗忘与 Host 撤销
+
+`HistoryService::begin_privacy` 是遗忘操作的协调入口。`PrivacyRequest` 包含
+`operation_id`、`expected_epoch` 和 `forget_term` / `clear_learned` 范围；旧的
+`HistoryService::forget_term` 委托此入口，返回的 epoch 只表示已接受。
+普通候选抑制（reject/undo）仍保持原有上下文语义，不冒充跨域遗忘。
+
+- 接受事务在 `integration.db` 同时撤销共享贡献、保存重放屏障与域回执、推进一次全局 epoch，
+  并写入 `PrivacyOperation`。不在两个数据库之间假装拥有单一 SQLite 事务。
+- 个性化域独立保存 `operation_id + HMAC 请求摘要 → 本域 epoch` 回执；域提交后、协调日志更新前
+  崩溃可幂等恢复。失败保留已完成进度，后台每 250 ms 尝试恢复。
+- 恢复载荷用既有学习密钥 AES-256-GCM 加密，完成后清除；操作摘要使用独立域前缀 HMAC。
+  个性化旧明文遗忘标记迁移成本域密钥 HMAC，保留旧事件拒绝回执，不再次保存被遗忘正文。
+- 启动每页核验最多 32 条终态的统一域与个性化域独立回执。审计未完成时不发布“完成”；
+  已完成操作缺少域回执时标记部分失败并暂停学习，不重新删除后来新写入的证据。
+- Host 每秒刷新个性化策略，个人候选租约最长两秒；共享词条原有最长一秒租约也登记到协调服务。
+  在线回复携带现有 `VoicePolicyBarrier`，主线程先清理候选、上下文和在途策略票据，再发送 ACK。
+  ACK 只结算严格早于该 barrier epoch 的租约，避免同 Host 多连接的迟到 ACK 消除新租约。
+  断连不冒充 ACK；服务重启后旧租约从启动时刻再保守等待两秒。
+
+状态为 `accepted`、`processing`、`partial_failure`、`completed`。只有两域回执及旧读者全部
+结算才显示完成。控制中心通过现有 `knowledge_request` 的 `privacy_status`、`privacy_begin`、
+`privacy_operation` 查询持久摘要，返回 operation ID、范围种类、epoch、各域状态和原因码，不返回词正文；
+超时重试必须复用原操作 ID 与参数。前端会展示启动恢复、完成范围和缺回执的修复提示。
+
+此范围移除两个学习库中的学习证据及共享贡献；原始历史、附件、公开基础词典及设置中手动添加的词条
+会保留。磁盘备份、已发送给外部模型的上下文和磁盘介质物理擦除不在此操作范围。
+当前验收使用临时 SQLite、合成 socket/Swift 状态机与浏览器 IPC 夹具，不代表已安装 Host 的现场验收。
