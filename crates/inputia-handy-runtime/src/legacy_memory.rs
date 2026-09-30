@@ -320,6 +320,10 @@ pub(crate) struct LegacyMemory {
     domain: Option<String>,
     failure: Option<String>,
     observed_version: Cell<(u64, u64)>,
+    reconciled_projection: Option<(
+        crate::memory_projection_clock::Stamp,
+        crate::memory_projection_clock::Stamp,
+    )>,
 }
 impl LegacyMemory {
     pub(crate) fn unavailable(context: LegacyMemoryContext, key: [u8; 32], reason: String) -> Self {
@@ -330,6 +334,7 @@ impl LegacyMemory {
             domain: None,
             failure: Some(reason),
             observed_version: Cell::new((0, 0)),
+            reconciled_projection: None,
         }
     }
     pub(crate) fn open(
@@ -346,6 +351,7 @@ impl LegacyMemory {
                 domain: None,
                 failure: None,
                 observed_version: Cell::new((0, 0)),
+                reconciled_projection: None,
             });
         }
         let path = context.path.as_ref().ok_or("memory_handoff_required")?;
@@ -470,6 +476,11 @@ impl LegacyMemory {
             )
             .map_err(db_err)?;
         tx.commit().map_err(db_err)?;
+        crate::memory_projection_clock::install(
+            &db,
+            crate::memory_projection_clock::Domain::Sources,
+        )
+        .map_err(db_err)?;
         Ok(Self {
             context,
             db: Some(db),
@@ -477,6 +488,7 @@ impl LegacyMemory {
             domain: Some(domain),
             failure: None,
             observed_version: Cell::new(version),
+            reconciled_projection: None,
         })
     }
     fn db(&self) -> Result<&Connection> {
@@ -971,10 +983,39 @@ impl LegacyMemory {
     }
     /// 源投影必须先经过完整同步屏障；新修订或墓碑撤销旧贡献，绝不自动重学新正文。
     pub(crate) fn reconcile_projection(&mut self, projection: &Connection) -> Result<()> {
+        self.reconcile_projection_observed(projection, || {})
+    }
+    fn reconcile_projection_observed(
+        &mut self,
+        projection: &Connection,
+        mut after_record: impl FnMut(),
+    ) -> Result<()> {
         if self.db.is_none() {
             return Ok(());
         }
-        let refs:Vec<(String,String,u64)>=self.db()?.prepare("SELECT store_id,record_id,revision FROM memory_sources WHERE deleted=0 AND store_id NOT LIKE 'commit:%'").map_err(db_err)?.query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(db_err)?.collect::<std::result::Result<_,_>>().map_err(db_err)?;
+        // 文件身份/代数下限始终先核验；缓存只省掉来源逐行核对，不能旁路域的完整性检查。
+        let sources_version =
+            crate::memory_projection_clock::external_version(self.db()?).map_err(db_err)?;
+        let projection_version =
+            crate::memory_projection_clock::external_version(projection).map_err(db_err)?;
+        let sources_before =
+            crate::memory_projection_clock::for_cache(self.db()?).map_err(db_err)?;
+        let projection_before =
+            crate::memory_projection_clock::for_cache(projection).map_err(db_err)?;
+        if let (Some(projected), Some(sources)) = (&projection_before, &sources_before) {
+            if self.reconciled_projection.as_ref() == Some(&(projected.clone(), sources.clone())) {
+                return Ok(());
+            }
+        }
+        self.reconciled_projection = None;
+        // 同一写事务覆盖来源集合的读取与撤销，不把审核期间外部新增的来源误记为已审核。
+        let tx = self
+            .db
+            .as_mut()
+            .ok_or("memory_not_configured")?
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_err)?;
+        let refs:Vec<(String,String,u64)>=tx.prepare("SELECT store_id,record_id,revision FROM memory_sources WHERE deleted=0 AND store_id NOT LIKE 'commit:%' ORDER BY store_id,record_id").map_err(db_err)?.query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(db_err)?.collect::<std::result::Result<_,_>>().map_err(db_err)?;
         let mut revoke = vec![];
         for (store, record, revision) in refs {
             let current:Option<u64>=projection.query_row("SELECT item.revision FROM integration_items item JOIN integration_sources source ON source.logical_name=item.logical_name WHERE source.active_store_id=?1 AND item.record_id=?2",params![store,record],|r|r.get(0)).optional().map_err(db_err)?;
@@ -986,21 +1027,27 @@ impl LegacyMemory {
                     current.is_none(),
                 ));
             }
+            after_record();
         }
-        if revoke.is_empty() {
-            return Ok(());
-        }
-        let tx = self
-            .db
-            .as_mut()
-            .ok_or("memory_not_configured")?
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(db_err)?;
         for (store, record, revision, deleted) in revoke {
             revoke_record(&tx, &store, &record, revision, deleted)?;
         }
+        let sources_after = crate::memory_projection_clock::for_cache(&tx).map_err(db_err)?;
+        let projection_after =
+            crate::memory_projection_clock::for_cache(projection).map_err(db_err)?;
+        if projection_before != projection_after
+            || crate::memory_projection_clock::external_version(projection).map_err(db_err)?
+                != projection_version
+            || crate::memory_projection_clock::external_version(&tx).map_err(db_err)?
+                != sources_version
+        {
+            return Err("memory_source_changed".into());
+        }
         tx.commit().map_err(db_err)?;
         self.db()?;
+        if let (Some(projected), Some(sources)) = (projection_after, sources_after) {
+            self.reconciled_projection = Some((projected, sources));
+        }
         Ok(())
     }
     pub(crate) fn begin_import(
@@ -1670,6 +1717,144 @@ mod tests {
         db.prepare("SELECT text,typed_count,voice_count,clipboard_count,last_used_tick FROM inputia_terms ORDER BY text")
             .unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
             .unwrap().collect::<std::result::Result<_, _>>().unwrap()
+    }
+    #[test]
+    fn projection_cache_rechecks_new_sources_revisions_external_writes_and_empty_restores() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut m = memory(&temp);
+        let path = temp.path().join("projection.db");
+        let projection = Connection::open(&path).unwrap();
+        projection.execute_batch("CREATE TABLE integration_items(logical_name TEXT,record_id TEXT,revision INTEGER);
+            CREATE TABLE integration_sources(logical_name TEXT,active_store_id TEXT);
+            INSERT INTO integration_sources VALUES('history','fixture-source');
+            INSERT INTO integration_items VALUES('history','one',1),('history','two',1),('history','three',1);").unwrap();
+        crate::memory_projection_clock::install(
+            &projection,
+            crate::memory_projection_clock::Domain::Projection,
+        )
+        .unwrap();
+        for name in ["one", "two", "three"] {
+            let e = evidence(name, 1, 1, name);
+            m.apply_intent(&e.intent(format!("learn-{name}")), &e)
+                .unwrap();
+        }
+        m.reconcile_projection(&projection).unwrap();
+        assert!(m.reconciled_projection.is_some());
+        m.reconcile_projection(&projection).unwrap();
+        assert_eq!(count(&m, "one"), 1);
+        // 同连接修订必须使缓存失效。
+        projection
+            .execute(
+                "UPDATE integration_items SET revision=2 WHERE record_id='one'",
+                [],
+            )
+            .unwrap();
+        m.reconcile_projection(&projection).unwrap();
+        assert_eq!(count(&m, "one"), 0);
+        // 对账后才出现的新来源不能继承旧对账结果。
+        let e = evidence("missing", 1, 1, "missing");
+        m.apply_intent(&e.intent("learn-missing".into()), &e)
+            .unwrap();
+        m.reconcile_projection(&projection).unwrap();
+        assert_eq!(count(&m, "missing"), 0);
+        // 另一个连接没有 TEMP 触发器；data_version 仍须抓住提交。
+        let external = Connection::open(&path).unwrap();
+        external
+            .execute("DELETE FROM integration_items WHERE record_id='two'", [])
+            .unwrap();
+        m.reconcile_projection(&projection).unwrap();
+        assert_eq!(count(&m, "two"), 0);
+        // 空快照恢复可能报告 0 restored_records；真实 DELETE 仍使缓存失效。
+        projection
+            .execute("DELETE FROM integration_items", [])
+            .unwrap();
+        m.reconcile_projection(&projection).unwrap();
+        assert_eq!(count(&m, "three"), 0);
+        drop(m);
+        let mut m = memory(&temp);
+        assert!(m.reconciled_projection.is_none());
+        m.reconcile_projection(&projection).unwrap();
+        assert_eq!(count(&m, "three"), 0);
+    }
+    #[test]
+    fn missing_cache_clock_still_rolls_back_a_mixed_external_projection() {
+        for installed in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut m = memory(&temp);
+            let path = temp.path().join("projection.db");
+            let projection = Connection::open(&path).unwrap();
+            projection.execute_batch("CREATE TABLE integration_items(logical_name TEXT,record_id TEXT,revision INTEGER);
+                CREATE TABLE integration_sources(logical_name TEXT,active_store_id TEXT);
+                INSERT INTO integration_sources VALUES('history','fixture-source');
+                INSERT INTO integration_items VALUES('history','one',2),('history','two',1);").unwrap();
+            if installed {
+                crate::memory_projection_clock::install(
+                    &projection,
+                    crate::memory_projection_clock::Domain::Projection,
+                )
+                .unwrap();
+                projection
+                    .execute_batch("DROP TRIGGER temp.audit_integration_items_UPDATE")
+                    .unwrap();
+            }
+            for name in ["one", "two"] {
+                let e = evidence(name, 1, 1, name);
+                m.apply_intent(&e.intent(format!("learn-{name}")), &e)
+                    .unwrap();
+            }
+            let external = Connection::open(path).unwrap();
+            let mut changed = false;
+            let result = m.reconcile_projection_observed(&projection, || {
+                if !changed {
+                    external
+                        .execute_batch(
+                            "BEGIN IMMEDIATE;
+                        UPDATE integration_items SET revision=1 WHERE record_id='one';
+                        UPDATE integration_items SET revision=2 WHERE record_id='two'; COMMIT;",
+                        )
+                        .unwrap();
+                    changed = true;
+                }
+            });
+            assert_eq!(result.unwrap_err(), "memory_source_changed");
+            assert!(m.reconciled_projection.is_none());
+            assert_eq!(count(&m, "one"), 1);
+            assert_eq!(count(&m, "two"), 1);
+            m.reconcile_projection(&projection).unwrap();
+            assert_eq!(count(&m, "one"), 1);
+            assert_eq!(count(&m, "two"), 0);
+        }
+    }
+    #[test]
+    fn source_switch_and_missing_clock_never_keep_a_stale_projection_approval() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut m = memory(&temp);
+        let projection = Connection::open_in_memory().unwrap();
+        projection
+            .execute_batch(
+                "CREATE TABLE integration_items(logical_name TEXT,record_id TEXT,revision INTEGER);
+            CREATE TABLE integration_sources(logical_name TEXT,active_store_id TEXT);
+            INSERT INTO integration_sources VALUES('history','fixture-source');
+            INSERT INTO integration_items VALUES('history','one',1);",
+            )
+            .unwrap();
+        crate::memory_projection_clock::install(
+            &projection,
+            crate::memory_projection_clock::Domain::Projection,
+        )
+        .unwrap();
+        let e = evidence("one", 1, 1, "one");
+        m.apply_intent(&e.intent("learn-one".into()), &e).unwrap();
+        m.reconcile_projection(&projection).unwrap();
+        projection
+            .execute_batch(
+                "DROP TRIGGER temp.audit_integration_sources_UPDATE;
+            UPDATE integration_sources SET active_store_id='new-source';",
+            )
+            .unwrap();
+        m.reconcile_projection(&projection).unwrap();
+        assert_eq!(count(&m, "one"), 0);
+        assert!(m.reconciled_projection.is_none());
     }
     #[test]
     fn incremental_revocation_preserves_saturation_ticks_and_unrelated_rows() {

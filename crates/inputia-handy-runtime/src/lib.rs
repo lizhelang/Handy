@@ -1,4 +1,5 @@
 pub mod legacy_memory;
+mod memory_projection_clock;
 pub mod memory_word_span;
 pub mod personalization_wire;
 use std::fmt;

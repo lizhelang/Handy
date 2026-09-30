@@ -1312,6 +1312,10 @@ impl IntegrationStore {
         crate::deletion_lifecycle::initialize(&tx)?;
         crate::privacy_operation::initialize(&tx)
             .map_err(|_| StoreError::Invalid("privacy journal unavailable"))?;
+        crate::memory_projection_clock::install(
+            &tx,
+            crate::memory_projection_clock::Domain::Projection,
+        )?;
         tx.commit()?;
         Ok(Self { conn })
     }
