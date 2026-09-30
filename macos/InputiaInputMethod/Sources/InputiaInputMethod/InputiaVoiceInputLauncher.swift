@@ -143,8 +143,7 @@ enum InputiaVoiceInputLauncher {
     guard InputiaPermissionLifecycle.shared.epoch == epoch,
       InputiaPermissionLifecycle.shared.allowsServiceConnection,
       InputiaPermissionLifecycle.shared.backgroundMaintenanceAllowsWork() else { throw InputiaVoiceServiceError.policy }
-    let manifestURL = InputiaProfile.current.root.deletingLastPathComponent().appendingPathComponent("pair-manifest.json")
-    let manifest = try Data(contentsOf: manifestURL)
+    let manifest = try InputiaProfile.current.readPairManifest()
     guard manifest.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
     if let previous = cached, previous.scope.matches(epoch: epoch, manifest: manifest, expectedServer: expectedServer) {
       return previous.connection
@@ -286,7 +285,7 @@ enum InputiaVoiceInputLauncher {
       do {
         let profile = InputiaProfile.current
         try profile.validateCandidatePaths()
-        let bytes = try Data(contentsOf: profile.root.deletingLastPathComponent().appendingPathComponent("pair-manifest.json"))
+        let bytes = try profile.readPairManifest()
         let manifest = try SignedPairManifest.verify(bytes, trust: InputiaEmbeddedPairTrust.trust)
         let identity = try manifest.identity(for: .handy)
         if serviceTerminationObserver == nil {
@@ -299,7 +298,7 @@ enum InputiaVoiceInputLauncher {
             retireBusinessConnections()
           }
         }
-        let running = !NSRunningApplication.runningApplications(withBundleIdentifier: identity.identifier).isEmpty
+        let running = try trustedServiceIsRunning(identity: identity)
         if running { readiness.markServiceObserved(); return }
         guard readiness.requestStart(isRunning: false) else { return }
         let app = try verifiedInstalledService(identity: identity)
@@ -336,7 +335,7 @@ enum InputiaVoiceInputLauncher {
   private static func verifiedServiceIdentity() throws -> PairCodeIdentity {
     let profile = InputiaProfile.current
     try profile.validateCandidatePaths()
-    let bytes = try Data(contentsOf: profile.root.deletingLastPathComponent().appendingPathComponent("pair-manifest.json"))
+    let bytes = try profile.readPairManifest()
     guard bytes.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
     return try SignedPairManifest.verify(bytes, trust: InputiaEmbeddedPairTrust.trust).identity(for: .handy)
   }
@@ -349,6 +348,11 @@ enum InputiaVoiceInputLauncher {
     guard SecRequirementCreateWithString("identifier \"\(identity.identifier)\" and (\(hashes))" as CFString, [], &requirement) == errSecSuccess,
       let requirement else { throw InputiaVoiceServiceError.handshake }
     for app in apps {
+      if let installation = InputiaProfile.current.installation {
+        guard app.bundleURL?.path == installation.receipt.components.control else {
+          throw InputiaVoiceServiceError.profile
+        }
+      }
       var code: SecCode?
       let attributes = [kSecGuestAttributePid as String: NSNumber(value: app.processIdentifier)] as CFDictionary
       guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess, let code,
@@ -431,7 +435,7 @@ enum InputiaVoiceInputLauncher {
   private static var sharedTermsBusy = false
   private static let sharedTermsQueue = DispatchQueue(label: "Inputia.shared-terms")
   private static var sharedTermsConnection: InputiaVoiceServiceConnection?
-  private struct Endpoint: Decodable { let profile_id: String; let protocol_major: Int; let server_instance: String; let socket_path: String }
+  private struct Endpoint: Decodable { let profile_id: String; let protocol_major: Int; let server_instance: String; let socket_path: String; let pair_binding: InputiaPairBinding? }
 
   /// All IPC ownership is released on its owning queues. Never wait for a socket on main.
   static func invalidatePermissionWork(completion: @escaping () -> Void = {}) {
@@ -644,10 +648,10 @@ enum InputiaVoiceInputLauncher {
     let profile = InputiaProfile.current
     try profile.validateCandidatePaths()
     let endpoint = try JSONDecoder().decode(Endpoint.self,
-      from: Data(contentsOf: profile.handyRoot.appendingPathComponent("integration-endpoint.json")))
+      from: profile.readEndpoint())
     guard endpoint.protocol_major == 1,
-      endpoint.profile_id == "unified-candidate:\(profile.runID ?? "")" else { throw InputiaVoiceServiceError.profile }
-    let manifest = try Data(contentsOf: profile.root.deletingLastPathComponent().appendingPathComponent("pair-manifest.json"))
+      endpoint.profile_id == profile.profileID, endpoint.pair_binding == profile.pairBinding else { throw InputiaVoiceServiceError.profile }
+    let manifest = try profile.readPairManifest()
     guard manifest.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
     let state = try InputiaVoiceSharedState(profile: profile)
     let connection = try InputiaVoiceServiceConnection.connect(endpoint: endpoint.socket_path,
@@ -818,10 +822,10 @@ enum InputiaVoiceInputLauncher {
         let profile = InputiaProfile.current
         try profile.validateCandidatePaths()
         let endpoint = try JSONDecoder().decode(Endpoint.self,
-          from: Data(contentsOf: profile.handyRoot.appendingPathComponent("integration-endpoint.json")))
+          from: profile.readEndpoint())
         guard endpoint.protocol_major == 1,
-          endpoint.profile_id == "unified-candidate:\(profile.runID ?? "")" else { throw InputiaVoiceServiceError.profile }
-        let manifest = try Data(contentsOf: profile.root.deletingLastPathComponent().appendingPathComponent("pair-manifest.json"))
+          endpoint.profile_id == profile.profileID, endpoint.pair_binding == profile.pairBinding else { throw InputiaVoiceServiceError.profile }
+        let manifest = try profile.readPairManifest()
         guard manifest.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
         let state = try InputiaVoiceSharedState(profile: profile)
         let connection = try InputiaVoiceServiceConnection.connect(endpoint: endpoint.socket_path,
@@ -864,11 +868,10 @@ enum InputiaVoiceInputLauncher {
         guard let target else { throw InputiaVoiceServiceError.policy }
         stage = "read_endpoint"
         let endpoint = try JSONDecoder().decode(Endpoint.self,
-          from: Data(contentsOf: profile.handyRoot.appendingPathComponent("integration-endpoint.json"), options: .mappedIfSafe))
-        guard endpoint.profile_id == "unified-candidate:\(profile.runID ?? "")", endpoint.protocol_major == 1 else { throw InputiaVoiceServiceError.profile }
-        let manifestURL = profile.root.deletingLastPathComponent().appendingPathComponent("pair-manifest.json")
+          from: profile.readEndpoint())
+        guard endpoint.profile_id == profile.profileID, endpoint.pair_binding == profile.pairBinding, endpoint.protocol_major == 1 else { throw InputiaVoiceServiceError.profile }
         stage = "read_manifest"
-        let manifest = try Data(contentsOf: manifestURL)
+        let manifest = try InputiaProfile.current.readPairManifest()
         guard manifest.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
         stage = "open_shared_state"
         let state = try InputiaVoiceSharedState(profile: profile)
@@ -1065,8 +1068,13 @@ enum InputiaVoiceInputLauncher {
   static let startupToggleDelaySeconds: TimeInterval = 1.5
 
   static func installedServiceAppPaths(homeDirectory: String = NSHomeDirectory()) -> [String] {
-    ["/Applications/Inputia.app", "\(homeDirectory)/Applications/Inputia.app",
+    #if INPUTIA_RELEASE_PAIR_V2
+    guard let installation = InputiaProfile.current.installation else { return [] }
+    return [installation.receipt.components.control]
+    #else
+    return ["/Applications/Inputia.app", "\(homeDirectory)/Applications/Inputia.app",
       "/Applications/Inputia Candidate.app", "\(homeDirectory)/Applications/Inputia Candidate.app"]
+    #endif
   }
 
   private static func openHiddenService(appPath: String, completion: @escaping (Error?) -> Void) {

@@ -1,6 +1,40 @@
 import Foundation
 import Darwin
 
+struct InputiaPairBinding: Codable, Equatable {
+  let product_id: String
+  let installation_id: String
+  let pair_release_id: String
+}
+
+struct InputiaLocatedInstallation: Decodable, Equatable {
+  struct Receipt: Decodable, Equatable {
+    struct Paths: Decodable, Equatable { let control: String; let ime: String; let settings: String }
+    struct DataLocation: Decodable, Equatable { let kind: String; let run_id: String? }
+    let product_id: String
+    let installation_id: String
+    let profile_id: String
+    let release_id: String
+    let components: Paths
+    let data: DataLocation
+  }
+  let receipt: Receipt
+  let handy_root: String
+  let inputia_root: String
+  let pair_manifest: String
+  var binding: InputiaPairBinding {
+    .init(product_id: receipt.product_id, installation_id: receipt.installation_id,
+          pair_release_id: receipt.release_id)
+  }
+}
+
+#if INPUTIA_RELEASE_PAIR_V2
+@_silgen_name("inputia_installation_load")
+private func installationLoad(_ context: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+@_silgen_name("inputia_string_free")
+private func installationStringFree(_ value: UnsafeMutablePointer<CChar>?)
+#endif
+
 enum InputiaProfileError: Error, Equatable {
   case unauthorizedCandidate
   case missingRunID
@@ -19,6 +53,20 @@ struct InputiaProfile: Equatable {
   let runID: String?
   let root: URL
   let handyRoot: URL
+  var installation: InputiaLocatedInstallation? = nil
+
+  var profileID: String { installation?.receipt.profile_id ?? runID.map { "unified-candidate:\($0)" } ?? "handy-local" }
+  var pairManifestURL: URL { installation.map { URL(fileURLWithPath: $0.pair_manifest) }
+    ?? root.deletingLastPathComponent().appendingPathComponent("pair-manifest.json") }
+  var pairBinding: InputiaPairBinding? { installation?.binding }
+
+  func readPairManifest() throws -> Data {
+    try Self.readBoundedFile(pairManifestURL, limit: 16_384, privateFile: installation != nil)
+  }
+
+  func readEndpoint() throws -> Data {
+    try Self.readBoundedFile(handyRoot.appendingPathComponent("integration-endpoint.json"), limit: 4096, privateFile: true)
+  }
 
   var settings: URL { root.appendingPathComponent("settings.json") }
   var memory: URL { root.appendingPathComponent("inputia_memory.db") }
@@ -45,11 +93,15 @@ struct InputiaProfile: Equatable {
       #endif
       try validateCompiledIdentity(bundleIdentifier: Bundle.main.bundleIdentifier,
                                    expectedCandidate: expectedCandidate)
+      #if INPUTIA_RELEASE_PAIR_V2
+      let profile = try loadReleaseInstallation()
+      #else
       let profile = try resolve(
         bundleIdentifier: Bundle.main.bundleIdentifier,
         info: Bundle.main.infoDictionary ?? [:],
         environment: ProcessInfo.processInfo.environment
       )
+      #endif
       try profile.validateCandidatePaths()
       return profile
     } catch {
@@ -57,6 +109,79 @@ struct InputiaProfile: Equatable {
       exit(78)
     }
   }()
+
+  #if INPUTIA_RELEASE_PAIR_V2
+  private static func loadReleaseInstallation() throws -> Self {
+    guard ProcessInfo.processInfo.environment["INPUTIA_PROFILE_RUN_ID"] == nil else {
+      throw InputiaProfileError.conflictingRunID
+    }
+    let trust = InputiaEmbeddedPairTrust.trust
+    let context: [String: Any] = ["product_id": trust.productID, "release_id": trust.releaseID,
+      "uid": geteuid(), "home": NSHomeDirectory()]
+    let data = try JSONSerialization.data(withJSONObject: context)
+    guard let json = String(data: data, encoding: .utf8),
+      let raw = json.withCString({ installationLoad($0) }) else { throw InputiaProfileError.unauthorizedCandidate }
+    defer { installationStringFree(raw) }
+    struct Reply: Decodable { let ok: Bool; let installation: InputiaLocatedInstallation? }
+    let reply = try JSONDecoder().decode(Reply.self, from: Data(String(cString: raw).utf8))
+    guard reply.ok, let installation = reply.installation else { throw InputiaProfileError.unauthorizedCandidate }
+    #if INPUTIA_SETTINGS_LAUNCHER
+    let expectedPath = installation.receipt.components.settings
+    #else
+    let expectedPath = installation.receipt.components.ime
+    #endif
+    guard Bundle.main.bundleURL.path == expectedPath else { throw InputiaProfileError.pathOutsideProfile }
+    return Self(isCandidate: true, runID: installation.receipt.data.run_id,
+      root: URL(fileURLWithPath: installation.inputia_root, isDirectory: true),
+      handyRoot: URL(fileURLWithPath: installation.handy_root, isDirectory: true), installation: installation)
+  }
+  #endif
+
+  /// 逐层固定目录句柄，拒绝链接、跨用户文件及无界读取；不把发现文件当身份认证。
+  static func readBoundedFile(_ url: URL, limit: Int, privateFile: Bool) throws -> Data {
+    let path = url.path
+    guard path.hasPrefix("/"), url.standardizedFileURL.path == path,
+      !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+      throw InputiaProfileError.pathOutsideProfile
+    }
+    var parent = Darwin.open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+    guard parent >= 0 else { throw InputiaProfileError.pathInspectionFailed }
+    defer { Darwin.close(parent) }
+    let parts = path.split(separator: "/")
+    for (index, part) in parts.enumerated() {
+      let last = index == parts.count - 1
+      let flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | (last ? O_NONBLOCK : O_DIRECTORY)
+      let descriptor = String(part).withCString { Darwin.openat(parent, $0, flags) }
+      guard descriptor >= 0 else { throw InputiaProfileError.pathInspectionFailed }
+      var metadata = stat()
+      guard fstat(descriptor, &metadata) == 0 else { Darwin.close(descriptor); throw InputiaProfileError.pathInspectionFailed }
+      if !last {
+        let owner = metadata.st_uid == 0 || metadata.st_uid == geteuid()
+        let writable = metadata.st_mode & 0o022 != 0
+        let rootSticky = metadata.st_uid == 0 && metadata.st_mode & 0o1000 != 0
+        guard metadata.st_mode & S_IFMT == S_IFDIR, owner, !writable || rootSticky else {
+          Darwin.close(descriptor); throw InputiaProfileError.invalidProfileDirectory
+        }
+        Darwin.close(parent); parent = descriptor
+        continue
+      }
+      defer { Darwin.close(descriptor) }
+      guard metadata.st_mode & S_IFMT == S_IFREG, metadata.st_nlink == 1,
+        metadata.st_uid == geteuid(), metadata.st_mode & (privateFile ? 0o077 : 0o022) == 0,
+        metadata.st_size >= 0, metadata.st_size <= limit else { throw InputiaProfileError.pathInspectionFailed }
+      var bytes = [UInt8](repeating: 0, count: limit + 1)
+      var count = 0
+      while count < bytes.count {
+        let amount = bytes.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress!.advanced(by: count), $0.count - count) }
+        if amount == 0 { break }
+        if amount < 0 { if errno == EINTR { continue }; throw InputiaProfileError.pathInspectionFailed }
+        count += amount
+      }
+      guard count <= limit else { throw InputiaProfileError.pathInspectionFailed }
+      return Data(bytes.prefix(count))
+    }
+    throw InputiaProfileError.pathInspectionFailed
+  }
 
   static func validateCompiledIdentity(bundleIdentifier: String?, expectedCandidate: String?) throws {
     if let expectedCandidate {

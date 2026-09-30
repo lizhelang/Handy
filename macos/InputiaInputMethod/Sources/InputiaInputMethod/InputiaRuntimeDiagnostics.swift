@@ -35,9 +35,15 @@ enum InputiaRuntimeDiagnostics {
       try require(InputiaProfile.current.isCandidate, "explicit candidate bundle required")
       #if INPUTIA_PAIRED_BUILD
       let trust = InputiaEmbeddedPairTrust.trust
+      #if INPUTIA_RELEASE_PAIR_V2
+      try require(InputiaProfile.current.pairBinding?.pair_release_id == trust.releaseID && trust.requireHardenedRuntime,
+        "embedded release pair identity mismatch")
+      print("inputia_embedded_pair_key_id=\(trust.keyID) release_id=\(trust.releaseID) runtime_key_configuration=false")
+      #else
       try require(trust.runID == InputiaProfile.current.runID && trust.requireHardenedRuntime,
                   "embedded pair build identity mismatch")
       print("inputia_embedded_pair_key_id=\(trust.keyID) profile_id=\(trust.profileID) runtime_key_configuration=false")
+      #endif
       #endif
       guard let resources = Bundle.main.resourceURL else { throw Failure(reason: "bundle resources missing") }
       let shared = resources.appendingPathComponent("RimeData", isDirectory: true)

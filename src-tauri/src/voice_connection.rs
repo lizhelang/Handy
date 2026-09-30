@@ -13,6 +13,19 @@ use std::collections::HashMap;
 use std::os::{fd::AsFd, unix::net::UnixStream};
 use tauri::Manager;
 
+enum ListenerTrust {
+    Legacy(crate::native_pair_auth::EmbeddedPairTrust),
+    Release(crate::native_pair_auth::EmbeddedReleasePairTrust),
+}
+impl ListenerTrust {
+    fn load(&self, bytes: &[u8]) -> Result<PairManifest, crate::native_pair_auth::PairAuthError> {
+        match self {
+            Self::Legacy(trust) => PairManifest::load(bytes, trust),
+            Self::Release(trust) => PairManifest::load_release(bytes, trust),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionError {
     Authentication,
@@ -67,17 +80,31 @@ impl VoiceConnection {
         manifest: &PairManifest,
         mut server: Handshake,
         history: &HistoryService,
+        expected_peer_path: Option<&std::path::Path>,
     ) -> Result<Self, ConnectionError> {
         // 不先读取握手/正文，再用客户端自报字段拼签名约束。
-        let peer = manifest
-            .authenticate(stream.as_fd(), PeerRole::Inputia)
-            .map_err(|_| ConnectionError::Authentication)?;
+        let peer = match (
+            manifest.release_binding(),
+            expected_peer_path,
+            &server.pair_binding,
+        ) {
+            (Some(release), Some(path), Some(binding))
+                if release.product_id == binding.product_id
+                    && release.release_id == binding.pair_release_id =>
+            {
+                manifest.authenticate_at(stream.as_fd(), PeerRole::Inputia, path)
+            }
+            (None, None, None) => manifest.authenticate(stream.as_fd(), PeerRole::Inputia),
+            _ => return Err(ConnectionError::Authentication),
+        }
+        .map_err(|_| ConnectionError::Authentication)?;
         server.policy_epoch = history
             .policy_epoch()
             .map_err(|_| ConnectionError::PolicyUnavailable)?;
         let policy = HandshakePolicy {
             profile_id: server.profile_id.clone(),
             current_policy_epoch: server.policy_epoch,
+            pair_binding: server.pair_binding.clone(),
         };
         let mut context = None;
         let client = transport::server_handshake_checked(&mut stream, &server, &policy, |client| {
@@ -788,9 +815,8 @@ impl Drop for VoiceClientConnectionGuard {
 }
 
 pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    use std::os::unix::fs::OpenOptionsExt;
     use std::{
-        io::Read,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc,
@@ -811,40 +837,32 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
     app.manage(ListenerLifetime(stop.clone()));
     std::thread::spawn(move || {
         let run = || -> Result<(), String> {
-            let trust = crate::native_pair_auth::candidate_build_trust(&profile.profile_id)
-                .map_err(|_| "embedded_profile_mismatch")?
-                .ok_or("missing_embedded_pair_key")?;
-            let manifest_path = profile
-                .handy_root
-                .parent()
-                .ok_or("missing_profile_root")?
-                .join("pair-manifest.json");
-            let file = std::fs::OpenOptions::new()
-                .read(true)
-                // Darwin SDK sys/fcntl.h: O_NOFOLLOW = 0x00000100。
-                .custom_flags(0x00000100)
-                .open(&manifest_path)
-                .map_err(|_| "missing_pair_manifest")?;
-            let metadata = file.metadata().map_err(|_| "manifest_metadata")?;
-            // SAFETY: geteuid无指针或副作用，仅核对当前用户拥有的候选材料。
-            unsafe extern "C" {
-                fn geteuid() -> u32;
-            }
-            let uid = unsafe { geteuid() };
-            if !metadata.is_file()
-                || metadata.len() > 16_384
-                || metadata.uid() != uid
-                || metadata.nlink() != 1
-                || metadata.mode() & 0o022 != 0
+            let trust = match crate::native_pair_auth::release_build_trust()
+                .map_err(|_| "embedded_release_mismatch")?
             {
-                return Err("unsafe_pair_manifest".into());
-            }
-            let mut bytes = Vec::new();
-            file.take(16_385)
-                .read_to_end(&mut bytes)
-                .map_err(|_| "manifest_read")?;
-            let manifest =
-                PairManifest::load(&bytes, &trust).map_err(|_| "pair_manifest_rejected")?;
+                Some(trust) => {
+                    if profile.installation.is_none() {
+                        return Err("missing_installation_receipt".into());
+                    }
+                    ListenerTrust::Release(trust)
+                }
+                None => ListenerTrust::Legacy(
+                    crate::native_pair_auth::candidate_build_trust(&profile.profile_id)
+                        .map_err(|_| "embedded_profile_mismatch")?
+                        .ok_or("missing_embedded_pair_key")?,
+                ),
+            };
+            let manifest_path = profile.pair_manifest_path()?;
+            // SAFETY: geteuid 只读取内核用户身份；配对清单逐段打开且不跟随链接。
+            let uid = unsafe { libc::geteuid() };
+            let bytes = inputia_settings::installation::read_owned_file(
+                &manifest_path,
+                uid,
+                16_384,
+                profile.installation.is_some(),
+            )
+            .map_err(|_| "unsafe_pair_manifest")?;
+            let manifest = trust.load(&bytes).map_err(|_| "pair_manifest_rejected")?;
             let version = service.voice_terms_version()?;
             let instance = inputia_handy_runtime::voice_protocol::VoicePolicyBarrier::new(version)
                 .map_err(|_| "instance_entropy")?
@@ -861,7 +879,7 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
             listener
                 .set_nonblocking(true)
                 .map_err(|_| "listener_nonblocking")?;
-            let discovery = serde_json::json!({"protocol_major":1,"profile_id":profile.profile_id,"server_instance":instance,"socket_path":socket});
+            let discovery = serde_json::json!({"protocol_major":1,"profile_id":profile.profile_id,"server_instance":instance,"socket_path":socket,"pair_binding":profile.pair_binding()});
             let temporary = profile
                 .handy_root
                 .join(format!(".endpoint-{instance}.json"));
@@ -885,12 +903,13 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
                 "unified_voice_listener_ready profile={}",
                 profile.profile_id
             );
-            let server = Handshake {
+            let mut server = Handshake {
                 protocol_major: 1,
                 protocol_minor: 0,
                 instance_id: instance,
                 profile_id: profile.profile_id.clone(),
                 policy_epoch: service.policy_epoch()?,
+                pair_binding: profile.pair_binding(),
                 capabilities: vec![
                     inputia_handy_runtime::voice_protocol::VOICE_CAPABILITY.into(),
                     inputia_handy_runtime::voice_protocol::SHARED_TERMS_CAPABILITY.into(),
@@ -899,6 +918,16 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
                     inputia_handy_runtime::personalization_wire::CAPABILITY.into(),
                 ],
             };
+            if server.pair_binding.is_some() {
+                server.protocol_minor = inputia_handy_runtime::protocol::PROTOCOL_MINOR;
+                server
+                    .capabilities
+                    .push(inputia_handy_runtime::protocol::INSTALLATION_BINDING_CAPABILITY.into());
+            }
+            let expected_peer_path = profile
+                .installation
+                .as_ref()
+                .map(|installation| installation.receipt.components.ime.clone());
             drop(manifest);
             // Swift 认证 handle 有线程归属；只共享已验证的字节和静态构建信任。
             let manifest_bytes = Arc::new(bytes);
@@ -925,8 +954,9 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
                 let manifest_bytes = manifest_bytes.clone();
                 let trust = trust.clone();
                 let server = server.clone();
+                let expected_peer_path = expected_peer_path.clone();
                 clients.push(std::thread::spawn(move || {
-                    let manifest = match PairManifest::load(&manifest_bytes, &trust) {
+                    let manifest = match trust.load(&manifest_bytes) {
                         Ok(manifest) => manifest,
                         Err(_) => {
                             log::warn!("unified_voice_connection_rejected stage=thread_manifest");
@@ -938,6 +968,7 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
                         &manifest,
                         server.clone(),
                         &service,
+                        expected_peer_path.as_deref(),
                     ) {
                         Ok(connection) => connection,
                         Err(error) => {

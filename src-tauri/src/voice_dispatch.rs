@@ -78,6 +78,7 @@ impl AuthenticatedVoiceConnection {
     ) -> Result<Self, DispatchError> {
         if verified.role() != crate::native_pair_auth::PeerRole::Inputia
             || client.profile_id != server.profile_id
+            || client.pair_binding != server.pair_binding
             || client.protocol_major != 1
             || server.protocol_major != 1
             || !valid_id(&client.instance_id)

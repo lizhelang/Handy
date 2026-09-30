@@ -7,6 +7,22 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$ROOT_DIR/build-artifact-lock.sh"
 IS_CANDIDATE="${INPUTIA_UNIFIED_CANDIDATE:-0}"
 RUN_ID="${INPUTIA_PROFILE_RUN_ID:-}"
+PAIR_IS_RELEASE_V2=0
+if [[ -n "${INPUTIA_PAIR_BUILD_METADATA:-}" ]]; then
+  pair_schema="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["schema_version"])' "$INPUTIA_PAIR_BUILD_METADATA")"
+  if [[ "$pair_schema" == "2" ]]; then
+    PAIR_IS_RELEASE_V2=1
+    if [[ -n "$RUN_ID" ]]; then
+      echo "v2 release cannot embed a profile run ID" >&2
+      exit 2
+    fi
+    # 仅用公开元数据摘要生成构建槽；此值不进入安装收据或产品运行域。
+    RUN_ID="release-$(/usr/bin/python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest()[:24])' "$INPUTIA_PAIR_BUILD_METADATA")"
+  elif [[ "$pair_schema" != "1" ]]; then
+    echo "unsupported pair metadata schema" >&2
+    exit 2
+  fi
+fi
 IS_RELEASE="${INPUTIA_RELEASE:-0}"
 if [[ "$IS_RELEASE" != "0" && "$IS_RELEASE" != "1" ]]; then
   echo "INPUTIA_RELEASE must be 0 or 1" >&2
@@ -332,8 +348,14 @@ require_no_verification_processes
 
 if [[ -n "${INPUTIA_PAIR_BUILD_METADATA:-}" ]]; then
   pair_source="$BUILD_DIR/InputiaEmbeddedPairTrust.swift"
+  pair_context_args=(--run-id "$RUN_ID")
+  if [[ "$PAIR_IS_RELEASE_V2" == "1" ]]; then
+    pair_context_args=(--release-context "${INPUTIA_RELEASE_CONTEXT:?v2 requires release context}")
+    HOST_SWIFT_DEFINES+=(-D INPUTIA_RELEASE_PAIR_V2)
+    SETTINGS_SWIFT_DEFINES+=(-D INPUTIA_RELEASE_PAIR_V2)
+  fi
   /usr/bin/python3 "$ROOT_DIR/../../native/unified-pair-auth/build_trust.py" \
-    --metadata "$INPUTIA_PAIR_BUILD_METADATA" --run-id "$RUN_ID" --emit swift > "$pair_source"
+    --metadata "$INPUTIA_PAIR_BUILD_METADATA" "${pair_context_args[@]}" --emit swift > "$pair_source"
   PAIR_SWIFT_SOURCES=("$pair_source" "$ROOT_DIR/../../native/unified-pair-auth/UnifiedPairAuth.swift")
   HOST_SWIFT_DEFINES+=(-D INPUTIA_PAIRED_BUILD)
 fi
@@ -449,6 +471,10 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   /usr/libexec/PlistBuddy -c "Set :ComponentInputModeDict:tsVisibleInputModeOrderedArrayKey:0 $candidate_host_id.Hans" "$host_plist"
   /usr/libexec/PlistBuddy -c "Add :InputiaDevelopmentCandidate bool true" "$host_plist"
   /usr/libexec/PlistBuddy -c "Add :InputiaProfileRunID string $RUN_ID" "$host_plist"
+  if [[ "$PAIR_IS_RELEASE_V2" == "1" ]]; then
+    /usr/libexec/PlistBuddy -c "Delete :InputiaDevelopmentCandidate" "$host_plist"
+    /usr/libexec/PlistBuddy -c "Delete :InputiaProfileRunID" "$host_plist"
+  fi
   if [[ "$IS_RELEASE" == "1" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia" "$host_plist"
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia" "$host_plist"
@@ -473,11 +499,14 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
 /usr/bin/swiftc \
   "$ROOT_DIR/SettingsLauncher/main.swift" \
   "${SETTINGS_SWIFT_DEFINES[@]}" \
+  "${PAIR_SWIFT_SOURCES[@]}" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
+  "${CAPI_LINK_ARGS[@]}" \
   -parse-as-library \
   -target "$TARGET_TRIPLE" \
   -module-name InputiaSettingsLauncher \
   -framework AppKit \
+  -framework Security \
   -o "$SETTINGS_MACOS_DIR/InputiaSettingsLauncher"
 
 /usr/bin/swiftc \
@@ -551,6 +580,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaFramedConnection.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "${PAIR_SWIFT_SOURCES[@]}" \
+  "${CAPI_LINK_ARGS[@]}" \
   -target "$TARGET_TRIPLE" \
   -framework AppKit \
   -framework InputMethodKit \
@@ -633,6 +663,10 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.0" "$settings_plist"
   /usr/libexec/PlistBuddy -c "Add :InputiaDevelopmentCandidate bool true" "$settings_plist"
   /usr/libexec/PlistBuddy -c "Add :InputiaProfileRunID string $RUN_ID" "$settings_plist"
+  if [[ "$PAIR_IS_RELEASE_V2" == "1" ]]; then
+    /usr/libexec/PlistBuddy -c "Delete :InputiaDevelopmentCandidate" "$settings_plist"
+    /usr/libexec/PlistBuddy -c "Delete :InputiaProfileRunID" "$settings_plist"
+  fi
   if [[ "$IS_RELEASE" == "1" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleName Inputia设置" "$settings_plist"
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Inputia设置" "$settings_plist"

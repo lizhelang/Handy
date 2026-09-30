@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Security
 
 private struct InputiaAppCandidate {
   let path: String
@@ -11,6 +12,10 @@ private let launcherVersion =
 private let expectedHostCDHash =
   Bundle.main.object(forInfoDictionaryKey: "InputiaExpectedHostCDHash") as? String ?? ""
 private let inputiaAppCandidates: [InputiaAppCandidate] = {
+  #if INPUTIA_RELEASE_PAIR_V2
+  guard let installation = InputiaProfile.current.installation else { return [] }
+  return [InputiaAppCandidate(path: installation.receipt.components.ime, source: "installation-receipt")]
+  #else
   if InputiaProfile.current.isCandidate {
     return [
       InputiaAppCandidate(
@@ -33,6 +38,7 @@ private let inputiaAppCandidates: [InputiaAppCandidate] = {
     source: "user"
   ),
 ].compactMap { $0 }
+  #endif
 }()
 
 private func showFailure(message: String) {
@@ -103,6 +109,25 @@ private func bundleCDHash(at appPath: String) -> String? {
 private func matchingCandidate() -> InputiaAppCandidate? {
   for candidate in inputiaAppCandidates
   where FileManager.default.fileExists(atPath: candidate.path) {
+    #if INPUTIA_RELEASE_PAIR_V2
+    do {
+      let url = URL(fileURLWithPath: candidate.path)
+      guard url.resolvingSymlinksInPath() == url else { continue }
+      let manifest = try SignedReleasePairManifest.verify(InputiaProfile.current.readPairManifest(), trust: InputiaEmbeddedPairTrust.trust)
+      let identity = try manifest.identity(for: .inputia)
+      let hashes = identity.cdhashes.map { "cdhash H\"\($0)\"" }.joined(separator: " or ")
+      var requirement: SecRequirement?
+      var code: SecStaticCode?
+      guard SecRequirementCreateWithString("identifier \"\(identity.identifier)\" and (\(hashes))" as CFString, [], &requirement) == errSecSuccess,
+        let requirement, SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code,
+        SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSCheckAllArchitectures), requirement) == errSecSuccess else { continue }
+      var information: CFDictionary?
+      guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+        let info = information as? [String: Any], let flags = info[kSecCodeInfoFlags as String] as? NSNumber,
+        flags.uint32Value & 0x10000 != 0 else { continue }
+      return candidate
+    } catch { continue }
+    #else
     if InputiaProfile.current.isCandidate {
       guard let host = Bundle(url: URL(fileURLWithPath: candidate.path)),
             host.bundleIdentifier == "com.inputia.inputmethod.Inputia.UnifiedCandidate",
@@ -120,6 +145,7 @@ private func matchingCandidate() -> InputiaAppCandidate? {
         return candidate
       }
     }
+    #endif
   }
 
   return nil

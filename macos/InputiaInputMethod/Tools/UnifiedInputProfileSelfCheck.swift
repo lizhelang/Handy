@@ -23,6 +23,18 @@ struct UnifiedInputProfileSelfCheck {
       catch let error as InputiaProfileError { check(error == expected, "wrong error \(error)") }
       catch { check(false, "unexpected error") }
     }
+    // 发现文件只提供定位，且必须有界读取；不读取任何现有用户资料。
+    let receiptProbe = base.appendingPathComponent("private-receipt.json")
+    try Data("{}".utf8).write(to: receiptProbe)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: receiptProbe.path)
+    check(try InputiaProfile.readBoundedFile(receiptProbe, limit: 20, privateFile: true) == Data("{}".utf8), "owned private receipt readable")
+    rejects(.pathInspectionFailed) { _ = try InputiaProfile.readBoundedFile(receiptProbe, limit: 1, privateFile: true) }
+    try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: receiptProbe.path)
+    rejects(.pathInspectionFailed) { _ = try InputiaProfile.readBoundedFile(receiptProbe, limit: 20, privateFile: true) }
+    check(try InputiaProfile.readBoundedFile(receiptProbe, limit: 20, privateFile: false) == Data("{}".utf8), "v1 public manifest mode compatible")
+    let readLink = base.appendingPathComponent("read-link")
+    try FileManager.default.createSymbolicLink(at: readLink, withDestinationURL: receiptProbe)
+    rejects(.pathInspectionFailed) { _ = try InputiaProfile.readBoundedFile(readLink, limit: 20, privateFile: false) }
     let daily = try InputiaProfile.resolve(bundleIdentifier: "com.inputia.inputmethod.Inputia", info: [:], environment: [:], applicationSupport: base)
     for identity: String? in [nil, "com.inputia.inputmethod.Inputia", "com.inputia.settings.UnifiedCandidate"] {
       rejects(.unauthorizedCandidate) { try InputiaProfile.validateCompiledIdentity(bundleIdentifier: identity, expectedCandidate: candidateID) }

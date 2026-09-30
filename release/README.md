@@ -60,7 +60,22 @@ Python 调用方可使用 `load_product()`、`read_json(path)`、`validate_manif
 
 公共入口会拒绝：配置漂移、脏提交、仍绑定 profile 的 v1 信任、尚未接入的发布签名验证、未经验证的 Developer ID/公证与最终制品验收。手动把 `public_release_enabled` 改为 true 不能绕过后三项。
 
-此目录已实现元数据与预检合同。真正的 v2 配对认证、发布签名/根密钥轮换、签名安装器、持久恢复更新核心和真实设备验收仍由后续实施阶段接入，不能将本机脚本测试计为这些门槛通过。
+此目录已实现元数据与预检合同。v2 配对认证与安装定位已接入源码；默认 `--build-local` 仍保留明确的 v1 本机桥接入口。发布签名/根密钥轮换、签名安装器、持久恢复更新核心和真实设备验收继续实施，不能将本机脚本测试计为这些门槛通过。
+
+## v2 配对与本机安装收据
+
+`native/unified-pair-auth/build_trust.py --release-context <build-context.json>` 生成 v2 公开构建元数据和 Rust/Swift 编译常量；不能同时提供 `--run-id`。它核对本次真实源码提交，并绑定构建上下文摘要。v2 配对签名使用独立签名域，只包含产品、release、key、协议与组件代码身份；v1 冻结夹具和独立入口继续保留。v2 验签或安装绑定失败不会自动调用 v1。
+
+两端通过 `inputia-settings::installation` 共用定位合同；Swift 在创建输入法会话前调用无 session 的 C ABI。安装收据固定在当前用户 `Library/Application Support/Inputia/installation.json`，要求所有者正确、权限私有、无符号链接或硬链接。读取有大小限制，路径逐段通过目录句柄打开。
+
+收据字段为 `schema_version=1`、`product_id`、随机且稳定的 `installation_id` / `profile_id`、内核 `uid`、`scope`、`data`、`components`、当前 `release_id` 和渠道偏好 `channel`：
+
+- `scope=user` 的组件路径固定为当前用户 Applications 下控制中心/设置入口，以及 Library/Input Methods 下 IME；`legacy_single_user` 明确保留 `/Applications/Inputia.app`。
+- `data.kind=managed` 使用 `Inputia/Profiles/<profile_id>/Handy` 与 `Inputia`；`legacy_candidate` 保留 `HandyUnifiedCandidate/<run_id>/Handy` 与 `Inputia`，profile 必须仍是 `unified-candidate:<run_id>`。不移动已有数据。
+- 配对文件定位到 `Inputia/Releases/<release_id>/pair-manifest.json`；receipt 不能指定任意替代路径。当前包路径与对端代码路径都要匹配收据。
+- v2 握手 minor 1 必须声明 `installation_binding_v1`，双方核对 product、installation、profile 与 release；v1 minor 0 仅用于双方均明确选择旧合同的桥接。
+
+收据由后续安装事务创建/切换。此批代码没有为日用安装生成收据、迁移证书或替换程序；真实 `.app` 路径、旧版混配和桥接升级仍需原计划的实机验收。路径比对是动态代码认证之外的附加约束，不承诺消除同 UID 文件替换的所有竞态。
 
 ## 验收账本与执行入口
 

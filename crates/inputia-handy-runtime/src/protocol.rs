@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, io};
 
 pub const PROTOCOL_MAJOR: u16 = 1;
-pub const PROTOCOL_MINOR: u16 = 0;
+pub const PROTOCOL_MINOR: u16 = 1;
+pub const INSTALLATION_BINDING_CAPABILITY: &str = "installation_binding_v1";
 pub const MAX_FRAME_BYTES: usize = 256 * 1024;
 
 /// 每个进程重启必须更换 instance_id；profile_id 标识安装及数据域。
@@ -16,6 +17,17 @@ pub struct Handshake {
     pub profile_id: String,
     pub policy_epoch: u64,
     pub capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pair_binding: Option<PairBinding>,
+}
+
+/// 仅与已由本地收据、构建信任和内核 UID 验证的服务端期望值比较；自报字段不是认证。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairBinding {
+    pub product_id: String,
+    pub installation_id: String,
+    pub pair_release_id: String,
 }
 
 /// 服务端当前策略；旧客户端须先刷新撤销屏障，再发送业务写入。
@@ -23,6 +35,7 @@ pub struct Handshake {
 pub struct HandshakePolicy {
     pub profile_id: String,
     pub current_policy_epoch: u64,
+    pub pair_binding: Option<PairBinding>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,6 +44,8 @@ pub enum HandshakeRejection {
     InvalidIdentity,
     IncompatibleVersion,
     ProfileMismatch,
+    PairMismatch,
+    MissingRequiredCapability,
     FuturePolicyEpoch,
 }
 
@@ -63,6 +78,31 @@ impl Handshake {
         }
         if self.profile_id != policy.profile_id {
             return Err(HandshakeRejection::ProfileMismatch);
+        }
+        if self.pair_binding != policy.pair_binding {
+            return Err(HandshakeRejection::PairMismatch);
+        }
+        if let Some(binding) = &self.pair_binding {
+            if binding.product_id != "com.inputia"
+                || !valid_id(&binding.installation_id)
+                || !valid_id(&binding.pair_release_id)
+            {
+                return Err(HandshakeRejection::InvalidIdentity);
+            }
+            if self.protocol_minor < 1
+                || !self
+                    .capabilities
+                    .iter()
+                    .any(|value| value == INSTALLATION_BINDING_CAPABILITY)
+            {
+                return Err(HandshakeRejection::MissingRequiredCapability);
+            }
+        } else if self
+            .capabilities
+            .iter()
+            .any(|value| value == INSTALLATION_BINDING_CAPABILITY)
+        {
+            return Err(HandshakeRejection::PairMismatch);
         }
         if self.policy_epoch > policy.current_policy_epoch {
             return Err(HandshakeRejection::FuturePolicyEpoch);

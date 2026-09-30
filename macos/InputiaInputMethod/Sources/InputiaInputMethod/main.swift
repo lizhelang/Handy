@@ -2878,11 +2878,18 @@ struct InputiaInputMethodApp {
       // 候选编译身份必须在创建IMK连接、设置窗口或诊断会话前与包身份一致。
       _ = InputiaProfile.current
       #if INPUTIA_PAIRED_BUILD
+      #if INPUTIA_RELEASE_PAIR_V2
+      guard InputiaProfile.current.installation != nil else {
+        NSLog("Inputia release installation receipt missing")
+        exit(78)
+      }
+      #else
       guard InputiaProfile.current.isCandidate,
             InputiaProfile.current.runID == InputiaEmbeddedPairTrust.runID else {
         NSLog("Inputia embedded pair trust does not match candidate profile")
         exit(78)
       }
+      #endif
       #endif
       if CommandLine.arguments.contains("--open-settings") {
         runSettingsOnly()

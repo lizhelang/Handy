@@ -10,6 +10,7 @@ struct InputiaVoiceHello: Codable, Equatable {
   let profile_id: String
   let policy_epoch: UInt64
   let capabilities: [String]
+  var pair_binding: InputiaPairBinding? = nil
 }
 
 struct InputiaMenuModel: Decodable {
@@ -597,11 +598,45 @@ final class InputiaVoiceServiceConnection {
       guard reply.status == "accepted", let server = reply.server,
             server.protocol_major == 1, reply.negotiated_minor == 0,
             server.profile_id == trust.profileID, !server.instance_id.isEmpty,
+            server.pair_binding == nil,
             server.instance_id.utf8.count <= 256,
             !server.instance_id.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
             server.policy_epoch >= previousEpoch,
             reply.require_policy_refresh == (server.policy_epoch != previousEpoch),
             server.capabilities.contains("voice_sessions_v1") else { throw InputiaVoiceServiceError.handshake }
+      return InputiaVoiceServiceConnection(connection: transport, server: server)
+    } catch { transport.close(); throw error }
+  }
+
+  /// v2 使用安装收据绑定运行域，失败不进入旧 profile 握手。
+  static func connect(endpoint: String, signedManifest: Data, trust: PairReleaseTrust,
+                      profile: InputiaProfile, previousEpoch: UInt64) throws -> InputiaVoiceServiceConnection {
+    guard !Thread.isMainThread else { throw InputiaConnectionError.mainThread }
+    guard let installation = profile.installation, let binding = profile.pairBinding,
+      binding.product_id == trust.productID, binding.pair_release_id == trust.releaseID,
+      trust.localRole == .inputia, trust.requireHardenedRuntime else { throw InputiaVoiceServiceError.profile }
+    let manifest = try SignedReleasePairManifest.verify(signedManifest, trust: trust)
+    let transport = try InputiaFramedConnection.connect(path: endpoint)
+    do {
+      _ = try transport.authenticate { descriptor in
+        try PeerAuthenticator.authenticate(socketFD: descriptor, manifest: manifest, expectedRole: .handy,
+          expectedBundlePath: installation.receipt.components.control)
+      }
+      let hello = InputiaVoiceHello(protocol_major: 1, protocol_minor: 1, instance_id: processInstance,
+        profile_id: profile.profileID, policy_epoch: previousEpoch,
+        capabilities: ["voice_sessions_v1", "shared_terms_v1", "ime_target_broker_v1", "typed_capture_v1", "personalization_v1", "installation_binding_v1"],
+        pair_binding: binding)
+      try transport.write(hello)
+      let reply = try transport.read(InputiaVoiceHelloReply.self)
+      guard reply.status == "accepted", let server = reply.server,
+        server.protocol_major == 1, server.protocol_minor >= 1, reply.negotiated_minor == 1,
+        server.profile_id == profile.profileID, server.pair_binding == binding,
+        !server.instance_id.isEmpty, server.instance_id.utf8.count <= 256,
+        !server.instance_id.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+        server.policy_epoch >= previousEpoch,
+        reply.require_policy_refresh == (server.policy_epoch != previousEpoch),
+        server.capabilities.contains("voice_sessions_v1"),
+        server.capabilities.contains("installation_binding_v1") else { throw InputiaVoiceServiceError.handshake }
       return InputiaVoiceServiceConnection(connection: transport, server: server)
     } catch { transport.close(); throw error }
   }

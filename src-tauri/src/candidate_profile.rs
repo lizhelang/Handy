@@ -14,6 +14,7 @@ pub struct CandidateProfile {
     pub handy_root: PathBuf,
     pub inputia_root: PathBuf,
     pub profile_id: String,
+    pub installation: Option<inputia_settings::installation::LocatedInstallation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -151,10 +152,33 @@ pub fn resolve(
         handy_root: root.join("Handy"),
         inputia_root: root.join("Inputia"),
         profile_id: format!("unified-candidate:{run_id}"),
+        installation: None,
     }))
 }
 
 impl CandidateProfile {
+    pub fn pair_manifest_path(&self) -> Result<PathBuf, String> {
+        if let Some(installation) = &self.installation {
+            return Ok(installation.pair_manifest.clone());
+        }
+        Ok(self
+            .handy_root
+            .parent()
+            .ok_or("候选根缺少父目录")?
+            .join("pair-manifest.json"))
+    }
+
+    pub fn pair_binding(&self) -> Option<inputia_handy_runtime::protocol::PairBinding> {
+        self.installation.as_ref().map(|installation| {
+            let binding = installation.binding();
+            inputia_handy_runtime::protocol::PairBinding {
+                product_id: binding.product_id,
+                installation_id: binding.installation_id,
+                pair_release_id: binding.pair_release_id,
+            }
+        })
+    }
+
     fn audit_and_prepare(&self) -> Result<(), String> {
         let run_root = self.handy_root.parent().ok_or("候选根缺少父目录")?;
         audit_ancestors(run_root)?;
@@ -289,6 +313,41 @@ fn platform_profile() -> Result<Option<CandidateProfile>, String> {
         .and_then(|url| url.path())
         .map(|value| PathBuf::from(value.to_string()))
         .ok_or("系统没有返回用户 Application Support 目录")?;
+    if let Some(trust) =
+        crate::native_pair_auth::release_build_trust().map_err(|error| error.to_string())?
+    {
+        if environment.is_some() {
+            return Err("发布安装不接受环境变量覆盖 profile".into());
+        }
+        let binding = trust.release_binding();
+        let home = support
+            .parent()
+            .and_then(Path::parent)
+            .ok_or("系统用户目录无效")?;
+        let context = inputia_settings::installation::LocatorContext {
+            product_id: binding.product_id.into(),
+            release_id: binding.release_id.into(),
+            // SAFETY: geteuid 不接收指针，仅读取当前进程的内核用户身份。
+            uid: unsafe { libc::geteuid() },
+            home: home.to_owned(),
+        };
+        let installation =
+            inputia_settings::installation::load(&context).map_err(|error| error.to_string())?;
+        let actual = bundle
+            .bundleURL()
+            .path()
+            .map(|path| PathBuf::from(path.to_string()))
+            .ok_or("无法确认主应用安装路径")?;
+        if actual != installation.receipt.components.control {
+            return Err("当前主应用不是安装收据中的准确路径".into());
+        }
+        return Ok(Some(CandidateProfile {
+            handy_root: installation.handy_root.clone(),
+            inputia_root: installation.inputia_root.clone(),
+            profile_id: installation.receipt.profile_id.clone(),
+            installation: Some(installation),
+        }));
+    }
     resolve(
         bundle_id.as_deref(),
         &marker,

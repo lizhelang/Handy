@@ -30,6 +30,7 @@ fn handshake(instance: &str, epoch: u64) -> Handshake {
         profile_id: "synthetic-profile".into(),
         policy_epoch: epoch,
         capabilities: vec!["voice_control".into()],
+        pair_binding: None,
     }
 }
 
@@ -37,6 +38,98 @@ fn policy() -> HandshakePolicy {
     HandshakePolicy {
         profile_id: "synthetic-profile".into(),
         current_policy_epoch: 7,
+        pair_binding: None,
+    }
+}
+
+#[test]
+fn release_pair_requires_same_installation_release_and_binding_capability() {
+    use inputia_handy_runtime::protocol::{PairBinding, INSTALLATION_BINDING_CAPABILITY};
+    let binding = PairBinding {
+        product_id: "com.inputia".into(),
+        installation_id: "synthetic-installation".into(),
+        pair_release_id: "release-1".into(),
+    };
+    let mut expected = policy();
+    expected.pair_binding = Some(binding.clone());
+    let mut hello = handshake("client", 7);
+    hello.protocol_minor = 1;
+    hello
+        .capabilities
+        .push(INSTALLATION_BINDING_CAPABILITY.into());
+    hello.pair_binding = Some(binding);
+    assert!(hello.validate(&expected).is_ok());
+    for field in [
+        "missing",
+        "installation",
+        "release",
+        "product",
+        "minor",
+        "capability",
+    ] {
+        let mut changed = hello.clone();
+        match field {
+            "missing" => changed.pair_binding = None,
+            "installation" => {
+                changed.pair_binding.as_mut().unwrap().installation_id = "other".into()
+            }
+            "release" => {
+                changed.pair_binding.as_mut().unwrap().pair_release_id = "release-2".into()
+            }
+            "product" => changed.pair_binding.as_mut().unwrap().product_id = "other".into(),
+            "minor" => changed.protocol_minor = 0,
+            _ => changed
+                .capabilities
+                .retain(|c| c != INSTALLATION_BINDING_CAPABILITY),
+        }
+        assert!(changed.validate(&expected).is_err(), "{field}");
+    }
+    // v1 桥接仅允许两端都明确使用旧合同；不接受 v2 降级。
+    assert!(handshake("legacy", 7).validate(&policy()).is_ok());
+    assert!(hello.validate(&policy()).is_err());
+    assert!(handshake("legacy", 7).validate(&expected).is_err());
+}
+
+#[test]
+fn release_pair_negotiation_rejects_downgrade_before_binding() {
+    use inputia_handy_runtime::protocol::{PairBinding, INSTALLATION_BINDING_CAPABILITY};
+    let binding = PairBinding {
+        product_id: "com.inputia".into(),
+        installation_id: "installation-1".into(),
+        pair_release_id: "release-1".into(),
+    };
+    for strip_binding in [true, false] {
+        let mut server_hello = handshake("server", 7);
+        server_hello.protocol_minor = 1;
+        server_hello.pair_binding = Some(binding.clone());
+        server_hello
+            .capabilities
+            .push(INSTALLATION_BINDING_CAPABILITY.into());
+        let mut client_hello = server_hello.clone();
+        client_hello.instance_id = "client".into();
+        if strip_binding {
+            client_hello.pair_binding = None;
+        }
+        let mut expected = policy();
+        expected.pair_binding = Some(binding.clone());
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let worker = thread::spawn(move || server_handshake(&mut server, &server_hello, &expected));
+        let outcome = client_handshake(&mut client, &client_hello);
+        if strip_binding {
+            // 非法本地请求在发出前就被拒绝，关闭 socket 唤醒服务端。
+            assert!(outcome.is_err());
+            drop(client);
+            assert!(worker.join().unwrap().is_err());
+        } else {
+            assert!(matches!(
+                outcome.unwrap(),
+                HandshakeReply::Accepted {
+                    negotiated_minor: 1,
+                    ..
+                }
+            ));
+            assert!(worker.join().unwrap().is_ok());
+        }
     }
 }
 

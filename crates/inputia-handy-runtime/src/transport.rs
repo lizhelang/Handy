@@ -340,8 +340,10 @@ mod unix {
             stream,
             &HandshakeReply::Accepted {
                 server: server.clone(),
-                // v1 当前只实现 minor 0；新增 minor 时在此加入能力协商。
-                negotiated_minor: PROTOCOL_MINOR,
+                negotiated_minor: server
+                    .protocol_minor
+                    .min(client.protocol_minor)
+                    .min(PROTOCOL_MINOR),
                 require_policy_refresh: client.policy_epoch != policy.current_policy_epoch,
             },
             deadline,
@@ -355,6 +357,7 @@ mod unix {
             .validate(&HandshakePolicy {
                 profile_id: client.profile_id.clone(),
                 current_policy_epoch: client.policy_epoch,
+                pair_binding: client.pair_binding.clone(),
             })
             .map_err(ProtocolError::Handshake)?;
         let deadline = Instant::now() + IO_TIMEOUT;
@@ -373,10 +376,15 @@ mod unix {
                     .validate(&HandshakePolicy {
                         profile_id: client.profile_id.clone(),
                         current_policy_epoch: server.policy_epoch,
+                        pair_binding: client.pair_binding.clone(),
                     })
                     .map_err(ProtocolError::Handshake)?;
                 if server.policy_epoch < client.policy_epoch
-                    || *negotiated_minor != PROTOCOL_MINOR
+                    || *negotiated_minor
+                        != server
+                            .protocol_minor
+                            .min(client.protocol_minor)
+                            .min(PROTOCOL_MINOR)
                     || *require_policy_refresh != (server.policy_epoch != client.policy_epoch)
                 {
                     return Err(ProtocolError::InvalidHandshakeReply);

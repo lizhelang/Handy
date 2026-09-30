@@ -16,6 +16,8 @@
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub mod installation;
+
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
 use std::ptr::null_mut;
