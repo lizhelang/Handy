@@ -430,6 +430,12 @@ fi
   -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-personalization-flow-self-check"
 "$BUILD_DIR/inputia-personalization-flow-self-check"
 
+/usr/bin/swiftc "$ROOT_DIR/Sources/InputiaInputMethod/InputiaManagedMemory.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaWordSpan.swift" \
+  "$ROOT_DIR/Tools/InputiaWordSpanSelfCheck.swift" \
+  -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-word-span-self-check"
+"$BUILD_DIR/inputia-word-span-self-check"
+
 /usr/bin/swiftc \
   "$ROOT_DIR/Sources/InputiaInputMethod/main.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaStartupMaintenance.swift" \
@@ -453,6 +459,7 @@ fi
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaFramedConnection.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaManagedMemory.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaWordSpan.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaCandidatePanel.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsWindow.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsStore.swift" \
@@ -597,6 +604,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPermissionLifecycle.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaManagedMemory.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaWordSpan.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaFramedConnection.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "${PAIR_SWIFT_SOURCES[@]}" \
@@ -630,6 +638,7 @@ for check in InputiaVoiceServiceSelfCheck InputiaSharedTermsSelfCheck InputiaExp
     "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExplicitHotwords.swift" \
     "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
     "$ROOT_DIR/Sources/InputiaInputMethod/InputiaManagedMemory.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaWordSpan.swift" \
     "$ROOT_DIR/Sources/InputiaInputMethod/InputiaFramedConnection.swift" \
     "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
     "$ROOT_DIR/../../native/unified-pair-auth/UnifiedPairAuth.swift" \

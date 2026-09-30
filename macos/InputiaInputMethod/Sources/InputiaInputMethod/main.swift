@@ -221,6 +221,20 @@ final class InputiaInputController: IMKInputController {
   private var memoryCommitExpiry: DispatchWorkItem?
   private var memoryViewGeneration: UInt64 = 1
   private var memoryFieldID: String?
+  private var wordSpanPreparation: UUID?
+  private var wordSpanObservation = UUID()
+  private lazy var wordSpan: InputiaWordSpan = InputiaWordSpan(send: { command, policy, completion in
+    InputiaVoiceBridge.shared.wordSpan(command, policy: policy, completion: completion)
+  }, current: { [weak self] context, caret in
+    self?.wordSpanScopeCurrent(context, caret: caret) == true
+  }, ended: { [weak self] context in
+    InputiaVoiceInputLauncher.releaseTarget(context.target.target_id)
+    guard let self else { return }
+    self.removeRetiredVoiceTarget(context.target.target_id)
+    if self.wordSpan.coverageReason == "sealed", let client = self.client() {
+      self.prepareWordSpan(client: client)
+    }
+  })
   private var memoryTargetFields: [String: String] = [:]
   private var memorySelectionIntent: UUID?
   private var memoryDisplayedTargets: [String: InputiaVoiceTargetSnapshot.Snapshot] = [:]
@@ -279,12 +293,14 @@ final class InputiaInputController: IMKInputController {
     #endif
     if shouldUseSecureDirectMode(client) {
       #if INPUTIA_PAIRED_BUILD
+      retireWordSpan(reason: "secure_input")
       discardTypedCompositionOrigin()
       #endif
       return false
     }
     #if INPUTIA_PAIRED_BUILD
     if let deferred = deferPersonalInput(event, client: client) { return deferred }
+    if event.type == .keyDown && wordSpanEdit(event, client: client) == nil { retireWordSpan(reason: "special_key_or_composition") }
     if changesInput {
       memorySelectionIntent = nil
       if !selectionKey { retireMemoryCommit() }
@@ -319,7 +335,11 @@ final class InputiaInputController: IMKInputController {
     case .flagsChanged:
       return handleFlagsChanged(event, client: client)
     case .keyDown:
+      #if INPUTIA_PAIRED_BUILD
+      return handleWordSpanKeyDown(event, client: client)
+      #else
       return handleKeyDown(event, client: client)
+      #endif
     case .keyUp:
       shiftInputModeGesture.observeLocalKeyUp(keyCode: event.keyCode)
       if [56, 60].contains(event.keyCode),
@@ -547,6 +567,7 @@ final class InputiaInputController: IMKInputController {
 
   override func candidateSelected(_ candidateString: NSAttributedString!) {
     #if INPUTIA_PAIRED_BUILD
+    retireWordSpan(reason: "candidate_selection")
     synchronizePermissionEpoch()
     #endif
     guard let selected = candidateString?.string else {
@@ -601,6 +622,7 @@ final class InputiaInputController: IMKInputController {
 
   override func commitComposition(_ sender: Any!) {
     #if INPUTIA_PAIRED_BUILD
+    retireWordSpan(reason: "external_commit_boundary")
     synchronizePermissionEpoch()
     #endif
     guard let client = (sender as? IMKTextInput) ?? client() else {
@@ -687,6 +709,9 @@ final class InputiaInputController: IMKInputController {
         return
       }
       updateAppContext(client: client, forceRefresh: true)
+      #if INPUTIA_PAIRED_BUILD
+      prepareWordSpan(client: client)
+      #endif
     }
     #if INPUTIA_PAIRED_BUILD
     refreshExplicitHotwords()
@@ -757,7 +782,11 @@ final class InputiaInputController: IMKInputController {
     clearEnglishCompletion()
     shiftDiagnostic.notice("phase=toggle source=\(source, privacy: .public)")
     inputiaDebugLog("shiftToggle source=\(source)")
-    return apply(bridge.toggleInputMode(), client: client)
+    let handled = apply(bridge.toggleInputMode(), client: client)
+    #if INPUTIA_PAIRED_BUILD
+    if bridge.latestOutcome.mode == "English" { prepareWordSpan(client: client) }
+    #endif
+    return handled
   }
 
   private func cancelShiftInputModeGesture(reason: String) {
@@ -827,7 +856,11 @@ final class InputiaInputController: IMKInputController {
     if isInputModeToggleShortcut(event, modifiers: modifiers) {
       cancelShiftInputModeGesture(reason: "controlSpaceToggle")
       clearEnglishCompletion()
-      return apply(bridge.toggleInputMode(), client: client)
+      let handled = apply(bridge.toggleInputMode(), client: client)
+      #if INPUTIA_PAIRED_BUILD
+      if bridge.latestOutcome.mode == "English" { prepareWordSpan(client: client) }
+      #endif
+      return handled
     }
     if bridge.latestOutcome.mode == "Chinese",
       InputiaShortcutClassifier.isShiftEnglishCompositionCharacter(
@@ -1027,6 +1060,9 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func apply(_ outcome: InputiaBridgeOutcome, client: IMKTextInput?) -> Bool {
+    #if INPUTIA_PAIRED_BUILD
+    if outcome.mode != "English" || !outcome.composing.isEmpty { retireWordSpan(reason: "mode_or_composition") }
+    #endif
     clearClipboardRecall()
     let previousComposing = latestComposing
     inputiaDebugLog(
@@ -1152,6 +1188,7 @@ final class InputiaInputController: IMKInputController {
   ) {
     #if INPUTIA_PAIRED_BUILD
     let memoryConfirmation = takeMemoryConfirmation(text: text, replacement: replacementRange, client: client)
+    if memoryConfirmation != nil { retireWordSpan(reason: "fixed_plan_commit") }
     let origin = typedOriginBeforeInsertion(client)
     let before = client.selectedRange()
     let marked = client.markedRange()
@@ -1189,6 +1226,7 @@ final class InputiaInputController: IMKInputController {
 
   /// 屏障不把旧排序换成新排序后继续接受同一数字；CAPI保留撤销选择闩锁。
   func clearManagedMemoryDisplay() {
+    retireWordSpan(reason: "cache_barrier")
     retireMemoryCommit()
     memoryViewGeneration &+= 1
     memoryFieldID = nil
@@ -2205,6 +2243,102 @@ final class InputiaInputController: IMKInputController {
       self.schedulePersonalization(client: client)
       _ = self.refreshHotwordPrefix(client: client)
     }
+  }
+
+  private func retireWordSpan(reason: String) {
+    wordSpanPreparation = nil; wordSpanObservation = UUID()
+    wordSpan.retire(reason: reason)
+  }
+
+  private func wordSpanOwner(_ client: IMKTextInput) -> String {
+    voiceControllerID + ":" + String(describing: ObjectIdentifier(client as AnyObject))
+  }
+
+  private func wordSpanCaret(_ client: IMKTextInput) -> UInt64? {
+    let range = client.selectedRange(), marked = client.markedRange()
+    guard range.location != NSNotFound, range.location >= 0, range.length == 0,
+      marked.location == NSNotFound || marked.length == 0 else { return nil }
+    return UInt64(range.location)
+  }
+
+  private func wordSpanScopeCurrent(_ context: InputiaWordSpanContext, caret: UInt64) -> Bool {
+    guard InputiaHost.activeInputController === self, isCurrentInputiaSourceSelected(),
+      !IsSecureEventInputEnabled(), InputiaPermissionLifecycle.shared.permits(permissionEpoch),
+      context.activation == voiceActivationGeneration, context.field == memoryFieldID,
+      memoryTargetFields[context.target.target_id] == context.field,
+      bridge.latestOutcome.mode == "English", latestComposing.isEmpty, shiftEnglishComposition.isEmpty,
+      let client = client(), wordSpanOwner(client) == context.owner, wordSpanCaret(client) == caret,
+      let snapshot = voiceTargetSnapshots[context.target.target_id],
+      snapshot.isCurrentForTypedOrigin(client: client, controllerID: voiceControllerID,
+        activationGeneration: voiceActivationGeneration) else { return false }
+    // 此处只核宿主范围；真实 AX 字段、正文及 anchors 必须由后台 checkpoint 读回。
+    return true
+  }
+
+  private func prepareWordSpan(client: IMKTextInput, retryAfterHandshake: Bool = true) {
+    guard wordSpanPreparation == nil, !wordSpan.isBusy, InputiaHost.activeInputController === self,
+      bridge.latestOutcome.mode == "English", latestComposing.isEmpty, shiftEnglishComposition.isEmpty,
+      recallCandidates.isEmpty, englishCompletionPrefix.isEmpty, wordSpanCaret(client) != nil else { return }
+    let pending = UUID(); wordSpanPreparation = pending
+    let selection = localSelectionGeneration, activation = voiceActivationGeneration
+    InputiaVoiceBridge.shared.prepare { [weak self] result in
+      guard let self else { return }
+      guard self.wordSpanPreparation == pending else {
+        // 首次认证握手的真实屏障会取消准备；只在期间完全没有输入/失活时重试一次新许可。
+        if retryAfterHandshake, case .success = result, self.localSelectionGeneration == selection,
+          self.voiceActivationGeneration == activation { self.prepareWordSpan(client: client, retryAfterHandshake: false) }
+        return
+      }
+      guard case .success(let policy) = result, self.localSelectionGeneration == selection,
+        self.voiceActivationGeneration == activation else { self.wordSpanPreparation = nil; return }
+      self.prepareUnifiedVoiceTarget(client: client) { [weak self] target in
+        guard let self else { if let target { InputiaVoiceInputLauncher.releaseTarget(target.target_id) }; return }
+        guard self.wordSpanPreparation == pending, self.localSelectionGeneration == selection,
+          self.voiceActivationGeneration == activation, let target,
+          let field = self.memoryTargetFields[target.target_id], let caret = self.wordSpanCaret(client) else {
+          if self.wordSpanPreparation == pending { self.wordSpanPreparation = nil }
+          if let target { InputiaVoiceInputLauncher.releaseTarget(target.target_id); self.removeRetiredVoiceTarget(target.target_id) }
+          return
+        }
+        self.wordSpanPreparation = nil
+        self.wordSpan.prepare(.init(target: .init(target), policy: policy, field: field,
+          owner: self.wordSpanOwner(client), activation: activation, caret: caret))
+      }
+    }
+  }
+
+  private func wordSpanEdit(_ event: NSEvent, client: IMKTextInput) -> InputiaWordSpanEdit? {
+    guard bridge.latestOutcome.mode == "English", latestComposing.isEmpty, shiftEnglishComposition.isEmpty,
+      recallCandidates.isEmpty, personalPredictions.isEmpty, !candidatePanelExpanded,
+      event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+      wordSpanCaret(client) != nil else { return nil }
+    if event.keyCode == 51 { return .tailBackspace(1) }
+    guard ![keyCodeTab, keyCodeReturn, keyCodeKeypadEnter, keyCodeEscape].contains(event.keyCode),
+      let text = event.characters, !text.isEmpty, text.utf8.count <= 64,
+      text.utf8.allSatisfy({ (32...126).contains($0) }) else { return nil }
+    return .append(text)
+  }
+
+  /// 基础按键始终先走原路径。系统透传编辑在下一主线程轮次核对光标，无法确证即停止学习。
+  private func handleWordSpanKeyDown(_ event: NSEvent, client: IMKTextInput) -> Bool {
+    let edit = wordSpanEdit(event, client: client), before = wordSpanCaret(client)
+    let hadPermit = wordSpan.hasPermit
+    if !hadPermit { retireWordSpan(reason: "input_before_permit") }
+    let observation = UUID(); wordSpanObservation = observation
+    let handled = handleKeyDown(event, client: client)
+    guard let edit, let before else { return handled }
+    let observe = { [weak self] in
+      guard let self, self.wordSpanObservation == observation else { return }
+      guard let after = self.wordSpanCaret(client) else { self.retireWordSpan(reason: "caret_unobservable"); return }
+      if hadPermit { self.wordSpan.observed(edit, before: before, after: after) }
+      else if case .append(let text) = edit, let last = text.utf8.last,
+        !InputiaWordSpanState.wordUnit(last), after == before + UInt64(text.utf8.count) {
+        self.prepareWordSpan(client: client)
+      }
+    }
+    if handled { observe() }
+    else { DispatchQueue.main.async(execute: observe) }
+    return handled
   }
 
   private func prepareUnifiedVoiceTarget(client: IMKTextInput?, completion: @escaping (InputiaVoiceTarget?) -> Void) {

@@ -82,6 +82,11 @@ struct InputiaMemoryCommand: Codable {
   var request: InputiaMemoryFixedRequest? = nil
   var commit_id: String? = nil
   var plan_id: String? = nil
+  var span_id: String? = nil
+  var sequence: UInt64? = nil
+  var edit: InputiaWordSpanEdit? = nil
+  var through_sequence: UInt64? = nil
+  var finish: Bool? = nil
 }
 
 struct InputiaMemoryRange: Codable, Equatable { let location: UInt64; let length: UInt64 }
@@ -224,12 +229,30 @@ struct InputiaMemoryOperationStatus: Decodable {
 }
 struct InputiaMemoryResult: Decodable {
   let kind: String
-  let domain: InputiaMemoryDomain?
-  let snapshot: InputiaMemorySnapshot?
-  // Import 与 Outcome 使用不同 tagged enum；保留原始 operation 供其类型精确解析。
-  let operation: InputiaMemoryOperationPayload?
-  let permit: InputiaMemoryPermit?
-  let receipt: InputiaMemoryReceipt?
+  var domain: InputiaMemoryDomain? = nil
+  var snapshot: InputiaMemorySnapshot? = nil
+  var operation: InputiaMemoryOperationPayload? = nil
+  var permit: InputiaMemoryPermit? = nil
+  var receipt: InputiaMemoryReceipt? = nil
+  var wordSpanPermit: InputiaWordSpanPermit? = nil
+  var wordSpanProgress: InputiaWordSpanProgress? = nil
+  enum CodingKeys: String, CodingKey { case kind, domain, snapshot, operation, permit, receipt, progress }
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    kind = try c.decode(String.self, forKey: .kind)
+    switch kind {
+    case "policy": domain = try c.decode(InputiaMemoryDomain.self, forKey: .domain)
+    case "snapshot": snapshot = try c.decode(InputiaMemorySnapshot.self, forKey: .snapshot)
+    case "import": operation = .imported(try c.decode(InputiaMemoryImportStatus.self, forKey: .operation))
+    case "outcome": operation = try c.decodeIfPresent(InputiaMemoryOperationStatus.self, forKey: .operation).map(InputiaMemoryOperationPayload.outcome)
+    case "prepared_commit": permit = try c.decode(InputiaMemoryPermit.self, forKey: .permit)
+    case "prepared_word_span": wordSpanPermit = try c.decode(InputiaWordSpanPermit.self, forKey: .permit)
+    case "word_span_progress": wordSpanProgress = try c.decode(InputiaWordSpanProgress.self, forKey: .progress)
+    case "word_span_retired": break
+    case "learn": receipt = try c.decode(InputiaMemoryReceipt.self, forKey: .receipt)
+    default: throw InputiaMemoryError.invalid
+    }
+  }
 }
 enum InputiaMemoryOperationPayload: Decodable {
   case imported(InputiaMemoryImportStatus), outcome(InputiaMemoryOperationStatus)

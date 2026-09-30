@@ -723,7 +723,7 @@ final class InputiaVoiceServiceConnection {
     guard !Thread.isMainThread, let version = locallyAppliedVersion,
       server.capabilities.contains("memory_domain_v1"), request.client_instance == Self.processInstance,
       request.server_instance == server.instance_id,
-      request.policy_epoch == version.policy_epoch || (request.memory_domain.kind == "outcome" && request.policy_epoch <= version.policy_epoch) else {
+      request.policy_epoch == version.policy_epoch || (["outcome", "retire_word_span"].contains(request.memory_domain.kind) && request.policy_epoch > 0 && request.policy_epoch <= version.policy_epoch) else {
       throw InputiaVoiceServiceError.policy
     }
     try connection.write(request)

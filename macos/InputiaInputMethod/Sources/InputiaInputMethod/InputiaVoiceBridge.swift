@@ -57,14 +57,14 @@ final class InputiaVoiceBridge {
       }
     }
   }
-  func management(_ command: InputiaMemoryCommand, expectedEpoch: UInt64? = nil,
+  func management(_ command: InputiaMemoryCommand, expectedEpoch: UInt64? = nil, expectedServer: String? = nil,
                   completion: @escaping (Result<InputiaMemoryReply, Error>) -> Void) {
     work.enqueue(on: queue, cancelled: { Self.onMain { completion(.failure(InputiaMemoryError.retired)) } }) { token in
       do {
         let connection = try self.connected(), policy = try self.policy(connection)
-        guard token.valid else { throw InputiaMemoryError.retired }
+        guard token.valid, expectedServer == nil || expectedServer == policy.server_instance else { throw InputiaMemoryError.retired }
         let epoch = expectedEpoch ?? policy.policy_epoch
-        if command.kind != "outcome" && epoch != policy.policy_epoch { throw InputiaMemoryError.retired }
+        if !["outcome", "retire_word_span"].contains(command.kind) && epoch != policy.policy_epoch { throw InputiaMemoryError.retired }
         let request = InputiaMemoryRequest(request_id: UUID().uuidString,
           client_instance: InputiaVoiceServiceConnection.processInstance, server_instance: policy.server_instance,
           policy_epoch: epoch, memory_domain: command)
@@ -78,6 +78,18 @@ final class InputiaVoiceBridge {
         if case InputiaMemoryError.retired = error {} else { self.failed() }
         DispatchQueue.main.async { completion(.failure(error)) }
       }
+    }
+  }
+  func wordSpan(_ command: InputiaMemoryCommand, policy: InputiaMemoryPolicy,
+                completion: @escaping (Result<InputiaWordSpanResponse, Error>) -> Void) {
+    management(command, expectedEpoch: policy.policy_epoch, expectedServer: policy.server_instance) { result in
+      completion(result.flatMap { reply in
+        guard reply.code == nil, reply.server_instance == policy.server_instance, reply.profile_id == policy.profile_id,
+          command.kind == "retire_word_span" || reply.policy_epoch == policy.policy_epoch,
+          let result = reply.result else { return .failure(InputiaMemoryError.retired) }
+        return .success(.init(policy: policy, kind: result.kind, permit: result.wordSpanPermit,
+          progress: result.wordSpanProgress, receipt: result.receipt))
+      })
     }
   }
   func retirePending() { work.cancelAll() }
