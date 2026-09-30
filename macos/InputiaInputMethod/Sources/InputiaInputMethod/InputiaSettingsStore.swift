@@ -85,8 +85,9 @@ enum InputiaSettingsStore {
     let revision: String
     let digest: String
     let sessions: [[String: Any]]
-    init(_ raw: [String: Any]) throws {
-      guard raw["scope"] as? String == "observed_engine_sessions", raw["lease_ms"] as? Int == 2500,
+    let expiresAt: TimeInterval
+    init(_ raw: [String: Any], requestedAt: TimeInterval = ProcessInfo.processInfo.systemUptime) throws {
+      guard raw["scope"] as? String == "observed_engine_sessions", let lease = raw["lease_ms"] as? Int, (0...2500).contains(lease),
         let store = raw["current_store_id"] as? String, let revision = raw["current_revision"] as? String,
         let digest = raw["current_values_digest"] as? String, let sessions = raw["sessions"] as? [[String: Any]],
         sessions.allSatisfy({ $0["instance_id"] is String && $0["store_id"] is String && $0["revision"] is String
@@ -94,8 +95,10 @@ enum InputiaSettingsStore {
         throw Failure(code: "invalid_response")
       }
       self.storeID = store; self.revision = revision; self.digest = digest; self.sessions = sessions
+      self.expiresAt = requestedAt + Double(lease) / 1000
     }
-    func summary(for snapshot: Snapshot) -> String {
+    func summary(for snapshot: Snapshot, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> String {
+      guard now < expiresAt else { return "已保存版本 \(snapshot.revision)，等待输入会话重新确认" }
       guard storeID == snapshot.storeID, revision == snapshot.revision, digest == snapshot.digest else {
         return "已保存，等待当前版本的输入会话确认"
       }
@@ -176,9 +179,10 @@ enum InputiaSettingsStore {
     throw Failure(code: "commit_uncertain")
   }
   static func applicationStatus(path: String) throws -> ApplicationStatus {
+    let requestedAt = ProcessInfo.processInfo.systemUptime
     let reply = try call(["action":"application_status", "path":path])
     guard let value = reply["application"] as? [String: Any] else { throw Failure(code: "invalid_response") }
-    return try ApplicationStatus(value)
+    return try ApplicationStatus(value, requestedAt: requestedAt)
   }
   static func reportApplication(session: UnsafeMutableRawPointer, applied: [String], unavailable: [String] = []) -> Bool {
     guard let data = try? JSONSerialization.data(withJSONObject: ["applied_fields":applied,"unavailable_fields":unavailable]),
@@ -265,7 +269,8 @@ final class InputiaSettingsCache {
   deinit { timer?.cancel() }
   var state: State {
     lock.lock(); defer { lock.unlock() }
-    return State(snapshot: failure == nil ? snapshot : nil, failure: failure, application: application, generation: generation)
+    let live = application.flatMap { ProcessInfo.processInfo.systemUptime < $0.expiresAt ? $0 : nil }
+    return State(snapshot: failure == nil ? snapshot : nil, failure: failure, application: failure == nil ? live : nil, generation: generation)
   }
   func publish(_ value: InputiaSettingsStore.Snapshot) {
     lock.lock(); defer { lock.unlock() }
@@ -283,7 +288,7 @@ final class InputiaSettingsCache {
       lock.lock(); application = observed; lock.unlock()
     }
     catch {
-      lock.lock(); failure = (error as? InputiaSettingsStore.Failure)?.code ?? "storage_unavailable"; lock.unlock()
+      lock.lock(); failure = (error as? InputiaSettingsStore.Failure)?.code ?? "storage_unavailable"; application = nil; lock.unlock()
     }
   }
 }

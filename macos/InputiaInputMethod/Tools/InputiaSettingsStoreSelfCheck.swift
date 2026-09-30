@@ -153,6 +153,10 @@ struct InputiaSettingsStoreSelfCheck {
       "current_store_id":current.storeID,"current_revision":current.revision,"current_values_digest":current.digest,"sessions":[session]])
     check(observation.summary(for:current).contains("1 个输入会话") && observation.summary(for:current).contains("降级")
       && observation.summary(for:current).contains("字体待确认"),"partial/degraded observed confirmation is explicit")
+    let aging = try InputiaSettingsStore.ApplicationStatus(["scope":"observed_engine_sessions","lease_ms":100,
+      "current_store_id":current.storeID,"current_revision":current.revision,"current_values_digest":current.digest,"sessions":[session]], requestedAt:10)
+    check(aging.summary(for:current,now:10.05).contains("1 个输入会话"),"remaining lease is usable before original deadline")
+    check(aging.summary(for:current,now:10.1).contains("重新确认"),"reading an old observation never extends its lease")
     print("settings_store_swift_checks=\(checks) user_settings_touched=false native_engine_acceptance=NOT_RUN")
   }
 }

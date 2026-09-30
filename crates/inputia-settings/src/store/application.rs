@@ -110,10 +110,23 @@ struct Observations {
     processes: Vec<ProcessObservation>,
 }
 #[derive(Debug, Serialize)]
+pub struct ObservedApplicationEntry {
+    #[serde(flatten)]
+    pub session: ApplicationEntry,
+    /// 当前响应生成时的剩余寿命，不重新授予原来的完整租约。
+    pub remaining_ms: u64,
+}
+impl std::ops::Deref for ObservedApplicationEntry {
+    type Target = ApplicationEntry;
+    fn deref(&self) -> &Self::Target {
+        &self.session
+    }
+}
+#[derive(Debug, Serialize)]
 pub struct ApplicationStatus {
     pub scope: &'static str,
     pub lease_ms: u64,
-    pub sessions: Vec<ApplicationEntry>,
+    pub sessions: Vec<ObservedApplicationEntry>,
     pub current_store_id: String,
     pub current_revision: String,
     pub current_values_digest: String,
@@ -202,16 +215,30 @@ impl Store {
     }
     pub fn application_status(&self) -> Result<ApplicationStatus> {
         let current = self.read()?;
-        let sessions = self
-            .observations()?
+        let observations = self.observations()?;
+        // 在文件读取与内核身份检查后取时钟。向下保守扣除一毫秒舍入误差。
+        let now = now_ms()?;
+        let sessions: Vec<_> = observations
             .processes
             .into_iter()
-            .flat_map(|v| v.sessions)
-            .filter(|s| s.store_id == current.store_id)
+            .flat_map(|v| {
+                let remaining_ms = now
+                    .checked_sub(v.observed_at_ms)
+                    .map(|age| LEASE_MS.saturating_sub(age.saturating_add(1)))
+                    .unwrap_or(0);
+                v.sessions
+                    .into_iter()
+                    .map(move |session| ObservedApplicationEntry {
+                        session,
+                        remaining_ms,
+                    })
+            })
+            .filter(|s| s.store_id == current.store_id && s.remaining_ms > 0)
             .collect();
+        let lease_ms = sessions.iter().map(|s| s.remaining_ms).min().unwrap_or(0);
         Ok(ApplicationStatus {
             scope: "observed_engine_sessions",
-            lease_ms: LEASE_MS,
+            lease_ms,
             sessions,
             current_store_id: current.store_id,
             current_revision: current.revision,
@@ -260,6 +287,37 @@ mod tests {
         forged.values_digest = "0".repeat(64);
         assert!(store.publish_applications(vec![forged]).is_err());
         store.publish_applications(vec![]).unwrap();
+        assert!(store.application_status().unwrap().sessions.is_empty());
+    }
+
+    #[test]
+    fn reading_old_observation_does_not_renew_its_lease() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().canonicalize().unwrap();
+        let store = Store::open(&home.join("settings.json"), &home, unsafe {
+            libc::geteuid()
+        })
+        .unwrap();
+        assert_eq!(store.application_status().unwrap().lease_ms, 0);
+        let entry = ApplicationEntry::new(&store.read().unwrap());
+        store.publish_applications(vec![entry]).unwrap();
+        let mut observations = store.observations().unwrap();
+        observations.processes[0].observed_at_ms = now_ms().unwrap().saturating_sub(2_000);
+        store
+            .files
+            .replace_observation(OBSERVATIONS, &serde_json::to_vec(&observations).unwrap())
+            .unwrap();
+        let status = store.application_status().unwrap();
+        assert_eq!(status.sessions.len(), 1);
+        assert!((1..=499).contains(&status.lease_ms));
+        assert_eq!(status.lease_ms, status.sessions[0].remaining_ms);
+        assert!(store.application_status().unwrap().lease_ms <= status.lease_ms);
+        observations.processes[0].observed_at_ms = now_ms().unwrap().saturating_sub(LEASE_MS);
+        store
+            .files
+            .replace_observation(OBSERVATIONS, &serde_json::to_vec(&observations).unwrap())
+            .unwrap();
+        assert_eq!(store.application_status().unwrap().lease_ms, 0);
         assert!(store.application_status().unwrap().sessions.is_empty());
     }
 }

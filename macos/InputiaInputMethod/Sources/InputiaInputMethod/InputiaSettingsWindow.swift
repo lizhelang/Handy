@@ -217,6 +217,8 @@ final class InputiaSettingsWindowController: NSWindowController {
   private var displayedDocument: InputiaSettingsDocument?
   private var pendingExternalImport: InputiaSettingsStore.ImportOperation?
   private var statusTimer: Timer?
+  private var confirmationExpiryTimer: Timer?
+  private var windowActivationObserver: NSObjectProtocol?
   private var statusIsError = false
   private let externalImportButton = NSButton(title: "查看并导入外部修改", target: nil, action: nil)
 
@@ -260,9 +262,13 @@ final class InputiaSettingsWindowController: NSWindowController {
     window.contentView = makeContentView()
     reloadDocument()
     statusTimer = Timer.scheduledTimer(withTimeInterval: 0.75, repeats: true) { [weak self] _ in self?.refreshApplicationStatus() }
+    windowActivationObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in self?.refreshApplicationStatus() }
   }
 
-  deinit { statusTimer?.invalidate() }
+  deinit {
+    statusTimer?.invalidate(); confirmationExpiryTimer?.invalidate()
+    if let observer = windowActivationObserver { NotificationCenter.default.removeObserver(observer) }
+  }
 
   @available(*, unavailable)
   required init?(coder: NSCoder) {
@@ -272,6 +278,7 @@ final class InputiaSettingsWindowController: NSWindowController {
   override func showWindow(_ sender: Any?) {
     if settingsEdit?.pending == nil && pendingExternalImport == nil { reloadDocument() }
     super.showWindow(sender)
+    refreshApplicationStatus()
   }
 
   private func acceptSnapshot(_ snapshot: InputiaSettingsStore.Snapshot) throws {
@@ -729,6 +736,7 @@ final class InputiaSettingsWindowController: NSWindowController {
   }
 
   private func refreshApplicationStatus() {
+    confirmationExpiryTimer?.invalidate(); confirmationExpiryTimer = nil
     guard window?.isVisible == true, !statusIsError, let edit = settingsEdit,
       edit.pending == nil, pendingExternalImport == nil else { return }
     let state = InputiaSettingsCache.shared(path: settingsURL.path).state
@@ -739,6 +747,14 @@ final class InputiaSettingsWindowController: NSWindowController {
     }
     statusLabel.stringValue = state.application?.summary(for: edit.base)
       ?? "已保存版本 \(edit.base.revision)，等待输入会话确认"
+    if let application = state.application {
+      let remaining = application.expiresAt - ProcessInfo.processInfo.systemUptime
+      if remaining > 0 {
+        let timer = Timer(timeInterval: remaining, repeats: false) { [weak self] _ in self?.refreshApplicationStatus() }
+        confirmationExpiryTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+      }
+    }
   }
 
   @objc private func previewExternalSettings() {

@@ -2,6 +2,7 @@
 use std::path::Path;
 
 pub mod integration;
+pub mod memory_snapshot;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InputMode {
@@ -66,7 +67,7 @@ impl Candidate {
     }
 
     pub fn final_score(&self) -> i32 {
-        self.base_score + self.memory_score
+        self.base_score.saturating_add(self.memory_score)
     }
 }
 
@@ -228,18 +229,21 @@ impl MemoryTerm {
 
     fn bump(&mut self, source: &MemorySource, tick: u64) {
         match source {
-            MemorySource::Typed => self.typed_count += 1,
-            MemorySource::Voice => self.voice_count += 1,
-            MemorySource::Clipboard => self.clipboard_count += 1,
+            MemorySource::Typed => self.typed_count = self.typed_count.saturating_add(1),
+            MemorySource::Voice => self.voice_count = self.voice_count.saturating_add(1),
+            MemorySource::Clipboard => {
+                self.clipboard_count = self.clipboard_count.saturating_add(1)
+            }
         }
         self.last_used_tick = tick;
     }
 
     fn score(&self) -> i32 {
-        (self.typed_count as i32 * 60)
-            + (self.voice_count as i32 * 35)
-            + (self.clipboard_count as i32 * 20)
-            + self.recency_score()
+        (u64::from(self.typed_count) * 60
+            + u64::from(self.voice_count) * 35
+            + u64::from(self.clipboard_count) * 20
+            + self.recency_score() as u64)
+            .min(i32::MAX as u64) as i32
     }
 
     fn source_count(&self, source: &MemorySource) -> u32 {
@@ -251,7 +255,8 @@ impl MemoryTerm {
     }
 
     fn source_score(&self, source: &MemorySource) -> i32 {
-        (self.source_count(source) as i32 * 100) + self.recency_score()
+        (u64::from(self.source_count(source)) * 100 + self.recency_score() as u64)
+            .min(i32::MAX as u64) as i32
     }
 
     fn recency_score(&self) -> i32 {
@@ -361,6 +366,24 @@ impl LocalMemory {
         }
     }
 
+    /// 构造纯值快照；不读取数据库、不授予读取租约。调用方仍须绑定查询及策略版本。
+    pub fn from_snapshot(
+        policy: AppPolicy,
+        terms: Vec<MemoryTerm>,
+    ) -> Result<Self, memory_snapshot::SnapshotError> {
+        memory_snapshot::validate_terms(&terms)?;
+        let tick = terms
+            .iter()
+            .map(|term| term.last_used_tick)
+            .max()
+            .unwrap_or(0);
+        Ok(Self {
+            policy,
+            tick,
+            terms,
+        })
+    }
+
     pub fn learn(
         &mut self,
         source: MemorySource,
@@ -382,7 +405,7 @@ impl LocalMemory {
             };
         }
 
-        self.tick += 1;
+        self.tick = self.tick.saturating_add(1);
         if let Some(term) = self.terms.iter_mut().find(|term| term.text == text) {
             term.bump(&source, self.tick);
         } else {
@@ -408,7 +431,7 @@ impl LocalMemory {
     ) -> Vec<Candidate> {
         for candidate in &mut candidates {
             if let Some(term) = self.terms.iter().find(|term| term.text == candidate.text) {
-                candidate.memory_score += term.score();
+                candidate.memory_score = candidate.memory_score.saturating_add(term.score());
                 candidate.source = strongest_candidate_source(term);
             }
         }
@@ -528,6 +551,13 @@ pub struct SqliteMemory {
 
 #[cfg(feature = "sqlite-memory")]
 impl SqliteMemory {
+    /// 只返回当前查询需要的完整权重，不用全库热门词截断冒充当前候选集合。
+    pub fn query_snapshot(
+        &self,
+        query: &memory_snapshot::MemoryQuery,
+    ) -> Result<memory_snapshot::MemorySnapshot, memory_snapshot::SnapshotError> {
+        memory_snapshot::read_query_snapshot(&self.conn, query)
+    }
     pub fn open(path: impl AsRef<Path>, policy: AppPolicy) -> rusqlite::Result<Self> {
         let conn = rusqlite::Connection::open(path)?;
         let memory = Self { conn, policy };
@@ -806,10 +836,10 @@ impl SqliteMemory {
         let rows = statement.query_map([], |row| {
             Ok(MemoryTerm {
                 text: row.get(0)?,
-                typed_count: row.get::<_, i64>(1)? as u32,
-                voice_count: row.get::<_, i64>(2)? as u32,
-                clipboard_count: row.get::<_, i64>(3)? as u32,
-                last_used_tick: row.get::<_, i64>(4)? as u64,
+                typed_count: row.get(1)?,
+                voice_count: row.get(2)?,
+                clipboard_count: row.get(3)?,
+                last_used_tick: row.get(4)?,
             })
         })?;
         rows.collect()
