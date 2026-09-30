@@ -1225,7 +1225,12 @@ final class InputiaInputController: IMKInputController {
   }
 
   /// 屏障不把旧排序换成新排序后继续接受同一数字；CAPI保留撤销选择闩锁。
-  func clearManagedMemoryDisplay() {
+  func clearManagedMemoryDisplay(restoringBasicCandidates: Bool = false) {
+    let originalClient = restoringBasicCandidates ? client() : nil
+    let originalSelection = originalClient?.selectedRange()
+    let originalMarked = originalClient?.markedRange()
+    // 只接受本次成功撤销后重建的Rime结果；失败时不能复用旧的latestOutcome。
+    let baseline = restoringBasicCandidates && bridge.clearManagedMemory() ? bridge.latestOutcome : nil
     retireWordSpan(reason: "cache_barrier")
     retireMemoryCommit()
     memoryViewGeneration &+= 1
@@ -1251,6 +1256,16 @@ final class InputiaInputController: IMKInputController {
     recallCandidates = []; englishCompletionCandidates = []; englishCompletionPrefix = ""
     candidatePanelExpanded = false; cachedAppContext = nil; pushedAppContext = nil
     if InputiaHost.activeInputController === self { InputiaHost.candidatePanel?.hide() }
+    // 增强内容及旧选择映射已撤销；学习域离线时仍允许当前字段显示基础候选。
+    guard let baseline, baseline.ok, baseline.mode == "Chinese", !baseline.composing.isEmpty,
+      !baseline.candidates.isEmpty, InputiaHost.activeInputController === self,
+      isCurrentInputiaSourceSelected(), !IsSecureEventInputEnabled(), InputiaPermissionLifecycle.shared.isReady,
+      let originalClient, let live = client(),
+      ObjectIdentifier(originalClient as AnyObject) == ObjectIdentifier(live as AnyObject),
+      live.selectedRange() == originalSelection, live.markedRange() == originalMarked else { return }
+    latestComposing = baseline.composing
+    latestCandidates = baseline.candidates
+    updateCandidateWindow(client: live)
   }
 
   private func observePersonalKey(_ event: NSEvent, client: IMKTextInput) {
@@ -3366,14 +3381,12 @@ struct InputiaInputMethodApp {
       InputiaMemoryBarrier.invalidate = {
         InputiaVoiceBridge.shared.retirePending()
         InputiaRustBridge.invalidateManagedMemory()
-        for controller in InputiaHost.inputControllers.allObjects { controller.clearManagedMemoryDisplay() }
-        InputiaHost.candidatePanel?.hide()
+        for controller in InputiaHost.inputControllers.allObjects { controller.clearManagedMemoryDisplay(restoringBasicCandidates: true) }
       }
       InputiaMemoryBarrier.clear = { policy in
         InputiaVoiceBridge.shared.retirePending()
         try InputiaRustBridge.applyManagedMemoryPolicy(policy)
-        for controller in InputiaHost.inputControllers.allObjects { controller.clearManagedMemoryDisplay() }
-        InputiaHost.candidatePanel?.hide()
+        for controller in InputiaHost.inputControllers.allObjects { controller.clearManagedMemoryDisplay(restoringBasicCandidates: true) }
       }
       #endif
       if CommandLine.arguments.contains("--open-settings") {

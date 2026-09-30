@@ -14,3 +14,4 @@ swiftc "$ROOT_DIR/Sources/InputiaInputMethod/InputiaManagedMemory.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaMemoryImport.swift" \
   "$ROOT_DIR/Tools/InputiaMemoryImportSelfCheck.swift" -o "$CHECK_DIR/import-check"
 "$CHECK_DIR/import-check"
+/usr/bin/python3 "$ROOT_DIR/Tools/managed-memory-basic-fallback-self-check.py"
