@@ -570,7 +570,12 @@
       "retranscribe": "Re-transcribe",
       "retranscribeError": "Failed to re-transcribe. Please try again.",
       "transcribing": "Transcribing...",
-      "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon."
+      "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon.",
+      "audio": {
+        "play": "Play recording",
+        "pause": "Pause recording",
+        "failed": "Recording could not be played. Try again."
+      }
     },
     "debug": {
       "title": "Debug",

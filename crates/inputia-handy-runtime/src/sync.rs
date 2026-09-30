@@ -64,6 +64,28 @@ impl SourcePump {
         self.source
     }
 
+    pub fn attachment_references(
+        &mut self,
+    ) -> Result<Vec<crate::attachment_store::AttachmentReference>, SyncError> {
+        self.verify_file_identity()?;
+        let refs = self
+            .outbox
+            .attachment_references(&mut self.connection, self.source)?;
+        self.verify_file_identity()?;
+        Ok(refs)
+    }
+    pub fn deleted_attachments(
+        &self,
+        item_id: &str,
+        revision: u64,
+        operation_id: &str,
+    ) -> Result<Option<Vec<crate::source::DeletedAttachment>>, SyncError> {
+        self.verify_file_identity()?;
+        Ok(self
+            .outbox
+            .deleted_attachments(&self.connection, item_id, revision, operation_id)?)
+    }
+
     /// SQLite 连接可能仍指向已被替换/移走的旧 inode；禁止把它当当前源继续写入。
     fn verify_file_identity(&self) -> Result<(), SyncError> {
         #[cfg(unix)]

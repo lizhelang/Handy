@@ -62,6 +62,9 @@ pub enum DeleteState {
 #[serde(rename_all = "snake_case")]
 pub enum AttachmentCleanup {
     NotStarted,
+    Scheduled,
+    Completed,
+    Blocked,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -84,18 +87,25 @@ pub struct DeleteRecord {
 }
 
 pub(crate) fn initialize(conn: &Connection) -> StoreResult<()> {
+    let schema:Option<String>=conn.query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='integration_deletion_operations'",[],|r|r.get(0)).optional()?;
+    let upgrade = schema.is_some_and(|sql| !sql.contains("'scheduled'"));
+    if upgrade {
+        conn.execute_batch("ALTER TABLE integration_deletion_operations RENAME TO integration_deletion_operations_v1;")?;
+    }
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS integration_deletion_operations(
             operation_id TEXT PRIMARY KEY,
             request_digest BLOB NOT NULL CHECK(length(request_digest)=32),
             request_json TEXT NOT NULL,
             state TEXT NOT NULL CHECK(state IN('requested','source_applied','projection_revoked','rejected')),
-            attachment_cleanup TEXT NOT NULL CHECK(attachment_cleanup='not_started'),
+            attachment_cleanup TEXT NOT NULL CHECK(attachment_cleanup IN('not_started','scheduled','completed','blocked')),
             last_failure TEXT
-        );
-        CREATE INDEX IF NOT EXISTS integration_deletion_pending
-        ON integration_deletion_operations(state,operation_id);",
+        );",
     )?;
+    if upgrade {
+        conn.execute_batch("INSERT INTO integration_deletion_operations SELECT * FROM integration_deletion_operations_v1;DROP TABLE integration_deletion_operations_v1;")?;
+    }
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS integration_deletion_pending ON integration_deletion_operations(state,operation_id);")?;
     Ok(())
 }
 

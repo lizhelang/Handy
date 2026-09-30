@@ -6,6 +6,11 @@ use clipboard_rs::common::RustImage;
 use clipboard_rs::{Clipboard, ClipboardContext};
 #[cfg(not(target_os = "macos"))]
 use clipboard_rs::{ClipboardHandler, ClipboardWatcher, ClipboardWatcherContext};
+use inputia_handy_runtime::{
+    attachment_store::{AttachmentKind, PinPurpose},
+    service::HistoryService,
+    source::SourceTable,
+};
 use log::{debug, error, info};
 use rusqlite::{params, Connection, OptionalExtension};
 use rusqlite_migration::{Migrations, M};
@@ -21,7 +26,7 @@ use std::sync::{
 };
 use std::time::Duration;
 use tauri::image::Image;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_specta::Event;
 
@@ -377,12 +382,9 @@ impl ClipboardManager {
                 &text.ok_or_else(|| anyhow!("Files unavailable"))?,
                 |paths| Ok(PreparedClipboardCopy::Files(paths)),
             ),
-            "image" => {
-                let path = self.resolve_clipboard_image_path(
-                    &image_path.ok_or_else(|| anyhow!("Image unavailable"))?,
-                )?;
-                Ok(PreparedClipboardCopy::Image(Image::from_path(path)?))
-            }
+            "image" => Ok(PreparedClipboardCopy::Image(self.read_clipboard_image(
+                &image_path.ok_or_else(|| anyhow!("Image unavailable"))?,
+            )?)),
             _ => Err(anyhow!("Unsupported clipboard representation")),
         }
     }
@@ -1150,21 +1152,67 @@ impl ClipboardManager {
         Ok(item.map(|item| self.normalize_item_for_client(item)))
     }
 
-    fn resolve_clipboard_image_path(&self, image_path: &str) -> Result<PathBuf> {
-        let path = PathBuf::from(image_path);
-        let full_path = if path.is_absolute() {
-            path
+    fn attachment_service(&self) -> Result<Arc<HistoryService>> {
+        self.app_handle
+            .try_state::<Arc<super::integration::IntegrationManager>>()
+            .map(|manager| manager.service.clone())
+            .ok_or_else(|| anyhow!("Unified attachment service unavailable"))
+    }
+    fn import_image_bytes(
+        &self,
+        bytes: &[u8],
+    ) -> Result<inputia_handy_runtime::service::PendingAttachmentImport> {
+        let operation = format!(
+            "image-{}",
+            inputia_handy_runtime::attachment_store::new_operation_id()?
+        );
+        self.attachment_service()?
+            .import_attachment_owned(AttachmentKind::Image, operation, bytes.to_vec())
+            .map_err(|reason| anyhow!("Image attachment unavailable: {reason:?}"))
+    }
+    fn read_clipboard_image(&self, image_path: &str) -> Result<Image<'static>> {
+        let raw = std::path::Path::new(image_path);
+        let relative = if raw.is_absolute() {
+            raw.strip_prefix(&self.images_dir)
+                .map_err(|_| anyhow!("Image outside managed root"))?
         } else {
-            self.images_dir.join(path)
+            raw
         };
-        let full_path = fs::canonicalize(full_path)?;
-        let images_dir = fs::canonicalize(&self.images_dir)?;
-
-        if !full_path.starts_with(&images_dir) {
-            return Err(anyhow!("Clipboard image path is outside Handy data"));
+        if relative.components().count() != 1
+            || !matches!(
+                relative.components().next(),
+                Some(std::path::Component::Normal(_))
+            )
+        {
+            return Err(anyhow!("Invalid image attachment name"));
         }
-
-        Ok(full_path)
+        let name = relative.to_string_lossy().into_owned();
+        let id:i64=self.get_connection()?.query_row("SELECT id FROM clipboard_history WHERE image_path=?1 OR image_path=?2 ORDER BY id DESC LIMIT 1",params![name,image_path],|row|row.get(0))?;
+        let service = self.attachment_service()?;
+        let operation = format!(
+            "image-read-{}",
+            inputia_handy_runtime::attachment_store::new_operation_id()?
+        );
+        let result = (|| {
+            let (lease, _, _) = service
+                .acquire_source_attachment(
+                    SourceTable::Clipboard,
+                    id.to_string(),
+                    None,
+                    PinPurpose::Active,
+                    operation.clone(),
+                )
+                .map_err(anyhow::Error::msg)?;
+            let bytes = service.read_attachment(lease.clone());
+            let released = service.release_attachment(lease);
+            let bytes = bytes.map_err(anyhow::Error::msg)?;
+            released.map_err(anyhow::Error::msg)?;
+            Image::from_bytes(&bytes).map_err(Into::into)
+        })();
+        if result.is_err() {
+            let _ = service.cancel_attachment_acquire(operation);
+        }
+        result
     }
 
     #[cfg(target_os = "macos")]
@@ -1202,12 +1250,10 @@ impl ClipboardManager {
         }
     }
 
-    fn write_image_path_to_system_clipboard(&self, full_path: PathBuf) -> Result<()> {
+    fn write_image_to_system_clipboard(&self, image: Image<'static>) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
             self.run_on_main_thread_sync("write image to system clipboard", move |manager| {
-                let image = Image::from_path(&full_path)
-                    .map_err(|e| anyhow!("Failed to load clipboard image: {}", e))?;
                 manager
                     .app_handle
                     .clipboard()
@@ -1221,8 +1267,6 @@ impl ClipboardManager {
 
         #[cfg(not(target_os = "macos"))]
         {
-            let image = Image::from_path(&full_path)
-                .map_err(|e| anyhow!("Failed to load clipboard image: {}", e))?;
             self.app_handle
                 .clipboard()
                 .write_image(&image)
@@ -1289,8 +1333,7 @@ impl ClipboardManager {
             }
             "image" => {
                 let path = image_path.ok_or_else(|| anyhow!("Image path not found"))?;
-                let full_path = self.resolve_clipboard_image_path(&path)?;
-                self.write_image_path_to_system_clipboard(full_path)
+                self.write_image_to_system_clipboard(self.read_clipboard_image(&path)?)
             }
             _ => Err(anyhow!("Unsupported content type")),
         }
@@ -1357,8 +1400,10 @@ impl ClipboardManager {
             error!("Failed to emit clipboard-added event: {}", e);
         }
 
-        let deleted_ids = self.cleanup_old_entries()?;
-        self.emit_deleted_many(deleted_ids);
+        match self.cleanup_old_entries() {
+            Ok(deleted_ids) => self.emit_deleted_many(deleted_ids),
+            Err(error) => error!("Clipboard item saved; retention cleanup pending: {error}"),
+        }
 
         Ok(Some(item))
     }
@@ -1427,8 +1472,10 @@ impl ClipboardManager {
             error!("Failed to emit clipboard-added event: {}", e);
         }
 
-        let deleted_ids = self.cleanup_old_entries()?;
-        self.emit_deleted_many(deleted_ids);
+        match self.cleanup_old_entries() {
+            Ok(deleted_ids) => self.emit_deleted_many(deleted_ids),
+            Err(error) => error!("Clipboard item saved; retention cleanup pending: {error}"),
+        }
 
         Ok(Some(item))
     }
@@ -1466,16 +1513,9 @@ impl ClipboardManager {
         // Get image dimensions
         let (width, height) = image_data.get_size();
 
-        // Generate filename
-        let filename = format!("{}.png", hash);
-        let image_path = self.images_dir.join(&filename);
-
-        // Save as PNG
-        image_data
-            .save_to_path(image_path.to_str().unwrap_or_default())
-            .map_err(|e| anyhow!("Failed to save image: {}", e))?;
-
-        let size_bytes = fs::metadata(&image_path)?.len() as i64;
+        let attachment = self.import_image_bytes(image_bytes)?;
+        let filename = attachment.import.file_name.clone();
+        let size_bytes = image_bytes.len() as i64;
         let now = Utc::now().timestamp();
         let preview = format!("Image {}x{}", width, height);
 
@@ -1517,8 +1557,10 @@ impl ClipboardManager {
             error!("Failed to emit clipboard-added event: {}", e);
         }
 
-        let deleted_ids = self.cleanup_old_entries()?;
-        self.emit_deleted_many(deleted_ids);
+        match self.cleanup_old_entries() {
+            Ok(deleted_ids) => self.emit_deleted_many(deleted_ids),
+            Err(error) => error!("Clipboard item saved; retention cleanup pending: {error}"),
+        }
 
         Ok(Some(item))
     }
@@ -1546,10 +1588,8 @@ impl ClipboardManager {
             }
         }
 
-        let filename = format!("{}.png", hash);
-        let image_path = self.images_dir.join(&filename);
-        fs::write(&image_path, png_bytes)?;
-
+        let attachment = self.import_image_bytes(png_bytes)?;
+        let filename = attachment.import.file_name.clone();
         let size_bytes = png_bytes.len() as i64;
         let now = Utc::now().timestamp();
         let preview = format!("Image {}x{}", width, height);
@@ -1591,8 +1631,10 @@ impl ClipboardManager {
             error!("Failed to emit clipboard-added event: {}", e);
         }
 
-        let deleted_ids = self.cleanup_old_entries()?;
-        self.emit_deleted_many(deleted_ids);
+        match self.cleanup_old_entries() {
+            Ok(deleted_ids) => self.emit_deleted_many(deleted_ids),
+            Err(error) => error!("Clipboard item saved; retention cleanup pending: {error}"),
+        }
 
         Ok(Some(item))
     }
@@ -1818,97 +1860,39 @@ impl ClipboardManager {
 
     /// Delete a clipboard item
     pub fn delete_item(&self, id: i64) -> Result<()> {
-        let _source_write = super::integration::begin_source_write(&self.app_handle);
-        let conn = self.get_connection()?;
-
-        // Get image path before deleting
-        let image_path: Option<String> = conn
-            .query_row(
-                "SELECT image_path FROM clipboard_history WHERE id = ?1",
-                params![id],
-                |row| row.get(0),
-            )
-            .optional()?;
-
-        // Delete from database
-        conn.execute("DELETE FROM clipboard_history WHERE id = ?1", params![id])?;
-
-        // Delete image file if exists
-        if let Some(path) = image_path {
-            let full_path = self.images_dir.join(&path);
-            if full_path.exists() {
-                if let Err(e) = fs::remove_file(&full_path) {
-                    error!("Failed to delete clipboard image {}: {}", path, e);
-                }
-            }
+        self.attachment_service()?
+            .delete_source_record(SourceTable::Clipboard, id.to_string())
+            .map_err(anyhow::Error::msg)?;
+        if let Err(error) = (ClipboardUpdatePayload::Deleted { id }).emit(&self.app_handle) {
+            error!("Failed to emit clipboard-deleted event: {error}");
         }
-
-        debug!("Deleted clipboard item {}", id);
-
-        // Emit event
-        if let Err(e) = (ClipboardUpdatePayload::Deleted { id }).emit(&self.app_handle) {
-            error!("Failed to emit clipboard-deleted event: {}", e);
-        }
-
         Ok(())
     }
 
-    /// Clear clipboard history
+    /// 每个源记录均保留可重试删除回执；部分失败时不发布全部清空的假结果。
     pub fn clear_history(&self, keep_pinned: bool) -> Result<()> {
-        let _source_write = super::integration::begin_source_write(&self.app_handle);
-        let conn = self.get_connection()?;
-
-        if keep_pinned {
-            // Get all non-pinned, non-favorite items to delete their images
-            let mut stmt = conn.prepare(
-                "SELECT image_path FROM clipboard_history WHERE is_pinned = 0 AND is_favorite = 0 AND image_path IS NOT NULL"
-            )?;
-            let image_paths: Vec<String> = stmt
-                .query_map([], |row| row.get(0))?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-
-            // Delete images
-            for path in image_paths {
-                let full_path = self.images_dir.join(&path);
-                if full_path.exists() {
-                    if let Err(e) = fs::remove_file(&full_path) {
-                        error!("Failed to delete clipboard image {}: {}", path, e);
-                    }
-                }
-            }
-
-            // Delete non-pinned, non-favorite entries
-            conn.execute(
-                "DELETE FROM clipboard_history WHERE is_pinned = 0 AND is_favorite = 0",
-                [],
-            )?;
-        } else {
-            // Get all image paths to delete
-            let mut stmt = conn
-                .prepare("SELECT image_path FROM clipboard_history WHERE image_path IS NOT NULL")?;
-            let image_paths: Vec<String> = stmt
-                .query_map([], |row| row.get(0))?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-
-            // Delete images
-            for path in image_paths {
-                let full_path = self.images_dir.join(&path);
-                if full_path.exists() {
-                    if let Err(e) = fs::remove_file(&full_path) {
-                        error!("Failed to delete clipboard image {}: {}", path, e);
-                    }
-                }
-            }
-
-            // Delete all entries
-            conn.execute("DELETE FROM clipboard_history", [])?;
+        let ids = {
+            let conn = self.get_connection()?;
+            let mut query = conn.prepare(if keep_pinned {
+                "SELECT id FROM clipboard_history WHERE is_pinned=0 AND is_favorite=0"
+            } else {
+                "SELECT id FROM clipboard_history"
+            })?;
+            let ids = query
+                .query_map([], |row| row.get::<_, i64>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            ids
+        };
+        let service = self.attachment_service()?;
+        for id in ids {
+            service
+                .delete_source_record(SourceTable::Clipboard, id.to_string())
+                .map_err(anyhow::Error::msg)?;
         }
-
-        info!("Cleared clipboard history (keep_pinned: {})", keep_pinned);
-        if let Err(e) = (ClipboardUpdatePayload::Cleared { keep_pinned }).emit(&self.app_handle) {
-            error!("Failed to emit clipboard-cleared event: {}", e);
+        if let Err(error) = (ClipboardUpdatePayload::Cleared { keep_pinned }).emit(&self.app_handle)
+        {
+            error!("Failed to emit clipboard-cleared event: {error}");
         }
-
         Ok(())
     }
 
@@ -1936,8 +1920,7 @@ impl ClipboardManager {
                 let path = item
                     .image_path
                     .ok_or_else(|| anyhow!("Image path not found"))?;
-                let full_path = self.images_dir.join(&path);
-                self.write_image_path_to_system_clipboard(full_path)
+                self.write_image_to_system_clipboard(self.read_clipboard_image(&path)?)
             }
             _ => Err(anyhow!("Unsupported content type")),
         }
@@ -2015,20 +1998,14 @@ impl ClipboardManager {
 
         let mut deleted_ids = Vec::new();
 
-        for (id, image_path) in entries_to_delete {
-            // Delete image file if exists
-            if let Some(path) = image_path {
-                let full_path = self.images_dir.join(&path);
-                if full_path.exists() {
-                    if let Err(e) = fs::remove_file(&full_path) {
-                        error!("Failed to delete clipboard image {}: {}", path, e);
-                    }
-                }
+        let service = self.attachment_service()?;
+        for (id, _) in entries_to_delete {
+            if service
+                .delete_source_record(SourceTable::Clipboard, id.to_string())
+                .map_err(anyhow::Error::msg)?
+            {
+                deleted_ids.push(id);
             }
-
-            // Delete entry
-            conn.execute("DELETE FROM clipboard_history WHERE id = ?1", params![id])?;
-            deleted_ids.push(id);
         }
 
         debug!("Cleaned up {} old clipboard entries", excess);

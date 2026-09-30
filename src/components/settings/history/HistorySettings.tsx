@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { readFile } from "@tauri-apps/plugin-fs";
+import { acquireHistoryAudio, type AudioSource } from "@/lib/historyAttachment";
 import { Check, Copy, FolderOpen, RotateCcw, Star, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -181,23 +180,8 @@ export const HistorySettings: React.FC = () => {
   };
 
   const getAudioUrl = useCallback(
-    async (fileName: string) => {
-      try {
-        const result = await commands.getAudioFilePath(fileName);
-        if (result.status === "ok") {
-          if (osType === "linux") {
-            const fileData = await readFile(result.data);
-            const blob = new Blob([fileData], { type: "audio/wav" });
-            return URL.createObjectURL(blob);
-          }
-          return convertFileSrc(result.data, "asset");
-        }
-        return null;
-      } catch (error) {
-        console.error("Failed to get audio file path:", error);
-        return null;
-      }
-    },
+    (id: number, signal: AbortSignal) =>
+      acquireHistoryAudio(id, osType, signal),
     [osType],
   );
 
@@ -298,7 +282,7 @@ interface HistoryEntryProps {
   entry: HistoryEntry;
   onToggleSaved: () => void;
   onCopyText: () => void;
-  getAudioUrl: (fileName: string) => Promise<string | null>;
+  getAudioUrl: (id: number, signal: AbortSignal) => Promise<AudioSource | null>;
   deleteAudio: (id: number) => Promise<void>;
   retryTranscription: (id: number) => Promise<void>;
 }
@@ -318,8 +302,8 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   const hasTranscription = entry.transcription_text.trim().length > 0;
 
   const handleLoadAudio = useCallback(
-    () => getAudioUrl(entry.file_name),
-    [getAudioUrl, entry.file_name],
+    (signal: AbortSignal) => getAudioUrl(entry.id, signal),
+    [getAudioUrl, entry.id],
   );
 
   const handleCopyText = () => {

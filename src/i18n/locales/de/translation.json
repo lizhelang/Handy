@@ -570,7 +570,12 @@
       "retranscribe": "Erneut transkribieren",
       "retranscribeError": "Erneute Transkription fehlgeschlagen. Bitte versuche es erneut.",
       "transcribing": "Transkribiere...",
-      "transcriptionFailed": "Transkription fehlgeschlagen. Du kannst über das Wiederholen-Symbol erneut transkribieren."
+      "transcriptionFailed": "Transkription fehlgeschlagen. Du kannst über das Wiederholen-Symbol erneut transkribieren.",
+      "audio": {
+        "play": "Play recording",
+        "pause": "Pause recording",
+        "failed": "Recording could not be played. Try again."
+      }
     },
     "debug": {
       "title": "Debug",

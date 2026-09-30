@@ -8,12 +8,14 @@ import React, {
   useState,
 } from "react";
 import { Play, Pause } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import type { AudioSource } from "@/lib/historyAttachment";
 
 interface AudioPlayerProps {
   /** Audio source URL. If not provided, onLoadRequest must be provided. */
   src?: string;
-  /** Called when play is clicked and no src is loaded yet. Should return the audio URL. */
-  onLoadRequest?: () => Promise<string | null>;
+  /** 每次开始/恢复播放重新获取租约；signal 取消未完成的获取。 */
+  onLoadRequest?: (signal: AbortSignal) => Promise<AudioSource | null>;
   className?: string;
   autoPlay?: boolean;
 }
@@ -57,6 +59,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   autoPlay = false,
 }) => {
   const group = useContext(AudioPlayerGroupContext);
+  const { t } = useTranslation();
+  const [playbackError, setPlaybackError] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -65,7 +69,12 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const [isLoading, setIsLoading] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement>(null);
-  const src = loadedSrc;
+  const sourceRef = useRef<AudioSource | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(false);
+  const generationRef = useRef(0);
+  const resumeTimeRef = useRef(0);
+  const busyRef = useRef(false);
   const animationRef = useRef<number>();
   const dragTimeRef = useRef<number>(0);
 
@@ -117,77 +126,101 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     };
   }, [isPlaying, isDragging, tick]);
 
-  // Audio event handlers
+  const stopPlayback = useCallback(
+    (resetPosition = false, audio = audioRef.current) => {
+      generationRef.current += 1;
+      busyRef.current = false;
+      const pending = requestRef.current;
+      requestRef.current = null;
+      const source = sourceRef.current;
+      sourceRef.current = null;
+      isPlayingRef.current = false;
+      if (audio) {
+        if (Number.isFinite(audio.currentTime))
+          resumeTimeRef.current = audio.currentTime;
+        if (resetPosition) resumeTimeRef.current = 0;
+        // 先移除底层读取来源再释放租约。
+        audio.pause();
+        if (source) {
+          audio.removeAttribute("src");
+          audio.load();
+        }
+        group?.releasePlayback(audio);
+      }
+      source?.release();
+      pending?.abort();
+      if (mountedRef.current) {
+        setIsPlaying(false);
+        setIsLoading(false);
+        if (source) setLoadedSrc(null);
+      }
+    },
+    [group],
+  );
+
+  useEffect(() => {
+    mountedRef.current = true;
+    // React 在被动卸载清理前清空 DOM ref；保留实例以先停止文件读取再释放租约。
+    const audio = audioRef.current;
+    return () => {
+      mountedRef.current = false;
+      stopPlayback(false, audio);
+    };
+  }, [stopPlayback]);
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-
-    const handleLoadedMetadata = () => {
+    const metadata = () => {
       setDuration(audio.duration || 0);
+      const position = Math.min(resumeTimeRef.current, audio.duration || 0);
+      if (position > 0) audio.currentTime = position;
+      setCurrentTime(position);
+    };
+    const ended = () => {
+      stopPlayback(true);
       setCurrentTime(0);
     };
-
-    const handleEnded = () => {
-      group?.releasePlayback(audio);
-      setIsPlaying(false);
-      setCurrentTime(audio.duration || 0);
-    };
-
-    const handlePlay = () => {
+    const play = () => {
       group?.requestPlayback(audio);
+      isPlayingRef.current = true;
       setIsPlaying(true);
     };
-    const handlePause = () => {
-      group?.releasePlayback(audio);
-      setIsPlaying(false);
+    const pause = () => {
+      // stopPlayback 清空引用后可能触发 pause；该事件不重复清理。
+      if (sourceRef.current || requestRef.current || isPlayingRef.current)
+        stopPlayback();
     };
-
-    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
-    audio.addEventListener("ended", handleEnded);
-    audio.addEventListener("play", handlePlay);
-    audio.addEventListener("pause", handlePause);
-
+    const error = () => {
+      if (!sourceRef.current && !requestRef.current && !initialSrc) return;
+      setPlaybackError(true);
+      stopPlayback();
+    };
+    audio.addEventListener("loadedmetadata", metadata);
+    audio.addEventListener("ended", ended);
+    audio.addEventListener("play", play);
+    audio.addEventListener("pause", pause);
+    audio.addEventListener("error", error);
     return () => {
-      group?.releasePlayback(audio);
-      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      audio.removeEventListener("ended", handleEnded);
-      audio.removeEventListener("play", handlePlay);
-      audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("loadedmetadata", metadata);
+      audio.removeEventListener("ended", ended);
+      audio.removeEventListener("play", play);
+      audio.removeEventListener("pause", pause);
+      audio.removeEventListener("error", error);
     };
-  }, [group]);
-
-  // Auto-play when src becomes available (via onLoadRequest or autoPlay prop)
-  const prevLoadedSrc = useRef<string | null>(null);
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    // Play when loadedSrc changes from null to a value (lazy load case)
-    if (loadedSrc && !prevLoadedSrc.current && onLoadRequest) {
-      audio.play().catch((error) => {
-        console.error("Auto-play failed:", error);
-      });
-    }
-    // Or when autoPlay is set with initial src
-    else if (autoPlay && initialSrc && !prevLoadedSrc.current) {
-      audio.play().catch((error) => {
-        console.error("Auto-play failed:", error);
-      });
-    }
-
-    prevLoadedSrc.current = loadedSrc;
-  }, [loadedSrc, autoPlay, initialSrc, onLoadRequest]);
+  }, [group, initialSrc, stopPlayback]);
 
   // Global drag handlers
   const handleMouseUp = useCallback(() => {
     if (isDragging) {
       setIsDragging(false);
       if (audioRef.current) {
-        audioRef.current.currentTime = dragTimeRef.current;
+        if (loadedSrc) audioRef.current.currentTime = dragTimeRef.current;
+        resumeTimeRef.current = dragTimeRef.current;
         setCurrentTime(dragTimeRef.current);
       }
     }
-  }, [isDragging]);
+  }, [isDragging, loadedSrc]);
 
   useEffect(() => {
     if (isDragging) {
@@ -201,40 +234,58 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     }
   }, [isDragging, handleMouseUp]);
 
-  // Cleanup blob URLs on unmount
-  useEffect(() => {
-    return () => {
-      if (loadedSrc?.startsWith("blob:")) {
-        URL.revokeObjectURL(loadedSrc);
-      }
-    };
-  }, [loadedSrc]);
-
-  const togglePlay = async () => {
+  const startPlayback = useCallback(async () => {
     const audio = audioRef.current;
-    if (!audio) return;
-    if (isLoading) return;
-
+    if (!audio || busyRef.current) return;
+    busyRef.current = true;
+    const generation = ++generationRef.current;
+    const request = new AbortController();
+    requestRef.current = request;
+    setPlaybackError(false);
+    setIsLoading(true);
     try {
-      if (isPlaying) {
-        audio.pause();
-      } else {
-        // If no src loaded yet, request it
-        if (!src && onLoadRequest) {
-          setIsLoading(true);
-          const newSrc = await onLoadRequest();
-          setIsLoading(false);
-          if (newSrc) {
-            setLoadedSrc(newSrc);
-            // Playback will be triggered by the useEffect watching loadedSrc
-          }
-        } else if (src) {
-          await audio.play();
+      if (onLoadRequest) {
+        const source = await onLoadRequest(request.signal);
+        if (
+          !mountedRef.current ||
+          request.signal.aborted ||
+          generation !== generationRef.current
+        ) {
+          source?.release();
+          return;
         }
+        if (!source) {
+          stopPlayback();
+          return;
+        }
+        sourceRef.current = source;
+        audio.src = source.url;
+        setLoadedSrc(source.url);
+      } else if (initialSrc) {
+        audio.src = initialSrc;
+      } else {
+        stopPlayback();
+        return;
       }
-    } catch (error) {
-      console.error("Playback failed:", error);
+      await audio.play();
+      if (!mountedRef.current || generation !== generationRef.current) return;
+      setIsLoading(false);
+      busyRef.current = false;
+    } catch {
+      if (mountedRef.current && generation === generationRef.current) {
+        setPlaybackError(true);
+        stopPlayback();
+      }
     }
+  }, [initialSrc, onLoadRequest, stopPlayback]);
+
+  useEffect(() => {
+    if (autoPlay && initialSrc) void startPlayback();
+  }, [autoPlay, initialSrc, startPlayback]);
+
+  const togglePlay = () => {
+    if (busyRef.current || isPlayingRef.current) stopPlayback();
+    else void startPlayback();
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -243,7 +294,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     setCurrentTime(newTime);
 
     if (!isDragging && audioRef.current) {
-      audioRef.current.currentTime = newTime;
+      if (loadedSrc) audioRef.current.currentTime = newTime;
+      resumeTimeRef.current = newTime;
     }
   };
 
@@ -278,13 +330,17 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
   return (
     <div className={`flex items-center gap-3 ${className}`}>
-      <audio ref={audioRef} src={src ?? undefined} preload="metadata" />
+      <audio ref={audioRef} preload="none" />
 
       <button
         onClick={togglePlay}
-        disabled={isLoading}
+        aria-busy={isLoading}
         className="transition-colors cursor-pointer text-text hover:text-accent-text disabled:opacity-50"
-        aria-label={isPlaying ? "Pause" : "Play"}
+        aria-label={
+          isPlaying || isLoading
+            ? t("settings.history.audio.pause")
+            : t("settings.history.audio.play")
+        }
       >
         {isPlaying ? (
           <Pause width={20} height={20} fill="currentColor" />
@@ -292,6 +348,12 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
           <Play width={20} height={20} fill="currentColor" />
         )}
       </button>
+
+      {playbackError && (
+        <span role="alert" className="text-xs text-text/60">
+          {t("settings.history.audio.failed")}
+        </span>
+      )}
 
       <div className="flex-1 flex items-center gap-2">
         <span className="text-xs text-text/60 min-w-[30px] tabular-nums">

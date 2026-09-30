@@ -19,6 +19,31 @@ struct DeleteRejection {
     record_exists: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeletedAttachment {
+    pub kind: crate::attachment_store::AttachmentKind,
+    pub path: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeleteSuccess {
+    version: u32,
+    item_id: String,
+    revision: u64,
+    attachments: Vec<DeletedAttachment>,
+}
+impl DeleteSuccess {
+    fn parse(response: &str, item_id: &str, revision: u64) -> Option<Self> {
+        serde_json::from_str::<Self>(response)
+            .ok()
+            .filter(|receipt| {
+                receipt.version == 2 && receipt.item_id == item_id && receipt.revision == revision
+            })
+    }
+}
+
 impl DeleteRejection {
     fn validates(response: &str, expected_revision: u64) -> bool {
         serde_json::from_str::<Self>(response).is_ok_and(|proof| {
@@ -590,6 +615,8 @@ impl SourceOutbox {
                 })
                 .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)));
             }
+            // 清单与 expected_revision 的 CAS 和源删除属于同一个 IMMEDIATE 事务。
+            let attachments = record_attachments(tx, source, record_id)?;
             let changed = tx.execute(
                 &format!("DELETE FROM {} WHERE CAST(id AS TEXT)=?1", source.table()),
                 [record_id],
@@ -597,10 +624,21 @@ impl SourceOutbox {
             if changed != 1 {
                 return Err(rusqlite::Error::InvalidQuery);
             }
-            Ok("true".into())
+            serde_json::to_string(&DeleteSuccess {
+                version: 2,
+                item_id: item_id.clone(),
+                revision: expected_revision,
+                attachments,
+            })
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
         })?;
-        if result.response == "true" {
-            Ok(result)
+        if result.response == "true"
+            || DeleteSuccess::parse(&result.response, &item_id, expected_revision).is_some()
+        {
+            Ok(MutationResult {
+                response: "true".into(),
+                ..result
+            })
         } else if DeleteRejection::validates(&result.response, expected_revision) {
             Err(SourceError::RevisionConflict)
         } else {
@@ -671,7 +709,9 @@ impl SourceOutbox {
         match prior {
             None => Ok(None),
             Some((digest, response))
-                if digest == delete_digest(item_id, revision) && response == "true" =>
+                if digest == delete_digest(item_id, revision)
+                    && (response == "true"
+                        || DeleteSuccess::parse(&response, item_id, revision).is_some()) =>
             {
                 Ok(Some(true))
             }
@@ -686,6 +726,70 @@ impl SourceOutbox {
             }
             Some(_) => Err(SourceError::InvalidReceipt),
         }
+    }
+
+    /// None 仅表示旧版成功回执缺少附件清单，不能推断它曾经没有附件。
+    pub fn deleted_attachments(
+        &self,
+        conn: &Connection,
+        item_id: &str,
+        revision: u64,
+        operation_id: &str,
+    ) -> Result<Option<Vec<DeletedAttachment>>> {
+        if self.delete_receipt(conn, item_id, revision, operation_id)? != Some(true) {
+            return Err(SourceError::InvalidReceipt);
+        }
+        let response: String = conn.query_row(
+            "SELECT response FROM unified_source_operations WHERE operation_id=?1",
+            [operation_id],
+            |r| r.get(0),
+        )?;
+        if response == "true" {
+            return Ok(None);
+        }
+        DeleteSuccess::parse(&response, item_id, revision)
+            .map(|receipt| Some(receipt.attachments))
+            .ok_or(SourceError::InvalidReceipt)
+    }
+
+    pub fn attachment_references(
+        &self,
+        conn: &mut Connection,
+        source: SourceTable,
+    ) -> Result<Vec<crate::attachment_store::AttachmentReference>> {
+        let tx = conn.transaction()?;
+        self.verify_identity(&tx)?;
+        let sql=format!("SELECT CAST(row.id AS TEXT),version.revision FROM {} row JOIN unified_source_versions version ON version.record_id=CAST(row.id AS TEXT)",source.table());
+        let mut stmt = tx.prepare(&sql)?;
+        let ids = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut refs = Vec::new();
+        for (record_id, revision) in ids {
+            let attachments = record_attachments(&tx, source, &record_id)?;
+            if attachments.is_empty() {
+                refs.push(crate::attachment_store::AttachmentReference {
+                    store_id: self.store_id.clone(),
+                    record_id,
+                    revision,
+                    kind: crate::attachment_store::AttachmentKind::Recording,
+                    path: None,
+                    retained: false,
+                });
+            } else {
+                for attachment in attachments {
+                    refs.push(crate::attachment_store::AttachmentReference {
+                        store_id: self.store_id.clone(),
+                        record_id: record_id.clone(),
+                        revision,
+                        kind: attachment.kind,
+                        path: Some(attachment.path),
+                        retained: false,
+                    });
+                }
+            }
+        }
+        Ok(refs)
     }
 
     /// 业务修改与去重回执在同一源事务；重复请求不再执行 toggle 等非幂等动作。
@@ -721,6 +825,52 @@ impl SourceOutbox {
             replayed: false,
             response,
         })
+    }
+}
+
+fn record_attachments(
+    conn: &Connection,
+    source: SourceTable,
+    record_id: &str,
+) -> rusqlite::Result<Vec<DeletedAttachment>> {
+    use crate::attachment_store::AttachmentKind;
+    match source {
+        SourceTable::History => {
+            let name: Option<String> = conn.query_row(
+                "SELECT file_name FROM transcription_history WHERE CAST(id AS TEXT)=?1",
+                [record_id],
+                |r| r.get(0),
+            )?;
+            Ok(name
+                .filter(|name| !name.is_empty())
+                .map(|path| DeletedAttachment {
+                    kind: AttachmentKind::Recording,
+                    path,
+                })
+                .into_iter()
+                .collect())
+        }
+        SourceTable::Clipboard => {
+            let (kind,path,files):(String,Option<String>,Option<String>)=conn.query_row("SELECT content_type,image_path,CASE WHEN content_type='file' THEN full_text ELSE NULL END FROM clipboard_history WHERE CAST(id AS TEXT)=?1",[record_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+            if kind == "file" {
+                Ok(vec![DeletedAttachment {
+                    kind: AttachmentKind::External,
+                    path: format!(
+                        "files:{:x}",
+                        Sha256::digest(files.unwrap_or_default().as_bytes())
+                    ),
+                }])
+            } else {
+                Ok(path
+                    .filter(|name| !name.is_empty())
+                    .map(|path| DeletedAttachment {
+                        kind: AttachmentKind::Image,
+                        path,
+                    })
+                    .into_iter()
+                    .collect())
+            }
+        }
     }
 }
 

@@ -100,7 +100,7 @@ impl Fixture {
             .unwrap()
             .unwrap();
         assert_eq!(record.state, DeleteState::ProjectionRevoked);
-        assert_eq!(record.attachment_cleanup, AttachmentCleanup::NotStarted);
+        assert_eq!(record.attachment_cleanup, AttachmentCleanup::Blocked);
         assert_eq!(record.last_failure, None);
         assert_eq!(self.source_count(), 0);
         assert_eq!(self.source_revision(), request.expected_revision + 1);

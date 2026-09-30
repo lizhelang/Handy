@@ -570,7 +570,12 @@
       "retranscribe": "Přepsat znovu",
       "retranscribeError": "Opětovný přepis se nezdařil. Zkuste to prosím znovu.",
       "transcribing": "Přepisuji...",
-      "transcriptionFailed": "Přepis selhal. Můžete zkusit přepis znovu pomocí ikony opakování."
+      "transcriptionFailed": "Přepis selhal. Můžete zkusit přepis znovu pomocí ikony opakování.",
+      "audio": {
+        "play": "Play recording",
+        "pause": "Pause recording",
+        "failed": "Recording could not be played. Try again."
+      }
     },
     "debug": {
       "title": "Ladění",

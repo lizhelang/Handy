@@ -921,14 +921,11 @@ impl ShortcutAction for TranscribeAction {
                     utils::hide_recording_overlay(&ah);
                     set_tray_state(&ah, TrayIconState::Idle);
                 } else {
-                    // Save WAV concurrently with transcription
-                    let sample_count = samples.len();
-                    let file_name = format!("handy-{}.wav", chrono::Utc::now().timestamp());
-                    let wav_path = hm.recordings_dir().join(&file_name);
-                    let wav_path_for_verify = wav_path.clone();
+                    // WAV 编码与耐久附件导入和识别并行；导入失败仍保存正文。
                     let samples_for_wav = samples.clone();
+                    let recording_history = hm.clone();
                     let wav_handle = tauri::async_runtime::spawn_blocking(move || {
-                        crate::audio_toolkit::save_wav_file(&wav_path, &samples_for_wav)
+                        recording_history.import_recording(&samples_for_wav)
                     });
 
                     // Transcribe concurrently with WAV save. If a live stream was
@@ -947,29 +944,19 @@ impl ShortcutAction for TranscribeAction {
                         Err(err) => Err(err),
                     };
 
-                    // Await WAV save and verify
-                    let wav_saved = match wav_handle.await {
-                        Ok(Ok(())) => {
-                            match crate::audio_toolkit::verify_wav_file(
-                                &wav_path_for_verify,
-                                sample_count,
-                            ) {
-                                Ok(()) => true,
-                                Err(e) => {
-                                    error!("WAV verification failed: {}", e);
-                                    false
-                                }
-                            }
-                        }
-                        Ok(Err(e)) => {
-                            error!("Failed to save WAV file: {}", e);
-                            false
-                        }
-                        Err(e) => {
-                            error!("WAV save task panicked: {}", e);
-                            false
+                    let attachment = match wav_handle.await {
+                        Ok(result) => result,
+                        Err(error) => {
+                            error!("Recording import task failed: {error}");
+                            Err(inputia_handy_runtime::attachment_store::PauseReason::IoFailure)
                         }
                     };
+                    let wav_saved = attachment.is_ok();
+                    let file_name = attachment
+                        .as_ref()
+                        .map(|saved| saved.import.file_name.clone())
+                        .unwrap_or_default();
+                    let attachment_failure = attachment.as_ref().err().copied();
 
                     if rm.was_cancelled_since(cancel_generation) {
                         debug!("Transcription operation cancelled before output handling");
@@ -1033,6 +1020,13 @@ impl ShortcutAction for TranscribeAction {
                                     )
                                 },
                             );
+                            if let (Ok(entry), Some(reason)) = (&saved_entry, attachment_failure) {
+                                if let Err(error) = hm.mark_missing_recording(entry.id, reason) {
+                                    error!(
+                                        "Text saved; attachment failure metadata pending: {error}"
+                                    );
+                                }
+                            }
                             if let Err(err) = &saved_entry {
                                 error!("Failed to save history entry: {}", err);
                             }

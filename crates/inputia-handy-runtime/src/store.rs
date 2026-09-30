@@ -179,6 +179,7 @@ pub struct SnapshotRestoreOutcome {
 
 #[derive(Debug)]
 pub enum StoreError {
+    Attachment(crate::attachment_store::AttachmentError),
     Output(crate::output_ledger::OutputLedgerError),
     Voice(crate::voice_ledger::VoiceLedgerError),
     Learning(LearningError),
@@ -203,6 +204,7 @@ impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // 不将来自数据库的正文或外部输入拼入诊断。
         match self {
+            Self::Attachment(error) => write!(f, "{error}"),
             Self::Output(error) => write!(f, "{error}"),
             Self::Voice(error) => write!(f, "{error}"),
             Self::Learning(error) => write!(f, "{error}"),
@@ -243,6 +245,11 @@ impl fmt::Display for StoreError {
 }
 
 impl std::error::Error for StoreError {}
+impl From<crate::attachment_store::AttachmentError> for StoreError {
+    fn from(error: crate::attachment_store::AttachmentError) -> Self {
+        Self::Attachment(error)
+    }
+}
 impl From<crate::output_ledger::OutputLedgerError> for StoreError {
     fn from(error: crate::output_ledger::OutputLedgerError) -> Self {
         Self::Output(error)
@@ -282,6 +289,32 @@ pub struct IntegrationStore {
 }
 
 impl IntegrationStore {
+    pub(crate) fn attachment_connection(&mut self) -> &mut Connection {
+        &mut self.conn
+    }
+    pub(crate) fn retained_attachment_references(
+        &self,
+    ) -> StoreResult<Vec<crate::attachment_store::AttachmentReference>> {
+        use crate::attachment_store::{AttachmentKind, AttachmentReference};
+        let mut query=self.conn.prepare("SELECT item.store_id,item.record_id,revision.revision,item.logical_name,json_extract(revision.snapshot,'$.asset_ref') FROM integration_revisions revision JOIN integration_items item ON revision.item_id=item.item_id WHERE json_extract(revision.snapshot,'$.asset_ref') IS NOT NULL")?;
+        let rows = query
+            .query_map([], |row| {
+                Ok(AttachmentReference {
+                    store_id: row.get(0)?,
+                    record_id: row.get(1)?,
+                    revision: row.get(2)?,
+                    kind: if row.get::<_, String>(3)? == "history" {
+                        AttachmentKind::Recording
+                    } else {
+                        AttachmentKind::Image
+                    },
+                    path: row.get(4)?,
+                    retained: true,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
     /// 先提交耐久意图；此事务不能与后续源库副作用交换顺序。
     pub fn prepare_deletion(
         &mut self,
@@ -319,6 +352,17 @@ impl IntegrationStore {
         crate::deletion_lifecycle::pending(&self.conn, after, 1)
     }
 
+    pub(crate) fn pending_deletion_for_owner(
+        &self,
+        store: &str,
+        record: &str,
+    ) -> StoreResult<Option<crate::deletion_lifecycle::DeleteRecord>> {
+        let operation:Option<String>=self.conn.query_row("SELECT operation_id FROM integration_deletion_operations WHERE state IN('requested','source_applied') AND json_extract(request_json,'$.store_id')=?1 AND json_extract(request_json,'$.record_id')=?2 ORDER BY operation_id LIMIT 1",params![store,record],|r|r.get(0)).optional()?;
+        operation
+            .map(|id| crate::deletion_lifecycle::get(&self.conn, &id))
+            .transpose()
+            .map(Option::flatten)
+    }
     pub(crate) fn has_pending_deletions(&self) -> StoreResult<bool> {
         crate::deletion_lifecycle::has_pending(&self.conn)
     }

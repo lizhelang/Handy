@@ -1,6 +1,10 @@
 //! 单一后台写入线程；Tauri/Host 通过请求队列访问，不在按键线程等待。
 
 use crate::{
+    attachment_store::{
+        AttachmentBudget, AttachmentHealth, AttachmentImport, AttachmentKind, AttachmentLease,
+        AttachmentMutationGate, AttachmentMutationGuard, AttachmentStore, PauseReason, PinPurpose,
+    },
     deletion_lifecycle::{
         DeleteFailure, DeleteRecord, DeleteRequest, DeleteState, DELETE_SCHEMA_VERSION,
     },
@@ -41,12 +45,14 @@ pub struct OutputPermit {
 
 #[derive(Default)]
 struct SourceWrites {
+    gate: Arc<AttachmentMutationGate>,
     active: AtomicUsize,
     generation: AtomicU64,
 }
 
 /// 源写入期间阻止新许可；Drop 后仍须由同步屏障消费源事务才可重新输出。
 pub struct SourceWriteGuard {
+    _attachment: AttachmentMutationGuard,
     source: Arc<SourceWrites>,
 }
 impl Drop for SourceWriteGuard {
@@ -71,6 +77,11 @@ struct Worker {
     output_generation: Arc<AtomicU64>,
     source_writes: Arc<SourceWrites>,
     _writer_lease: std::fs::File,
+    attachments: AttachmentStore,
+    attachment_audit: Option<(u64, u64)>,
+    attachment_pause: Option<PauseReason>,
+    maintenance_user: Option<inputia_settings::maintenance::UserContext>,
+    next_attachment_maintenance: Instant,
     learning_key: [u8; 32],
     store: IntegrationStore,
     sources: Vec<SourcePump>,
@@ -84,6 +95,85 @@ struct Worker {
 }
 
 impl Worker {
+    fn record_deletion_attachments(&mut self, request: &DeleteRequest) -> ServiceResult<()> {
+        let source = self
+            .sources
+            .iter()
+            .find(|s| s.store_id() == request.store_id)
+            .ok_or("attachment source unavailable")?;
+        let manifest = source
+            .deleted_attachments(
+                &request.item_id,
+                request.expected_revision,
+                &request.operation_id,
+            )
+            .map_err(|e| e.to_string())?;
+        let retained: Vec<_> = self
+            .store
+            .retained_attachment_references()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|r| r.store_id == request.store_id && r.record_id == request.record_id)
+            .collect();
+        self.attachments
+            .record_manifest(
+                self.store.attachment_connection(),
+                request,
+                manifest.as_deref(),
+                &retained,
+            )
+            .map_err(|e| e.to_string())
+    }
+    fn audit_attachments(&mut self) -> ServiceResult<()> {
+        let mut refs = Vec::new();
+        for source in &mut self.sources {
+            refs.extend(source.attachment_references().map_err(|e| e.to_string())?);
+        }
+        refs.extend(
+            self.store
+                .retained_attachment_references()
+                .map_err(|e| e.to_string())?,
+        );
+        self.attachments
+            .reconcile(self.store.attachment_connection(), &refs)
+            .map_err(|e| e.to_string())?;
+        self.attachment_audit = Some((
+            self.generation,
+            self.source_writes.generation.load(Ordering::Acquire),
+        ));
+        Ok(())
+    }
+    fn maintain_attachments(&mut self) {
+        if Instant::now() < self.next_attachment_maintenance {
+            return;
+        }
+        self.next_attachment_maintenance = Instant::now() + Duration::from_secs(1);
+        if self.require_deletions_settled().is_err() || self.last_error.is_some() {
+            self.attachment_pause = Some(PauseReason::SourceAuditPending);
+            return;
+        }
+        let Some(exclusive) = self.source_writes.gate.try_gc() else {
+            self.attachment_pause = Some(PauseReason::BusyPin);
+            return;
+        };
+        let revision = (
+            self.generation,
+            self.source_writes.generation.load(Ordering::Acquire),
+        );
+        if self.attachment_audit != Some(revision) && self.audit_attachments().is_err() {
+            self.attachment_pause = Some(PauseReason::SourceAuditPending);
+            return;
+        }
+        let Some(user) = self.maintenance_user.as_ref() else {
+            self.attachment_pause = Some(PauseReason::Maintenance);
+            return;
+        };
+        self.attachment_pause = self
+            .attachments
+            .collect_one(self.store.attachment_connection(), &exclusive, user)
+            .err()
+            .map(|e| e.reason());
+    }
     fn revoke_outputs(&self) {
         self.output_generation.fetch_add(1, Ordering::AcqRel);
     }
@@ -207,6 +297,7 @@ impl Worker {
             self.deletion_failure(&record, failure, reject)?;
             return Err(format!("deletion pending or rejected: {failure:?}"));
         }
+        self.record_deletion_attachments(&request)?;
         if record.state == DeleteState::Requested {
             record = self
                 .store
@@ -239,10 +330,17 @@ impl Worker {
                         return Err("source changed during deletion projection".into());
                     }
                 }
+                self.store
+                    .transition_deletion(&request, DeleteState::ProjectionRevoked, None)
+                    .map_err(|e| e.to_string())?;
+                self.attachments
+                    .schedule_deletion(self.store.attachment_connection(), &request)
+                    .map_err(|e| e.to_string())?;
                 return self
                     .store
-                    .transition_deletion(&request, DeleteState::ProjectionRevoked, None)
-                    .map_err(|e| e.to_string());
+                    .deletion_record(&request.operation_id)
+                    .map_err(|e| e.to_string())?
+                    .ok_or("deletion record missing".into());
             }
         }
         self.deletion_failure(&record, DeleteFailure::ProjectionUnavailable, false)?;
@@ -322,6 +420,10 @@ impl Worker {
                     {
                         return Err("deletion completion evidence missing or inconsistent".into());
                     }
+                    self.record_deletion_attachments(request)?;
+                    self.attachments
+                        .schedule_deletion(self.store.attachment_connection(), request)
+                        .map_err(|e| e.to_string())?;
                 } else {
                     if !matches!(
                         record.last_failure,
@@ -401,6 +503,23 @@ impl Worker {
     }
 }
 
+/// 调用者持有到源记录提交或放弃；超时/取消后的导入不会永久占据本进程 reservation。
+pub struct PendingAttachmentImport {
+    pub import: AttachmentImport,
+    service: Arc<HistoryService>,
+}
+impl Drop for PendingAttachmentImport {
+    fn drop(&mut self) {
+        let service = self.service.clone();
+        let operation = self.import.operation_id.clone();
+        let _ = thread::Builder::new()
+            .name("attachment-import-settle".into())
+            .spawn(move || {
+                let _ = service.finish_attachment_import(operation);
+            });
+    }
+}
+
 pub struct HistoryService {
     output_generation: Arc<AtomicU64>,
     source_writes: Arc<SourceWrites>,
@@ -415,6 +534,19 @@ impl HistoryService {
         root: PathBuf,
         profile_id: String,
         changed: impl Fn(u64) + Send + 'static,
+    ) -> ServiceResult<Self> {
+        Self::start_with_attachment_context(
+            root,
+            profile_id,
+            changed,
+            inputia_settings::maintenance::current_user_context().ok(),
+        )
+    }
+    fn start_with_attachment_context(
+        root: PathBuf,
+        profile_id: String,
+        changed: impl Fn(u64) + Send + 'static,
+        maintenance_user: Option<inputia_settings::maintenance::UserContext>,
     ) -> ServiceResult<Self> {
         let (sender, receiver) = mpsc::sync_channel::<Job>(32);
         let stopping = Arc::new(AtomicBool::new(false));
@@ -467,7 +599,18 @@ impl HistoryService {
                     store
                         .initialize_voice_sessions()
                         .map_err(|e| e.to_string())?;
+                    let attachments = AttachmentStore::new(&root).map_err(|e| e.to_string())?;
+                    AttachmentStore::initialize(store.attachment_connection())
+                        .map_err(|e| e.to_string())?;
+                    attachments
+                        .recover_imports(store.attachment_connection())
+                        .map_err(|e| e.to_string())?;
                     Ok(Worker {
+                        attachments,
+                        attachment_audit: None,
+                        attachment_pause: Some(PauseReason::SourceAuditPending),
+                        maintenance_user,
+                        next_attachment_maintenance: Instant::now(),
                         output_generation: worker_generation,
                         source_writes: worker_source_writes,
                         _writer_lease: writer,
@@ -488,6 +631,7 @@ impl HistoryService {
                         // 先恢复删除屏障再接收下一项工作；重启不依赖 UI 重放请求。
                         let recovery = state.recover_deletions().err();
                         state.last_error = recovery.or_else(|| state.sync_once().err());
+                        state.maintain_attachments();
                     }
                     match receiver.recv_timeout(Duration::from_millis(100)) {
                         Ok(job) => job(&mut worker),
@@ -534,6 +678,297 @@ impl HistoryService {
         receiver
             .recv_timeout(Duration::from_secs(5))
             .map_err(|_| "history service request timed out".to_owned())?
+    }
+
+    /// 导入失败独立于文字提交，调用方应保存 typed 缺附件原因。操作 ID 重试必须保持字节相同。
+    pub fn import_attachment(
+        &self,
+        kind: AttachmentKind,
+        operation_id: String,
+        bytes: Vec<u8>,
+    ) -> Result<AttachmentImport, PauseReason> {
+        use sha2::{Digest, Sha256};
+        let _guard = self.begin_source_write();
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let size = bytes.len() as u64;
+        let (attachments, work) = self
+            .call_metadata(move |worker| {
+                let work = worker.attachments.prepare_import(
+                    worker.store.attachment_connection(),
+                    kind,
+                    &operation_id,
+                    &digest,
+                    size,
+                );
+                Ok((worker.attachments.clone(), work.map_err(|e| e.reason())))
+            })
+            .map_err(|_| PauseReason::IoFailure)?;
+        let published = attachments
+            .publish_import(work?, &bytes)
+            .map_err(|e| e.reason())?;
+        self.call_metadata(move |worker| {
+            Ok(worker
+                .attachments
+                .commit_import(worker.store.attachment_connection(), published)
+                .map_err(|e| e.reason()))
+        })
+        .map_err(|_| PauseReason::IoFailure)?
+    }
+    pub fn import_attachment_owned(
+        self: &Arc<Self>,
+        kind: AttachmentKind,
+        operation: String,
+        bytes: Vec<u8>,
+    ) -> Result<PendingAttachmentImport, PauseReason> {
+        match self.import_attachment(kind, operation.clone(), bytes) {
+            Ok(import) => Ok(PendingAttachmentImport {
+                import,
+                service: self.clone(),
+            }),
+            Err(error) => {
+                let _ = self.finish_attachment_import(operation);
+                Err(error)
+            }
+        }
+    }
+    pub fn finish_attachment_import(&self, operation: String) -> ServiceResult<()> {
+        self.call_metadata(move |worker| {
+            worker
+                .attachments
+                .finish_import(worker.store.attachment_connection(), &operation)
+                .map_err(|e| e.to_string())?;
+            worker.attachment_audit = None;
+            Ok(())
+        })
+    }
+    pub fn attachment_import_status(
+        &self,
+        operation: String,
+    ) -> ServiceResult<Option<crate::attachment_store::AttachmentImportStatus>> {
+        self.call_metadata(move |worker| {
+            worker
+                .attachments
+                .import_status(worker.store.attachment_connection(), &operation)
+                .map_err(|e| e.to_string())
+        })
+    }
+    pub fn attachment_deletion_status(
+        &self,
+        operation: String,
+    ) -> ServiceResult<(
+        crate::deletion_lifecycle::AttachmentCleanup,
+        Option<PauseReason>,
+    )> {
+        self.call_metadata(move |worker| {
+            worker
+                .attachments
+                .deletion_progress(worker.store.attachment_connection(), &operation)
+                .map_err(|e| e.to_string())
+        })
+    }
+    pub fn attachment_health(&self) -> ServiceResult<AttachmentHealth> {
+        self.call_metadata(|worker| {
+            let mut health = worker
+                .attachments
+                .health(worker.store.attachment_connection())
+                .map_err(|e| e.to_string())?;
+            health.paused = health.paused.or(worker.attachment_pause);
+            Ok(health)
+        })
+    }
+    pub fn configure_attachment_budget(&self, budget: AttachmentBudget) -> ServiceResult<()> {
+        self.call_metadata(move |worker| {
+            worker
+                .attachments
+                .configure(worker.store.attachment_connection(), &budget)
+                .map_err(|e| e.to_string())
+        })
+    }
+    pub fn pause_attachment_gc(&self, reason: Option<PauseReason>) -> ServiceResult<()> {
+        self.call_metadata(move |worker| {
+            worker
+                .attachments
+                .pause(worker.store.attachment_connection(), reason)
+                .map_err(|e| e.to_string())
+        })
+    }
+    pub fn mark_attachment_failure(
+        &self,
+        table: SourceTable,
+        record_id: String,
+        reason: PauseReason,
+    ) -> ServiceResult<()> {
+        self.call_metadata(move |worker| {
+            let source = worker
+                .sources
+                .iter_mut()
+                .find(|s| s.source_table() == table)
+                .ok_or("attachment source unavailable")?;
+            let refs = source.attachment_references().map_err(|e| e.to_string())?;
+            let reference = refs
+                .iter()
+                .find(|r| r.record_id == record_id)
+                .ok_or("attachment owner missing")?;
+            worker
+                .attachments
+                .owner_failure(
+                    worker.store.attachment_connection(),
+                    &reference.store_id,
+                    &record_id,
+                    reference.revision,
+                    Some(reason),
+                )
+                .map_err(|e| e.to_string())
+        })
+    }
+    /// 按源当前修订获取，租约钉住确切文件身份，不随之后的 owner 修订改变。
+    pub fn acquire_source_attachment(
+        &self,
+        table: SourceTable,
+        record_id: String,
+        expected_revision: Option<u64>,
+        purpose: PinPurpose,
+        operation_id: String,
+    ) -> ServiceResult<(AttachmentLease, PathBuf, u64)> {
+        let acquired = self.call(move |worker| {
+            let source = worker
+                .sources
+                .iter_mut()
+                .find(|s| s.source_table() == table)
+                .ok_or("attachment source unavailable")?;
+            let refs: Vec<_> = source
+                .attachment_references()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .filter(|r| r.record_id == record_id)
+                .collect();
+            let first = refs.first().ok_or("attachment owner missing")?;
+            let store = first.store_id.clone();
+            let revision = first.revision;
+            if expected_revision.is_some_and(|expected| expected != revision) {
+                return Err("attachment revision changed".into());
+            }
+            worker
+                .attachments
+                .reconcile_owner(worker.store.attachment_connection(), &refs)
+                .map_err(|e| e.to_string())?;
+            let (lease, path) = worker
+                .attachments
+                .acquire_owner(
+                    worker.store.attachment_connection(),
+                    &store,
+                    &record_id,
+                    revision,
+                    purpose,
+                    &operation_id,
+                )
+                .map_err(|e| e.to_string())?;
+            Ok((lease, path, revision))
+        })?;
+        if let Err(error) = self.read_attachment(acquired.0.clone()) {
+            let _ = self.release_attachment(acquired.0);
+            return Err(error);
+        }
+        Ok(acquired)
+    }
+    pub fn release_attachment(&self, lease: AttachmentLease) -> ServiceResult<()> {
+        self.call_metadata(move |worker| {
+            worker
+                .attachments
+                .release(worker.store.attachment_connection(), &lease)
+                .map_err(|e| e.to_string())
+        })
+    }
+    pub fn cancel_attachment_acquire(&self, operation_id: String) -> ServiceResult<()> {
+        self.call_metadata(move |worker| {
+            worker
+                .attachments
+                .cancel_acquire(worker.store.attachment_connection(), &operation_id)
+                .map_err(|e| e.to_string())
+        })
+    }
+    pub fn read_attachment(&self, lease: AttachmentLease) -> ServiceResult<Vec<u8>> {
+        let (attachments, plan) = self.call(move |worker| {
+            let plan = worker
+                .attachments
+                .lease_read_plan(worker.store.attachment_connection(), &lease)
+                .map_err(|e| e.to_string())?;
+            Ok((worker.attachments.clone(), plan))
+        })?;
+        attachments.read_plan(plan).map_err(|e| e.to_string())
+    }
+
+    pub fn acquire_attachment_maintenance(
+        &self,
+        operation_id: String,
+    ) -> ServiceResult<AttachmentLease> {
+        self.call_metadata(move |worker| {
+            worker
+                .attachments
+                .acquire(
+                    worker.store.attachment_connection(),
+                    None,
+                    PinPurpose::Update,
+                    &operation_id,
+                )
+                .map_err(|e| e.to_string())
+        })
+    }
+    /// manager 的单项、清空、保留策略均用同一源 CAS 和耐久删除状态机，隐私过滤不影响删除。
+    pub fn delete_source_record(
+        &self,
+        table: SourceTable,
+        record_id: String,
+    ) -> ServiceResult<bool> {
+        self.call_metadata(move |worker| {
+            use sha2::{Digest, Sha256};
+            worker.sync_once()?;
+            let source = worker
+                .sources
+                .iter_mut()
+                .find(|s| s.source_table() == table)
+                .ok_or("deletion source unavailable")?;
+            let refs = source.attachment_references().map_err(|e| e.to_string())?;
+            let Some(reference) = refs.iter().find(|r| r.record_id == record_id) else {
+                let store_id = source.store_id().to_owned();
+                if let Some(record) = worker
+                    .store
+                    .pending_deletion_for_owner(&store_id, &record_id)
+                    .map_err(|e| e.to_string())?
+                {
+                    worker.resume_deletion(record, 100)?;
+                    return Ok(true);
+                }
+                return Ok(false);
+            };
+            let store_id = source.store_id().to_owned();
+            let revision = reference.revision;
+            let item_id = crate::store::item_id(&store_id, &record_id);
+            let operation_id = format!(
+                "manager-delete-{:x}",
+                Sha256::digest(format!("{item_id}:{revision}").as_bytes())
+            );
+            let request = DeleteRequest {
+                schema_version: DELETE_SCHEMA_VERSION,
+                operation_id,
+                item_id,
+                store_id,
+                logical_name: table.logical_name().into(),
+                record_id,
+                expected_revision: revision,
+            };
+            // 捕获所有现存 owner/保留修订引用，随后源事务回执决定真实删除清单。
+            let _ = worker
+                .attachments
+                .reconcile_owner(worker.store.attachment_connection(), &refs);
+            let record = worker
+                .store
+                .prepare_deletion(&request)
+                .map_err(|e| e.to_string())?;
+            worker.resume_deletion(record, 100)?;
+            worker.last_error = None;
+            Ok(true)
+        })
     }
 
     /// 同步请求仅供阻塞任务池调用，不能在 GUI 或输入法按键线程调用。
@@ -1144,10 +1579,12 @@ impl HistoryService {
 
     /// 必须在任何源正文/元数据/附件变更之前持有此守卫，直到源事务提交。
     pub fn begin_source_write(&self) -> SourceWriteGuard {
+        let attachment = self.source_writes.gate.enter();
         self.source_writes.active.fetch_add(1, Ordering::AcqRel);
         self.source_writes.generation.fetch_add(1, Ordering::AcqRel);
         self.output_generation.fetch_add(1, Ordering::AcqRel);
         SourceWriteGuard {
+            _attachment: attachment,
             source: self.source_writes.clone(),
         }
     }
@@ -1571,5 +2008,267 @@ mod output_permit_tests {
         assert!(permit.check().is_ok());
         permit.expires = Instant::now();
         assert!(permit.check().is_err());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod attachment_pipeline_tests {
+    use super::*;
+    fn wav() -> Vec<u8> {
+        let mut output = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = hound::WavWriter::new(
+                &mut output,
+                hound::WavSpec {
+                    channels: 1,
+                    sample_rate: 16000,
+                    bits_per_sample: 16,
+                    sample_format: hound::SampleFormat::Int,
+                },
+            )
+            .unwrap();
+            writer.write_sample(123i16).unwrap();
+            writer.finalize().unwrap();
+        }
+        output.into_inner()
+    }
+    fn fixture() -> (tempfile::TempDir, Connection, Arc<HistoryService>) {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().canonicalize().unwrap();
+        let conn = Connection::open(home.join("history.db")).unwrap();
+        conn.execute_batch("CREATE TABLE transcription_history(id INTEGER PRIMARY KEY AUTOINCREMENT,file_name TEXT,timestamp INTEGER,saved INTEGER,title TEXT,transcription_text TEXT,post_processed_text TEXT);").unwrap();
+        Connection::open(home.join("clipboard.db")).unwrap().execute_batch("CREATE TABLE clipboard_history(id INTEGER PRIMARY KEY AUTOINCREMENT,content_type TEXT,full_text TEXT,title TEXT,is_favorite INTEGER,is_pinned INTEGER,created_at INTEGER,image_path TEXT,source_app TEXT);").unwrap();
+        let service = Arc::new(
+            HistoryService::start_with_attachment_context(
+                home.clone(),
+                "fixture".into(),
+                |_| {},
+                Some(inputia_settings::maintenance::UserContext {
+                    home,
+                    uid: unsafe { libc::geteuid() },
+                }),
+            )
+            .unwrap(),
+        );
+        service.synchronize().unwrap();
+        (root, conn, service)
+    }
+    fn maintain(service: &HistoryService) {
+        service
+            .call_metadata(|worker| {
+                worker.next_attachment_maintenance = Instant::now();
+                worker.maintain_attachments();
+                Ok(())
+            })
+            .unwrap();
+    }
+    #[test]
+    fn real_source_commit_play_delete_release_and_gc_form_one_pipeline() {
+        let (root, conn, service) = fixture();
+        let pending = service
+            .import_attachment_owned(AttachmentKind::Recording, "recording".into(), wav())
+            .unwrap();
+        let path = root
+            .path()
+            .join("recordings")
+            .join(&pending.import.file_name);
+        {
+            let _guard = service.begin_source_write();
+            conn.execute(
+                "INSERT INTO transcription_history(id,file_name,timestamp,saved,title,transcription_text,post_processed_text) VALUES(1,?1,1,0,'title','saved text',NULL)",
+                [&pending.import.file_name],
+            )
+            .unwrap();
+        }
+        service
+            .finish_attachment_import("recording".into())
+            .unwrap();
+        drop(pending);
+        service.synchronize().unwrap();
+        maintain(&service);
+        let (lease, _, revision) = service
+            .acquire_source_attachment(
+                SourceTable::History,
+                "1".into(),
+                None,
+                PinPurpose::Active,
+                "play".into(),
+            )
+            .unwrap();
+        assert_eq!(service.read_attachment(lease.clone()).unwrap(), wav());
+        assert_eq!(revision, 1);
+        service
+            .delete_source_record(SourceTable::History, "1".into())
+            .unwrap();
+        maintain(&service);
+        assert!(path.exists());
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM transcription_history", [], |r| r
+                .get::<_, u64>(0))
+                .unwrap(),
+            0
+        );
+        service.release_attachment(lease.clone()).unwrap();
+        service.release_attachment(lease).unwrap();
+        maintain(&service);
+        assert!(!path.exists());
+        assert_eq!(service.attachment_health().unwrap().pending_gc, 0);
+    }
+    #[test]
+    fn source_revision_change_does_not_retarget_existing_audio_lease() {
+        let (_root, conn, service) = fixture();
+        let pending = service
+            .import_attachment_owned(AttachmentKind::Recording, "one".into(), wav())
+            .unwrap();
+        {
+            let _guard = service.begin_source_write();
+            conn.execute(
+                "INSERT INTO transcription_history(id,file_name,timestamp,saved,title,transcription_text,post_processed_text) VALUES(1,?1,1,0,'title','one',NULL)",
+                [&pending.import.file_name],
+            )
+            .unwrap();
+        }
+        let (lease, _, revision) = service
+            .acquire_source_attachment(
+                SourceTable::History,
+                "1".into(),
+                Some(1),
+                PinPurpose::Active,
+                "audio".into(),
+            )
+            .unwrap();
+        {
+            let _guard = service.begin_source_write();
+            conn.execute(
+                "UPDATE transcription_history SET transcription_text='two' WHERE id=1",
+                [],
+            )
+            .unwrap();
+        }
+        assert_eq!(revision, 1);
+        assert!(service
+            .acquire_source_attachment(
+                SourceTable::History,
+                "1".into(),
+                Some(1),
+                PinPurpose::Active,
+                "stale".into()
+            )
+            .is_err());
+        assert_eq!(service.read_attachment(lease.clone()).unwrap(), wav());
+        service.release_attachment(lease).unwrap();
+    }
+    #[test]
+    fn cancelled_source_save_and_missing_wav_have_visible_recoverable_outcomes() {
+        let (root, conn, service) = fixture();
+        let pending = service
+            .import_attachment_owned(AttachmentKind::Recording, "cancelled".into(), wav())
+            .unwrap();
+        let path = root
+            .path()
+            .join("recordings")
+            .join(&pending.import.file_name);
+        service
+            .finish_attachment_import("cancelled".into())
+            .unwrap();
+        drop(pending);
+        maintain(&service);
+        assert!(!path.exists());
+        {
+            let _guard = service.begin_source_write();
+            conn.execute("INSERT INTO transcription_history(id,file_name,timestamp,saved,title,transcription_text,post_processed_text) VALUES(1,'',1,0,'title','successful recognition',NULL)",[]).unwrap();
+        }
+        service
+            .mark_attachment_failure(
+                SourceTable::History,
+                "1".into(),
+                PauseReason::InsufficientSpace,
+            )
+            .unwrap();
+        service.synchronize().unwrap();
+        assert_eq!(
+            service.query(HistoryQuery::default()).unwrap()[0]
+                .snapshot
+                .text
+                .as_deref(),
+            Some("successful recognition")
+        );
+        assert!(service
+            .acquire_source_attachment(
+                SourceTable::History,
+                "1".into(),
+                None,
+                PinPurpose::Active,
+                "missing".into()
+            )
+            .is_err());
+        let reason = service
+            .call_metadata(|worker| {
+                let store = worker.sources[0].store_id().to_owned();
+                worker
+                    .attachments
+                    .owner_status(worker.store.attachment_connection(), &store, "1")
+                    .map_err(|e| e.to_string())
+            })
+            .unwrap();
+        assert_eq!(reason, Some(PauseReason::InsufficientSpace));
+    }
+    #[test]
+    fn source_write_guard_allows_cleanup_callback_without_gc_deadlock() {
+        let (_root, conn, service) = fixture();
+        let _guard = service.begin_source_write();
+        conn.execute(
+            "INSERT INTO transcription_history(id,file_name,timestamp,saved,title,transcription_text,post_processed_text) VALUES(1,'',1,0,'title','text',NULL)",
+            [],
+        )
+        .unwrap();
+        assert!(service
+            .delete_source_record(SourceTable::History, "1".into())
+            .unwrap());
+        assert_eq!(service.attachment_health().unwrap().pending_gc, 0);
+    }
+    #[test]
+    fn clipboard_png_uses_same_owner_lease_and_durable_gc_path() {
+        let (root, _history, service) = fixture();
+        let mut png = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut png, 1, 1);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&[1, 2, 3, 255]).unwrap();
+        }
+        let pending = service
+            .import_attachment_owned(AttachmentKind::Image, "image".into(), png.clone())
+            .unwrap();
+        let path = root
+            .path()
+            .join("clipboard_images")
+            .join(&pending.import.file_name);
+        let clipboard = Connection::open(root.path().join("clipboard.db")).unwrap();
+        {
+            let _guard = service.begin_source_write();
+            clipboard.execute("INSERT INTO clipboard_history(id,content_type,full_text,title,is_favorite,is_pinned,created_at,image_path,source_app) VALUES(1,'image',NULL,'pixel',0,0,1,?1,NULL)",[&pending.import.file_name]).unwrap();
+        }
+        service.finish_attachment_import("image".into()).unwrap();
+        drop(pending);
+        let (lease, _, _) = service
+            .acquire_source_attachment(
+                SourceTable::Clipboard,
+                "1".into(),
+                None,
+                PinPurpose::Active,
+                "image-read".into(),
+            )
+            .unwrap();
+        assert_eq!(service.read_attachment(lease.clone()).unwrap(), png);
+        service
+            .delete_source_record(SourceTable::Clipboard, "1".into())
+            .unwrap();
+        maintain(&service);
+        assert!(path.exists());
+        service.release_attachment(lease).unwrap();
+        maintain(&service);
+        assert!(!path.exists());
     }
 }

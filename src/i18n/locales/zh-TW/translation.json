@@ -570,7 +570,12 @@
       "retranscribe": "重新轉錄",
       "retranscribeError": "重新轉錄失敗，請重試。",
       "transcribing": "轉錄中...",
-      "transcriptionFailed": "轉錄失敗。您可以使用重試圖示重新轉錄。"
+      "transcriptionFailed": "轉錄失敗。您可以使用重試圖示重新轉錄。",
+      "audio": {
+        "play": "播放錄音",
+        "pause": "暫停錄音",
+        "failed": "錄音暫時無法播放，請重試。"
+      }
     },
     "debug": {
       "title": "偵錯",

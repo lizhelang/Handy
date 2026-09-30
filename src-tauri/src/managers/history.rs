@@ -1,5 +1,10 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local, Utc};
+use inputia_handy_runtime::{
+    attachment_store::{AttachmentKind, PauseReason},
+    service::{HistoryService, PendingAttachmentImport},
+    source::SourceTable,
+};
 use log::{debug, error, info};
 use rusqlite::{params, Connection, OptionalExtension};
 use rusqlite_migration::{Migrations, M};
@@ -7,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::fs;
 use std::path::PathBuf;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 
 /// Database migrations for transcription history.
@@ -141,26 +146,8 @@ pub(crate) fn insert_entry_with_conn(
     Ok(entry)
 }
 
-/// 空文件名表示无附件，不能把 recordings 目录交给文件删除操作。
-fn remove_recording_attachment(
-    recordings: &std::path::Path,
-    file_name: &str,
-    remove_file: impl FnOnce(&std::path::Path) -> std::io::Result<()>,
-) -> std::io::Result<bool> {
-    if file_name.is_empty() {
-        return Ok(false);
-    }
-    let path = recordings.join(file_name);
-    if !path.exists() {
-        return Ok(false);
-    }
-    remove_file(&path)?;
-    Ok(true)
-}
-
 pub struct HistoryManager {
     app_handle: AppHandle,
-    recordings_dir: PathBuf,
     db_path: PathBuf,
 }
 
@@ -179,7 +166,6 @@ impl HistoryManager {
 
         let manager = Self {
             app_handle: app_handle.clone(),
-            recordings_dir,
             db_path,
         };
 
@@ -303,10 +289,6 @@ impl HistoryManager {
         })
     }
 
-    pub fn recordings_dir(&self) -> &std::path::Path {
-        &self.recordings_dir
-    }
-
     /// Save a new history entry to the database.
     /// Non-empty file_name references a verified WAV; empty means text without an audio attachment.
     pub fn save_entry(
@@ -359,7 +341,10 @@ impl HistoryManager {
 
         debug!("Saved history entry with id {}", entry.id);
 
-        self.cleanup_old_entries()?;
+        drop(_source_write);
+        if let Err(error) = self.cleanup_old_entries() {
+            error!("History saved; retention cleanup is pending: {error}");
+        }
 
         // Emit typed event for real-time frontend updates
         if let Err(e) = (HistoryUpdatePayload::Added {
@@ -458,35 +443,79 @@ impl HistoryManager {
     }
 
     fn delete_entries_and_files(&self, entries: &[(i64, String)]) -> Result<usize> {
-        let _source_write = super::integration::begin_source_write(&self.app_handle);
-        if entries.is_empty() {
-            return Ok(0);
-        }
-
-        let conn = self.get_connection()?;
-        let mut deleted_count = 0;
-
-        for (id, file_name) in entries {
-            // Delete database entry
-            conn.execute(
-                "DELETE FROM transcription_history WHERE id = ?1",
-                params![id],
-            )?;
-
-            // Delete WAV file
-            match remove_recording_attachment(&self.recordings_dir, file_name, |path| {
-                fs::remove_file(path)
-            }) {
-                Err(e) => error!("Failed to delete WAV file {}: {}", file_name, e),
-                Ok(true) => {
-                    debug!("Deleted old WAV file: {}", file_name);
-                    deleted_count += 1;
-                }
-                Ok(false) => {}
+        let service = self.attachment_service()?;
+        let mut count = 0;
+        for (id, _) in entries {
+            if service
+                .delete_source_record(SourceTable::History, id.to_string())
+                .map_err(anyhow::Error::msg)?
+            {
+                count += 1;
             }
         }
+        Ok(count)
+    }
 
-        Ok(deleted_count)
+    pub(crate) fn attachment_service(&self) -> Result<std::sync::Arc<HistoryService>> {
+        self.app_handle
+            .try_state::<std::sync::Arc<super::integration::IntegrationManager>>()
+            .map(|manager| manager.service.clone())
+            .ok_or_else(|| anyhow!("Unified attachment service unavailable"))
+    }
+    pub(crate) fn import_recording(
+        &self,
+        samples: &[f32],
+    ) -> std::result::Result<PendingAttachmentImport, PauseReason> {
+        let mut output = std::io::Cursor::new(Vec::new());
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        {
+            let mut writer =
+                hound::WavWriter::new(&mut output, spec).map_err(|_| PauseReason::IoFailure)?;
+            for sample in samples {
+                if !sample.is_finite() {
+                    return Err(PauseReason::InvalidFormat);
+                }
+                writer
+                    .write_sample((sample * i16::MAX as f32) as i16)
+                    .map_err(|_| PauseReason::IoFailure)?;
+            }
+            writer.finalize().map_err(|_| PauseReason::IoFailure)?;
+        }
+        let service = self
+            .attachment_service()
+            .map_err(|_| PauseReason::IoFailure)?;
+        service.import_attachment_owned(
+            AttachmentKind::Recording,
+            format!(
+                "recording-{}",
+                inputia_handy_runtime::attachment_store::new_operation_id()
+                    .map_err(|e| e.reason())?
+            ),
+            output.into_inner(),
+        )
+    }
+    pub(crate) fn mark_missing_recording(&self, id: i64, reason: PauseReason) -> Result<()> {
+        self.attachment_service()?
+            .mark_attachment_failure(SourceTable::History, id.to_string(), reason)
+            .map_err(anyhow::Error::msg)
+    }
+    pub(crate) fn entry_id_for_recording(&self, file_name: &str) -> Result<Option<i64>> {
+        if file_name.is_empty() {
+            return Ok(None);
+        }
+        Ok(self
+            .get_connection()?
+            .query_row(
+                "SELECT id FROM transcription_history WHERE file_name=?1 ORDER BY id DESC LIMIT 1",
+                [file_name],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 
     fn cleanup_by_count(&self, limit: usize) -> Result<()> {
@@ -694,10 +723,6 @@ impl HistoryManager {
         Ok(())
     }
 
-    pub fn get_audio_file_path(&self, file_name: &str) -> PathBuf {
-        self.recordings_dir.join(file_name)
-    }
-
     pub async fn get_entry_by_id(&self, id: i64) -> Result<Option<HistoryEntry>> {
         let conn = self.get_connection()?;
         let mut stmt = conn.prepare(
@@ -721,35 +746,16 @@ impl HistoryManager {
     }
 
     pub async fn delete_entry(&self, id: i64) -> Result<()> {
-        let _source_write = super::integration::begin_source_write(&self.app_handle);
-        let conn = self.get_connection()?;
-
-        // Get the entry to find the file name
-        if let Some(entry) = self.get_entry_by_id(id).await? {
-            // Delete the audio file first
-            if let Err(e) =
-                remove_recording_attachment(&self.recordings_dir, &entry.file_name, |path| {
-                    fs::remove_file(path)
-                })
-            {
-                error!("Failed to delete audio file {}: {}", entry.file_name, e);
-                // Continue with database deletion even if file deletion fails
-            }
+        let service = self.attachment_service()?;
+        tauri::async_runtime::spawn_blocking(move || {
+            service.delete_source_record(SourceTable::History, id.to_string())
+        })
+        .await
+        .map_err(|e| anyhow!(e.to_string()))?
+        .map_err(anyhow::Error::msg)?;
+        if let Err(error) = (HistoryUpdatePayload::Deleted { id }).emit(&self.app_handle) {
+            error!("Failed to emit history-updated event: {error}");
         }
-
-        // Delete from database
-        conn.execute(
-            "DELETE FROM transcription_history WHERE id = ?1",
-            params![id],
-        )?;
-
-        debug!("Deleted history entry with id: {}", id);
-
-        // Emit history updated event
-        if let Err(e) = (HistoryUpdatePayload::Deleted { id }).emit(&self.app_handle) {
-            error!("Failed to emit history-updated event: {}", e);
-        }
-
         Ok(())
     }
 
@@ -879,36 +885,6 @@ mod tests {
                 .source_trust,
             SourceTrust::Unknown
         );
-    }
-
-    #[test]
-    fn no_attachment_never_calls_remove_on_recordings_directory() {
-        let temp = tempfile::tempdir().unwrap();
-        let recordings = temp.path().join("recordings");
-        std::fs::create_dir(&recordings).unwrap();
-        let neighbor = recordings.join("keep.wav");
-        std::fs::write(&neighbor, b"synthetic").unwrap();
-        let mut calls = 0;
-        let removed = remove_recording_attachment(&recordings, "", |path| {
-            calls += 1;
-            std::fs::remove_file(path)
-        })
-        .unwrap();
-        assert!(!removed);
-        assert_eq!(calls, 0);
-        assert!(recordings.is_dir());
-        assert!(neighbor.is_file());
-        assert!(
-            remove_recording_attachment(&recordings, "keep.wav", |path| {
-                calls += 1;
-                assert_eq!(path, neighbor);
-                std::fs::remove_file(path)
-            })
-            .unwrap()
-        );
-        assert_eq!(calls, 1);
-        assert!(recordings.is_dir());
-        assert!(!neighbor.exists());
     }
 
     fn setup_conn() -> Connection {
