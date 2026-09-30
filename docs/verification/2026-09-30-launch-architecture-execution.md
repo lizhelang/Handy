@@ -421,3 +421,12 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 数据库租约的重复身份检查改为已持 FD 的 fstat 与安全父目录 FD 下的 NOFOLLOW fstatat，不再为核对主库路径额外 open/close 同 inode。后者会释放同进程 SQLite 持有的 POSIX 文件锁；原版本已用临时子进程写入反例复现，修复后保持真实事务互斥。
 
 验证：handoff 范围 14 项通过，新增 BEGIN IMMEDIATE 前后和连续三次租约核验时另一个进程均返回 BUSY，显式 ROLLBACK 并成功关闭连接后才允许写；另有五类路径替换、链接和权限反例。默认 all-targets 严格 Clippy、Rust 格式和 diff 检查通过，独立增量复核 CLEAR。没有打开真实用户库。泛型析构次序不等于 SQLite 已成功关闭，后续具体连接包装仍须在 close 失败时保留连接及租约责任；HAS_MOVED 不单独声称抵抗任意同 UID 的 ABA 换路径。
+
+
+### 第三十九批：具体 SQLite 连接持有关闭责任
+
+新增合作单写者命名空间的连接包装：持有文件租约后使用 READ_WRITE、NOFOLLOW 打开现有库，不允许 CREATE 或 URI。开始任何 SQL 前与闭包返回后均核租约和 HAS_MOVED；操作后绑定变化返回 Uncertain，不能推断未执行后自动重放。只有显式 close 成功才释放租约；BUSY 保留原连接与租约供重试，析构再次失败则保留两者至进程退出，防止 SQLite 实际仍打开时另一写者获锁。
+
+验证：9 项临时测试通过，包含真实 close BUSY 重试、Drop BUSY 后第三进程仍取不到锁、持有进程退出后可获取、重复检查保持事务锁以及提交后路径替换只写一次。runtime all-targets 严格 Clippy、格式/diff 通过，独立源码窄审 CLEAR。没有遗留夹具进程或依赖变化。
+
+边界：此层按合作命名空间校验，不声称取得 SQLite 实际主 FD 的独立身份证明或抵抗任意恶意同 UID 持续置换。生产实现已编译，尚未接 LegacyMemory/来源授权；所有 publish、restore、repair 与父目录稳定性必须先纳入同一 service.lock，才能据此开放真实领域。原生 origin 与旧路径交接门禁没有放宽。

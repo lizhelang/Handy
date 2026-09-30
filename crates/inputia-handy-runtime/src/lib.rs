@@ -16,6 +16,15 @@ pub mod legacy_memory_wire;
 pub mod memory_commit;
 pub mod native_readers;
 pub mod output_ledger;
+#[cfg(unix)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "等待来源发行者与LegacyMemory接线；当前只编译合作文件层，不开放生产域"
+    )
+)]
+mod owned_memory_connection;
 pub mod personalization;
 pub mod private_key;
 pub mod privacy_operation;
