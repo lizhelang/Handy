@@ -99,6 +99,7 @@ pub fn retire_current(app: &AppHandle) -> Result<(), String> {
 /// Key event sent to frontend during recording mode
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct FrontendKeyEvent {
+    capture_token: String,
     /// Currently pressed modifier keys
     pub modifiers: Vec<String>,
     /// The key that was pressed (if any)
@@ -408,7 +409,12 @@ impl HandyKeysState {
     }
 
     /// Start recording mode for a specific binding
-    pub fn start_recording(&self, app: &AppHandle, binding_id: String) -> Result<(), String> {
+    pub fn start_recording(
+        &self,
+        app: &AppHandle,
+        binding_id: String,
+        capture_token: String,
+    ) -> Result<(), String> {
         crate::input_permission::check_epoch(self.epoch)?;
         if self.is_recording.load(Ordering::SeqCst) {
             return Err("Already recording".into());
@@ -445,7 +451,7 @@ impl HandyKeysState {
             .recording_thread
             .try_lock()
             .map_err(|_| "快捷键录制线程忙碌")? = Some(thread::spawn(move || {
-            Self::recording_loop(app_clone, recording_running, epoch);
+            Self::recording_loop(app_clone, recording_running, epoch, capture_token);
         }));
 
         debug!("Started handy-keys recording mode");
@@ -453,7 +459,7 @@ impl HandyKeysState {
     }
 
     /// Recording loop - emits key events to frontend during recording
-    fn recording_loop(app: AppHandle, running: Arc<AtomicBool>, epoch: u64) {
+    fn recording_loop(app: AppHandle, running: Arc<AtomicBool>, epoch: u64, capture_token: String) {
         while running.load(Ordering::SeqCst) && crate::input_permission::check_epoch(epoch).is_ok()
         {
             let event = {
@@ -468,6 +474,7 @@ impl HandyKeysState {
             if let Some(key_event) = event {
                 // Convert to frontend-friendly format
                 let frontend_event = FrontendKeyEvent {
+                    capture_token: capture_token.clone(),
                     modifiers: modifiers_to_strings(key_event.modifiers),
                     key: key_event.key.map(|k| k.to_string().to_lowercase()),
                     is_key_down: key_event.is_key_down,
@@ -650,56 +657,28 @@ pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<
     state.unregister(&binding)
 }
 
-/// Start key recording mode
+/// 原生录制和 Webview 录制使用同一 token/空闲屏障。
 #[tauri::command]
 #[specta::specta]
-pub fn start_handy_keys_recording(app: AppHandle, binding_id: String) -> Result<(), String> {
-    crate::input_permission::capture_epoch()?;
-    let settings = get_settings(&app);
-    if settings.keyboard_implementation != settings::KeyboardImplementation::HandyKeys {
-        return Err("handy-keys is not the active keyboard implementation".into());
-    }
-
-    // While Secure Input is active the tap receives no KeyDown/KeyUp, so the
-    // recorder would silently capture just the modifier and overwrite the
-    // binding with it (issue #1578). Refuse instead; the frontend maps this
-    // marker to a localized explanation, and the noted impact makes the
-    // warning banner appear with the full story.
-    if crate::secure_input::is_enabled_now() {
-        crate::secure_input::note_recorder_blocked(&app);
-        return Err("secure-input-active".into());
-    }
-
-    let state = current(&app)?;
-
-    // Suspend every registered shortcut so a combo that overlaps an existing
-    // binding can't fire it (or have its keys swallowed) mid-capture.
-    super::suspend_all_shortcuts(&app);
-
-    let result = state.start_recording(&app, binding_id);
-    if result.is_err() {
-        super::resume_all_shortcuts(&app);
-    }
-    result
+pub async fn start_handy_keys_recording(
+    app: AppHandle,
+    binding_id: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        super::capture::begin(
+            &app,
+            binding_id,
+            settings::KeyboardImplementation::HandyKeys,
+        )
+    })
+    .await
+    .map_err(|_| "shortcut_capture_task_failed".to_owned())?
 }
 
-/// Stop key recording mode
 #[tauri::command]
 #[specta::specta]
-pub fn stop_handy_keys_recording(app: AppHandle) -> Result<(), String> {
-    let settings = get_settings(&app);
-    if settings.keyboard_implementation != settings::KeyboardImplementation::HandyKeys {
-        return Err("handy-keys is not the active keyboard implementation".into());
-    }
-
-    let state = current(&app)?;
-
-    // Restore shortcuts from settings regardless of how recording ended.
-    // A commit has already registered the new binding via change_binding;
-    // re-registering it here fails cleanly and is ignored.
-    let result = state.stop_recording();
-    if result.is_ok() && crate::input_permission::check_epoch(state.epoch).is_ok() {
-        super::resume_all_shortcuts(&app);
-    }
-    result
+pub async fn stop_handy_keys_recording(app: AppHandle, token: String) -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || super::capture::end(&app, token))
+        .await
+        .map_err(|_| "shortcut_capture_task_failed".to_owned())?
 }

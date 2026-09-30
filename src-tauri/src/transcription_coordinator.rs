@@ -177,6 +177,14 @@ enum Effect {
 
 /// Commands processed sequentially by the coordinator thread.
 enum Command {
+    AcquireSettingsIdle {
+        token: u64,
+        deadline: Instant,
+        reply: Sender<Result<(), String>>,
+    },
+    ReleaseSettingsIdle {
+        token: u64,
+    },
     Input(InputEvent),
     PermissionInput {
         input: InputEvent,
@@ -286,6 +294,7 @@ fn classify_ptt_event(
 /// * hold-or-toggle — a release after a long hold stops; a release after a
 ///   short tap locks the session, and the next press stops
 struct CoordinatorState {
+    settings_barrier: Option<u64>,
     stage: Stage,
     hold: Option<Hold>,
     last_press: Option<Instant>,
@@ -300,6 +309,7 @@ struct CoordinatorState {
 impl CoordinatorState {
     fn new() -> Self {
         Self {
+            settings_barrier: None,
             stage: Stage::Idle,
             hold: None,
             last_press: None,
@@ -1087,7 +1097,43 @@ fn shortcut_activation(value: VoiceShortcutActivation) -> ShortcutActivation {
     }
 }
 
+pub(crate) struct SettingsIdleGuard {
+    tx: Sender<Command>,
+    token: u64,
+}
+impl Drop for SettingsIdleGuard {
+    fn drop(&mut self) {
+        let _ = self
+            .tx
+            .send(Command::ReleaseSettingsIdle { token: self.token });
+    }
+}
+
 impl TranscriptionCoordinator {
+    pub(crate) fn acquire_settings_idle(&self) -> Result<SettingsIdleGuard, String> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let token = NEXT
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_add(1))
+            .map_err(|_| "shortcut_barrier_exhausted")?;
+        let guard = SettingsIdleGuard {
+            tx: self.tx.clone(),
+            token,
+        };
+        let (reply, received) = mpsc::channel();
+        self.tx
+            .send(Command::AcquireSettingsIdle {
+                token,
+                deadline: Instant::now() + Duration::from_millis(750),
+                reply,
+            })
+            .map_err(|_| "shortcut_coordinator_unavailable")?;
+        received
+            .recv_timeout(Duration::from_millis(800))
+            .map_err(|_| "shortcut_idle_unconfirmed")??;
+        Ok(guard)
+    }
+
     pub fn new(app: AppHandle) -> Self {
         let (tx, rx) = mpsc::channel();
         let voice_projection = Arc::new(VoiceProjection::default());
@@ -1143,6 +1189,15 @@ impl TranscriptionCoordinator {
         request: VoiceRequest,
     ) -> mpsc::Receiver<Result<VoiceSessionView, String>> {
         let (reply, receiver) = mpsc::channel();
+        let starts = request.strict_start_identity().is_some();
+        let _settings_lease = starts.then(|| {
+            crate::shortcut::settings_barrier::capture(true)
+                .and_then(|generation| crate::shortcut::settings_barrier::admit(generation, true))
+        });
+        if matches!(_settings_lease, Some(None)) {
+            let _ = reply.send(Err("shortcut_settings_busy".into()));
+            return receiver;
+        }
         if let Err(error) = self.tx.send(Command::Voice {
             permission_epoch: request
                 .strict_start_identity()
@@ -1288,6 +1343,13 @@ impl TranscriptionCoordinator {
         hold_threshold: Duration,
         external: bool,
     ) {
+        let Some(_settings_lease) = crate::shortcut::settings_barrier::capture(is_pressed)
+            .and_then(|generation| {
+                crate::shortcut::settings_barrier::admit(generation, is_pressed)
+            })
+        else {
+            return;
+        };
         if self
             .tx
             .send(Command::PermissionInput {
@@ -1367,7 +1429,36 @@ fn dispatch_command(
     execute: &mut impl FnMut(&mut CoordinatorState, Effect),
 ) {
     match command {
+        Command::AcquireSettingsIdle {
+            token,
+            deadline,
+            reply,
+        } => {
+            if now >= deadline
+                || state.settings_barrier.is_some()
+                || !matches!(state.stage, Stage::Idle)
+                || state.hold.is_some()
+                || state.pending_release.is_some()
+                || state.pending_press.is_some()
+                || state.active_voice.is_some()
+            {
+                let _ = reply.send(Err("shortcut_gesture_busy".into()));
+            } else {
+                state.settings_barrier = Some(token);
+                if reply.send(Ok(())).is_err() {
+                    state.settings_barrier = None;
+                }
+            }
+        }
+        Command::ReleaseSettingsIdle { token } => {
+            if state.settings_barrier == Some(token) {
+                state.settings_barrier = None;
+            }
+        }
         Command::PermissionInput { input, epoch } => {
+            if state.settings_barrier.is_some() {
+                return;
+            }
             if epoch.and_then(crate::input_permission::check_epoch).is_ok() {
                 if let Some(effect) = state.on_input(input, now) {
                     execute(state, effect);
@@ -1375,6 +1466,9 @@ fn dispatch_command(
             }
         }
         Command::Input(input) => {
+            if state.settings_barrier.is_some() {
+                return;
+            }
             if let Some(effect) = state.on_input(input, now) {
                 execute(state, effect);
             }
@@ -1403,6 +1497,10 @@ fn dispatch_command(
             reply,
             deadline,
         } => {
+            if state.settings_barrier.is_some() && request.strict_start_identity().is_some() {
+                let _ = reply.send(Err("shortcut_settings_busy".into()));
+                return;
+            }
             if let Some(epoch) = permission_epoch {
                 if let Err(error) = epoch.and_then(crate::input_permission::check_epoch) {
                     let _ = reply.send(Err(error));
@@ -1540,6 +1638,101 @@ fn stop(app: &AppHandle, binding_id: &str, hotkey_string: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_barrier_refuses_active_and_queued_gestures_and_blocks_new_starts() {
+        let now = Instant::now();
+        let acquire = |state: &mut CoordinatorState, token| {
+            let (reply, received) = mpsc::channel();
+            dispatch_command(
+                state,
+                Command::AcquireSettingsIdle {
+                    token,
+                    deadline: now + Duration::from_secs(1),
+                    reply,
+                },
+                now,
+                &mut |_, _| panic!("barrier must not execute input"),
+            );
+            received.recv().unwrap()
+        };
+        let mut state = CoordinatorState::new();
+        state.stage = Stage::Processing;
+        assert!(acquire(&mut state, 1).is_err());
+        state.stage = Stage::Idle;
+        state.pending_press = Some(PendingPress {
+            binding_id: "transcribe".into(),
+            hotkey_string: "F8".into(),
+            pressed_at: now,
+            locked: false,
+        });
+        assert!(acquire(&mut state, 2).is_err());
+        state.pending_press = None;
+        acquire(&mut state, 3).unwrap();
+        dispatch_command(
+            &mut state,
+            Command::Input(InputEvent {
+                binding_id: "transcribe".into(),
+                hotkey_string: "F8".into(),
+                is_pressed: true,
+                mode: ShortcutActivation::PushToTalk,
+                hold_threshold: Duration::ZERO,
+                external: false,
+                owned: false,
+            }),
+            now,
+            &mut |_, _| panic!("new Start crossed barrier"),
+        );
+        assert!(matches!(state.stage, Stage::Idle));
+        dispatch_command(
+            &mut state,
+            Command::ReleaseSettingsIdle { token: 2 },
+            now,
+            &mut |_, _| {},
+        );
+        assert_eq!(state.settings_barrier, Some(3));
+        dispatch_command(
+            &mut state,
+            Command::ReleaseSettingsIdle { token: 3 },
+            now,
+            &mut |_, _| {},
+        );
+        assert_eq!(state.settings_barrier, None);
+    }
+
+    #[test]
+    fn rejected_settings_barrier_preserves_active_ptt_release() {
+        let now = Instant::now();
+        let mut state = CoordinatorState::new();
+        let mut effects = vec![];
+        dispatch_command(
+            &mut state,
+            Command::Input(input(ShortcutActivation::PushToTalk, true)),
+            now,
+            &mut |_, effect| effects.push(effect),
+        );
+        assert!(matches!(effects.pop(), Some(Effect::Start { .. })));
+        let (reply, received) = mpsc::channel();
+        dispatch_command(
+            &mut state,
+            Command::AcquireSettingsIdle {
+                token: 1,
+                deadline: now + Duration::from_secs(1),
+                reply,
+            },
+            now,
+            &mut |_, _| panic!("must not change active input"),
+        );
+        assert!(received.recv().unwrap().is_err());
+        dispatch_command(
+            &mut state,
+            Command::Input(input(ShortcutActivation::PushToTalk, false)),
+            now + Duration::from_millis(300),
+            &mut |_, effect| effects.push(effect),
+        );
+        effects.extend(state.on_grace_expired());
+        assert!(matches!(effects.pop(), Some(Effect::Stop { .. })));
+    }
 
     #[test]
     fn policy_failure_continuation_cannot_start_but_stops_existing_legacy_recording() {

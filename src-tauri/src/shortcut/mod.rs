@@ -10,10 +10,13 @@
 //! setting and can be changed at runtime.
 
 mod cancel_registration;
+mod capture;
 mod handler;
 pub mod handy_keys;
 mod implementation_switch;
 mod lifecycle_guard;
+pub(crate) mod settings_barrier;
+pub(crate) mod settings_delta;
 pub mod tauri_impl;
 
 use log::{debug, error, warn};
@@ -29,6 +32,47 @@ use crate::settings::{
     Theme, TypingTool, VadBackend, APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 use crate::tray;
+
+static SETTINGS_CHANGE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn settings_change_guard() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    SETTINGS_CHANGE
+        .try_lock()
+        .map_err(|_| "shortcut_settings_busy".into())
+}
+
+/// 重建完整组件，调用方持有设置变更锁且配置已经确认保存。
+pub(crate) fn rebuild_configured_shortcuts(app: &AppHandle) -> Result<(), String> {
+    crate::secure_input::pause_fallback_for_settings(app)?;
+    ::handy_keys::set_blocking_enabled(false);
+    handy_keys::retire_current(app)?;
+    tauri_impl::retire_all(app)?;
+    match settings::get_settings(app).keyboard_implementation {
+        KeyboardImplementation::HandyKeys => handy_keys::init_shortcuts(app)?,
+        KeyboardImplementation::Tauri => tauri_impl::init_shortcuts(app)?,
+    }
+    ::handy_keys::set_blocking_enabled(true);
+    crate::secure_input::resume_fallback_after_settings(app)?;
+    Ok(())
+}
+
+pub(crate) fn retire_configured_shortcuts_checked(app: &AppHandle) -> Result<(), String> {
+    crate::secure_input::pause_fallback_for_settings(app)?;
+    ::handy_keys::set_blocking_enabled(false);
+    handy_keys::retire_current(app)?;
+    tauri_impl::retire_all(app)
+}
+
+pub(crate) fn suspend_for_settings_failure(app: &AppHandle) {
+    let fallback = crate::secure_input::pause_fallback_for_settings(app);
+    ::handy_keys::set_blocking_enabled(false);
+    let primary = handy_keys::retire_current(app);
+    let alternate = tauri_impl::retire_all(app);
+    if fallback.is_err() || primary.is_err() || alternate.is_err() {
+        // 只有组件自身撤销也不能确认时，才收紧外层输入准入。
+        crate::input_permission::close_gate("shortcut_settings_retirement_unconfirmed");
+    }
+}
 
 // Note: Commands are accessed via shortcut::handy_keys:: in lib.rs
 
@@ -197,6 +241,8 @@ fn repair_transcribe_post_process_overlap(
 
 /// Initialize shortcuts using the configured implementation
 pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
+    let _settings_change = settings_change_guard()?;
+    capture::ensure_none(app)?;
     crate::input_permission::initializing_epoch()?;
     let mut user_settings = settings::load_or_create_app_settings(app);
     if user_settings.keyboard_implementation == KeyboardImplementation::HandyKeys {
@@ -205,7 +251,7 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
                 warn!(
                     "Resetting plain transcription shortcut to its default because it overlaps the post-processing shortcut"
                 );
-                settings::write_settings(app, user_settings.clone());
+                settings::write_settings(app, user_settings.clone())?;
             }
             Ok(false) => {}
             Err(error) => error!("Failed to repair overlapping transcription shortcuts: {error}"),
@@ -306,11 +352,23 @@ pub struct BindingResponse {
 
 #[tauri::command]
 #[specta::specta]
-pub fn change_binding(
+pub async fn change_binding(
     app: AppHandle,
     id: String,
     binding: String,
 ) -> Result<BindingResponse, String> {
+    tokio::task::spawn_blocking(move || change_binding_blocking(app, id, binding))
+        .await
+        .map_err(|_| "shortcut_settings_task_failed".to_owned())?
+}
+
+fn change_binding_blocking(
+    app: AppHandle,
+    id: String,
+    binding: String,
+) -> Result<BindingResponse, String> {
+    let _settings_change = settings_change_guard()?;
+    let _idle = settings_barrier::SettingsBarrier::acquire(&app)?;
     // Reject empty bindings — every shortcut should have a value
     if binding.trim().is_empty() {
         return Err("Binding cannot be empty".to_string());
@@ -351,7 +409,7 @@ pub fn change_binding(
         if let Some(mut b) = settings.bindings.get(&id).cloned() {
             b.current_binding = binding;
             settings.bindings.insert(id.clone(), b.clone());
-            settings::write_settings(&app, settings);
+            settings::write_settings(&app, settings)?;
             cancel_registration::refresh(&app);
             crate::secure_input::reconcile_fallback(&app);
             return Ok(BindingResponse {
@@ -372,7 +430,7 @@ pub fn change_binding(
     if let Some(updated_binding) =
         update_disabled_clipboard_binding(&mut settings, &binding_to_modify, binding.clone())
     {
-        settings::write_settings(&app, settings);
+        settings::write_settings(&app, settings)?;
         return Ok(BindingResponse {
             success: true,
             binding: Some(updated_binding),
@@ -393,35 +451,20 @@ pub fn change_binding(
         });
     }
 
-    // Unregister the existing binding only after the replacement is known to be
-    // valid and non-conflicting, so rejection leaves the current shortcut live.
-    if let Err(e) = unregister_shortcut(&app, binding_to_modify.clone()) {
-        let error_msg = format!("Failed to unregister shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
-    }
-
-    // Create an updated binding
+    let before = settings.clone();
+    let old_bindings = settings.bindings.clone();
     let mut updated_binding = binding_to_modify.clone();
     updated_binding.current_binding = binding;
-
-    // Register the new binding
-    if let Err(e) = register_shortcut(&app, updated_binding.clone()) {
-        let error_msg = format!("Failed to register shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
-        restore_registration(&app, &binding_to_modify);
-        return Ok(BindingResponse {
-            success: false,
-            binding: None,
-            error: Some(error_msg),
-        });
-    }
-
-    // Update the binding in the settings
     settings.bindings.insert(id, updated_binding.clone());
-
-    // Save the settings and synchronize any active Secure Input shadows.
-    settings::write_settings(&app, settings);
-    crate::secure_input::reconcile_fallback(&app);
+    let delta = settings_delta::RegistrationDelta::new(&before, &settings);
+    crate::commands::settings_effects::save_and_apply(
+        &app,
+        settings,
+        |saved| saved.bindings = old_bindings,
+        || delta.apply(&app),
+        || delta.restore(&app),
+        || suspend_for_settings_failure(&app),
+    )?;
 
     // Return the updated binding
     Ok(BindingResponse {
@@ -431,80 +474,31 @@ pub fn change_binding(
     })
 }
 
-/// Best-effort re-register of the previous binding after a failed change,
-/// so a failure leaves the user's shortcut working exactly as before.
-fn restore_registration(app: &AppHandle, binding: &ShortcutBinding) {
-    if let Err(e) = register_shortcut(app, binding.clone()) {
-        error!(
-            "Failed to restore previous binding '{}' ({}): {}",
-            binding.id, binding.current_binding, e
-        );
-    }
-}
-
 #[tauri::command]
 #[specta::specta]
-pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, String> {
+pub async fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, String> {
     let binding = settings::get_stored_binding(&app, &id);
-    change_binding(app, id, binding.default_binding)
+    change_binding(app, id, binding.default_binding).await
 }
 
-/// Unregister every binding while the user is recording a new shortcut in
-/// the UI, so no existing shortcut can fire — or swallow the keystrokes —
-/// mid-capture. The "cancel" binding is untouched: it is managed dynamically
-/// by the recording lifecycle.
-pub fn suspend_all_shortcuts(app: &AppHandle) {
-    ::handy_keys::set_blocking_enabled(false);
-    let settings = get_settings(app);
-    for (id, binding) in &settings.bindings {
-        if !binding_enabled(&settings, id) {
-            continue;
-        }
-        if let Err(e) = unregister_shortcut(app, binding.clone()) {
-            debug!(
-                "suspend_all_shortcuts: could not unregister '{}': {}",
-                id, e
-            );
-        }
-    }
-}
-
-/// Re-register every binding from settings after shortcut recording ends.
-/// Registering an already-registered shortcut fails cleanly in both
-/// implementations, so this is idempotent and safe on every exit path.
-pub fn resume_all_shortcuts(app: &AppHandle) {
-    if crate::input_permission::capture_epoch().is_err() {
-        return;
-    }
-    let settings = get_settings(app);
-    for (id, binding) in &settings.bindings {
-        if !binding_enabled(&settings, id) {
-            continue;
-        }
-        if let Err(e) = register_shortcut(app, binding.clone()) {
-            debug!("resume_all_shortcuts: could not register '{}': {}", id, e);
-        }
-    }
-    if crate::input_permission::capture_epoch().is_ok() {
-        ::handy_keys::set_blocking_enabled(true);
-    }
-}
-
-/// Temporarily unregister all bindings while the user is recording a
-/// shortcut in the UI. This avoids firing actions while keys are recorded.
+/// 只有成功取得本次录制票据后，前端才可以进入键盘捕获模式。
 #[tauri::command]
 #[specta::specta]
-pub fn suspend_all_bindings(app: AppHandle) -> Result<(), String> {
-    suspend_all_shortcuts(&app);
-    Ok(())
+pub async fn suspend_all_bindings(app: AppHandle, binding_id: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        capture::begin(&app, binding_id, KeyboardImplementation::Tauri)
+    })
+    .await
+    .map_err(|_| "shortcut_capture_task_failed".to_owned())?
 }
 
-/// Re-register all bindings after the user has finished recording.
+/// 只结束调用者持有的录制票据；没有票据不得重注册整套快捷键。
 #[tauri::command]
 #[specta::specta]
-pub fn resume_all_bindings(app: AppHandle) -> Result<(), String> {
-    resume_all_shortcuts(&app);
-    Ok(())
+pub async fn resume_all_bindings(app: AppHandle, token: String) -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || capture::end(&app, token))
+        .await
+        .map_err(|_| "shortcut_capture_task_failed".to_owned())?
 }
 
 // ============================================================================
@@ -525,10 +519,23 @@ pub struct ImplementationChangeResult {
 /// and register them with the new implementation.
 #[tauri::command]
 #[specta::specta]
-pub fn change_keyboard_implementation_setting(
+pub async fn change_keyboard_implementation_setting(
     app: AppHandle,
     implementation: String,
 ) -> Result<ImplementationChangeResult, String> {
+    tokio::task::spawn_blocking(move || {
+        change_keyboard_implementation_setting_blocking(app, implementation)
+    })
+    .await
+    .map_err(|_| "shortcut_settings_task_failed".to_owned())?
+}
+
+fn change_keyboard_implementation_setting_blocking(
+    app: AppHandle,
+    implementation: String,
+) -> Result<ImplementationChangeResult, String> {
+    let _settings_change = settings_change_guard()?;
+    let _idle = settings_barrier::SettingsBarrier::acquire(&app)?;
     let epoch = crate::input_permission::capture_epoch()?;
     let mut selected = settings::get_settings(&app);
     let current_impl = selected.keyboard_implementation;
@@ -542,29 +549,21 @@ pub fn change_keyboard_implementation_setting(
     app.manage(implementation_switch::ImplementationSwitch::default());
     let switch = app.state::<implementation_switch::ImplementationSwitch>();
     switch.begin(current_impl, new_impl)?;
-    let result: Result<(), String> = (|| {
-        // Close native dispatch while retiring. Permission state/epoch is unchanged.
-        ::handy_keys::set_blocking_enabled(false);
-        unregister_all_shortcuts(&app, current_impl)?;
-        handy_keys::retire_current(&app)?;
-        tauri_impl::retire_all(&app)?;
-        crate::input_permission::check_epoch(epoch)?;
-        if new_impl == KeyboardImplementation::HandyKeys {
-            handy_keys::init_shortcuts(&app)?;
-        } else {
-            tauri_impl::init_shortcuts(&app)?;
-        }
-        crate::input_permission::check_epoch(epoch)?;
-        ::handy_keys::set_blocking_enabled(true);
-        selected.keyboard_implementation = new_impl;
-        settings::write_settings(&app, selected);
-        Ok(())
-    })();
+    selected.keyboard_implementation = new_impl;
+    let result = crate::commands::settings_effects::save_and_apply(
+        &app,
+        selected,
+        |saved| saved.keyboard_implementation = current_impl,
+        || {
+            crate::input_permission::check_epoch(epoch)?;
+            rebuild_configured_shortcuts(&app)?;
+            crate::input_permission::check_epoch(epoch)
+        },
+        || rebuild_configured_shortcuts(&app),
+        || suspend_for_settings_failure(&app),
+    );
     switch.complete()?;
-    if let Err(error) = result {
-        crate::input_permission::close_gate(&error);
-        return Err(error);
-    }
+    result?;
     crate::secure_input::reconcile_fallback(&app);
     Ok(ImplementationChangeResult {
         success: true,
@@ -613,30 +612,6 @@ fn parse_keyboard_implementation(s: &str) -> KeyboardImplementation {
     }
 }
 
-/// Unregister all shortcuts for the current implementation
-fn unregister_all_shortcuts(
-    app: &AppHandle,
-    implementation: KeyboardImplementation,
-) -> Result<(), String> {
-    let settings = settings::get_settings(app);
-
-    for (id, binding) in &settings.bindings {
-        if !binding_enabled(&settings, id) {
-            continue;
-        }
-
-        let result = match implementation {
-            KeyboardImplementation::Tauri => tauri_impl::unregister_shortcut(app, binding.clone()),
-            KeyboardImplementation::HandyKeys => {
-                handy_keys::unregister_shortcut(app, binding.clone())
-            }
-        };
-
-        result?;
-    }
-    Ok(())
-}
-
 // ============================================================================
 // General Settings Commands
 // ============================================================================
@@ -649,7 +624,7 @@ pub fn change_shortcut_activation_setting(
 ) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.shortcut_activation = activation;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -658,7 +633,7 @@ pub fn change_shortcut_activation_setting(
 pub fn change_hold_threshold_ms_setting(app: AppHandle, ms: u64) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.hold_threshold_ms = ms;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -667,7 +642,7 @@ pub fn change_hold_threshold_ms_setting(app: AppHandle, ms: u64) -> Result<(), S
 pub fn change_audio_feedback_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.audio_feedback = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -676,7 +651,7 @@ pub fn change_audio_feedback_setting(app: AppHandle, enabled: bool) -> Result<()
 pub fn change_audio_feedback_volume_setting(app: AppHandle, volume: f32) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.audio_feedback_volume = volume;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -694,7 +669,7 @@ pub fn change_sound_theme_setting(app: AppHandle, theme: String) -> Result<(), S
         }
     };
     settings.sound_theme = parsed;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -712,7 +687,7 @@ pub fn change_theme_setting(app: AppHandle, theme: String) -> Result<(), String>
         }
     };
     settings.theme = parsed;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     apply_window_theme(&app, parsed);
     // Notify other webviews (the recording overlay) so they re-apply the palette
@@ -749,7 +724,7 @@ pub fn apply_window_theme(app: &AppHandle, theme: Theme) {
 pub fn change_translate_to_english_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.translate_to_english = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -758,7 +733,7 @@ pub fn change_translate_to_english_setting(app: AppHandle, enabled: bool) -> Res
 pub fn change_selected_language_setting(app: AppHandle, language: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.selected_language = language;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -777,7 +752,7 @@ pub fn change_overlay_position_setting(app: AppHandle, position: String) -> Resu
         }
     };
     settings.overlay_position = parsed;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
 
     // Whether the overlay shows at all is owned by overlay_style now; position
     // only ever toggles Top/Bottom, so the enabled cache is untouched here.
@@ -801,7 +776,7 @@ pub fn change_overlay_style_setting(app: AppHandle, style: String) -> Result<(),
         }
     };
     settings.overlay_style = parsed;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
 
     // Keep the cached overlay-enabled flag in sync so emit_levels stops (or
     // resumes) emitting on the next audio callback.
@@ -818,7 +793,7 @@ pub fn change_overlay_style_setting(app: AppHandle, style: String) -> Result<(),
 pub fn change_debug_mode_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.debug_mode = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
 
     // Keep webview log streaming in sync: the live log viewer only exists in
     // debug mode, so logs are forwarded to the frontend only while it is on.
@@ -841,7 +816,7 @@ pub fn change_debug_mode_setting(app: AppHandle, enabled: bool) -> Result<(), St
 pub fn change_start_hidden_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.start_hidden = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
 
     // Notify frontend
     let _ = app.emit(
@@ -860,7 +835,7 @@ pub fn change_start_hidden_setting(app: AppHandle, enabled: bool) -> Result<(), 
 pub fn change_autostart_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.autostart_enabled = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
 
     // Apply the autostart setting immediately
     crate::autostart::apply_autostart(&app, enabled);
@@ -888,7 +863,7 @@ pub fn change_update_checks_setting(app: AppHandle, enabled: bool) -> Result<(),
 
     let mut settings = settings::get_settings(&app);
     settings.update_checks_enabled = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
 
     let _ = app.emit(
         "settings-changed",
@@ -909,7 +884,7 @@ pub fn change_show_whats_new_on_update_setting(
 ) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.show_whats_new_on_update = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
 
     let _ = app.emit(
         "settings-changed",
@@ -931,7 +906,7 @@ pub fn change_whats_new_last_seen_version_setting(
     let version = version.trim().to_string();
     let mut settings = settings::get_settings(&app);
     settings.whats_new_last_seen_version = version.clone();
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
 
     let _ = app.emit(
         "settings-changed",
@@ -949,7 +924,7 @@ pub fn change_whats_new_last_seen_version_setting(
 pub fn update_custom_words(app: AppHandle, words: Vec<String>) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.custom_words = words;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -961,7 +936,7 @@ pub fn change_word_correction_threshold_setting(
 ) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.word_correction_threshold = threshold;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -970,7 +945,7 @@ pub fn change_word_correction_threshold_setting(
 pub fn change_extra_recording_buffer_setting(app: AppHandle, ms: u64) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.extra_recording_buffer_ms = ms;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -979,7 +954,7 @@ pub fn change_extra_recording_buffer_setting(app: AppHandle, ms: u64) -> Result<
 pub fn change_paste_delay_ms_setting(app: AppHandle, ms: u64) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.paste_delay_ms = ms;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -988,7 +963,7 @@ pub fn change_paste_delay_ms_setting(app: AppHandle, ms: u64) -> Result<(), Stri
 pub fn change_paste_delay_after_ms_setting(app: AppHandle, ms: u64) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.paste_delay_after_ms = ms;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -997,7 +972,7 @@ pub fn change_paste_delay_after_ms_setting(app: AppHandle, ms: u64) -> Result<()
 pub fn change_reliable_paste_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.reliable_paste = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1018,7 +993,7 @@ pub fn change_paste_method_setting(app: AppHandle, method: String) -> Result<(),
         }
     };
     settings.paste_method = parsed;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1052,7 +1027,7 @@ pub fn change_typing_tool_setting(app: AppHandle, tool: String) -> Result<(), St
         }
     };
     settings.typing_tool = parsed;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1064,7 +1039,7 @@ pub fn change_external_script_path_setting(
 ) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.external_script_path = path;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1084,7 +1059,7 @@ pub fn change_clipboard_handling_setting(app: AppHandle, handling: String) -> Re
         }
     };
     settings.clipboard_handling = parsed;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1093,7 +1068,7 @@ pub fn change_clipboard_handling_setting(app: AppHandle, handling: String) -> Re
 pub fn change_auto_submit_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.auto_submit = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1111,64 +1086,53 @@ pub fn change_auto_submit_key_setting(app: AppHandle, key: String) -> Result<(),
         }
     };
     settings.auto_submit_key = parsed;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+pub async fn change_post_process_enabled_setting(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || change_post_process_enabled_setting_blocking(app, enabled))
+        .await
+        .map_err(|_| "shortcut_settings_task_failed".to_owned())?
+}
+
+fn change_post_process_enabled_setting_blocking(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let _settings_change = settings_change_guard()?;
+    let _idle = settings_barrier::SettingsBarrier::acquire(&app)?;
     let mut settings = settings::get_settings(&app);
     if settings.post_process_enabled == enabled {
         return Ok(());
     }
 
+    let before = settings.clone();
+    let previous_enabled = settings.post_process_enabled;
+    let previous_bindings = settings.bindings.clone();
     settings.post_process_enabled = enabled;
-    let old_plain_binding = settings.bindings.get("transcribe").cloned();
     let repaired_plain_binding = if enabled {
         repair_transcribe_post_process_overlap(&mut settings)?
     } else {
         false
     };
-    let new_plain_binding = settings.bindings.get("transcribe").cloned();
-    let post_process_binding = settings
-        .bindings
-        .get("transcribe_with_post_process")
-        .cloned();
-
-    if enabled {
-        if repaired_plain_binding {
-            let old_plain = old_plain_binding
-                .as_ref()
-                .ok_or("Plain transcription shortcut is missing")?;
-            let new_plain = new_plain_binding
-                .as_ref()
-                .ok_or("Plain transcription shortcut is missing after repair")?;
-            unregister_shortcut(&app, old_plain.clone())?;
-            if let Err(error) = register_shortcut(&app, new_plain.clone()) {
-                restore_registration(&app, old_plain);
-                return Err(error);
-            }
-        }
-
-        if let Some(binding) = post_process_binding.clone() {
-            if let Err(error) = register_shortcut(&app, binding) {
-                if repaired_plain_binding {
-                    if let (Some(old_plain), Some(new_plain)) =
-                        (old_plain_binding.as_ref(), new_plain_binding.as_ref())
-                    {
-                        let _ = unregister_shortcut(&app, new_plain.clone());
-                        restore_registration(&app, old_plain);
-                    }
-                }
-                return Err(error);
-            }
-        }
-    } else if let Some(binding) = post_process_binding {
-        unregister_shortcut(&app, binding)?;
-    }
-
-    settings::write_settings(&app, settings);
+    let delta = settings_delta::RegistrationDelta::new(&before, &settings);
+    crate::commands::settings_effects::save_and_apply(
+        &app,
+        settings,
+        |saved| {
+            saved.post_process_enabled = previous_enabled;
+            saved.bindings = previous_bindings;
+        },
+        || delta.apply(&app),
+        || delta.restore(&app),
+        || suspend_for_settings_failure(&app),
+    )?;
 
     if repaired_plain_binding {
         let _ = app.emit(
@@ -1192,7 +1156,7 @@ pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Res
 pub fn change_experimental_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.experimental_enabled = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1221,7 +1185,7 @@ pub fn change_post_process_base_url_setting(
     }
 
     provider.base_url = base_url;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1250,7 +1214,7 @@ pub fn change_post_process_api_key_setting(
     let mut settings = settings::get_settings(&app);
     validate_provider_exists(&settings, &provider_id)?;
     settings.post_process_api_keys.insert(provider_id, api_key);
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1264,7 +1228,7 @@ pub fn change_post_process_model_setting(
     let mut settings = settings::get_settings(&app);
     validate_provider_exists(&settings, &provider_id)?;
     settings.post_process_models.insert(provider_id, model);
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1274,7 +1238,7 @@ pub fn set_post_process_provider(app: AppHandle, provider_id: String) -> Result<
     let mut settings = settings::get_settings(&app);
     validate_provider_exists(&settings, &provider_id)?;
     settings.post_process_provider_id = provider_id;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1297,7 +1261,7 @@ pub fn add_post_process_prompt(
     };
 
     settings.post_process_prompts.push(new_prompt.clone());
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
 
     Ok(new_prompt)
 }
@@ -1319,7 +1283,7 @@ pub fn update_post_process_prompt(
     {
         existing_prompt.name = name;
         existing_prompt.prompt = prompt;
-        settings::write_settings(&app, settings);
+        settings::write_settings(&app, settings)?;
         Ok(())
     } else {
         Err(format!("Prompt with id '{}' not found", id))
@@ -1350,7 +1314,7 @@ pub fn delete_post_process_prompt(app: AppHandle, id: String) -> Result<(), Stri
             settings.post_process_prompts.first().map(|p| p.id.clone());
     }
 
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1410,7 +1374,7 @@ pub fn set_post_process_selected_prompt(app: AppHandle, id: String) -> Result<()
     }
 
     settings.post_process_selected_prompt_id = Some(id);
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1419,7 +1383,7 @@ pub fn set_post_process_selected_prompt(app: AppHandle, id: String) -> Result<()
 pub fn change_mute_while_recording_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.mute_while_recording = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1428,7 +1392,7 @@ pub fn change_mute_while_recording_setting(app: AppHandle, enabled: bool) -> Res
 pub fn change_append_trailing_space_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.append_trailing_space = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1437,7 +1401,7 @@ pub fn change_append_trailing_space_setting(app: AppHandle, enabled: bool) -> Re
 pub fn change_lazy_stream_close_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.lazy_stream_close = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1446,33 +1410,51 @@ pub fn change_lazy_stream_close_setting(app: AppHandle, enabled: bool) -> Result
 pub fn change_vad_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.vad_enabled = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn change_vad_backend_setting(app: AppHandle, backend: VadBackend) -> Result<(), String> {
-    if settings::get_settings(&app).vad_backend == backend {
-        return Ok(());
-    }
-
-    // Construct/swap the detector and, when necessary, reopen cpal away from
-    // the webview thread. Persist only after the runtime change succeeds so a
-    // rejected in-progress switch or failed microphone reopen rolls back cleanly.
-    let manager = app
-        .state::<std::sync::Arc<crate::managers::audio::AudioRecordingManager>>()
-        .inner()
-        .clone();
-    tokio::task::spawn_blocking(move || manager.update_vad_backend(backend))
-        .await
-        .map_err(|e| format!("audio task join failed: {e}"))?
-        .map_err(|e| format!("Failed to update VAD backend: {e}"))?;
-
-    let mut current_settings = settings::get_settings(&app);
-    current_settings.vad_backend = backend;
-    settings::write_settings(&app, current_settings);
-    Ok(())
+    tokio::task::spawn_blocking(move || {
+        let _guard = crate::managers::audio::SETTINGS_CHANGE
+            .try_lock()
+            .map_err(|_| "audio_settings_busy")?;
+        let manager = app
+            .state::<std::sync::Arc<crate::managers::audio::AudioRecordingManager>>()
+            .inner()
+            .clone();
+        manager.require_idle_for_settings()?;
+        let mut settings = settings::get_settings(&app);
+        let previous = settings.vad_backend;
+        if previous == backend {
+            return Ok(());
+        }
+        settings.vad_backend = backend;
+        let was_open = manager.is_stream_open();
+        crate::commands::settings_effects::save_and_apply(
+            &app,
+            settings,
+            |saved| saved.vad_backend = previous,
+            || {
+                manager
+                    .update_vad_backend(backend)
+                    .map_err(|_| "audio_vad_apply_failed".into())
+            },
+            || {
+                manager
+                    .update_vad_backend(previous)
+                    .map_err(|_| "audio_vad_restore_failed")?;
+                manager
+                    .restore_stream_open_state(was_open)
+                    .map_err(|_| "audio_vad_restore_failed".into())
+            },
+            || manager.suspend_for_settings_failure(),
+        )
+    })
+    .await
+    .map_err(|_| "audio_settings_task_failed")?
 }
 
 #[tauri::command]
@@ -1483,7 +1465,7 @@ pub fn change_filler_word_removal_enabled_setting(
 ) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.filler_word_removal_enabled = enabled;
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
     Ok(())
 }
 
@@ -1492,7 +1474,7 @@ pub fn change_filler_word_removal_enabled_setting(
 pub fn change_app_language_setting(app: AppHandle, language: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.app_language = language.clone();
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
 
     // Refresh the tray menu with the new language
     tray::update_tray_menu(&app);
@@ -1505,7 +1487,7 @@ pub fn change_app_language_setting(app: AppHandle, language: String) -> Result<(
 pub fn change_show_tray_icon_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.show_tray_icon = tray::independent_tray_enabled(enabled, false);
-    settings::write_settings(&app, settings);
+    settings::write_settings(&app, settings)?;
 
     // Apply change immediately
     tray::set_tray_visibility(&app, false);
@@ -1515,11 +1497,15 @@ pub fn change_show_tray_icon_setting(app: AppHandle, enabled: bool) -> Result<()
 
 /// Save accelerator settings and make the next model use reload with them.
 /// The currently running transcription, if any, keeps its existing engine.
-fn save_accelerator_and_reload_next_use(app: &AppHandle, s: settings::AppSettings) {
-    settings::write_settings(app, s);
+fn save_accelerator_and_reload_next_use(
+    app: &AppHandle,
+    s: settings::AppSettings,
+) -> Result<(), String> {
+    settings::write_settings(app, s)?;
 
     let tm = app.state::<std::sync::Arc<crate::managers::transcription::TranscriptionManager>>();
     tm.reload_model_on_next_use();
+    Ok(())
 }
 
 #[tauri::command]
@@ -1530,7 +1516,7 @@ pub fn change_transcribe_accelerator_setting(
 ) -> Result<(), String> {
     let mut s = settings::get_settings(&app);
     s.transcribe_accelerator = accelerator;
-    save_accelerator_and_reload_next_use(&app, s);
+    save_accelerator_and_reload_next_use(&app, s)?;
     Ok(())
 }
 
@@ -1542,7 +1528,7 @@ pub fn change_ort_accelerator_setting(
 ) -> Result<(), String> {
     let mut s = settings::get_settings(&app);
     s.ort_accelerator = accelerator;
-    save_accelerator_and_reload_next_use(&app, s);
+    save_accelerator_and_reload_next_use(&app, s)?;
     Ok(())
 }
 
@@ -1551,7 +1537,7 @@ pub fn change_ort_accelerator_setting(
 pub fn change_transcribe_gpu_device(app: AppHandle, device: Option<String>) -> Result<(), String> {
     let mut s = settings::get_settings(&app);
     s.transcribe_gpu_device = device;
-    save_accelerator_and_reload_next_use(&app, s);
+    save_accelerator_and_reload_next_use(&app, s)?;
     Ok(())
 }
 

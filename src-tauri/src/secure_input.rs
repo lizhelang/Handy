@@ -108,6 +108,15 @@ pub fn reconcile_fallback_checked(app: &AppHandle) -> Result<(), String> {
     imp::reconcile_fallback_checked(app)
 }
 
+/// 设置切换的短期屏障只暂停本组件；shadow 必须由其自身清单真实注销。
+pub(crate) fn pause_fallback_for_settings(app: &AppHandle) -> Result<(), String> {
+    imp::set_settings_paused(app, true)
+}
+
+pub(crate) fn resume_fallback_after_settings(app: &AppHandle) -> Result<(), String> {
+    imp::set_settings_paused(app, false)
+}
+
 #[cfg(any(target_os = "macos", test))]
 fn reconcile_on_main_dispatch(
     is_main: bool,
@@ -133,6 +142,21 @@ fn reconcile_on_main_dispatch(
                 "fallback 主线程回执丢失，清理结果未知".to_owned()
             }
         })?
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn partition_shadows(
+    previous: Vec<crate::settings::ShortcutBinding>,
+    wanted: &[crate::settings::ShortcutBinding],
+) -> (
+    Vec<crate::settings::ShortcutBinding>,
+    Vec<crate::settings::ShortcutBinding>,
+) {
+    previous.into_iter().partition(|previous| {
+        wanted
+            .iter()
+            .any(|next| previous.id == next.id && previous.current_binding == next.current_binding)
+    })
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -229,6 +253,7 @@ mod imp {
         recorder_blocked: AtomicBool,
         cancel_requested: AtomicBool,
         monitor_started: AtomicBool,
+        settings_paused: AtomicBool,
     }
 
     impl SecureInputState {
@@ -243,6 +268,7 @@ mod imp {
                 recorder_blocked: AtomicBool::new(false),
                 cancel_requested: AtomicBool::new(false),
                 monitor_started: AtomicBool::new(false),
+                settings_paused: AtomicBool::new(false),
             }
         }
 
@@ -521,6 +547,14 @@ mod imp {
         )
     }
 
+    pub fn set_settings_paused(app: &AppHandle, paused: bool) -> Result<(), String> {
+        let state = app
+            .try_state::<SecureInputState>()
+            .ok_or("SecureInput 状态尚未初始化")?;
+        state.settings_paused.store(paused, Ordering::SeqCst);
+        reconcile_fallback_checked(app)
+    }
+
     fn reconcile_on_main(app: &AppHandle) -> Result<(), String> {
         if objc2::MainThreadMarker::new().is_none() {
             return Err("fallback 清理没有运行在主线程".into());
@@ -539,7 +573,8 @@ mod imp {
         };
 
         let settings = settings::get_settings(app);
-        let eligible = crate::input_permission::capture_epoch().is_ok()
+        let eligible = !state.settings_paused.load(Ordering::SeqCst)
+            && crate::input_permission::capture_epoch().is_ok()
             && state.is_sustained()
             && app
                 .try_state::<crate::commands::ShortcutsInitialized>()
@@ -554,7 +589,7 @@ mod imp {
                 if id == "cancel" && !state.cancel_requested.load(Ordering::SeqCst) {
                     continue;
                 }
-                if id == "transcribe_with_post_process" && !settings.post_process_enabled {
+                if id != "cancel" && !crate::shortcut::binding_enabled(&settings, id) {
                     continue;
                 }
 
@@ -569,12 +604,11 @@ mod imp {
         }
 
         // Preserve unchanged registrations; unregister only stale shadows.
-        let (kept, stale): (Vec<ShortcutBinding>, Vec<ShortcutBinding>) =
-            previous.registered.into_iter().partition(|prev| {
-                wanted
-                    .iter()
-                    .any(|(_, shadow, _)| same_shadow(shadow, prev))
-            });
+        let wanted_shadows = wanted
+            .iter()
+            .map(|(_, shadow, _)| shadow.clone())
+            .collect::<Vec<_>>();
+        let (kept, stale) = super::partition_shadows(previous.registered, &wanted_shadows);
 
         if !stale.is_empty() {
             info!(
@@ -801,6 +835,24 @@ mod reconciliation_tests {
     }
 
     #[test]
+    fn paused_fallback_retires_every_owned_shadow_and_failed_removal_keeps_ownership() {
+        let mut shadows = crate::settings::get_default_settings()
+            .bindings
+            .into_values()
+            .take(2)
+            .collect::<Vec<_>>();
+        let (kept, stale) = partition_shadows(shadows.clone(), &shadows);
+        assert_eq!(kept.len(), shadows.len());
+        assert!(stale.is_empty());
+        let (kept, stale) = partition_shadows(shadows.clone(), &[]);
+        assert!(kept.is_empty());
+        let retained = unregister_stale_shadows(stale, |_| Err("native receipt missing".into()));
+        assert_eq!(retained.len(), shadows.len());
+        let cleaned = unregister_stale_shadows(std::mem::take(&mut shadows), |_| Ok(()));
+        assert!(cleaned.is_empty());
+    }
+
+    #[test]
     fn successful_cleanup_reply_is_a_barrier_before_primary_registration() {
         let order = Arc::new(Mutex::new(Vec::new()));
         let cleanup_order = order.clone();
@@ -959,6 +1011,10 @@ mod imp {
     pub fn unregister_cancel_fallback(_app: &AppHandle) {}
 
     pub fn reconcile_fallback_checked(_app: &AppHandle) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn set_settings_paused(_app: &AppHandle, _paused: bool) -> Result<(), String> {
         Ok(())
     }
 

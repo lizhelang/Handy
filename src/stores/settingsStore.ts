@@ -194,6 +194,11 @@ const settingUpdaters: {
   auto_submit_key: (value) =>
     commands.changeAutoSubmitKeySetting(value as string),
   history_limit: (value) => commands.updateHistoryLimit(value as number),
+  model_unload_timeout: (value) => {
+    if (value === undefined)
+      return Promise.reject(new Error(i18n.t(saveFailureKey)));
+    return commands.setModelUnloadTimeout(value);
+  },
   post_process_enabled: (value) =>
     commands.changePostProcessEnabledSetting(value as boolean),
   post_process_selected_prompt_id: (value) =>
@@ -751,6 +756,9 @@ export const useSettingsStore = create<SettingsStore>()(
       // reset during model switch). The backend is the source of truth.
       listen("model-state-changed", () => {
         get().refreshSettings();
+      });
+      listen("settings-save-failed", () => {
+        notifySaveFailure();
       });
       listen<{ setting?: string }>("settings-changed", (event) => {
         get().refreshSettings();

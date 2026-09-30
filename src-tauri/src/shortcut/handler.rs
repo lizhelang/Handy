@@ -32,6 +32,9 @@ pub fn handle_shortcut_event(
     hotkey_string: &str,
     is_pressed: bool,
 ) {
+    let Some(generation) = super::settings_barrier::capture(is_pressed) else {
+        return;
+    };
     #[cfg(target_os = "macos")]
     {
         // 原生快捷键回调可能来自后台线程；Carbon 输入源查询只能在主线程执行。
@@ -46,6 +49,7 @@ pub fn handle_shortcut_event(
                     binding_id,
                     hotkey_string,
                     is_pressed,
+                    generation,
                     source: crate::host_shortcut_broker::current_input_source(),
                 });
             })
@@ -55,7 +59,13 @@ pub fn handle_shortcut_event(
         }
     }
     #[cfg(not(target_os = "macos"))]
-    handle_shortcut_event_on_dispatch_thread(app, binding_id, hotkey_string, is_pressed);
+    handle_shortcut_event_on_dispatch_thread(
+        app,
+        binding_id,
+        hotkey_string,
+        is_pressed,
+        generation,
+    );
 }
 
 fn handle_shortcut_event_on_dispatch_thread(
@@ -63,8 +73,12 @@ fn handle_shortcut_event_on_dispatch_thread(
     binding_id: &str,
     hotkey_string: &str,
     is_pressed: bool,
+    generation: u64,
     #[cfg(target_os = "macos")] source: crate::host_shortcut_broker::CurrentInputSource,
 ) {
+    let Some(_lease) = super::settings_barrier::admit(generation, is_pressed) else {
+        return;
+    };
     let settings = get_settings(app);
 
     // Transcribe bindings are handled by the coordinator.
@@ -174,6 +188,7 @@ struct NativeShortcutEvent {
     binding_id: String,
     hotkey_string: String,
     is_pressed: bool,
+    generation: u64,
     source: crate::host_shortcut_broker::CurrentInputSource,
 }
 
@@ -192,6 +207,7 @@ fn enqueue_native_shortcut(event: NativeShortcutEvent) {
                         &event.binding_id,
                         &event.hotkey_string,
                         event.is_pressed,
+                        event.generation,
                         event.source,
                     );
                 }

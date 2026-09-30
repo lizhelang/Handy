@@ -65,6 +65,19 @@ pub struct HostShortcutBroker {
 }
 
 impl HostShortcutBroker {
+    /// 调用方先关闭新 press 准入；旧 release 可继续，不能把尚未回传的 Host
+    /// trigger 误判成 coordinator 空闲。未知 issued 保留为 busy，绝不猜已消费。
+    pub(crate) fn confirm_settings_idle(&self) -> Result<(), String> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| "shortcut_broker_unavailable")?;
+        if !state.active.is_empty() || !state.queue.is_empty() || !state.issued.is_empty() {
+            return Err("shortcut_host_gesture_busy".into());
+        }
+        Ok(())
+    }
+
     /// 复制当前已注册的精确目标，不跨服务 IPC 持锁；再次读取用于提交前比较。
     pub(crate) fn shared_terms_lease(
         &self,
@@ -778,6 +791,33 @@ mod tests {
             Some(4),
             source,
         )
+    }
+
+    #[test]
+    fn settings_idle_rejects_forwarded_unconsumed_and_issued_start() {
+        let broker = HostShortcutBroker::default();
+        register_default_lease(&broker);
+        broker.confirm_settings_idle().unwrap();
+        route_with_source(
+            &broker,
+            true,
+            ShortcutActivation::PushToTalk,
+            CurrentInputSource::InputiaCandidate,
+        );
+        assert!(broker.confirm_settings_idle().is_err());
+        route_with_source(
+            &broker,
+            false,
+            ShortcutActivation::PushToTalk,
+            CurrentInputSource::InputiaCandidate,
+        );
+        assert!(broker.state.lock().unwrap().active.is_empty());
+        assert!(broker.confirm_settings_idle().is_err());
+        let first = broker.poll("host-one", 0).unwrap();
+        assert!(first.starts_session);
+        assert!(broker.confirm_settings_idle().is_err());
+        broker.retire("host-one", "lease-one", 1);
+        broker.confirm_settings_idle().unwrap();
     }
 
     #[test]

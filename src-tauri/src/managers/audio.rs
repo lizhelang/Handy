@@ -16,6 +16,9 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
+// 只串行化设置变更，不让硬件回调执行设置持久化。
+pub(crate) static SETTINGS_CHANGE: Mutex<()> = Mutex::new(());
+
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const SILERO_VAD_THRESHOLD: f32 = 0.3;
 const EARSHOT_VAD_THRESHOLD: f32 = 0.5;
@@ -436,6 +439,7 @@ pub struct AudioRecordingManager {
     /// stopped or cancelled. This prevents a slow device from producing a late
     /// "ready" indication for a session the user already ended.
     capture_generation: Arc<AtomicU64>,
+    configuration_failed: Arc<AtomicBool>,
     /// Resolution of a *named* microphone (selected or clamshell) to its cpal
     /// device, cached so on-demand recording starts skip the full device
     /// enumeration (~40-110ms). Keyed by the resolved name, so a settings
@@ -473,6 +477,7 @@ impl AudioRecordingManager {
             stream_router,
             recording_active: Arc::new(AtomicBool::new(false)),
             capture_generation: Arc::new(AtomicU64::new(0)),
+            configuration_failed: Arc::new(AtomicBool::new(false)),
             cached_device: Arc::new(Mutex::new(None)),
         };
 
@@ -571,24 +576,28 @@ impl AudioRecordingManager {
         }
     }
 
-    /// Keep persisted settings and the UI aligned with a successful runtime
-    /// fallback. Re-read first so recovery cannot clear a microphone the user
-    /// selected concurrently while the stream was being rebuilt.
-    fn persist_default_microphone_after_fallback(&self, unavailable_name: &str) {
-        let mut settings = get_settings(&self.app_handle);
+    /// 使用设备解析时的原始读取凭据；后台失败不覆盖后来选择，也不伪报已保存。
+    fn persist_default_microphone_after_fallback(
+        &self,
+        mut settings: AppSettings,
+        unavailable_name: &str,
+    ) {
         if settings.selected_microphone.as_deref() != Some(unavailable_name) {
             return;
         }
-
         settings.selected_microphone = None;
-        write_settings(&self.app_handle, settings);
-        let _ = self.app_handle.emit(
-            "settings-changed",
-            serde_json::json!({
-                "setting": "selected_microphone",
-                "value": "Default"
-            }),
-        );
+        let app = self.app_handle.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if write_settings(&app, settings).is_err() {
+                warn!("Microphone fallback preference was not confirmed saved");
+                let _ = app.emit("settings-save-failed", ());
+                return;
+            }
+            let _ = app.emit(
+                "settings-changed",
+                serde_json::json!({"setting":"selected_microphone","value":"Default"}),
+            );
+        });
     }
 
     fn schedule_lazy_close(&self) {
@@ -672,6 +681,7 @@ impl AudioRecordingManager {
     }
 
     pub fn start_microphone_stream(&self) -> Result<(), anyhow::Error> {
+        self.ensure_configuration_available()?;
         let mut open_flag = self.is_open.lock().unwrap();
         if *open_flag {
             // `is_open` only records that we opened a stream at some point, not
@@ -766,10 +776,11 @@ impl AudioRecordingManager {
         drop(recorder_opt);
 
         *open_flag = true;
+        drop(open_flag);
         if let Some(unavailable_name) = resolution.unavailable_selected_microphone {
             // Do this only after the default stream opened successfully. A
             // failed fallback must not erase the user's microphone preference.
-            self.persist_default_microphone_after_fallback(&unavailable_name);
+            self.persist_default_microphone_after_fallback(settings, &unavailable_name);
         }
         // This timing covers through cpal's stream.play() returning — i.e. the
         // point cpal surfaces as "stream running." It does NOT guarantee the
@@ -783,10 +794,44 @@ impl AudioRecordingManager {
         Ok(())
     }
 
+    pub(crate) fn is_stream_open(&self) -> bool {
+        *self.is_open.lock().unwrap()
+    }
+
+    pub(crate) fn require_idle_for_settings(&self) -> Result<(), String> {
+        if self.is_recording() {
+            Err("audio_settings_busy_recording".into())
+        } else {
+            self.ensure_configuration_available()
+                .map_err(|_| "audio_settings_restart_required".into())
+        }
+    }
+
+    fn ensure_configuration_available(&self) -> Result<(), anyhow::Error> {
+        anyhow::ensure!(
+            !self.configuration_failed.load(Ordering::Acquire),
+            "audio_settings_restart_required"
+        );
+        Ok(())
+    }
+
+    /// 运行态恢复无法证实时仅停用音频入口；重启前不得自动重新打开采集。
+    pub(crate) fn suspend_for_settings_failure(&self) {
+        self.configuration_failed.store(true, Ordering::Release);
+        self.invalidate_recording_readiness();
+        self.stop_microphone_stream();
+    }
+
     pub fn stop_microphone_stream(&self) {
+        if self.stop_microphone_stream_checked().is_err() {
+            warn!("Microphone stream retirement was not confirmed");
+        }
+    }
+
+    fn stop_microphone_stream_checked(&self) -> Result<(), anyhow::Error> {
         let mut open_flag = self.is_open.lock().unwrap();
         if !*open_flag {
-            return;
+            return Ok(());
         }
 
         {
@@ -803,23 +848,34 @@ impl AudioRecordingManager {
                 let _ = rec.stop();
                 *self.is_recording.lock().unwrap() = false;
             }
-            let _ = rec.close();
+            rec.close()
+                .map_err(|_| anyhow::anyhow!("audio_stream_retirement_unconfirmed"))?;
         }
 
         *open_flag = false;
         debug!("Microphone stream stopped");
+        Ok(())
+    }
+
+    pub(crate) fn restore_stream_open_state(&self, was_open: bool) -> Result<(), anyhow::Error> {
+        if was_open {
+            self.start_microphone_stream()
+        } else {
+            self.stop_microphone_stream_checked()
+        }
     }
 
     /* ---------- mode switching --------------------------------------------- */
 
     pub fn update_mode(&self, new_mode: MicrophoneMode) -> Result<(), anyhow::Error> {
+        self.ensure_configuration_available()?;
         let cur_mode = self.mode.lock().unwrap().clone();
 
         match (cur_mode, &new_mode) {
             (MicrophoneMode::AlwaysOn, MicrophoneMode::OnDemand) => {
                 if matches!(*self.state.lock().unwrap(), RecordingState::Idle) {
                     self.close_generation.fetch_add(1, Ordering::SeqCst);
-                    self.stop_microphone_stream();
+                    self.stop_microphone_stream_checked()?;
                 }
             }
             (MicrophoneMode::OnDemand, MicrophoneMode::AlwaysOn) => {
@@ -855,6 +911,11 @@ impl AudioRecordingManager {
         binding_id: &str,
         vad_policy: VadPolicy,
     ) -> Result<RecordingReadiness, String> {
+        self.ensure_configuration_available()
+            .map_err(|_| "audio_settings_restart_required")?;
+        let _settings = SETTINGS_CHANGE
+            .try_lock()
+            .map_err(|_| "audio_settings_busy")?;
         let mut state = self.state.lock().unwrap();
 
         if let RecordingState::Idle = *state {
@@ -903,6 +964,7 @@ impl AudioRecordingManager {
     /// detector before reporting success. A failed reopen restores the previous
     /// recorder so the persisted setting can remain unchanged.
     pub fn update_vad_backend(&self, backend: VadBackend) -> Result<(), anyhow::Error> {
+        self.ensure_configuration_available()?;
         let state = self.state.lock().unwrap();
         if !matches!(*state, RecordingState::Idle) {
             return Err(anyhow::anyhow!(
@@ -922,7 +984,7 @@ impl AudioRecordingManager {
         // Invalidate any delayed close before swapping the recorder it targets.
         self.close_generation.fetch_add(1, Ordering::SeqCst);
         if was_open {
-            self.stop_microphone_stream();
+            self.stop_microphone_stream_checked()?;
         }
 
         // A timed-out close retains its worker. Do not discard that ownership
@@ -963,12 +1025,13 @@ impl AudioRecordingManager {
     }
 
     pub fn update_selected_device(&self) -> Result<(), anyhow::Error> {
+        self.ensure_configuration_available()?;
         // Device settings changed; re-enumerate the device and restart capture.
         self.invalidate_device_cache();
         let was_open = *self.is_open.lock().unwrap();
         if was_open {
             self.close_generation.fetch_add(1, Ordering::SeqCst);
-            self.stop_microphone_stream();
+            self.stop_microphone_stream_checked()?;
             self.start_microphone_stream()?;
         }
         Ok(())
@@ -977,7 +1040,9 @@ impl AudioRecordingManager {
     pub fn update_selected_channel(
         &self,
         selected_channel: Option<u16>,
+        previous_channel: Option<u16>,
     ) -> Result<(), anyhow::Error> {
+        self.ensure_configuration_available()?;
         // Serialize against recording start/stop. Restarting an active capture
         // would discard its samples and leave the manager's recording state out
         // of sync with the new recorder.
@@ -988,11 +1053,10 @@ impl AudioRecordingManager {
             ));
         }
 
-        let previous_channel = get_settings(&self.app_handle).selected_channel;
         let was_open = *self.is_open.lock().unwrap();
         if was_open {
             self.close_generation.fetch_add(1, Ordering::SeqCst);
-            self.stop_microphone_stream();
+            self.stop_microphone_stream_checked()?;
         }
         if let Some(recorder) = self.recorder.lock().unwrap().as_mut() {
             recorder.set_selected_channel(selected_channel);

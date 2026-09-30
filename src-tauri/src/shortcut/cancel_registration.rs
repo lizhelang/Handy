@@ -27,6 +27,7 @@ struct Desired {
     active: bool,
     epoch: u64,
     shutdown: bool,
+    idle_epoch: Option<u64>,
 }
 
 #[derive(Default)]
@@ -42,7 +43,8 @@ impl Shared {
                 desired.active = active;
             }
             desired.epoch = desired.epoch.wrapping_add(1);
-            self.changed.notify_one();
+            desired.idle_epoch = None;
+            self.changed.notify_all();
         }
     }
 }
@@ -127,6 +129,14 @@ fn run(shared: Arc<Shared>, mut backend: impl Backend) {
         }
         applied_epoch = Some(desired.epoch);
         retry = false;
+        if installed.is_none() && !desired.active {
+            if let Ok(mut current) = shared.desired.lock() {
+                if current.epoch == desired.epoch && !current.active {
+                    current.idle_epoch = Some(desired.epoch);
+                    shared.changed.notify_all();
+                }
+            }
+        }
     }
 }
 
@@ -237,6 +247,46 @@ fn shared(app: &AppHandle) -> Arc<Shared> {
 
 pub(super) fn set_active(app: &AppHandle, active: bool) {
     shared(app).update(Some(active));
+}
+
+/// 调用方已经持有协调器空闲屏障；必须确认 worker 自己撤销了 Cancel，
+/// 不能把外部 unregister_all 当作其 installed 缓存的回执。
+pub(super) fn confirm_idle(app: &AppHandle) -> Result<(), String> {
+    let Some(worker) = app.try_state::<Worker>() else {
+        return Ok(());
+    };
+    confirm_shared_idle(&worker.shared, Duration::from_millis(750))
+}
+
+fn confirm_shared_idle(shared: &Shared, timeout: Duration) -> Result<(), String> {
+    let mut desired = shared
+        .desired
+        .lock()
+        .map_err(|_| "cancel_state_unavailable")?;
+    if desired.active || desired.shutdown {
+        return Err("cancel_still_active".into());
+    }
+    desired.epoch = desired.epoch.wrapping_add(1);
+    desired.idle_epoch = None;
+    let epoch = desired.epoch;
+    shared.changed.notify_all();
+    let (desired, _) = shared
+        .changed
+        .wait_timeout_while(desired, timeout, |state| {
+            !state.active
+                && !state.shutdown
+                && state.epoch == epoch
+                && state.idle_epoch != Some(epoch)
+        })
+        .map_err(|_| "cancel_state_unavailable")?;
+    if desired.active
+        || desired.shutdown
+        || desired.epoch != epoch
+        || desired.idle_epoch != Some(epoch)
+    {
+        return Err("cancel_retirement_unconfirmed".into());
+    }
+    Ok(())
 }
 
 pub(super) fn refresh(app: &AppHandle) {
@@ -368,6 +418,23 @@ mod tests {
                 let _ = worker.join();
             }
         }
+    }
+
+    #[test]
+    fn idle_receipt_waits_for_actual_unregister_not_just_inactive_desire() {
+        let h = Harness::new(Some("unregister"), false);
+        h.shared.update(Some(true));
+        h.expect("register:Tauri:Escape");
+        h.expect("registered");
+        assert!(confirm_shared_idle(&h.shared, Duration::from_millis(5)).is_err());
+        h.shared.update(Some(false));
+        h.expect("unregister:Tauri:Escape");
+        assert!(confirm_shared_idle(&h.shared, Duration::from_millis(5)).is_err());
+        assert_eq!(h.installed.lock().unwrap().len(), 1);
+        h.release.send(()).unwrap();
+        h.expect("unregistered");
+        confirm_shared_idle(&h.shared, Duration::from_secs(1)).unwrap();
+        assert!(h.installed.lock().unwrap().is_empty());
     }
 
     #[test]

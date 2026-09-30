@@ -1,5 +1,5 @@
 use crate::managers::clipboard::{ClipboardManager, ClipboardPageResult, ClipboardStats};
-use log::{error, info, warn};
+use log::{error, info};
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 
@@ -11,19 +11,6 @@ fn clipboard_binding(
         .get(crate::settings::CLIPBOARD_HISTORY_BINDING_ID)
         .cloned()
         .ok_or_else(|| "Clipboard history shortcut binding is missing".to_string())
-}
-
-fn clipboard_shortcut_active(settings: &crate::settings::AppSettings) -> bool {
-    settings.clipboard_hotkey_enabled
-}
-
-fn unregister_clipboard_shortcut_best_effort(
-    app: &AppHandle,
-    binding: crate::settings::ShortcutBinding,
-) {
-    if let Err(err) = crate::shortcut::unregister_shortcut(app, binding) {
-        warn!("Failed to unregister clipboard history shortcut: {err}");
-    }
 }
 
 #[tauri::command]
@@ -192,7 +179,7 @@ pub async fn update_clipboard_settings(
         change_clipboard_max_records_setting(app.clone(), max)?;
     }
     if let Some(key) = hotkey {
-        change_clipboard_hotkey_setting(app.clone(), key)?;
+        change_clipboard_hotkey_setting(app.clone(), key).await?;
     }
 
     let settings = crate::settings::get_settings(&app);
@@ -217,7 +204,7 @@ pub fn change_clipboard_enabled_setting(
     }
 
     settings.clipboard_enabled = enabled;
-    crate::settings::write_settings(&app, settings);
+    crate::settings::write_settings(&app, settings)?;
     crate::tray::update_tray_menu(&app);
 
     if enabled {
@@ -241,63 +228,86 @@ pub fn change_clipboard_max_records_setting(
 ) -> Result<(), String> {
     let mut settings = crate::settings::get_settings(&app);
     settings.clipboard_max_records = max_records;
-    crate::settings::write_settings(&app, settings);
+    crate::settings::write_settings(&app, settings)?;
     Ok(())
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn change_clipboard_hotkey_enabled_setting(
+pub async fn change_clipboard_hotkey_enabled_setting(
     app: AppHandle,
     enabled: bool,
 ) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        change_clipboard_hotkey_enabled_setting_blocking(app, enabled)
+    })
+    .await
+    .map_err(|_| "shortcut_settings_task_failed".to_owned())?
+}
+
+fn change_clipboard_hotkey_enabled_setting_blocking(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let _guard = crate::shortcut::settings_change_guard()?;
+    let _idle = crate::shortcut::settings_barrier::SettingsBarrier::acquire(&app)?;
     let mut settings = crate::settings::get_settings(&app);
-    if settings.clipboard_hotkey_enabled == enabled {
+    let before = settings.clone();
+    let previous = settings.clipboard_hotkey_enabled;
+    if previous == enabled {
         return Ok(());
     }
-
-    let binding = clipboard_binding(&settings)?;
-    if enabled {
-        crate::shortcut::register_shortcut(&app, binding)?;
-    } else {
-        unregister_clipboard_shortcut_best_effort(&app, binding);
-    }
-
+    clipboard_binding(&settings)?;
     settings.clipboard_hotkey_enabled = enabled;
-    crate::settings::write_settings(&app, settings);
-    Ok(())
+    let delta = crate::shortcut::settings_delta::RegistrationDelta::new(&before, &settings);
+    super::settings_effects::save_and_apply(
+        &app,
+        settings,
+        |saved| saved.clipboard_hotkey_enabled = previous,
+        || delta.apply(&app),
+        || delta.restore(&app),
+        || crate::shortcut::suspend_for_settings_failure(&app),
+    )
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn change_clipboard_hotkey_setting(app: AppHandle, hotkey: String) -> Result<(), String> {
+pub async fn change_clipboard_hotkey_setting(app: AppHandle, hotkey: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || change_clipboard_hotkey_setting_blocking(app, hotkey))
+        .await
+        .map_err(|_| "shortcut_settings_task_failed".to_owned())?
+}
+
+fn change_clipboard_hotkey_setting_blocking(app: AppHandle, hotkey: String) -> Result<(), String> {
+    let _guard = crate::shortcut::settings_change_guard()?;
+    let _idle = crate::shortcut::settings_barrier::SettingsBarrier::acquire(&app)?;
     let mut settings = crate::settings::get_settings(&app);
     crate::shortcut::validate_shortcut_for_implementation(
         &hotkey,
         settings.keyboard_implementation,
     )?;
-
-    let old_binding = clipboard_binding(&settings)?;
-    let mut new_binding = old_binding.clone();
+    let before = settings.clone();
+    let old_bindings = settings.bindings.clone();
+    let old_hotkey = settings.clipboard_hotkey.clone();
+    let mut new_binding = clipboard_binding(&settings)?;
     new_binding.current_binding = hotkey.clone();
-
-    if clipboard_shortcut_active(&settings) {
-        unregister_clipboard_shortcut_best_effort(&app, old_binding.clone());
-        if let Err(err) = crate::shortcut::register_shortcut(&app, new_binding.clone()) {
-            if let Err(restore_err) = crate::shortcut::register_shortcut(&app, old_binding) {
-                error!("Failed to restore clipboard shortcut after update error: {restore_err}");
-            }
-            return Err(err);
-        }
-    }
-
     settings.clipboard_hotkey = hotkey;
     settings.bindings.insert(
-        crate::settings::CLIPBOARD_HISTORY_BINDING_ID.to_string(),
+        crate::settings::CLIPBOARD_HISTORY_BINDING_ID.into(),
         new_binding,
     );
-    crate::settings::write_settings(&app, settings);
-    Ok(())
+    let delta = crate::shortcut::settings_delta::RegistrationDelta::new(&before, &settings);
+    super::settings_effects::save_and_apply(
+        &app,
+        settings,
+        |saved| {
+            saved.bindings = old_bindings;
+            saved.clipboard_hotkey = old_hotkey;
+        },
+        || delta.apply(&app),
+        || delta.restore(&app),
+        || crate::shortcut::suspend_for_settings_failure(&app),
+    )
 }
 
 #[tauri::command]

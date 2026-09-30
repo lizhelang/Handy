@@ -597,6 +597,23 @@ impl VoiceConnection {
                         .map_err(|_| ConnectionError::ControlFrame)
                 }
                 VoiceWireRequest::Control(request) => {
+                    // 在任何 AX/账本/Host consume 之前取得票据，并持有到 coordinator
+                    // 的真实回执。切换方只检查计数，不跨 IPC 持准入锁。
+                    let starts = request.strict_start_identity().is_some();
+                    let _settings_lease = crate::shortcut::settings_barrier::capture(starts)
+                        .and_then(|generation| {
+                            crate::shortcut::settings_barrier::admit(generation, starts)
+                        });
+                    if _settings_lease.is_none() {
+                        return transport::write_frame(
+                            &mut self.stream,
+                            &VoiceReply::Rejected {
+                                request_id: request.request_id.clone(),
+                                code: inputia_handy_runtime::voice_protocol::VoiceReplyError::CoordinatorRejected,
+                            },
+                        )
+                        .map_err(|_| ConnectionError::ControlFrame);
+                    }
                     if request.request_id.is_empty()
                         || request.request_id.len() > 256
                         || request.request_id.chars().any(char::is_control)

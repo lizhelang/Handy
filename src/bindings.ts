@@ -527,23 +527,28 @@ export const commands = {
     }
   },
   /**
-   * Temporarily unregister all bindings while the user is recording a
-   * shortcut in the UI. This avoids firing actions while keys are recorded.
+   * 只有成功取得本次录制票据后，前端才可以进入键盘捕获模式。
    */
-  async suspendAllBindings(): Promise<Result<null, string>> {
+  async suspendAllBindings(bindingId: string): Promise<Result<string, string>> {
     try {
-      return { status: "ok", data: await TAURI_INVOKE("suspend_all_bindings") };
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("suspend_all_bindings", { bindingId }),
+      };
     } catch (e) {
       if (e instanceof Error) throw e;
       else return { status: "error", error: e as any };
     }
   },
   /**
-   * Re-register all bindings after the user has finished recording.
+   * 只结束调用者持有的录制票据；没有票据不得重注册整套快捷键。
    */
-  async resumeAllBindings(): Promise<Result<null, string>> {
+  async resumeAllBindings(token: string): Promise<Result<boolean, string>> {
     try {
-      return { status: "ok", data: await TAURI_INVOKE("resume_all_bindings") };
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("resume_all_bindings", { token }),
+      };
     } catch (e) {
       if (e instanceof Error) throw e;
       else return { status: "error", error: e as any };
@@ -786,11 +791,11 @@ export const commands = {
     return await TAURI_INVOKE("get_available_accelerators");
   },
   /**
-   * Start key recording mode
+   * 原生录制和 Webview 录制使用同一 token/空闲屏障。
    */
   async startHandyKeysRecording(
     bindingId: string,
-  ): Promise<Result<null, string>> {
+  ): Promise<Result<string, string>> {
     try {
       return {
         status: "ok",
@@ -801,14 +806,13 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
-  /**
-   * Stop key recording mode
-   */
-  async stopHandyKeysRecording(): Promise<Result<null, string>> {
+  async stopHandyKeysRecording(
+    token: string,
+  ): Promise<Result<boolean, string>> {
     try {
       return {
         status: "ok",
-        data: await TAURI_INVOKE("stop_handy_keys_recording"),
+        data: await TAURI_INVOKE("stop_handy_keys_recording", { token }),
       };
     } catch (e) {
       if (e instanceof Error) throw e;
@@ -838,6 +842,9 @@ export const commands = {
       if (e instanceof Error) throw e;
       else return { status: "error", error: e as any };
     }
+  },
+  async checkProductUpdate(): Promise<UpdateCheckReply> {
+    return await TAURI_INVOKE("check_product_update");
   },
   async showMainWindowCommand(): Promise<Result<null, string>> {
     try {
@@ -1277,8 +1284,18 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
-  async setModelUnloadTimeout(timeout: ModelUnloadTimeout): Promise<void> {
-    await TAURI_INVOKE("set_model_unload_timeout", { timeout });
+  async setModelUnloadTimeout(
+    timeout: ModelUnloadTimeout,
+  ): Promise<Result<null, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("set_model_unload_timeout", { timeout }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
   },
   async getModelLoadStatus(): Promise<Result<ModelLoadStatus, string>> {
     try {
@@ -1332,6 +1349,53 @@ export const commands = {
       return {
         status: "ok",
         data: await TAURI_INVOKE("get_audio_file_path", { fileName }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
+  async acquireHistoryAttachment(
+    id: number,
+    expectedRevision: number | null,
+    operationId: string,
+  ): Promise<Result<HistoryAttachmentAccess, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("acquire_history_attachment", {
+          id,
+          expectedRevision,
+          operationId,
+        }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
+  async releaseHistoryAttachment(
+    lease: HistoryAttachmentLease,
+  ): Promise<Result<null, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("release_history_attachment", { lease }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
+  async releaseHistoryAttachmentOperation(
+    operationId: string,
+  ): Promise<Result<null, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("release_history_attachment_operation", {
+          operationId,
+        }),
       };
     } catch (e) {
       if (e instanceof Error) throw e;
@@ -1434,6 +1498,46 @@ export const commands = {
       return {
         status: "ok",
         data: await TAURI_INVOKE("get_unified_output_receipt", { operationId }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
+  /**
+   * 无正文的启动恢复查询；分页不会准备或派发任何输出。
+   */
+  async listUnresolvedUnifiedOutputs(
+    cursor: string | null,
+    limit: number | null,
+  ): Promise<Result<UnifiedOutputNoticePage, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("list_unresolved_unified_outputs", {
+          cursor,
+          limit,
+        }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
+  /**
+   * 用户关闭提示只记录已读；未知输出仍不可自动重试。
+   */
+  async acknowledgeUnifiedOutputNotice(
+    operationId: string,
+    expectedState: string,
+  ): Promise<Result<null, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("acknowledge_unified_output_notice", {
+          operationId,
+          expectedState,
+        }),
       };
     } catch (e) {
       if (e instanceof Error) throw e;
@@ -2136,6 +2240,18 @@ export type GpuDeviceOption = {
   name: string;
   total_vram_mb: number;
 };
+export type HistoryAttachmentAccess = {
+  lease: HistoryAttachmentLease;
+  path: string;
+  revision: number;
+};
+export type HistoryAttachmentLease = {
+  lease_id: string;
+  instance_id: string;
+  attachment_id: string | null;
+  purpose: HistoryAttachmentPurpose;
+};
+export type HistoryAttachmentPurpose = "active" | "export" | "update";
 export type HistoryEntry = {
   id: number;
   file_name: string;
@@ -2423,12 +2539,34 @@ export type UnifiedHistoryRevision = {
   asset_ref: string | null;
 };
 export type UnifiedHistoryUpdate = { generation: number };
+export type UnifiedOutputNotice = {
+  operation_id: string;
+  item_id: string;
+  state: string;
+};
+export type UnifiedOutputNoticePage = {
+  items: UnifiedOutputNotice[];
+  next_cursor: string | null;
+};
 export type UnifiedOutputResult = { operation_id: string; status: string };
 export type UnifiedTerm = {
   term: string;
   contributions: number;
   explicitly_confirmed: boolean;
 };
+export type UpdateCheckReply = {
+  status: UpdateStatus;
+  reason: string | null;
+  version: string | null;
+  release_id: string | null;
+  installable: boolean;
+};
+export type UpdateStatus =
+  | "disabled"
+  | "checking"
+  | "current"
+  | "available"
+  | "unavailable";
 export type VadBackend = "silero" | "earshot";
 export type WindowsMicrophonePermissionStatus = {
   supported: boolean;

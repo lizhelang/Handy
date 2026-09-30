@@ -14,6 +14,8 @@ for (const scenario of [
   "transport-error",
   "provider-error",
   "binding-business-error",
+  "timeout-error",
+  "background-save-error",
 ] as const) {
   test(`settings save failure: ${scenario}`, async ({ page }) => {
     const logs: string[] = [];
@@ -31,6 +33,7 @@ for (const scenario of [
         audio_feedback: true,
         debug_mode: false,
         selected_language: "en",
+        model_unload_timeout: "never",
         post_process_api_keys: { fixture: "old-key" },
         bindings: {
           transcribe: {
@@ -47,15 +50,38 @@ for (const scenario of [
         resolve: (value: unknown) => void;
         reject: (value: unknown) => void;
       }> = [];
+      const callbacks = new Map<number, (value: unknown) => void>();
+      const listeners = new Map<string, number>();
       let readsFail = false;
       let deferredRead: ((value: unknown) => void) | undefined;
       let holdReads = false;
       let reads = 0;
       Object.assign(window, {
         __TAURI_INTERNALS__: {
-          transformCallback: () => 1,
+          transformCallback: (callback: (value: unknown) => void) => {
+            const id = callbacks.size + 1;
+            callbacks.set(id, callback);
+            return id;
+          },
           unregisterCallback: () => undefined,
-          invoke: (command: string) => {
+          invoke: (
+            command: string,
+            args?: { event?: string; handler?: number },
+          ) => {
+            if (command === "get_default_settings")
+              return Promise.resolve(saved);
+            if (command === "check_custom_sounds")
+              return Promise.resolve({ start: false, stop: false });
+            if (command === "is_update_checks_locked")
+              return Promise.resolve(false);
+            if (
+              command === "plugin:event|listen" &&
+              args?.event &&
+              args.handler
+            ) {
+              listeners.set(args.event, args.handler);
+              return Promise.resolve(args.handler);
+            }
             if (command === "get_app_settings") {
               reads += 1;
               if (holdReads)
@@ -133,10 +159,7 @@ for (const scenario of [
         await first;
         requests[1].reject(secret);
         await second;
-      } else if (
-        scenario === "saved-then-failed" ||
-        scenario === "saved-during-rollback-read"
-      ) {
+      } else if (scenario === "saved-then-failed") {
         readsFail = true;
         const first = store.updateSetting("selected_language", "fr");
         const second = store.updateSetting("selected_language", "de");
@@ -198,6 +221,17 @@ for (const scenario of [
         const first = store.updateSetting("audio_feedback", false);
         requests[0].reject(new Error(secret)); // Error rejection走包装的throw分支。
         await first;
+      } else if (scenario === "timeout-error") {
+        const first = store.updateSetting("model_unload_timeout", "min_5");
+        requests[0].reject(secret);
+        failed = await first;
+      } else if (scenario === "background-save-error") {
+        await store.initialize();
+        const callback = callbacks.get(
+          listeners.get("settings-save-failed") ?? 0,
+        );
+        if (!callback) throw new Error("save failure subscription missing");
+        callback({ payload: secret });
       } else if (scenario === "provider-error") {
         const first = store.updatePostProcessApiKey("fixture", "new-key");
         requests[0].reject(secret);
@@ -265,6 +299,13 @@ for (const scenario of [
     } else if (scenario === "transport-error") {
       expect(result.settings.audio_feedback).toBe(true);
       expect(result.commands).toEqual(["change_audio_feedback_setting"]);
+    } else if (scenario === "timeout-error") {
+      expect(result.failed).toBe(false);
+      expect(result.settings.model_unload_timeout).toBe("never");
+      expect(result.commands).toEqual(["set_model_unload_timeout"]);
+    } else if (scenario === "background-save-error") {
+      expect(result.commands).toEqual([]);
+      expect(result.notices).toHaveLength(1);
     } else if (scenario === "provider-error") {
       expect(result.settings.post_process_api_keys.fixture).toBe("old-key");
       expect(result.commands).toEqual(["change_post_process_api_key_setting"]);
