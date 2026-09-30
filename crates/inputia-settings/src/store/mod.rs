@@ -589,6 +589,11 @@ pub fn strict_json(raw: &[u8]) -> Result<Value> {
                 fn visit_u64<E: serde::de::Error>(self, v: u64) -> std::result::Result<Strict, E> {
                     Ok(Strict(v.into()))
                 }
+                fn visit_f64<E: serde::de::Error>(self, v: f64) -> std::result::Result<Strict, E> {
+                    serde_json::Number::from_f64(v)
+                        .map(|number| Strict(Value::Number(number)))
+                        .ok_or_else(|| E::custom("non-finite number"))
+                }
                 fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<Strict, E> {
                     Ok(Strict(Value::Null))
                 }

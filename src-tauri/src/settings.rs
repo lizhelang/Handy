@@ -8,6 +8,10 @@ use std::fmt;
 use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
 
+#[cfg(unix)]
+#[path = "settings_document.rs"]
+mod document;
+
 pub const APPLE_INTELLIGENCE_PROVIDER_ID: &str = "apple_intelligence";
 pub const LOCAL_POST_PROCESS_PROVIDER_ID: &str = "local";
 pub const APPLE_INTELLIGENCE_DEFAULT_MODEL_ID: &str = "Apple Intelligence";
