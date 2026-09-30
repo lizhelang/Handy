@@ -1,6 +1,6 @@
 # Inputia 发布目录信任核心
 
-原生 Rust 库，不要求安装机具备 Python、源码或编译器。当前完成根轮换、目录验签、频道新鲜度、逐库元数据兼容与耐久防重放；**尚未接入实际下载、原生更新适配器、离线新装授权或正式签署流水线，不能据此宣称产品可发布。**
+原生 Rust 库，不要求安装机具备 Python、源码或编译器。当前完成根轮换、目录验签、频道新鲜度、逐库元数据兼容与耐久防重放，并接入主应用的受限 HTTPS 目录查询；**原生安装适配器、离线新装授权和正式签署流水线仍待完成，不能据此宣称产品可发布。**
 
 ## 签名与摘要合同
 
@@ -57,4 +57,21 @@ cargo test --manifest-path crates/inputia-release/Cargo.toml --offline --feature
 python3.11 -m unittest discover -s scripts/tests
 ```
 
-当前原生 18 项、发布/验收 Python 47 项通过。覆盖真实临时密钥签名、不同根阈值、归档策略保留、域隔离、等价包装、逐库反例、报告错绑、降级、文件锁互斥、重启、时钟回拨、状态缺失/损坏/链接和部分文件，以及落盘归档内容、总预算和链接反例。使用合成制品和临时目录，未访问真实发布证书、日用安装或私人数据。
+当前原生 24 项、发布/验收 Python 47 项通过。覆盖真实临时密钥签名、不同根阈值、归档策略保留、域隔离、等价包装、逐库反例、报告错绑、降级、文件锁互斥、重启、时钟回拨、状态缺失/损坏/链接和部分文件，以及落盘归档内容、总预算和链接反例。使用合成制品和临时目录，未访问真实发布证书、日用安装或私人数据。
+
+## 更新目录查询接线
+
+`catalog::check_catalog` 接受构建内置信任、固定来源适配器、系统时钟，以及当前安装的签名清单基线。依次下载频道、最多 32 个连续根轮换、准确摘要的清单/证明/报告，最终重新打开耐久信任存储完成授权。网络等待不占用文件锁；任何并发频道变化或失效根都会在最终检查被拒绝。响应单文档上限 4 MiB，总计 32 MiB，回滚报告最多 32 项；超出明确失败，不部分通过。长期离线需要更多根时，保存已验证进度并返回继续刷新状态。
+
+固定公开路径：
+
+- `keysets/<version>.json`：连续签名 keyset。
+- `channels/<candidate|stable>/macos/arm64.json`：签名 feed v2。
+- `releases/<release_id>/release-manifest.json`、`release-attestation.json`：原始签名封套。
+- `releases/<release_id>/reports/<sha256>.json`：原始验收/回滚报告。
+
+主应用内置 `release/update-source.json`；`source=null` 表示发布来源尚未配置。正式 `source` 包含 product_id、base_url、redirect_origins、root_keys、root_threshold。根公钥是发布时选定的产品信任，不能由设置、环境或下载响应注入。HTTPS 适配器仅跟随内置允许来源、最多三次重定向，不发送历史/文本/安装 ID；每个请求限时和流式计数，拒绝压缩正文及任意路径跳转。
+
+旧安装必须有固定 `Inputia/Releases/<release_id>/release-manifest.json` 和私有 `catalog-receipt.json`（schema_version=1、release_id、archive_policy_id、manifest_digest）。旧清单仍须用当前根与历史归档策略验签，并匹配编译发布身份；缺失时明确要求修复，不伪装首次安装绕过逐库兼容。**这些文件还需由配套安装器以耐久事务写入，本包未修改日用安装。**
+
+菜单与界面只调用 `check_product_update`。已移除 Tauri 单应用 updater 插件、ACL 与未验签安装链接回退。查询区分当前/发现版本/不可检查/禁用，进程内重复查询有界等待，关闭后迟到结果被丢弃；每次重新读取频道，等待后核对维护状态与完整安装收据。`installable` 当前固定 false，后续必须接入原生配套预检、下载暂存和恢复事务，不能凭查询结果直接安装。普通入口暂不授权降级，独立回退流程必须提供旧版签名报告。

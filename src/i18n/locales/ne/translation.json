@@ -843,7 +843,13 @@
     "portableUpdateButton": "इन्स्टलर डाउनलोड गर्नुहोस्",
     "portableUpdateBrowseMessage": "पोर्टेबल इन्स्टलहरू स्वतः अपडेट गर्न सकिँदैन। GitHub Releases बाट आफ्नो प्रणालीका लागि पछिल्लो संस्करण डाउनलोड गर्नुहोस् र उही फोल्डरमा इन्स्टल गर्नुहोस् — तपाईंको Data/ फोल्डर (सेटिङ, मोडेल, रेकर्डिङ) जस्ताको तस्तै रहन्छ।",
     "portableUpdateBrowseButton": "GitHub Releases खोल्नुहोस्",
-    "updateSourceUnavailable": "This candidate has no Inputia update source yet; use the paired candidate installer."
+    "updateSourceUnavailable": "This candidate has no Inputia update source yet; use the paired candidate installer.",
+    "pairedUpdateAvailable": "Version {{version}} is available; automatic updates are not yet supported for this installation.",
+    "updateCheckBusy": "An update check is already running. Try again shortly.",
+    "updateInstallationRepair": "Repair this installation before checking for updates.",
+    "updateMaintenance": "Installation maintenance is in progress. Try again later.",
+    "updateTrustRefresh": "Release trust was refreshed. Check again to continue.",
+    "updateCheckFailed": "Unable to check for updates. Click to retry."
   },
   "whatsNew": {
     "title": "Inputia v{{version}} मा नयाँ"

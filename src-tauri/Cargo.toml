@@ -106,7 +106,6 @@ signal-hook = "0.3"
 tauri-plugin-autostart = "2.5.1"
 tauri-plugin-global-shortcut = "2.3.1"
 tauri-plugin-single-instance = "2.3.2"
-tauri-plugin-updater = "2.10.1"
 
 [target.'cfg(windows)'.dependencies]
 # ONNX Runtime on Windows is CPU-only (no ort-directml), matching macOS/Linux.
@@ -155,6 +154,7 @@ transcribe-cpp = { git = "https://github.com/lizhelang/transcribe.cpp", rev = "1
 transcribe-cpp = { git = "https://github.com/lizhelang/transcribe.cpp", rev = "18718a497750ec51daa102ee0030f4e4000ea627", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+inputia-release = { path = "../crates/inputia-release" }
 libc = "0.2"
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
 transcribe-cpp = { git = "https://github.com/lizhelang/transcribe.cpp", rev = "18718a497750ec51daa102ee0030f4e4000ea627", default-features = false, features = ["metal"] }

@@ -843,7 +843,13 @@
     "portableUpdateButton": "下載安裝程式",
     "portableUpdateBrowseMessage": "可攜式安裝無法自動更新。請從 GitHub Releases 下載適用於你的系統的最新版本，並安裝到相同資料夾，你的 Data/ 資料夾（設定、模型、錄音）會保留在原處。",
     "portableUpdateBrowseButton": "開啟 GitHub Releases",
-    "updateSourceUnavailable": "此候選尚未設定 Inputia 更新來源，請使用配套候選安裝包"
+    "updateSourceUnavailable": "此候選尚未設定 Inputia 更新來源，請使用配套候選安裝包",
+    "pairedUpdateAvailable": "發現版本 {{version}}；目前安裝暫不支援自動更新。",
+    "updateCheckBusy": "正在檢查更新，請稍後再試。",
+    "updateInstallationRepair": "目前安裝需要修復後才能檢查更新。",
+    "updateMaintenance": "安裝維護正在進行，請稍後再試。",
+    "updateTrustRefresh": "發佈信任已更新，請再次檢查以繼續。",
+    "updateCheckFailed": "無法檢查更新，點擊重試。"
   },
   "common": {
     "loading": "載入中...",

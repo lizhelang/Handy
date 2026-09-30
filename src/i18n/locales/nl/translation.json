@@ -843,7 +843,13 @@
     "portableUpdateButton": "Installatiebestand downloaden",
     "portableUpdateBrowseMessage": "Draagbare (portable) installaties kunnen niet automatisch worden bijgewerkt. Download de nieuwste versie voor je systeem van GitHub Releases en installeer die in dezelfde map — je Data/-map (instellingen, modellen, opnames) blijft behouden.",
     "portableUpdateBrowseButton": "GitHub Releases openen",
-    "updateSourceUnavailable": "This candidate has no Inputia update source yet; use the paired candidate installer."
+    "updateSourceUnavailable": "This candidate has no Inputia update source yet; use the paired candidate installer.",
+    "pairedUpdateAvailable": "Version {{version}} is available; automatic updates are not yet supported for this installation.",
+    "updateCheckBusy": "An update check is already running. Try again shortly.",
+    "updateInstallationRepair": "Repair this installation before checking for updates.",
+    "updateMaintenance": "Installation maintenance is in progress. Try again later.",
+    "updateTrustRefresh": "Release trust was refreshed. Check again to continue.",
+    "updateCheckFailed": "Unable to check for updates. Click to retry."
   },
   "whatsNew": {
     "title": "Nieuw in Inputia v{{version}}"

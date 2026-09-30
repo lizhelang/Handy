@@ -843,7 +843,13 @@
     "portableUpdateButton": "Stáhnout instalátor",
     "portableUpdateBrowseMessage": "Přenosné instalace nelze aktualizovat automaticky. Stáhněte nejnovější verzi pro svůj systém z GitHub Releases a nainstalujte ji do stejné složky — vaše složka Data/ (nastavení, modely, nahrávky) zůstane na místě.",
     "portableUpdateBrowseButton": "Otevřít GitHub Releases",
-    "updateSourceUnavailable": "This candidate has no Inputia update source yet; use the paired candidate installer."
+    "updateSourceUnavailable": "This candidate has no Inputia update source yet; use the paired candidate installer.",
+    "pairedUpdateAvailable": "Version {{version}} is available; automatic updates are not yet supported for this installation.",
+    "updateCheckBusy": "An update check is already running. Try again shortly.",
+    "updateInstallationRepair": "Repair this installation before checking for updates.",
+    "updateMaintenance": "Installation maintenance is in progress. Try again later.",
+    "updateTrustRefresh": "Release trust was refreshed. Check again to continue.",
+    "updateCheckFailed": "Unable to check for updates. Click to retry."
   },
   "common": {
     "loading": "Načítání...",

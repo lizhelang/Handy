@@ -6,6 +6,7 @@ pub mod knowledge;
 pub mod models;
 pub mod permissions;
 pub mod transcription;
+pub mod updates;
 
 use crate::settings::{
     get_settings, update_checks_forced_disabled, write_settings, AppSettings, LogLevel,

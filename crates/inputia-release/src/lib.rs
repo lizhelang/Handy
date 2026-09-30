@@ -4,6 +4,8 @@
 #[cfg(unix)]
 pub mod artifacts;
 pub mod canonical;
+#[cfg(unix)]
+pub mod catalog;
 pub mod feed;
 pub mod manifest;
 mod schema;

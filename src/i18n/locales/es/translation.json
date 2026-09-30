@@ -843,7 +843,13 @@
     "portableUpdateButton": "Descargar instalador",
     "portableUpdateBrowseMessage": "Las instalaciones portátiles no se pueden actualizar automáticamente. Descarga la versión más reciente para tu sistema desde GitHub Releases e instálala en la misma carpeta: tu carpeta Data/ (ajustes, modelos, grabaciones) se conserva.",
     "portableUpdateBrowseButton": "Abrir GitHub Releases",
-    "updateSourceUnavailable": "This candidate has no Inputia update source yet; use the paired candidate installer."
+    "updateSourceUnavailable": "This candidate has no Inputia update source yet; use the paired candidate installer.",
+    "pairedUpdateAvailable": "Version {{version}} is available; automatic updates are not yet supported for this installation.",
+    "updateCheckBusy": "An update check is already running. Try again shortly.",
+    "updateInstallationRepair": "Repair this installation before checking for updates.",
+    "updateMaintenance": "Installation maintenance is in progress. Try again later.",
+    "updateTrustRefresh": "Release trust was refreshed. Check again to continue.",
+    "updateCheckFailed": "Unable to check for updates. Click to retry."
   },
   "common": {
     "loading": "Cargando...",

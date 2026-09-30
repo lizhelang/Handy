@@ -181,7 +181,8 @@ impl TrustStore {
         }
         Ok(())
     }
-    fn observe_time(&mut self, wall_clock: i64) -> Result<i64> {
+    /// 网络等待结束后先记录观察时间；即使后续验证失败，也不允许回拨恢复已过期授权。
+    pub fn observe_time(&mut self, wall_clock: i64) -> Result<i64> {
         let now = self.effective_time(wall_clock)?;
         if now > self.state.trusted_time {
             let mut next = self.state.clone();

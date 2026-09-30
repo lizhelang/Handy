@@ -45,6 +45,10 @@ mod tray_i18n;
 mod typed_capture;
 #[cfg(target_os = "macos")]
 mod unified_target;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+mod update_download;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+mod update_installation;
 mod utils;
 #[cfg(target_os = "macos")]
 pub mod voice_connection;
@@ -771,6 +775,7 @@ pub fn run(cli_args: CliArgs) {
             secure_input::get_secure_input_status,
             secure_input::run_keyboard_diagnostic,
             trigger_update_check,
+            commands::updates::check_product_update,
             show_main_window_command,
             commands::cancel_operation,
             commands::is_portable,
@@ -1050,7 +1055,6 @@ pub fn run(cli_args: CliArgs) {
     let mut app = builder
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_macos_permissions::init())
