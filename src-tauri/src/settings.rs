@@ -420,6 +420,8 @@ pub struct AppSettings {
     #[serde(default = "default_model")]
     pub selected_model: String,
     #[serde(default)]
+    pub model_storage: crate::managers::model::ModelStorageBudget,
+    #[serde(default)]
     pub onboarding_completed: bool,
     #[serde(default = "default_always_on_microphone")]
     pub always_on_microphone: bool,
@@ -1020,6 +1022,7 @@ pub fn get_default_settings() -> AppSettings {
         show_whats_new_on_update: default_show_whats_new_on_update(),
         whats_new_last_seen_version: default_whats_new_last_seen_version(),
         selected_model: "".to_string(),
+        model_storage: crate::managers::model::ModelStorageBudget::default(),
         onboarding_completed: false,
         always_on_microphone: false,
         selected_microphone: None,

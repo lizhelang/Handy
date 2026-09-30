@@ -1182,5 +1182,13 @@
     "restart": "重新启动 Inputia",
     "openFolder": "打开数据文件夹",
     "actionFailed": "操作未能完成，请重试。"
+  },
+  "modelStorage": {
+    "busy": "另一个模型操作仍在进行。请等待其结束，或取消后重试。",
+    "downloadLimit": "模型超过设置的单次下载上限，已有续传文件已保留。",
+    "archiveSizeLimit": "模型解压后的大小超过设置的上限，已下载的归档已保留。",
+    "archiveEntryLimit": "模型归档的条目数超过设置的上限，归档已保留。",
+    "archiveMetadataLimit": "模型归档的扩展信息超过支持的上限，归档已保留。",
+    "insufficientSpace": "磁盘空间不足或已达到配额。已下载的文件已保留，请释放空间后重试。"
   }
 }

@@ -4,6 +4,19 @@ import { produce } from "immer";
 import { listen } from "@tauri-apps/api/event";
 import { commands, type ModelInfo } from "@/bindings";
 import { toast } from "sonner";
+import i18n from "i18next";
+
+function downloadErrorMessage(error: string): string {
+  const keys: Record<string, string> = {
+    model_storage_busy: "modelStorage.busy",
+    model_storage_download_limit: "modelStorage.downloadLimit",
+    model_storage_archive_size_limit: "modelStorage.archiveSizeLimit",
+    model_storage_archive_entry_limit: "modelStorage.archiveEntryLimit",
+    model_storage_archive_metadata_limit: "modelStorage.archiveMetadataLimit",
+    model_storage_insufficient_space: "modelStorage.insufficientSpace",
+  };
+  return keys[error] ? i18n.t(keys[error]) : error;
+}
 
 interface DownloadProgress {
   model_id: string;
@@ -183,6 +196,7 @@ export const useModelStore = create<ModelsStore>()(
               delete state.downloadingModels[modelId];
               delete state.downloadProgress[modelId];
               delete state.downloadStats[modelId];
+              state.error = downloadErrorMessage(result.error);
             }),
           );
         }
@@ -336,16 +350,17 @@ export const useModelStore = create<ModelsStore>()(
         "model-download-failed",
         (event) => {
           const { model_id: modelId, error } = event.payload;
+          const message = downloadErrorMessage(error);
           set(
             produce((state) => {
               delete state.downloadingModels[modelId];
               delete state.verifyingModels[modelId];
               delete state.downloadProgress[modelId];
               delete state.downloadStats[modelId];
-              state.error = error;
+              state.error = message;
             }),
           );
-          toast.error(error);
+          toast.error(message);
         },
       );
 
@@ -393,7 +408,7 @@ export const useModelStore = create<ModelsStore>()(
           set(
             produce((state) => {
               delete state.extractingModels[modelId];
-              state.error = `Failed to extract model: ${event.payload.error}`;
+              state.error = downloadErrorMessage(event.payload.error);
             }),
           );
         },

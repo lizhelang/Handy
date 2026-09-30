@@ -199,6 +199,11 @@ const settingUpdaters: {
       return Promise.reject(new Error(i18n.t(saveFailureKey)));
     return commands.setModelUnloadTimeout(value);
   },
+  model_storage: (value) => {
+    if (value === undefined)
+      return Promise.reject(new Error(i18n.t(saveFailureKey)));
+    return commands.changeModelStorageSetting(value);
+  },
   post_process_enabled: (value) =>
     commands.changePostProcessEnabledSetting(value as boolean),
   post_process_selected_prompt_id: (value) =>

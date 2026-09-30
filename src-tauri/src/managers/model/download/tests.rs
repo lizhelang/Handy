@@ -145,9 +145,119 @@ async fn run_download(
         expected_size,
         expected_sha256,
         cancel,
+        &ModelStorageBudget::default(),
         &|_| {},
     )
     .await
+}
+
+#[tokio::test]
+async fn configured_limit_bounds_unknown_length_stream_and_preserves_prior_partial() {
+    let response = http_response("200 OK", &[], b"123456789");
+    let (url, server) = serve_once(response).await;
+    let temp = TempDir::new().unwrap();
+    let partial = temp.path().join("model.partial");
+    let budget = ModelStorageBudget {
+        max_download_bytes: 4,
+        ..Default::default()
+    };
+    let error = ModelManager::download_http_resumable_with_events(
+        "bounded",
+        &url,
+        &partial,
+        None,
+        None,
+        &CancellationToken::new(),
+        &budget,
+        &|_| {},
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<ModelStorageFailure>().unwrap().code,
+        StorageFailureCode::DownloadLimit
+    );
+    assert!(fs::metadata(&partial).unwrap().len() <= 4);
+    server.await.unwrap();
+
+    fs::write(&partial, b"retained-for-resume").unwrap();
+    let error = ModelManager::download_http_resumable_with_events(
+        "bounded",
+        "http://127.0.0.1:1/unused",
+        &partial,
+        None,
+        None,
+        &CancellationToken::new(),
+        &budget,
+        &|_| {},
+    )
+    .await
+    .unwrap_err();
+    assert!(error.downcast_ref::<ModelStorageFailure>().is_some());
+    assert_eq!(fs::read(partial).unwrap(), b"retained-for-resume");
+}
+
+#[tokio::test]
+async fn advertised_size_above_budget_is_rejected_before_creating_partial() {
+    let (url, server) = serve_once(http_response(
+        "200 OK",
+        &["Content-Length: 9".into()],
+        b"123456789",
+    ))
+    .await;
+    let temp = TempDir::new().unwrap();
+    let partial = temp.path().join("model.partial");
+    let budget = ModelStorageBudget {
+        max_download_bytes: 4,
+        ..Default::default()
+    };
+    let error = ModelManager::download_http_resumable_with_events(
+        "bounded",
+        &url,
+        &partial,
+        None,
+        None,
+        &CancellationToken::new(),
+        &budget,
+        &|_| {},
+    )
+    .await
+    .unwrap_err();
+    assert!(error.downcast_ref::<ModelStorageFailure>().is_some());
+    assert!(!partial.exists());
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn ignored_range_over_budget_keeps_original_partial_before_restart() {
+    let (url, server) = serve_once(http_response(
+        "200 OK",
+        &["Content-Length: 9".into()],
+        b"123456789",
+    ))
+    .await;
+    let temp = TempDir::new().unwrap();
+    let partial = temp.path().join("model.partial");
+    fs::write(&partial, b"old").unwrap();
+    let budget = ModelStorageBudget {
+        max_download_bytes: 4,
+        ..Default::default()
+    };
+    let error = ModelManager::download_http_resumable_with_events(
+        "bounded",
+        &url,
+        &partial,
+        None,
+        None,
+        &CancellationToken::new(),
+        &budget,
+        &|_| {},
+    )
+    .await
+    .unwrap_err();
+    assert!(error.downcast_ref::<ModelStorageFailure>().is_some());
+    assert_eq!(fs::read(partial).unwrap(), b"old");
+    assert!(server.await.unwrap().contains("range: bytes=3-"));
 }
 
 #[tokio::test]

@@ -3,6 +3,7 @@
 //! Both legacy URL models and Hugging Face mirror fallbacks use this module;
 //! source-specific orchestration and finalization remain in the parent module.
 
+use super::storage::{ModelStorageBudget, ModelStorageFailure, StorageFailureCode};
 use super::{DownloadProgress, ModelManager};
 use anyhow::Result;
 use futures_util::StreamExt;
@@ -132,6 +133,7 @@ impl ModelManager {
     ) -> Result<HttpDownloadOutcome> {
         let app_handle = self.app_handle.clone();
         let id = model_id.to_string();
+        let budget = crate::settings::get_settings(&self.app_handle).model_storage;
         Self::download_http_resumable_with_events(
             model_id,
             url,
@@ -139,6 +141,7 @@ impl ModelManager {
             expected_size,
             expected_sha256,
             cancel_token,
+            &budget,
             &move |event| {
                 let _ = match event {
                     HttpDownloadEvent::Progress(progress) => {
@@ -181,6 +184,7 @@ impl ModelManager {
     ///   at the first excess byte, not trusted until it closes the stream
     /// - the final bytes are checked against `expected_size` (catalog, or
     ///   content-length when unknown) and `expected_sha256` before returning
+    #[allow(clippy::too_many_arguments)]
     async fn download_http_resumable_with_events(
         model_id: &str,
         url: &str,
@@ -188,9 +192,27 @@ impl ModelManager {
         expected_size: Option<u64>,
         expected_sha256: Option<&str>,
         cancel_token: &CancellationToken,
+        budget: &ModelStorageBudget,
         emit: &(dyn Fn(HttpDownloadEvent<'_>) + Send + Sync),
     ) -> Result<HttpDownloadOutcome> {
+        budget.validate().map_err(anyhow::Error::msg)?;
         let mut resume_from = partial_path.metadata().map(|m| m.len()).unwrap_or(0);
+        let check_limit = |bytes| -> Result<()> {
+            if bytes > budget.max_download_bytes {
+                return Err(ModelStorageFailure {
+                    code: StorageFailureCode::DownloadLimit,
+                    required_bytes: bytes,
+                    limit_bytes: budget.max_download_bytes,
+                    resumable: true,
+                }
+                .into());
+            }
+            Ok(())
+        };
+        check_limit(resume_from)?;
+        if let Some(expected) = expected_size {
+            check_limit(expected)?;
+        }
 
         if let Some(expected) = expected_size {
             if resume_from > expected {
@@ -252,7 +274,7 @@ impl ModelManager {
         // A 200 to a Range request means the server ignored it and is sending
         // the whole file; appending it to the partial would corrupt the model.
         if resume_from > 0 && response.status() == reqwest::StatusCode::OK {
-            let _ = fs::remove_file(partial_path);
+            // 仅切换逻辑起点；响应通过额度/长度检查后，File::create才可重开。
             resume_from = 0;
         }
         if !response.status().is_success() {
@@ -280,18 +302,28 @@ impl ModelManager {
         }
         // When the catalog pins the size, a server advertising a different
         // total is already misbehaving — reject before writing anything.
-        if let (Some(expected), Some(len)) = (expected_size, response.content_length()) {
-            if resume_from + len != expected {
+        let response_total = response
+            .content_length()
+            .map(|len| {
+                resume_from
+                    .checked_add(len)
+                    .ok_or_else(|| anyhow::anyhow!("model_download_size_overflow"))
+            })
+            .transpose()?;
+        if let Some(total) = response_total {
+            check_limit(total)?;
+        }
+        if let (Some(expected), Some(total)) = (expected_size, response_total) {
+            if total != expected {
                 return Err(anyhow::anyhow!(
                     "server advertises {} bytes, expected {}",
-                    resume_from + len,
+                    total,
                     expected
                 ));
             }
         }
 
-        let known_total =
-            expected_size.or_else(|| response.content_length().map(|l| resume_from + l));
+        let known_total = expected_size.or(response_total);
         let total_size = known_total.unwrap_or(0);
         let mut downloaded = resume_from;
         let mut file = if resume_from > 0 {
@@ -340,8 +372,12 @@ impl ModelManager {
             // transfer at the first byte past the known total instead of
             // trusting it to eventually close the stream. Everything written
             // so far is tainted by a provably-misbehaving server — clear it.
+            let next_size = downloaded
+                .checked_add(chunk.len() as u64)
+                .ok_or_else(|| anyhow::anyhow!("model_download_size_overflow"))?;
+            check_limit(next_size)?;
             if let Some(cap) = known_total {
-                if downloaded + chunk.len() as u64 > cap {
+                if next_size > cap {
                     drop(file);
                     let _ = fs::remove_file(partial_path);
                     return Err(anyhow::anyhow!(
@@ -351,7 +387,7 @@ impl ModelManager {
                 }
             }
             file.write_all(&chunk)?;
-            downloaded += chunk.len() as u64;
+            downloaded = next_size;
             if last_emit.elapsed() >= throttle {
                 emit_progress(downloaded);
                 last_emit = Instant::now();

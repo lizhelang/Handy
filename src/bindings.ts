@@ -1297,6 +1297,19 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
+  async changeModelStorageSetting(
+    budget: ModelStorageBudget,
+  ): Promise<Result<null, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("change_model_storage_setting", { budget }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
   async getModelLoadStatus(): Promise<Result<ModelLoadStatus, string>> {
     try {
       return {
@@ -2091,6 +2104,7 @@ export type AppSettings = {
    */
   whats_new_last_seen_version?: string;
   selected_model?: string;
+  model_storage?: ModelStorageBudget;
   onboarding_completed?: boolean;
   always_on_microphone?: boolean;
   selected_microphone?: string | null;
@@ -2348,6 +2362,11 @@ export type ModelSource =
    * in a shared cache. Nothing to download.
    */
   | "Local";
+export type ModelStorageBudget = {
+  max_download_bytes: number;
+  max_extracted_bytes: number;
+  max_archive_entries: number;
+};
 export type ModelUnloadTimeout =
   | "never"
   | "immediately"

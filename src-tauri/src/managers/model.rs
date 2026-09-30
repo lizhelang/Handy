@@ -3,7 +3,6 @@ use super::model_capabilities::{
 };
 use crate::settings::{get_settings, write_settings};
 use anyhow::Result;
-use flate2::read::GzDecoder;
 use hf_hub::api::tokio::{ApiBuilder, CancellationToken, Progress};
 use hf_hub::{Cache, Repo, RepoType};
 use log::{debug, error, info, warn};
@@ -11,15 +10,22 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tar::Archive;
 use tauri::{AppHandle, Emitter, Manager};
 
+mod archive;
 mod download;
+mod storage;
+pub use storage::ModelStorageBudget;
+pub(crate) fn download_failure_code(error: &anyhow::Error) -> Option<&'static str> {
+    error
+        .downcast_ref::<storage::ModelStorageFailure>()
+        .map(|failure| failure.code.code())
+        .or_else(|| storage::is_space_error(error).then_some("model_storage_insufficient_space"))
+}
 
 use download::{HttpDownloadOutcome, DOWNLOAD_STALL_TIMEOUT};
 
@@ -528,47 +534,9 @@ pub struct ModelManager {
     is_rescanning: Arc<AtomicBool>,
 }
 
+#[cfg(test)]
 fn safe_unpack_tar_gz(archive_path: &Path, destination: &Path) -> Result<()> {
-    let tar_gz = File::open(archive_path)?;
-    let tar = GzDecoder::new(tar_gz);
-    let mut archive = Archive::new(tar);
-
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let entry_path = entry.path()?.into_owned();
-        validate_archive_entry_path(&entry_path)?;
-        let entry_type = entry.header().entry_type();
-        if entry_type.is_symlink() || entry_type.is_hard_link() {
-            return Err(anyhow::anyhow!(
-                "model archive links are not permitted: {}",
-                entry_path.display()
-            ));
-        }
-        if !entry.unpack_in(destination)? {
-            return Err(anyhow::anyhow!(
-                "model archive entry escaped extraction directory: {}",
-                entry_path.display()
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn validate_archive_entry_path(path: &Path) -> Result<()> {
-    if path.as_os_str().is_empty() {
-        return Err(anyhow::anyhow!("model archive contains an empty path"));
-    }
-    for component in path.components() {
-        if matches!(
-            component,
-            std::path::Component::ParentDir
-                | std::path::Component::RootDir
-                | std::path::Component::Prefix(_)
-        ) {
-            return Err(anyhow::anyhow!("model archive contains an unsafe path"));
-        }
-    }
-    Ok(())
+    archive::unpack(archive_path, destination, &ModelStorageBudget::default())
 }
 
 impl ModelManager {
@@ -1460,20 +1428,8 @@ impl ModelManager {
                 // For directory-based models, check if the directory exists
                 let model_path = self.models_dir.join(&model.filename);
                 let partial_path = self.models_dir.join(format!("{}.partial", &model.filename));
-                let extracting_path = self
-                    .models_dir
-                    .join(format!("{}.extracting", &model.filename));
-
-                // Clean up any leftover .extracting directories from interrupted extractions
-                // But only if this model is NOT currently being extracted
-                let is_currently_extracting = {
-                    let extracting = self.extracting_models.lock().unwrap();
-                    extracting.contains(&model.id)
-                };
-                if extracting_path.exists() && !is_currently_extracting {
-                    warn!("Cleaning up interrupted extraction for model: {}", model.id);
-                    let _ = fs::remove_dir_all(&extracting_path);
-                }
+                // 扫描只读取状态，不能凭本进程旗标删除另一个进程正在使用的解压目录。
+                // 下次下载取得模型写租约后再处理残留。
 
                 model.is_downloaded = model_path.exists() && model_path.is_dir();
                 model.is_downloading = false;
@@ -2189,6 +2145,7 @@ impl ModelManager {
     }
 
     pub async fn download_model(&self, model_id: &str) -> Result<()> {
+        let _writing = storage::ModelWriteLease::acquire(&self.models_dir)?;
         let model_info = {
             let models = self.available_models.lock().unwrap();
             models.get(model_id).cloned()
@@ -2296,13 +2253,22 @@ impl ModelManager {
             fs::create_dir_all(&temp_extract_dir)?;
 
             // Extract to the temporary directory first
-            safe_unpack_tar_gz(&partial_path, &temp_extract_dir).map_err(|e| {
+            archive::unpack(
+                &partial_path,
+                &temp_extract_dir,
+                &get_settings(&self.app_handle).model_storage,
+            )
+            .map_err(|e| {
                 let error_msg = format!("Failed to extract archive: {}", e);
                 // Clean up failed extraction
                 let _ = fs::remove_dir_all(&temp_extract_dir);
                 // Delete the corrupt partial file so the next download attempt starts fresh
                 // instead of resuming from a broken archive (issue #858).
-                let _ = fs::remove_file(&partial_path);
+                if e.downcast_ref::<storage::ModelStorageFailure>().is_none()
+                    && !storage::is_space_error(&e)
+                {
+                    let _ = fs::remove_file(&partial_path);
+                }
                 // Remove from extracting set
                 {
                     let mut extracting = self.extracting_models.lock().unwrap();
@@ -2312,10 +2278,10 @@ impl ModelManager {
                     "model-extraction-failed",
                     &serde_json::json!({
                         "model_id": model_id,
-                        "error": error_msg
+                        "error": download_failure_code(&e).unwrap_or(&error_msg)
                     }),
                 );
-                anyhow::anyhow!(error_msg)
+                e.context(error_msg)
             })?;
 
             // Find the actual extracted directory (archive might have a nested structure)
@@ -2382,6 +2348,7 @@ impl ModelManager {
     }
 
     pub fn delete_model(&self, model_id: &str) -> Result<()> {
+        let _writing = storage::ModelWriteLease::acquire(&self.models_dir)?;
         debug!("ModelManager: delete_model called for: {}", model_id);
 
         let model_info = {
@@ -2526,16 +2493,9 @@ impl ModelManager {
             }
             // Mirror-fallback download or manual drop-in in the models dir.
             // The complete file only ever appears after verification, so a
-            // stale `.partial` alongside it is leftover noise, not a veto —
-            // clear it rather than declaring the model missing.
+            // A separate partial never authorizes mutation in this read path.
             let local_path = self.models_dir.join(&model_info.filename);
             if local_path.exists() {
-                let partial_path = self
-                    .models_dir
-                    .join(format!("{}.partial", &model_info.filename));
-                if partial_path.exists() {
-                    let _ = fs::remove_file(&partial_path);
-                }
                 return Ok(local_path);
             }
             return Err(anyhow::anyhow!(
@@ -2611,6 +2571,7 @@ impl ModelManager {
 mod tests {
     use super::*;
     use flate2::{write::GzEncoder, Compression};
+    use std::fs::File;
     use std::io::Write;
     use tempfile::TempDir;
 

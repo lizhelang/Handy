@@ -828,6 +828,7 @@ pub fn run(cli_args: CliArgs) {
             commands::audio::get_microphone_channels,
             commands::audio::set_selected_channel,
             commands::transcription::set_model_unload_timeout,
+            commands::models::change_model_storage_setting,
             commands::transcription::get_model_load_status,
             commands::transcription::unload_model_manually,
             commands::history::get_history_entries,

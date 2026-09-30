@@ -1182,5 +1182,13 @@
     "restart": "Inputia दोबारा शुरू करें",
     "openFolder": "डेटा फ़ोल्डर खोलें",
     "actionFailed": "कार्रवाई पूरी नहीं हो सकी। फिर से कोशिश करें।"
+  },
+  "modelStorage": {
+    "busy": "Another model operation is still running. Wait for it to finish, or cancel it and retry.",
+    "downloadLimit": "The model exceeds the configured download limit. Any existing partial download has been kept.",
+    "archiveSizeLimit": "The unpacked model exceeds the configured size limit. The downloaded archive has been kept.",
+    "archiveEntryLimit": "The model archive contains more entries than the configured limit. The archive has been kept.",
+    "archiveMetadataLimit": "The model archive metadata exceeds the supported limit. The archive has been kept.",
+    "insufficientSpace": "The disk is full or its quota has been reached. Downloaded files have been kept; free some space and retry."
   }
 }

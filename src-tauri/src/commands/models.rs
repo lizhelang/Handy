@@ -1,10 +1,22 @@
 use crate::custom_words_model::{self, CustomWordsModelInfo};
-use crate::managers::model::{ModelInfo, ModelManager};
+use crate::managers::model::{ModelInfo, ModelManager, ModelStorageBudget};
 use crate::managers::transcription::{ModelStateEvent, TranscriptionManager};
 use crate::settings::{get_settings, write_settings, ModelUnloadTimeout};
 use log::error;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_model_storage_setting(
+    app: AppHandle,
+    budget: ModelStorageBudget,
+) -> Result<(), String> {
+    budget.validate().map_err(str::to_owned)?;
+    let mut settings = get_settings(&app);
+    settings.model_storage = budget;
+    write_settings(&app, settings)
+}
 
 #[tauri::command]
 #[specta::specta]
@@ -44,10 +56,11 @@ pub async fn download_model(
     model_manager: State<'_, Arc<ModelManager>>,
     model_id: String,
 ) -> Result<(), String> {
-    let result = model_manager
-        .download_model(&model_id)
-        .await
-        .map_err(|e| e.to_string());
+    let result = model_manager.download_model(&model_id).await.map_err(|e| {
+        crate::managers::model::download_failure_code(&e)
+            .map(str::to_owned)
+            .unwrap_or_else(|| e.to_string())
+    });
 
     if let Err(ref error) = result {
         // Log as well as emit: the toast is transient, and failed downloads have
