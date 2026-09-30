@@ -1,0 +1,912 @@
+diff --git a/src-tauri/src/data_migration.rs b/src-tauri/src/data_migration.rs
+index 98a49a3d..608ea3fc 100644
+--- a/src-tauri/src/data_migration.rs
++++ b/src-tauri/src/data_migration.rs
+@@ -320,6 +320,7 @@ impl Drop for MigrationLock {
+ }
+ 
+ mod startup;
++pub(crate) use startup::v3;
+ #[cfg(test)]
+ use startup::prepare_startup_backup_for_paths;
+ pub use startup::{
+diff --git a/src-tauri/src/data_migration/startup/v3.rs b/src-tauri/src/data_migration/startup/v3.rs
+index 4a0303b4..e46d0ed4 100644
+--- a/src-tauri/src/data_migration/startup/v3.rs
++++ b/src-tauri/src/data_migration/startup/v3.rs
+@@ -1,4 +1,4 @@
+-//! 固定启动日志的第三版。此模块尚未启用 App 的 pending 协议。
++//! 固定启动日志的第三版，与 App 设置 Files 锁共同保护恢复链。
+ use super::*;
+ mod model;
+ mod restore;
+@@ -304,7 +304,7 @@ fn read_versioned(path: &Path) -> Result<Option<Versioned>> {
+     }
+ }
+ 
+-/// 第一包只提供受控内核；现 App 调用仍为 schema 2，不能提前开启永久 pending 门禁。
++/// 无额外资源的内核入口用于独立夹具；App 使用 prepare_app_with_guard 持有 Files 锁。
+ pub(crate) fn prepare_with_state(
+     handy: &Path,
+     inputia: Option<&Path>,
+@@ -313,8 +313,42 @@ pub(crate) fn prepare_with_state(
+     legacy: Option<&Path>,
+     inspect: impl FnOnce() -> Result<StartupNeed>,
+ ) -> Result<StartupPreparation> {
++    prepare_with_guard(
++        handy,
++        inputia,
++        backup,
++        lock,
++        legacy,
++        || Ok(()),
++        |_| inspect(),
++    )
++    .map(|(prepared, ())| prepared)
++}
++
++/// 先取得迁移锁，再取得设置 Files 锁。guard 在恢复前创建，交付前始终存活。
++pub(crate) fn prepare_with_guard<G>(
++    handy: &Path,
++    inputia: Option<&Path>,
++    backup: &Path,
++    lock: &Path,
++    legacy: Option<&Path>,
++    acquire: impl FnOnce() -> Result<G>,
++    inspect: impl FnOnce(&G) -> Result<StartupNeed>,
++) -> Result<(StartupPreparation, G)> {
+     let lock = StartupLock::acquire(lock)
+         .map_err(|e| classified(StartupFailureKind::PendingRecovery, e))?;
++    let guard = acquire().map_err(|e| classified(StartupFailureKind::PendingRecovery, e))?;
++    let prepared = prepare_locked(handy, inputia, backup, legacy, lock, || inspect(&guard))?;
++    Ok((prepared, guard))
++}
++fn prepare_locked(
++    handy: &Path,
++    inputia: Option<&Path>,
++    backup: &Path,
++    legacy: Option<&Path>,
++    lock: StartupLock,
++    inspect: impl FnOnce() -> Result<StartupNeed>,
++) -> Result<StartupPreparation> {
+     let mut roots = vec![MigrationSourceRoot {
+         label: "handy".into(),
+         root: handy.into(),
+@@ -422,6 +456,35 @@ pub(crate) fn prepare_with_state(
+     };
+     new_attempt(lock, roots, backup, purpose, full).map(StartupPreparation::Attempt)
+ }
++/// 保持 schema 2 的日志目录，不能通过更换路径跳过旧恢复链。
++pub(crate) fn prepare_app_with_guard<G>(
++    app: &tauri::AppHandle,
++    acquire: impl FnOnce(&Path, Option<&Path>) -> Result<G>,
++    inspect: impl FnOnce(&G) -> Result<StartupNeed>,
++) -> Result<(StartupPreparation, G)> {
++    let handy = crate::portable::app_data_dir(app)?;
++    let migration = handy.join("migration_backups");
++    #[cfg(target_os = "macos")]
++    let inputia = crate::candidate_profile::current()
++        .map(|p| p.inputia_root.clone())
++        .or_else(|| {
++            app.path()
++                .home_dir()
++                .ok()
++                .map(|home| home.join("Library/Application Support/Inputia"))
++        });
++    #[cfg(not(target_os = "macos"))]
++    let inputia: Option<PathBuf> = None;
++    prepare_with_guard(
++        &handy,
++        inputia.as_deref(),
++        &migration.join(MIGRATION_ID),
++        &handy.join("migration_locks"),
++        Some(&migration.join(STARTUP_MIGRATION_ID)),
++        || acquire(&handy, inputia.as_deref()),
++        inspect,
++    )
++}
+ fn specs(roots: &[MigrationSourceRoot], purpose: StartupPurpose) -> Result<Vec<Member>> {
+     let mut result = vec![];
+     for root in roots {
+diff --git a/src-tauri/src/settings_document.rs b/src-tauri/src/settings_document.rs
+index 5ad31c30..b994d3b5 100644
+--- a/src-tauri/src/settings_document.rs
++++ b/src-tauri/src/settings_document.rs
+@@ -9,6 +9,9 @@ use std::{
+     path::{Path, PathBuf},
+ };
+ 
++#[path = "settings_document/startup.rs"]
++pub(super) mod startup;
++
+ pub(super) struct Schema;
+ pub(super) fn preflight(path: &Path, home: &Path, uid: u32) -> Result<(), Error> {
+     DocumentStore::<Schema>::open(path, home, uid)?.preflight()
+@@ -17,6 +20,7 @@ impl DocumentSchema for Schema {
+     const FILE_NAME: &'static str = SETTINGS_STORE_PATH;
+     const MARKER_NAME: &'static str = ".inputia-control-settings-initialized.json";
+     const DOMAIN: &'static str = "inputia.control-settings";
++    const PENDING_NAME: Option<&'static str> = Some(".inputia-control-settings-pending.json");
+     const PATCH_ROOT: &'static [&'static str] = &["settings"];
+ 
+     fn defaults(_: &Path) -> Result<Map<String, Value>, Error> {
+@@ -177,10 +181,27 @@ pub(super) enum SavedSettings {
+ }
+ impl LoadedSettings {
+     pub fn reload(&self) -> Result<Self, Error> {
+-        let snapshot = DocumentStore::<Schema>::open(&self.path, &self.home, self.uid)?
+-            .read_at_least(&self.snapshot)?;
++        let store = DocumentStore::<Schema>::open(&self.path, &self.home, self.uid)?;
++        startup::ensure_ready(&store)?;
++        let snapshot = store.read_at_least(&self.snapshot)?;
+         Self::from_snapshot(snapshot, self.path.clone(), self.home.clone(), self.uid)
+     }
++    pub fn complete_startup(
++        &self,
++        transaction: Option<&mut crate::data_migration::v3::StartupTransaction>,
++    ) -> anyhow::Result<Self> {
++        let store = DocumentStore::<Schema>::open(&self.path, &self.home, self.uid)?;
++        startup::confirm_ready(&store)?;
++        let snapshot = store.read_at_least(&self.snapshot)?;
++        if let Some(transaction) = transaction {
++            transaction.complete(
++                crate::data_migration::v3::StartupConfirmation::FullStartupReady,
++                || startup::ensure_ready(&store).map_err(Into::into),
++            )?;
++        }
++        Self::from_snapshot(snapshot, self.path.clone(), self.home.clone(), self.uid)
++            .map_err(Into::into)
++    }
+     pub fn follows(&self, previous: &Self) -> bool {
+         self.path == previous.path
+             && self.home == previous.home
+@@ -230,10 +251,21 @@ impl LoadedSettings {
+             uid,
+         })
+     }
++    #[cfg(test)]
+     pub fn read(path: &Path, home: &Path, uid: u32) -> Result<Self, Error> {
+-        let snapshot = DocumentStore::<Schema>::open(path, home, uid)?.read()?;
++        let store = DocumentStore::<Schema>::open(path, home, uid)?;
++        store.read_observed_initialization(&mut |_| Ok(()))?;
++        if matches!(
++            store.pending_status()?,
++            inputia_settings::store::PendingStatus::RequiresActivation
++        ) {
++            store.activate_pending_protocol(&mut |_| Ok(()))?;
++        }
++        startup::ensure_ready(&store)?;
++        let snapshot = store.read()?;
+         Self::from_snapshot(snapshot, path.into(), home.into(), uid)
+     }
++    #[cfg(test)]
+     pub fn read_observed(
+         path: &Path,
+         home: &Path,
+@@ -242,8 +274,16 @@ impl LoadedSettings {
+             &inputia_settings::store::InitializationIntent,
+         ) -> Result<(), Error>,
+     ) -> Result<Self, Error> {
+-        let snapshot = DocumentStore::<Schema>::open(path, home, uid)?
+-            .read_observed_initialization(observer)?;
++        let store = DocumentStore::<Schema>::open(path, home, uid)?;
++        store.read_observed_initialization(observer)?;
++        if matches!(
++            store.pending_status()?,
++            inputia_settings::store::PendingStatus::RequiresActivation
++        ) {
++            store.activate_pending_protocol(&mut |_| Ok(()))?;
++        }
++        startup::ensure_ready(&store)?;
++        let snapshot = store.read()?;
+         Self::from_snapshot(snapshot, path.into(), home.into(), uid)
+     }
+     pub fn plan(&self, edited: &AppSettings) -> Result<Option<PlannedChange>, Error> {
+@@ -296,6 +336,17 @@ impl PlannedChange {
+             .apply_at_least(&self.request, &floor.snapshot)?;
+         self.result(result)
+     }
++    pub fn apply_observed(
++        &self,
++        floor: &LoadedSettings,
++        observer: &mut inputia_settings::store::TransitionObserver<'_>,
++    ) -> Result<SavedSettings, Error> {
++        if self.path != floor.path || self.home != floor.home || self.uid != floor.uid {
++            return Err(Error::RepairRequired);
++        }
++        let store = DocumentStore::<Schema>::open(&self.path, &self.home, self.uid)?;
++        self.result(store.apply_observed(&self.request, &floor.snapshot, observer)?)
++    }
+     /// 同一实例可按原 ID 重试；错误不清除原请求或捏造成功。
+     pub fn apply(&self) -> Result<SavedSettings, Error> {
+         let result = DocumentStore::<Schema>::open(&self.path, &self.home, self.uid)?
+diff --git a/src-tauri/src/settings_runtime.rs b/src-tauri/src/settings_runtime.rs
+index 3c2eddff..3446546d 100644
+--- a/src-tauri/src/settings_runtime.rs
++++ b/src-tauri/src/settings_runtime.rs
+@@ -1,6 +1,9 @@
+ //! 启动阶段与配置快照分离：业务入口只能在全部初始化完成后开放。
++use super::document::startup::{PreparedSettings, Reconciliation};
+ use super::{session::Coordinator, AppSettings};
+-use inputia_settings::store::{Error, InitializationIntent};
++use inputia_settings::store::Error;
++#[cfg(test)]
++use inputia_settings::store::InitializationIntent;
+ use serde::Serialize;
+ use std::{
+     path::Path,
+@@ -30,6 +33,7 @@ pub(crate) struct RuntimeSettings {
+     initialization: Mutex<()>,
+     coordinator: OnceLock<Arc<Coordinator>>,
+     phase: RwLock<StartupStatus>,
++    reconciliation: RwLock<Option<Reconciliation>>,
+ }
+ impl Default for RuntimeSettings {
+     fn default() -> Self {
+@@ -37,6 +41,7 @@ impl Default for RuntimeSettings {
+             initialization: Mutex::new(()),
+             coordinator: OnceLock::new(),
+             phase: RwLock::new(StartupStatus::Starting),
++            reconciliation: RwLock::new(None),
+         }
+     }
+ }
+@@ -58,6 +63,7 @@ impl RuntimeSettings {
+     }
+ 
+     /// 迁移 guard 已授权 Mutating 后调用；observer 必须先耐久登记初始化写入。
++    #[cfg(test)]
+     pub fn initialize(
+         &self,
+         path: &Path,
+@@ -79,6 +85,64 @@ impl RuntimeSettings {
+             .map_err(|_| "settings_already_initialized".to_owned())
+     }
+ 
++    pub fn prepare_app(&self, app: &tauri::AppHandle, home: &Path, uid: u32) -> anyhow::Result<()> {
++        let (preparation, stores) = crate::data_migration::v3::prepare_app_with_guard(
++            app,
++            |root, inputia| {
++                super::document::startup::StartupStore::open(root, inputia, home, uid)
++                    .map_err(Into::into)
++            },
++            |stores| stores.inspect().map_err(Into::into),
++        )?;
++        let prepared = stores.prepare(preparation)?;
++        self.initialize_prepared(prepared)
++            .map_err(anyhow::Error::msg)
++    }
++
++    pub(super) fn initialize_prepared(&self, prepared: PreparedSettings) -> Result<(), String> {
++        let _guard = self
++            .initialization
++            .lock()
++            .map_err(|_| "settings_state_unavailable")?;
++        if self.status() != StartupStatus::Starting || self.coordinator.get().is_some() {
++            return Err("settings_startup_state".into());
++        }
++        *self
++            .reconciliation
++            .write()
++            .map_err(|_| "settings_state_unavailable")? = prepared.reconciliation;
++        self.coordinator
++            .set(Arc::new(Coordinator::from_prepared(
++                prepared.loaded,
++                prepared.transaction,
++            )))
++            .map_err(|_| "settings_already_initialized".into())
++    }
++    pub fn reconciliation(&self) -> Option<Reconciliation> {
++        self.reconciliation
++            .read()
++            .ok()
++            .and_then(|value| value.clone())
++    }
++    pub fn confirm_startup(&self) -> Result<(), String> {
++        let _guard = self
++            .initialization
++            .lock()
++            .map_err(|_| "settings_state_unavailable")?;
++        let phase = self
++            .phase
++            .write()
++            .map_err(|_| "settings_state_unavailable")?;
++        if *phase != StartupStatus::Starting {
++            return Err("settings_startup_state".into());
++        }
++        self.coordinator
++            .get()
++            .ok_or("settings_not_initialized")?
++            .complete_startup()
++            .map_err(failure_code)
++    }
++
+     /// 仅内部初始化可在 Starting 读取。IPC 的统一入口必须先检查 ready。
+     pub fn read_for_component(&self) -> Result<AppSettings, String> {
+         let phase = self
+@@ -139,6 +203,11 @@ impl RuntimeSettings {
+         if *phase != StartupStatus::Starting || self.coordinator.get().is_none() {
+             return Err("settings_startup_state".into());
+         }
++        self.coordinator
++            .get()
++            .ok_or("settings_not_initialized")?
++            .complete_startup()
++            .map_err(failure_code)?;
+         *phase = StartupStatus::Ready;
+         Ok(())
+     }
+diff --git a/src-tauri/src/settings_session.rs b/src-tauri/src/settings_session.rs
+index 54fa4b86..86af8eb0 100644
+--- a/src-tauri/src/settings_session.rs
++++ b/src-tauri/src/settings_session.rs
+@@ -3,10 +3,9 @@ use super::{document, AppSettings};
+ use document::{LoadedSettings, PlannedChange, SavedSettings};
+ use inputia_settings::store::Error;
+ use serde::Serialize;
+-use std::{
+-    path::Path,
+-    sync::{Arc, Mutex, RwLock},
+-};
++#[cfg(test)]
++use std::path::Path;
++use std::sync::{Arc, Mutex, RwLock};
+ 
+ /// 只由当前协调器创建；不进入 JSON、Specta 或日志。
+ #[derive(Clone)]
+@@ -24,6 +23,8 @@ pub(super) struct Coordinator {
+ struct WriterState {
+     pending: Option<PendingSave>,
+     blocked: Option<Error>,
++    startup: Option<crate::data_migration::v3::StartupTransaction>,
++    startup_complete: bool,
+ }
+ struct PendingSave {
+     plan: PlannedChange,
+@@ -60,9 +61,11 @@ pub(super) enum SaveReport {
+ }
+ 
+ impl Coordinator {
++    #[cfg(test)]
+     pub fn open(path: &Path, home: &Path, uid: u32) -> Result<Self, Failure> {
+         Ok(Self::from_loaded(LoadedSettings::read(path, home, uid)?))
+     }
++    #[cfg(test)]
+     pub fn open_observed(
+         path: &Path,
+         home: &Path,
+@@ -75,11 +78,27 @@ impl Coordinator {
+             path, home, uid, observer,
+         )?))
+     }
++    #[cfg(test)]
+     fn from_loaded(loaded: LoadedSettings) -> Self {
++        let mut result = Self::from_prepared(loaded, None);
++        result
++            .writer
++            .get_mut()
++            .expect("new fixture mutex")
++            .startup_complete = true;
++        result
++    }
++    pub(super) fn from_prepared(
++        loaded: LoadedSettings,
++        startup: Option<crate::data_migration::v3::StartupTransaction>,
++    ) -> Self {
+         Self {
+             owner: Arc::new(()),
+             cached: RwLock::new(Arc::new(loaded)),
+-            writer: Mutex::new(WriterState::default()),
++            writer: Mutex::new(WriterState {
++                startup,
++                ..WriterState::default()
++            }),
+         }
+     }
+ 
+@@ -98,16 +117,14 @@ impl Coordinator {
+     }
+ 
+     pub fn save(&self, settings: &AppSettings) -> Result<SaveReport, Failure> {
+-        self.save_with(settings, |plan, floor| plan.apply_at_least(floor))
++        self.save_with_apply(settings, Self::apply_plan)
+     }
+ 
+     /// 为原生组件返回原提交版本的读取凭据。后续失败补偿只能从此凭据构造，
+     /// 不能先重新读取较新配置再覆盖用户已经确认的新选择。
+     pub fn save_with_snapshot(&self, settings: &AppSettings) -> Result<AppSettings, Failure> {
+         let mut writer = self.writer.lock().map_err(|_| Error::StorageUnavailable)?;
+-        let report = self.save_locked(settings, &mut writer, |plan, floor| {
+-            plan.apply_at_least(floor)
+-        })?;
++        let report = self.save_locked(settings, &mut writer, Self::apply_plan)?;
+         let expected_revision = match report {
+             SaveReport::Unchanged => {
+                 let original = &settings
+@@ -136,20 +153,87 @@ impl Coordinator {
+         Ok(current)
+     }
+ 
++    #[cfg(test)]
+     fn save_with(
+         &self,
+         settings: &AppSettings,
+         apply: impl FnOnce(&PlannedChange, &LoadedSettings) -> Result<SavedSettings, Error>,
++    ) -> Result<SaveReport, Failure> {
++        self.save_with_apply(settings, |plan, floor, startup| {
++            assert!(
++                startup.is_none(),
++                "fault fixture cannot bypass startup observer"
++            );
++            apply(plan, floor)
++        })
++    }
++    fn save_with_apply(
++        &self,
++        settings: &AppSettings,
++        apply: impl FnOnce(
++            &PlannedChange,
++            &LoadedSettings,
++            Option<&mut crate::data_migration::v3::StartupTransaction>,
++        ) -> Result<SavedSettings, Error>,
+     ) -> Result<SaveReport, Failure> {
+         let mut writer = self.writer.lock().map_err(|_| Error::StorageUnavailable)?;
+         self.save_locked(settings, &mut writer, apply)
+     }
++    fn apply_plan(
++        plan: &PlannedChange,
++        floor: &LoadedSettings,
++        startup: Option<&mut crate::data_migration::v3::StartupTransaction>,
++    ) -> Result<SavedSettings, Error> {
++        if let Some(startup) = startup {
++            plan.apply_observed(floor, &mut |intent| {
++                startup
++                    .record_settings_transition(intent)
++                    .map_err(|_| Error::CommitUncertain)
++            })
++        } else {
++            plan.apply_at_least(floor)
++        }
++    }
++    /// 与所有 manager 保存共用 writer 锁；完成、移除 observer 与释放迁移锁不可交错。
++    pub(super) fn complete_startup(&self) -> Result<(), Failure> {
++        let mut writer = self.writer.lock().map_err(|_| Error::StorageUnavailable)?;
++        if writer.startup_complete {
++            return Ok(());
++        }
++        if let Some(pending) = &writer.pending {
++            return Err(Failure::Pending {
++                operation_id: pending.plan.operation_id().into(),
++            });
++        }
++        if let Some(error) = &writer.blocked {
++            return Err(error.clone().into());
++        }
++        let loaded = self
++            .cached
++            .read()
++            .map_err(|_| Error::StorageUnavailable)?
++            .clone();
++        let current = loaded
++            .complete_startup(writer.startup.as_mut())
++            .map_err(|_| {
++                writer.blocked = Some(Error::CommitUncertain);
++                Failure::from(Error::CommitUncertain)
++            })?;
++        self.publish(current)?;
++        writer.startup = None;
++        writer.startup_complete = true;
++        Ok(())
++    }
+ 
+     fn save_locked(
+         &self,
+         settings: &AppSettings,
+         writer: &mut WriterState,
+-        apply: impl FnOnce(&PlannedChange, &LoadedSettings) -> Result<SavedSettings, Error>,
++        apply: impl FnOnce(
++            &PlannedChange,
++            &LoadedSettings,
++            Option<&mut crate::data_migration::v3::StartupTransaction>,
++        ) -> Result<SavedSettings, Error>,
+     ) -> Result<SaveReport, Failure> {
+         let ticket = settings
+             .read_ticket
+@@ -250,13 +334,17 @@ impl Coordinator {
+         {
+             return Err(Failure::WrongOperation);
+         }
+-        self.apply_pending(&mut writer, |plan, floor| plan.apply_at_least(floor))
++        self.apply_pending(&mut writer, Self::apply_plan)
+     }
+ 
+     fn apply_pending(
+         &self,
+         writer: &mut WriterState,
+-        apply: impl FnOnce(&PlannedChange, &LoadedSettings) -> Result<SavedSettings, Error>,
++        apply: impl FnOnce(
++            &PlannedChange,
++            &LoadedSettings,
++            Option<&mut crate::data_migration::v3::StartupTransaction>,
++        ) -> Result<SavedSettings, Error>,
+     ) -> Result<SaveReport, Failure> {
+         let pending = writer.pending.as_mut().ok_or(Failure::WrongOperation)?;
+         let operation_id = pending.plan.operation_id().to_owned();
+@@ -266,7 +354,7 @@ impl Coordinator {
+             .read()
+             .map_err(|_| Error::StorageUnavailable)?
+             .clone();
+-        match apply(&pending.plan, &floor) {
++        match apply(&pending.plan, &floor, writer.startup.as_mut()) {
+             Ok(SavedSettings::Saved {
+                 current,
+                 commit_revision,
+diff --git a/src-tauri/src/startup.rs b/src-tauri/src/startup.rs
+index 9639503f..c511b41f 100644
+--- a/src-tauri/src/startup.rs
++++ b/src-tauri/src/startup.rs
+@@ -1,5 +1,7 @@
+ //! 启动设置校验先于任何业务模块；恢复页面只有固定的两项操作。
+-use crate::data_migration::{self, StartupMigration};
++use crate::data_migration;
++#[cfg(not(unix))]
++use crate::data_migration::StartupMigration;
+ use tauri::{AppHandle, Manager};
+ use tauri_plugin_opener::OpenerExt;
+ 
+@@ -30,66 +32,67 @@ fn enter_recovery(app: &AppHandle, reason: RecoveryReason, editable: bool) {
+     }
+ }
+ 
++#[cfg(unix)]
++pub(crate) struct StartupGuard {
++    app: AppHandle,
++    completed: bool,
++}
++#[cfg(not(unix))]
++pub(crate) type StartupGuard = StartupMigration;
++#[cfg(unix)]
++impl StartupGuard {
++    pub fn complete(&mut self) -> anyhow::Result<()> {
++        self.app
++            .state::<RuntimeSettings>()
++            .confirm_startup()
++            .map_err(anyhow::Error::msg)?;
++        self.completed = true;
++        Ok(())
++    }
++}
++#[cfg(unix)]
++impl Drop for StartupGuard {
++    fn drop(&mut self) {
++        if !self.completed {
++            // manager 可能已打开业务资源；这里只关闭准入，不能在线恢复 DB。
++            enter_recovery(&self.app, RecoveryReason::MigrationRecoveryRequired, false);
++        }
++    }
++}
++
+ /// 只有此函数成功返回后，调用者才可构造业务 manager。
+-pub(crate) fn prepare(app: &AppHandle) -> anyhow::Result<Option<StartupMigration>> {
++pub(crate) fn prepare(app: &AppHandle) -> anyhow::Result<Option<StartupGuard>> {
+     #[cfg(unix)]
+     {
+-        let paths = (|| -> anyhow::Result<_> {
+-            Ok((
+-                crate::portable::app_data_dir(app)?.join(crate::settings::SETTINGS_STORE_PATH),
+-                app.path().home_dir()?,
+-                unsafe { libc::geteuid() },
+-            ))
+-        })();
+-        let (path, home, uid) = match paths {
+-            Ok(paths) => paths,
++        let home = match app.path().home_dir() {
++            Ok(home) => home,
+             Err(_) => {
+                 enter_recovery(app, RecoveryReason::StorageUnavailable, false);
+                 anyhow::bail!("startup_storage_unavailable");
+             }
+         };
+-        let prepared = data_migration::prepare_startup_backup_with_preflight(app, || {
+-            RuntimeSettings::preflight(&path, &home, uid).map_err(Into::into)
+-        });
+-        let mut migration = match prepared {
+-            Ok(migration) => migration,
+-            Err(error) => {
+-                let editable = error
+-                    .downcast_ref::<data_migration::StartupFailure>()
+-                    .is_some_and(|failure| failure.allows_configuration_repair());
+-                enter_recovery(
+-                    app,
+-                    if editable {
+-                        RecoveryReason::SettingsInvalid
+-                    } else {
+-                        RecoveryReason::MigrationRecoveryRequired
+-                    },
+-                    editable,
+-                );
+-                anyhow::bail!("startup_preflight_failed");
+-            }
+-        };
+-        if let Some(guard) = migration.as_mut() {
+-            if guard.begin_mutations().is_err() {
+-                enter_recovery(app, RecoveryReason::MigrationRecoveryRequired, false);
+-                anyhow::bail!("startup_mutation_authorization_failed");
+-            }
+-        }
+-        let result = app
++        if let Err(error) = app
+             .state::<RuntimeSettings>()
+-            .initialize(&path, &home, uid, &mut |intent| {
+-                // 既有 Completed 不授权重建丢失文件；必须由新恢复流程明确处理。
+-                migration
+-                    .as_mut()
+-                    .ok_or(inputia_settings::store::Error::RepairRequired)?
+-                    .record_settings_initialization(intent)
+-                    .map_err(|_| inputia_settings::store::Error::CommitUncertain)
+-            });
+-        if result.is_err() {
+-            enter_recovery(app, RecoveryReason::MigrationRecoveryRequired, false);
+-            anyhow::bail!("startup_settings_initialization_failed");
++            .prepare_app(app, &home, unsafe { libc::geteuid() })
++        {
++            let editable = error
++                .downcast_ref::<data_migration::StartupFailure>()
++                .is_some_and(|failure| failure.allows_configuration_repair());
++            enter_recovery(
++                app,
++                if editable {
++                    RecoveryReason::SettingsInvalid
++                } else {
++                    RecoveryReason::MigrationRecoveryRequired
++                },
++                editable,
++            );
++            anyhow::bail!("startup_settings_preparation_failed");
+         }
+-        Ok(migration)
++        Ok(Some(StartupGuard {
++            app: app.clone(),
++            completed: false,
++        }))
+     }
+     #[cfg(not(unix))]
+     {
+@@ -117,8 +120,14 @@ pub(crate) fn finish(app: &AppHandle) -> Result<(), String> {
+ pub(crate) fn control_settings_status(app: AppHandle) -> serde_json::Value {
+     #[cfg(unix)]
+     {
+-        serde_json::to_value(app.state::<RuntimeSettings>().status())
+-            .unwrap_or_else(|_| serde_json::json!({ "phase": "starting" }))
++        let runtime = app.state::<RuntimeSettings>();
++        let mut status = serde_json::to_value(runtime.status())
++            .unwrap_or_else(|_| serde_json::json!({ "phase": "starting" }));
++        if let Some(reconciliation) = runtime.reconciliation() {
++            status["settings_reconciliation"] =
++                serde_json::to_value(reconciliation).unwrap_or(serde_json::Value::Null);
++        }
++        status
+     }
+     #[cfg(not(unix))]
+     {
+diff --git a/src-tauri/src/settings_document/startup.rs b/src-tauri/src/settings_document/startup.rs
+new file mode 100644
+index 00000000..0aedae66
+--- /dev/null
++++ b/src-tauri/src/settings_document/startup.rs
+@@ -0,0 +1,215 @@
++//! 真正的启动短期锁：恢复、初始化、激活和原请求重放共享同一个 Files guard。
++use super::*;
++use crate::data_migration::{v3::*, MigrationSourceRoot};
++use inputia_settings::store::{InputSettingsSchema, PendingStatus};
++
++pub(in crate::settings) struct StartupStore {
++    pub store: DocumentStore<Schema>,
++    _inputia: Option<DocumentStore<InputSettingsSchema>>,
++    path: PathBuf,
++    home: PathBuf,
++    uid: u32,
++}
++#[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
++#[serde(tag = "status", rename_all = "snake_case")]
++pub(crate) enum Reconciliation {
++    Saved {
++        operation_id: String,
++        commit_revision: String,
++    },
++    Conflict {
++        operation_id: String,
++    },
++}
++pub(in crate::settings) struct PreparedSettings {
++    pub loaded: LoadedSettings,
++    pub transaction: Option<StartupTransaction>,
++    pub reconciliation: Option<Reconciliation>,
++}
++impl StartupStore {
++    /// 调用方必须已持迁移锁；固定顺序为控制中心→IME，避免反向等待。
++    pub fn open(root: &Path, inputia: Option<&Path>, home: &Path, uid: u32) -> Result<Self, Error> {
++        if inputia.is_some_and(|inputia| inputia == root) {
++            return Err(Error::UnsafePath);
++        }
++        let path = root.join(Schema::FILE_NAME);
++        let store = DocumentStore::<Schema>::open(&path, home, uid)?;
++        let inputia = inputia
++            .map(|root| {
++                DocumentStore::<InputSettingsSchema>::open(
++                    &root.join(InputSettingsSchema::FILE_NAME),
++                    home,
++                    uid,
++                )
++            })
++            .transpose()?;
++        Ok(Self {
++            store,
++            _inputia: inputia,
++            path,
++            home: home.into(),
++            uid,
++        })
++    }
++    pub fn inspect(&self) -> Result<StartupNeed, Error> {
++        if !entry_exists(&self.path.with_file_name(Schema::MARKER_NAME))? {
++            if entry_exists(
++                &self
++                    .path
++                    .with_file_name(Schema::PENDING_NAME.ok_or(Error::RepairRequired)?),
++            )? {
++                return Err(Error::RepairRequired);
++            }
++            self.store.preflight()?;
++            return Ok(StartupNeed::SettingsProtocol);
++        }
++        // Active 外部导入只有原预览/回执可以通过，普通 preflight 不得代替此入口。
++        self.store.preflight_pending_recovery()?;
++        match self.store.pending_status()? {
++            PendingStatus::RequiresActivation => Ok(StartupNeed::SettingsProtocol),
++            PendingStatus::Active { .. } => Ok(StartupNeed::SettingsReplay),
++            PendingStatus::Idle => Ok(StartupNeed::NoWork),
++            PendingStatus::Resolved { outcome, .. }
++                if outcome == "saved" || outcome == "conflict" =>
++            {
++                Ok(StartupNeed::NoWork)
++            }
++            _ => Err(Error::RepairRequired),
++        }
++    }
++    pub fn prepare(self, preparation: StartupPreparation) -> anyhow::Result<PreparedSettings> {
++        let mut reconciliation = None;
++        let mut transaction = match preparation {
++            StartupPreparation::NoWork(observed) => {
++                observed.recheck(&[MigrationSourceRoot {
++                    label: "handy".into(),
++                    root: self.path.parent().ok_or(Error::UnsafePath)?.into(),
++                }])?;
++                None
++            }
++            StartupPreparation::Attempt(mut transaction) => {
++                transaction.begin_mutations()?;
++                match transaction.purpose() {
++                    StartupPurpose::FullStartup | StartupPurpose::SettingsProtocol => {
++                        // 不能先对 Active import 做普通 read，它会拒绝合法的原外部预览。
++                        if self.inspect()? != StartupNeed::SettingsReplay {
++                            self.store.read_observed_initialization(&mut |intent| {
++                                transaction
++                                    .record_settings_initialization(intent)
++                                    .map_err(|_| Error::CommitUncertain)
++                            })?;
++                            if matches!(
++                                self.store.pending_status()?,
++                                PendingStatus::RequiresActivation
++                            ) {
++                                self.store.activate_pending_protocol(&mut |intent| {
++                                    transaction
++                                        .record_protocol_activation(intent)
++                                        .map_err(|_| Error::CommitUncertain)
++                                })?;
++                            }
++                        }
++                    }
++                    StartupPurpose::SettingsReplay => {}
++                }
++                if let PendingStatus::Active { operation_id } = self.store.pending_status()? {
++                    let outcome = self.store.reconcile_pending_observed(&mut |intent| {
++                        transaction
++                            .record_settings_transition(intent)
++                            .map_err(|_| Error::CommitUncertain)
++                    })?;
++                    reconciliation = Some(match outcome {
++                        Some(ApplyResult::Saved {
++                            commit_revision, ..
++                        }) => Reconciliation::Saved {
++                            operation_id,
++                            commit_revision,
++                        },
++                        Some(ApplyResult::Conflict { .. }) => {
++                            Reconciliation::Conflict { operation_id }
++                        }
++                        // Expired/未知从来不能关闭 attempt 或启动业务。
++                        Some(ApplyResult::OutcomeExpired { .. }) | None => {
++                            anyhow::bail!(Error::CommitUncertain)
++                        }
++                    });
++                }
++                match transaction.purpose() {
++                    StartupPurpose::FullStartup => Some(transaction),
++                    StartupPurpose::SettingsProtocol => {
++                        transaction.complete(StartupConfirmation::ProtocolReady, || {
++                            ensure_ready(&self.store).map_err(Into::into)
++                        })?;
++                        None
++                    }
++                    StartupPurpose::SettingsReplay => {
++                        let confirmation =
++                            match reconciliation.as_ref().ok_or(Error::RepairRequired)? {
++                                Reconciliation::Saved { operation_id, .. } => {
++                                    StartupConfirmation::RequestSaved {
++                                        operation_id: operation_id.clone(),
++                                    }
++                                }
++                                Reconciliation::Conflict { operation_id } => {
++                                    StartupConfirmation::RequestConflict {
++                                        operation_id: operation_id.clone(),
++                                    }
++                                }
++                            };
++                        transaction.complete(confirmation, || {
++                            ensure_ready(&self.store).map_err(Into::into)
++                        })?;
++                        None
++                    }
++                }
++            }
++        };
++        // 本次 Files 锁仍在；不能将早先 NoWork 或 read() 返回当作 Ready 授权。
++        confirm_ready(&self.store)?;
++        let snapshot = self.store.read()?;
++        ensure_ready(&self.store)?;
++        let loaded = LoadedSettings::from_snapshot(
++            snapshot,
++            self.path.clone(),
++            self.home.clone(),
++            self.uid,
++        )?;
++        // Store 在返回后释放；manager 的保存自行取得同锁并携带原启动 observer。
++        Ok(PreparedSettings {
++            loaded,
++            transaction: transaction.take(),
++            reconciliation,
++        })
++    }
++}
++fn entry_exists(path: &Path) -> Result<bool, Error> {
++    match std::fs::symlink_metadata(path) {
++        Ok(_) => Ok(true),
++        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
++        Err(_) => Err(Error::StorageUnavailable),
++    }
++}
++pub(super) fn ensure_ready(store: &DocumentStore<Schema>) -> Result<(), Error> {
++    match store.pending_status()? {
++        PendingStatus::Idle => Ok(()),
++        PendingStatus::Resolved { outcome, .. } if outcome == "saved" || outcome == "conflict" => {
++            Ok(())
++        }
++        PendingStatus::Active { .. } => Err(Error::PendingOperation),
++        PendingStatus::RequiresActivation | PendingStatus::Disabled => {
++            Err(Error::PendingProtocolRequired)
++        }
++        _ => Err(Error::RepairRequired),
++    }
++}
++
++/// Resolved 的 rename 可能已完成而同步未知；只补同步，不写任何新请求或执行原生副作用。
++pub(super) fn confirm_ready(store: &DocumentStore<Schema>) -> Result<(), Error> {
++    ensure_ready(store)?;
++    match store.reconcile_pending()? {
++        None | Some(ApplyResult::Saved { .. }) | Some(ApplyResult::Conflict { .. }) => {
++            ensure_ready(store)
++        }
++        Some(ApplyResult::OutcomeExpired { .. }) => Err(Error::CommitUncertain),
++    }
++}

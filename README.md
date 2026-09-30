@@ -4,6 +4,8 @@
 
 **当前状态（2026-09-30）：已有本机安装并验证的 1.1.0/build84 双组件版本，尚未完成面向公众的 Developer ID 签名、公证和独立分发验收。** 用户已批准 P0–P6 长期架构实施，源码改造正在进行；进展与实测证据见[实施记录](docs/verification/2026-09-30-launch-architecture-execution.md)。提交代码不代表发布安装包或开放更新渠道。
 
+**2026-10-01 体验版冻结：** 按用户要求优先交付 1.1.1/build85，本次停止新增架构工作；已完成、延期和安装参与事项统一见[体验版交付清单](docs/verification/2026-10-01-preview-build85.md)。新包安装前仍需用户确认。
+
 导航：[当前能力](#inputia-current) · [组件与代码职责](#inputia-components) · [长期架构](#inputia-architecture) · [实施阶段](#inputia-roadmap) · [开发与文档](#inputia-development) · [上游资料](#upstream-handy)
 
 <a id="inputia-current"></a>
