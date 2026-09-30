@@ -269,3 +269,66 @@ Swift 使用注入后端验证安全字典与路径分离、跨架构一致、�
 Developer ID IME 正向与正式 Updater / NativeAdapter 接线均 NOT_RUN。** 未启停日用 Host、
 未启用或安装输入源、未修改用户设置。公开 SDK 合同来自 Xcode `TextInputSources.h`，尤其是
 Bundle ID 可缺、布局 CFData 无来源承诺、`TISSelectInputSource` 与 distributed change 通知的限制。
+
+## 旧学习库路径隔离与合作文件租约（origin 发行者未接）
+
+`legacy_handoff::LegacyMemoryHandoff::prepare(&Transaction)` 从事务的真实 home / uid 重新读取安装
+收据，必须与本事务 old / new receipt 精确匹配后再解析固定 profile。调用方不能提供数据库路径
+或反序列化的 location 当作授权。固定源集为 `inputia_memory.db`、`-wal`、`-shm`、`-journal`；
+旧 Core 未强制 WAL，所以热 rollback journal 同样必须保留。源缺失返回 `LegacySourceMissing`，
+不推断成新 profile，也不新建空库冒充迁移成功。
+
+文件协议由 `advance(&mut VerifiedLegacyOrigin)` 执行：
+
+1. 绑定原 Transaction OFD / subject / maintenance epoch，并取得新的独立操作锁 OFD。
+2. 耐久登记完整源文件实例（device / inode），预建非空目录 fence 及其记录。
+3. 通过 macOS `RENAME_SWAP` / Linux `RENAME_EXCHANGE` 把旧主路径原子替换为 fence；没有
+   “旧文件移走、新文件尚未放入”的空路径窗口。同步两侧父目录，随后按原 basename 归档全部
+   sidecar。fence 不自动撤销，失败也不把旧版本重新指向新库。
+   正常移动与“rename 已发生但目录 fsync 失败”的重入执行同一耐久确认：重同步实际文件及
+   两侧父目录；同步仍失败时不得因目标已经存在而继续成功。
+4. **fence 持久后，对实际归档的完整实例集合重新取得无旧 FD / 未知写者证明。** 在此之前
+   不产生可发布快照；暂停租约、一次 fence 前扫描或单纯 TIS Observed 都不满足这一条件。
+5. 把冻结源集复制到独占工作区的原 basename，在那里执行 SQLite 恢复 / backup，不修改归档。
+   目标关闭所有连接、切为 DELETE journal、通过完整性检查且没有 sidecar 后同步；使用
+   no-replace rename 发布至 `managed-memory-v1/memory.sqlite`。
+   每次 SQLite open 前核完整四文件集合，原集合 absent 的 sidecar 必须仍 absent；staged
+   target 旁的任何未登记 WAL / SHM / journal 也拒绝并保留，不能先交给 SQLite 消费后再检查。
+6. 返回前再次核原生授权、文件集合、fence 与目标实例，获取固定 `service.lock` 的合作排他
+   租约。日志 `ready` 只记进度，不能直接发行 origin 或省略真实盘面核验。
+
+**当前生产 `origin_authority()` 明确返回 `OriginProofRequired`。** `VerifiedLegacyOrigin` 没有
+公开构造 / Deserialize / Clone；只有 `cfg(test)` 私有夹具发行者。正式原生 writer exit、未知
+子进程及归档 inode 的 FD 集合审计尚未接入，因此本包不能启动生产迁移或解除 runtime 的
+`handoff_required`。全套 NativeAdapter、实际用户库迁移均 **NOT_RUN**。
+
+`inputia-settings::memory_domain::OwnedMemoryDomainLease` 持有 `service.lock` 的独立 OFD 与
+目标 / fence / fence-record 的私有文件描述符，逐次核固定名字仍指向相同实例，拒绝链接、
+越权路径、非私有文件、重复租约和 fork 后使用。它不创建缺失文件。`MemoryFileBinding` 只是
+文件事实，JSON / UUID 不是来源授权；`requires_origin_and_connection_validation()` 始终为 true。
+数据库 FD **不额外持 flock**：macOS 实测该锁会挡住同进程 SQLite 的 fcntl 锁。单写者合作
+排他由 `service.lock` 提供，SQLite 自己管理数据库锁。该租约不阻止任意同 UID 程序直接 open。
+
+`bind_resource(Connection)` 只封装析构顺序：先关闭 Connection，再关闭租约 FD，没有提前
+拆出 / 释放租约的接口。未来 runtime 必须在打开 SQLite 后核其真实 handle / `HAS_MOVED`，
+并验证 domain UUID / key ID / profile / epoch 与第三域真实回执，不能只检查数据库路径字符串
+或把此文件租约写进旧 `exclusive: bool`。文件租约允许正常内容更新，不把迁移时摘要当作未来
+内容永远不变的条件。已开始业务写入后，不能重跑快照迁移来覆盖新正文；应走运行时域审计。
+
+恢复采用实例和摘要证据，不覆盖或删除未知文件。已知持久检查点可继续；若进程死在文件创建
+与实例登记之间，或工作区在 SQLite 恢复途中留下不能核实的内容，返回 `RepairRequired` 并
+保留原物和 fence，不猜测归属。源集合总量上限 256 MiB，backup 分页且有五秒循环期限；
+完整性检查和哈希仍为同步磁盘工作，不承诺整个迁移五秒完成。归档包含私有学习数据，保持
+0600 / 私有目录；本包不删除归档，后续须接保留策略及真正遗忘/GC，不能宣称所有痕迹已遗忘。
+目录 fence 阻止旧 SQLite 常规打开/创建，不是防止同 UID 恶意递归删除目录的系统沙箱。
+
+```sh
+cargo test --locked --manifest-path crates/inputia-updater/Cargo.toml legacy_handoff:: -- --test-threads=1
+cargo clippy --locked --manifest-path crates/inputia-updater/Cargo.toml --all-targets -- -D warnings
+```
+
+临时夹具覆盖 WAL / 热 rollback journal、一项测试中的十个真实自建进程 SIGKILL 持久边界、
+fence 后归档 inode 仍被旧子进程打开时拒发布、伪造 ready、同 inode 内容恢复、inode 替换、
+未知目标、符号/硬链接、跨进程合作锁及 SQLite 实际 `HAS_MOVED`。此外覆盖 rename 后目录
+同步持续失败及工作区/目标的六种未知 sidecar 保留。测试中的来源发行者只验证本次自建子进程
+的状态，不冒充生产全系统 FD 扫描。没有切换输入源、扫描日用进程或操作用户库。

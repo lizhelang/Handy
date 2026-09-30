@@ -5,6 +5,7 @@ pub mod archive;
 mod engine;
 mod filesystem;
 pub mod guardian;
+pub mod legacy_handoff;
 mod model;
 pub mod native_code;
 pub mod native_input_source;

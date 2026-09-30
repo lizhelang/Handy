@@ -391,3 +391,13 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 两种快捷键录制入口统一取得不透明 capture token，并在录制期间持有同一屏障。后端在原生动作前建立独立清理责任，固定 60 秒期限；开始失败、未交付 token、组件卸载及首次 end 失败均不会丢失清理责任。结束请求幂等，旧 token 不操作新会话；过期或撤权返回已退休但不允许保存，回执后再次核实原权限 epoch。UI 处理迟到 begin、旧事件 token、取消/保存竞争及超时退出。
 
 验证：保存/补偿 helper 4 项、音频定向 1 项；快捷键 29 项，协调器/Host Broker/Secure Input 96 项，PTT 松键专项 1 项，末次清理专项 4 项通过。录制 UI 15 项、设置错误传播增量 3 项通过；TypeScript、范围 ESLint、Prettier、Rust 格式和 diff 检查通过。独立复核发现录制旁路及失败后清理责任丢失，均修复后最终 CLEAR。未实际注册/触发系统快捷键、开麦或恢复用户设备，真实录制、权限切换及设备验收仍待正式执行。
+
+### 第三十六批：旧学习库的文件交接与独占租约核心
+
+交接核心在同父目录描述符上原子交换非空目录 fence，封闭旧 SQLite 主路径；主文件、WAL、SHM 和 rollback journal 一并归档，随后对实际归档实例重新核实来源。隔离工作区保持原文件基名，先恢复 SQLite 日志，再通过 backup 发布固定管理路径。固定 service.lock 的合作 flock 与私有数据库 FD 贯穿连接生命周期，测试核验实际 SQLite handle 的 HAS_MOVED，不能只凭重新打开的路径确认连接身份。
+
+独立复核发现 rename 已生效而目录同步失败的重入遗漏补同步，以及未知工作区 sidecar 可能被 SQLite 消费，两项均已修复。正常和重入路径统一同步目标及两个父目录；SQLite 打开前核完整文件集合，未知 WAL、SHM 或 journal 保留并拒绝。
+
+验证：12 项临时文件测试通过，包含 10 个真实自建子进程 SIGKILL 窗口、热 rollback journal、WAL、旧 inode 持有者、跨进程锁、路径替换、6 处持续同步失败与 6 种未知 sidecar 反例；root 重跑同范围 12 项通过。默认/native all-targets 严格 Clippy、格式和 diff 检查通过，独立增量复核 CLEAR。
+
+边界：本包是机械交接核心；生产 origin_authority 仍返回 OriginProofRequired，运行时尚未接入，不以序列化 Ready 或暂停租约授权。归档包含旧数据，后续必须接入隐私与保留生命周期；尚未对用户库、日用进程或安装执行迁移。

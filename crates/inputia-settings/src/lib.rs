@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub mod installation;
 pub mod maintenance;
 #[cfg(unix)]
+pub mod memory_domain;
+#[cfg(unix)]
 pub mod store;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
