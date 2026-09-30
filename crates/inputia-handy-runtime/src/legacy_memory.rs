@@ -392,7 +392,9 @@ impl LegacyMemory {
         CREATE TABLE IF NOT EXISTS memory_sources(store_id TEXT NOT NULL,record_id TEXT NOT NULL,revision INTEGER NOT NULL,deleted INTEGER NOT NULL,PRIMARY KEY(store_id,record_id));
         CREATE TABLE IF NOT EXISTS memory_contributions(store_id TEXT NOT NULL,record_id TEXT NOT NULL,revision INTEGER NOT NULL,event_id TEXT NOT NULL,term_hmac BLOB NOT NULL,text TEXT NOT NULL,source TEXT NOT NULL,typed_count INTEGER NOT NULL,voice_count INTEGER NOT NULL,clipboard_count INTEGER NOT NULL,tick INTEGER NOT NULL,PRIMARY KEY(store_id,record_id,revision,term_hmac));
         CREATE INDEX IF NOT EXISTS memory_contributions_text ON memory_contributions(text);
+        CREATE INDEX IF NOT EXISTS memory_contributions_term ON memory_contributions(term_hmac);
         CREATE TABLE IF NOT EXISTS memory_event_sources(event_row INTEGER PRIMARY KEY,store_id TEXT NOT NULL,record_id TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS memory_event_sources_record ON memory_event_sources(store_id,record_id,event_row);
         CREATE TABLE IF NOT EXISTS memory_forgotten(term_hmac BLOB PRIMARY KEY,epoch INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS memory_source_revocations(operation_id TEXT PRIMARY KEY,request_hmac BLOB NOT NULL,domain_uuid TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS memory_privacy_receipts(operation_id TEXT PRIMARY KEY,request_hmac BLOB NOT NULL,epoch INTEGER NOT NULL,domain_uuid TEXT NOT NULL);
@@ -734,6 +736,23 @@ fn rebuild(db: &Connection) -> Result<()> {
     db.execute_batch("DELETE FROM inputia_terms; INSERT INTO inputia_terms SELECT text,MIN(4294967295,SUM(typed_count)),MIN(4294967295,SUM(voice_count)),MIN(4294967295,SUM(clipboard_count)),MAX(tick) FROM memory_contributions GROUP BY text;
     UPDATE memory_domain_meta SET generation=generation+1 WHERE singleton=1;").map_err(db_err)
 }
+/// 同一事务内只重算被撤销来源涉及的词；从剩余贡献重算，不能从饱和计数做减法。
+fn begin_term_refresh(db: &Connection) -> Result<()> {
+    db.execute_batch(
+        "CREATE TEMP TABLE IF NOT EXISTS memory_dirty_terms(text TEXT PRIMARY KEY) WITHOUT ROWID;
+        DELETE FROM memory_dirty_terms;",
+    )
+    .map_err(db_err)
+}
+fn refresh_dirty_terms(db: &Connection) -> Result<()> {
+    // CROSS JOIN 固定由受影响词驱动索引查找，单条撤销不扫描/重写全部词库。
+    db.execute_batch("DELETE FROM inputia_terms WHERE text IN(SELECT text FROM memory_dirty_terms);
+        INSERT INTO inputia_terms SELECT c.text,MIN(4294967295,SUM(c.typed_count)),MIN(4294967295,SUM(c.voice_count)),MIN(4294967295,SUM(c.clipboard_count)),MAX(c.tick)
+        FROM memory_dirty_terms dirty CROSS JOIN memory_contributions c INDEXED BY memory_contributions_text
+        WHERE c.text=dirty.text GROUP BY dirty.text;
+        UPDATE memory_domain_meta SET generation=generation+1 WHERE singleton=1;
+        DELETE FROM memory_dirty_terms;").map_err(db_err)
+}
 fn contribute(
     db: &Connection,
     key: &[u8],
@@ -820,6 +839,11 @@ fn revoke_record(
     revision: u64,
     deleted: bool,
 ) -> Result<()> {
+    begin_term_refresh(db)?;
+    db.execute(
+        "INSERT OR IGNORE INTO memory_dirty_terms SELECT text FROM memory_contributions WHERE store_id=?1 AND record_id=?2",
+        params![store, record],
+    ).map_err(db_err)?;
     db.execute("DELETE FROM inputia_events WHERE id IN(SELECT event_row FROM memory_event_sources WHERE store_id=?1 AND record_id=?2)",params![store,record]).map_err(db_err)?;
     db.execute(
         "DELETE FROM memory_event_sources WHERE store_id=?1 AND record_id=?2",
@@ -832,7 +856,7 @@ fn revoke_record(
     )
     .map_err(db_err)?;
     db.execute("INSERT INTO memory_sources VALUES(?1,?2,?3,?4) ON CONFLICT(store_id,record_id) DO UPDATE SET revision=max(revision,excluded.revision),deleted=max(deleted,excluded.deleted)",params![store,record,revision,deleted]).map_err(db_err)?;
-    rebuild(db)
+    refresh_dirty_terms(db)
 }
 impl LegacyMemory {
     pub(crate) fn advance_epoch(&mut self, epoch: u64) -> Result<()> {
@@ -1359,6 +1383,11 @@ fn span_identity(key: &[u8], identity: &crate::memory_commit::CommitIdentity) ->
     ))
 }
 fn clear_span(db: &Connection, store: &str) -> Result<()> {
+    begin_term_refresh(db)?;
+    db.execute(
+        "INSERT OR IGNORE INTO memory_dirty_terms SELECT text FROM memory_contributions WHERE store_id=?1",
+        [store],
+    ).map_err(db_err)?;
     db.execute("DELETE FROM inputia_events WHERE id IN(SELECT event_row FROM memory_event_sources WHERE store_id=?1)",[store]).map_err(db_err)?;
     db.execute(
         "DELETE FROM memory_event_sources WHERE store_id=?1",
@@ -1372,7 +1401,7 @@ fn clear_span(db: &Connection, store: &str) -> Result<()> {
     .map_err(db_err)?;
     db.execute("DELETE FROM memory_sources WHERE store_id=?1", [store])
         .map_err(db_err)?;
-    rebuild(db)
+    refresh_dirty_terms(db)
 }
 impl LegacyMemory {
     pub(crate) fn apply_word_span(
@@ -1636,6 +1665,95 @@ mod tests {
             .optional()
             .unwrap()
             .unwrap_or(0)
+    }
+    fn projection_rows(db: &Connection) -> Vec<(String, u64, u64, u64, u64)> {
+        db.prepare("SELECT text,typed_count,voice_count,clipboard_count,last_used_tick FROM inputia_terms ORDER BY text")
+            .unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .unwrap().collect::<std::result::Result<_, _>>().unwrap()
+    }
+    #[test]
+    fn incremental_revocation_preserves_saturation_ticks_and_unrelated_rows() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut m = memory(&temp);
+        let db = m.db.as_mut().unwrap();
+        let tx = db.transaction().unwrap();
+        tx.execute_batch("WITH RECURSIVE numbers(n) AS(SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<20000)
+            INSERT INTO memory_contributions SELECT 'unrelated',CAST(n AS TEXT),1,'seed',CAST(n AS BLOB),'unrelated-'||n,'voice',0,1,0,n FROM numbers;
+            INSERT INTO memory_contributions VALUES
+            ('source','keep',1,'seed',X'AA','shared','voice',0,4294967295,0,2),
+            ('source','remove',1,'seed',X'AA','shared','voice',0,5,0,9),
+            ('span','one',1,'seed',X'BB','span-shared','typed',3,0,0,5),
+            ('span','two',1,'seed',X'CC','span-only','typed',1,0,0,6),
+            ('retained','three',1,'seed',X'BB','span-shared','typed',7,0,0,4);").unwrap();
+        rebuild(&tx).unwrap();
+        tx.commit().unwrap();
+        // 任何重写无关词的策略都会失败；本测试同时覆盖两万词的实际 SQLite 索引路径。
+        db.execute_batch("CREATE TEMP TRIGGER preserve_unrelated_terms BEFORE DELETE ON inputia_terms
+            WHEN OLD.text LIKE 'unrelated-%' BEGIN SELECT RAISE(ABORT,'unrelated row rewritten'); END;").unwrap();
+        let started = std::time::Instant::now();
+        let tx = db.transaction().unwrap();
+        revoke_record(&tx, "source", "remove", 2, true).unwrap();
+        clear_span(&tx, "span").unwrap();
+        tx.commit().unwrap();
+        eprintln!(
+            "incremental revoke+span against 20000 unrelated terms: {:?}",
+            started.elapsed()
+        );
+        let shared: (u64, u64) = db
+            .query_row(
+                "SELECT voice_count,last_used_tick FROM inputia_terms WHERE text='shared'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(shared, (u32::MAX as u64, 2));
+        let remaining: (u64, u64) = db
+            .query_row(
+                "SELECT typed_count,last_used_tick FROM inputia_terms WHERE text='span-shared'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(remaining, (7, 4));
+        let actual = projection_rows(db);
+        assert_eq!(actual.len(), 20002);
+        db.execute_batch("DROP TRIGGER preserve_unrelated_terms")
+            .unwrap();
+        rebuild(db).unwrap();
+        assert_eq!(actual, projection_rows(db));
+    }
+    #[test]
+    fn interrupted_term_refresh_rolls_back_before_next_revocation() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut m = memory(&temp);
+        for name in ["first", "second"] {
+            let e = evidence(name, 1, 1, name);
+            m.apply_intent(&e.intent(format!("add-{name}")), &e)
+                .unwrap();
+        }
+        let db = m.db.as_mut().unwrap();
+        db.execute_batch(
+            "CREATE TEMP TRIGGER fail_revoke BEFORE DELETE ON inputia_terms WHEN OLD.text='first'
+            BEGIN SELECT RAISE(ABORT,'injected refresh failure'); END;",
+        )
+        .unwrap();
+        let tx = db.transaction().unwrap();
+        assert!(revoke_record(&tx, "fixture-source", "first", 2, true).is_err());
+        drop(tx);
+        db.execute_batch("DROP TRIGGER fail_revoke").unwrap();
+        let tx = db.transaction().unwrap();
+        revoke_record(&tx, "fixture-source", "second", 2, true).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(
+            projection_rows(db)
+                .iter()
+                .map(|row| row.0.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first"]
+        );
+        let actual = projection_rows(db);
+        rebuild(db).unwrap();
+        assert_eq!(actual, projection_rows(db));
     }
     #[test]
     fn missing_handoff_never_opens_or_creates_database() {
