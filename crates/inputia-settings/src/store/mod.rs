@@ -149,8 +149,11 @@ pub struct InitializationIntent {
     pub marker_name: String,
     pub store_id: String,
     pub original_document_sha256: Option<String>,
+    pub original_document_size: Option<u64>,
     pub document_sha256: String,
+    pub document_size: u64,
     pub marker_sha256: String,
+    pub marker_size: u64,
     pub will_write_document: bool,
     pub will_create_marker: bool,
 }
@@ -401,6 +404,7 @@ impl<S: DocumentSchema> DocumentStore<S> {
             return Err(Error::RepairRequired);
         }
         let source_digest = raw.as_ref().map(|bytes| raw_digest(bytes));
+        let source_size = raw.as_ref().map(|bytes| bytes.len() as u64);
         let mut values = match raw {
             Some(raw) => strict_json(&raw)?
                 .as_object()
@@ -532,6 +536,7 @@ impl<S: DocumentSchema> DocumentStore<S> {
                 marker_name: S::MARKER_NAME.into(),
                 store_id: document.header.store_id.clone(),
                 original_document_sha256: document.source_digest.clone(),
+                original_document_size: source_size,
                 document_sha256: match &document_bytes {
                     Some(bytes) => raw_digest(bytes),
                     None => document
@@ -540,6 +545,11 @@ impl<S: DocumentSchema> DocumentStore<S> {
                         .ok_or(Error::RepairRequired)?,
                 },
                 marker_sha256: raw_digest(marker_bytes),
+                document_size: match &document_bytes {
+                    Some(bytes) => bytes.len() as u64,
+                    None => source_size.ok_or(Error::RepairRequired)?,
+                },
+                marker_size: marker_bytes.len() as u64,
                 will_write_document: document_bytes.is_some(),
                 will_create_marker: true,
             })?;
@@ -838,6 +848,7 @@ mod tests {
         assert_eq!(intent.store_id, initialized.store_id);
         assert_eq!(intent.domain, InputSettingsSchema::DOMAIN);
         assert!(intent.original_document_sha256.is_none());
+        assert!(intent.original_document_size.is_none());
         assert!(intent.will_write_document && intent.will_create_marker);
         assert_eq!(
             intent.document_sha256,
@@ -847,6 +858,8 @@ mod tests {
             intent.marker_sha256,
             raw_digest(&fs::read(&marker).unwrap())
         );
+        assert_eq!(intent.document_size, fs::metadata(&path).unwrap().len());
+        assert_eq!(intent.marker_size, fs::metadata(&marker).unwrap().len());
         store
             .read_observed_initialization(&mut |_| panic!("existing files need no creation intent"))
             .unwrap();
@@ -861,6 +874,11 @@ mod tests {
                     Some(raw_digest(&document_bytes))
                 );
                 assert_eq!(intent.document_sha256, raw_digest(&document_bytes));
+                assert_eq!(
+                    intent.original_document_size,
+                    Some(document_bytes.len() as u64)
+                );
+                assert_eq!(intent.document_size, document_bytes.len() as u64);
                 assert_eq!(intent.store_id, initialized.store_id);
                 Ok(())
             })
@@ -880,6 +898,7 @@ mod tests {
         assert!(matches!(
             store.read_observed_initialization(&mut |intent| {
                 assert_eq!(intent.original_document_sha256, Some(raw_digest(original)));
+                assert_eq!(intent.original_document_size, Some(original.len() as u64));
                 assert_eq!(fs::read(&path).unwrap(), original);
                 fs::write(&path, external).unwrap();
                 Ok(())
