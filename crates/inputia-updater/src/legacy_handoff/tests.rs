@@ -290,6 +290,21 @@ fn child_fixture() {
         ));
         return;
     }
+    if mode == "sqlite_locked" || mode == "sqlite_writable" {
+        let db =
+            rusqlite::Connection::open(root.join(DOMAIN_DIRECTORY).join(DATABASE_NAME)).unwrap();
+        db.busy_timeout(std::time::Duration::ZERO).unwrap();
+        let result = db.execute_batch("BEGIN IMMEDIATE; UPDATE terms SET count=count+1; ROLLBACK;");
+        if mode == "sqlite_locked" {
+            assert_eq!(
+                result.unwrap_err().sqlite_error_code(),
+                Some(rusqlite::ErrorCode::DatabaseBusy)
+            );
+        } else {
+            result.unwrap();
+        }
+        return;
+    }
     if mode == "hot_journal" {
         let db = rusqlite::Connection::open(root.join(OLD_DATABASE_NAME)).unwrap();
         db.execute_batch("PRAGMA cache_size=1; PRAGMA synchronous=FULL; BEGIN IMMEDIATE; UPDATE terms SET count=99; CREATE TABLE padding AS WITH RECURSIVE x(n) AS(SELECT 1 UNION ALL SELECT n+1 FROM x WHERE n<1000) SELECT randomblob(1024) AS body FROM x;").unwrap();
@@ -445,6 +460,72 @@ fn cooperative_lock_survives_connection_lifetime_and_blocks_another_process() {
     drop(resource);
     let journal = h.load().unwrap().unwrap();
     OwnedMemoryDomainLease::acquire(&fixture.root, h.uid(), &binding(&journal).unwrap()).unwrap();
+}
+
+#[test]
+fn lease_validation_preserves_sqlite_transaction_locks_against_another_process() {
+    let fixture = Fixture::new();
+    let h = handoff(&fixture.root);
+    let lease = h.advance(&mut origin(&h)).unwrap();
+    let db = rusqlite::Connection::open(lease.database_path()).unwrap();
+    db.execute_batch("BEGIN IMMEDIATE;").unwrap();
+    assert!(child(&fixture.root, "sqlite_locked")
+        .wait()
+        .unwrap()
+        .success());
+    for _ in 0..3 {
+        lease.assert_current().unwrap();
+        // 不能另开关主文件FD：Unix的POSIX锁可能随同进程任何该inode的FD关闭而释放。
+        assert!(child(&fixture.root, "sqlite_locked")
+            .wait()
+            .unwrap()
+            .success());
+    }
+    db.execute_batch("ROLLBACK;").unwrap();
+    db.close().unwrap();
+    assert!(child(&fixture.root, "sqlite_writable")
+        .wait()
+        .unwrap()
+        .success());
+    drop(lease);
+}
+
+#[test]
+fn database_metadata_checks_reject_replacement_links_and_unsafe_permissions() {
+    for mode in [
+        "replacement",
+        "symlink",
+        "hardlink",
+        "permissions",
+        "parent_symlink",
+    ] {
+        let fixture = Fixture::new();
+        let h = handoff(&fixture.root);
+        let lease = h.advance(&mut origin(&h)).unwrap();
+        let path = lease.database_path();
+        match mode {
+            "replacement" | "symlink" => {
+                let preserved = h.managed().join("preserved-instance");
+                std::fs::rename(&path, &preserved).unwrap();
+                if mode == "symlink" {
+                    std::os::unix::fs::symlink(&preserved, &path).unwrap();
+                } else {
+                    std::fs::copy(&preserved, &path).unwrap();
+                    private(&path);
+                }
+            }
+            "hardlink" => std::fs::hard_link(&path, h.managed().join("alias")).unwrap(),
+            "permissions" => {
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            }
+            _ => {
+                let preserved = fixture.root.join("preserved-domain");
+                std::fs::rename(h.managed(), &preserved).unwrap();
+                std::os::unix::fs::symlink(&preserved, h.managed()).unwrap();
+            }
+        }
+        assert!(lease.assert_current().is_err(), "{mode}");
+    }
 }
 
 #[test]

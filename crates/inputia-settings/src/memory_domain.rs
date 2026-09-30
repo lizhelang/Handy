@@ -1,5 +1,6 @@
 //! 固定学习域的合作单写者文件租约。不是旧进程退出/FD清空或SQLite连接身份的证明。
-//! runtime接入时须额外持有原生origin授权，并在SQLite打开后核HAS_MOVED/实际handle；Connection先销毁。
+//! runtime接入时须额外持有原生origin授权并核SQLite实际handle；HAS_MOVED不能独自排除ABA。
+//! Connection必须成功关闭后才能释放本租约。
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::CString,
@@ -195,13 +196,8 @@ impl OwnedMemoryDomainLease {
         if self.pid != std::process::id() {
             return Err(LeaseError::ProcessChanged);
         }
+        self.assert_database_current()?;
         for (held, path, identity, directory) in [
-            (
-                &self.database,
-                self.database_path(),
-                self.binding.database,
-                false,
-            ),
             (
                 &self.service_lock,
                 self.root.join(DOMAIN_DIRECTORY).join("service.lock"),
@@ -228,6 +224,54 @@ impl OwnedMemoryDomainLease {
         }
         Ok(())
     }
+    fn assert_database_current(&self) -> Result<()> {
+        // 不能为身份检查另开关数据库FD：这会释放同进程SQLite已持有的POSIX锁。
+        // held FD只fstat；固定名字通过安全父目录FD做fstatat，绝不open主文件。
+        let held = self.database.metadata()?;
+        if held.uid() != self.uid
+            || held.mode() & 0o077 != 0
+            || !held.is_file()
+            || held.nlink() != 1
+        {
+            return Err(LeaseError::UnsafePath);
+        }
+        let parent = open(&self.root.join(DOMAIN_DIRECTORY), self.uid, false, true)?;
+        let mut named = std::mem::MaybeUninit::<libc::stat>::uninit();
+        if unsafe {
+            libc::fstatat(
+                parent.as_raw_fd(),
+                c"memory.sqlite".as_ptr(),
+                named.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
+        {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        // fstatat成功后stat已完整初始化；NOFOLLOW使符号链接本身无法通过regular-file检查。
+        let named = unsafe { named.assume_init() };
+        if named.st_uid != self.uid
+            || named.st_mode & 0o077 != 0
+            || named.st_mode & libc::S_IFMT != libc::S_IFREG
+            || named.st_nlink != 1
+        {
+            return Err(LeaseError::UnsafePath);
+        }
+        let held_identity = FileIdentity {
+            device: held.dev(),
+            inode: held.ino(),
+        };
+        // Unix各平台dev_t/ino_t宽度不同；统一为现有持久身份字段，不解析SQLite私有布局。
+        #[allow(clippy::unnecessary_cast)]
+        let named_identity = FileIdentity {
+            device: named.st_dev as u64,
+            inode: named.st_ino as u64,
+        };
+        if held_identity != self.binding.database || named_identity != self.binding.database {
+            return Err(LeaseError::IdentityChanged);
+        }
+        Ok(())
+    }
     pub fn database_path(&self) -> PathBuf {
         self.root.join(DOMAIN_DIRECTORY).join(DATABASE_NAME)
     }
@@ -235,7 +279,7 @@ impl OwnedMemoryDomainLease {
     pub fn requires_origin_and_connection_validation(&self) -> bool {
         true
     }
-    /// 只绑定析构顺序，不验证资源身份；SQLite仍须在调用前检查自己的handle/HAS_MOVED。
+    /// 只绑定析构顺序，不验证身份或资源关闭成功；SQLite须另核实际handle并处理close失败。
     pub fn bind_resource<T>(self, resource: T) -> LeaseBoundMemoryResource<T> {
         LeaseBoundMemoryResource {
             resource,

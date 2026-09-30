@@ -414,3 +414,10 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 性能诊断使用本机 macOS 27.2 (26B5091g)、arm64 Mac14,5、32GiB，在 `5905f7ff` 加本批未提交 SQL 差异上编译 release。实际运行 `cargo test --release --manifest-path crates/inputia-handy-runtime/Cargo.toml --lib full_projection_audit_latency_diagnostic -- --ignored --nocapture --test-threads=1` 对应的测试二进制，并由 `/usr/bin/time -l` 单独测量。50,000 来源，预热 5 次、强制缓存失效的完整扫描 200 次：p50=93.075ms、p95=104.085ms、p99=126.827ms、max=142.847ms；错误 0，未设服务超时，进程峰值 RSS 24,707,072 bytes。SQLite 逻辑大小为学习域 3,158,016 bytes、投影 8,376,320 bytes（不含 WAL/SHM）；只测来源审计，没有构造大正文/附件/贡献词表。
 
 边界：这是临时合成数据、单测试进程、已预热 OS 文件缓存下的模块诊断，未隔离本机其他任务，不能充当 G7 冷启动、语音并发、按键或端到端验收。首次审计仍在服务队列同步执行；后续实机压力证据若超限，再按隔离队列或有界准备方案处理，不能在核对未完成时放行旧个性化结果。
+
+
+### 第三十八批：租约核验保留 SQLite 已持事务锁
+
+数据库租约的重复身份检查改为已持 FD 的 fstat 与安全父目录 FD 下的 NOFOLLOW fstatat，不再为核对主库路径额外 open/close 同 inode。后者会释放同进程 SQLite 持有的 POSIX 文件锁；原版本已用临时子进程写入反例复现，修复后保持真实事务互斥。
+
+验证：handoff 范围 14 项通过，新增 BEGIN IMMEDIATE 前后和连续三次租约核验时另一个进程均返回 BUSY，显式 ROLLBACK 并成功关闭连接后才允许写；另有五类路径替换、链接和权限反例。默认 all-targets 严格 Clippy、Rust 格式和 diff 检查通过，独立增量复核 CLEAR。没有打开真实用户库。泛型析构次序不等于 SQLite 已成功关闭，后续具体连接包装仍须在 close 失败时保留连接及租约责任；HAS_MOVED 不单独声称抵抗任意同 UID 的 ABA 换路径。
