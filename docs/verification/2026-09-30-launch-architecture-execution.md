@@ -529,3 +529,11 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 重新纳入此前暂存的两个生产补丁。Hugging Face 新下载现在进入 `managed-hf-v1` 私有命名空间：按 repo/文件固定收据、revision/摘要/大小绑定代际，下载先写受限 partial，校验后耐久发布 active 索引；发现、加载、进度、删除共用来源判定，损坏收据不会隐式回退覆盖。启动设置路径接入 v3 pending/Files 锁：准备阶段先取得迁移锁和设置存储锁，业务入口只能在 `confirm_startup` 后开放；旧 legacy 恢复器遇到新 pending 会拒绝并保留原文件，交给 v3 修复流程。
 
 验证：新增受管模型边界测试 4 项通过；启动迁移与 v3 回归 46 项通过；模型管理/下载/归档范围 48 项通过；主应用 Rust 单元测试 `641 passed, 2 ignored, 0 failed`。`cargo check --manifest-path src-tauri/Cargo.toml`、`cargo fmt` 与 diff 检查通过。该批仍未接生产 NativeAdapter、正式安装器或真实已安装迁移；此前 r6 体验包不包含本批源码，下一步必须重新构建并绑定新 releaseId。
+
+### 第五十三批：启动恢复版 r7 体验包重新冻结
+
+在提交 `d75c46d67ae30f27d2a7a4134773fde9284f53d5` 的干净工作区重新运行 v2 三组件构建，确保体验包包含受管模型存储与启动恢复屏障接入。构建目录为 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-pVI0Xap2`，releaseId 为 `inputia-1.1.1-85-d75c46d67ae3-cff979cb579b4fba98165eaa7b4f639b`；主程序、输入法、设置组件均完成 arm64、macOS 13+ 构建与本地测试证书签名。成套配对验签通过，构建状态为 `installed=false`、`publicReleaseEligible=false`；公证和公开签名未运行。
+
+重新归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r7.zip`，SHA-256 为 `1bfdb9dbf32c7bde06495f5cf3ef5691315e840a9d7d724dc923ee9ffc7a75b0`；`unzip -t` 通过。包内更新器包含收据预检、收据写入和 `--settings-app` 三组件入口。
+
+对当前电脑已安装的 1.1.0/build84 旧组件执行归档内只读预检，返回 `installationReceiptPresent=false`、`releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`；没有执行 `--apply`，没有覆盖已安装组件、切换输入源或写入真实收据。当前工作区保持干净。
