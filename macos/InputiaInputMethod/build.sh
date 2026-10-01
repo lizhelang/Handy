@@ -167,6 +167,9 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   # 候选输入法构建目录是一次性隔离产物。关闭增量编译，避免 macOS
   # 对 proc-macro 动态库复用不完整 LINKEDIT 的中间文件。
   export CARGO_INCREMENTAL=0
+  # macOS 27 上候选目录的 proc-macro dylib 在并行链接时可能出现
+  # LINKEDIT 未对齐；单任务构建牺牲吞吐，换取确定性和可复现性。
+  export CARGO_BUILD_JOBS=1
 fi
 RUST_TOOLCHAIN="${INPUTIA_RUST_TOOLCHAIN:-1.96.0}"
 if [[ -n "${MACOSX_DEPLOYMENT_TARGET:-}" && "$MACOSX_DEPLOYMENT_TARGET" != "$MIN_MACOS_VERSION" && "$MACOSX_DEPLOYMENT_TARGET" != "13" && "$MACOSX_DEPLOYMENT_TARGET" != "13.0.0" ]]; then
