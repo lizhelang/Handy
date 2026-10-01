@@ -165,6 +165,9 @@ def validate_existing_legacy_receipt(run_id, destinations, home=None):
     path = home / 'Library/Application Support/Inputia/installation.json'
     if not path.exists():
         return False
+    stat_result = path.stat()
+    if stat_result.st_uid != os.getuid() or stat_result.st_mode & 0o077:
+        raise ValueError('已有安装收据所有者或权限不安全')
     with path.open('r', encoding='utf-8') as stream:
         value = json.load(stream)
     expected_components = {
@@ -177,6 +180,8 @@ def validate_existing_legacy_receipt(run_id, destinations, home=None):
             or value.get('scope') != 'legacy_single_user'
             or value.get('profile_id') != f'unified-candidate:{run_id}'
             or value.get('uid') != os.getuid()
+            or value.get('channel') != 'candidate'
+            or not re.fullmatch(r'inputia-[A-Za-z0-9._-]{1,180}', str(value.get('release_id', '')))
             or value.get('data') != {'kind': 'legacy_candidate', 'run_id': run_id}
             or value.get('components') != expected_components
             or not re.fullmatch(r'[0-9a-f-]{36}', str(value.get('installation_id', '')))):

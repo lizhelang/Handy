@@ -281,6 +281,23 @@ class CandidateUpdateTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 module.validate_existing_legacy_receipt('trial-20260905', changed, home=home)
 
+    def test_v2_preflight_rejects_non_candidate_or_public_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            destinations = [home / 'control.app', home / 'ime.app', home / 'settings.app']
+            path = module.write_legacy_receipt(
+                'trial-20260905', 'inputia-1.1.1-85-test', destinations, home=home)
+            value = json.loads(path.read_text())
+            value['channel'] = 'stable'
+            path.write_text(json.dumps(value))
+            with self.assertRaises(ValueError):
+                module.validate_existing_legacy_receipt('trial-20260905', destinations, home=home)
+            value['channel'] = 'candidate'
+            path.write_text(json.dumps(value))
+            path.chmod(0o644)
+            with self.assertRaises(ValueError):
+                module.validate_existing_legacy_receipt('trial-20260905', destinations, home=home)
+
     def test_symlink_source_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'real').mkdir();(root/'alias').symlink_to(root/'real')

@@ -513,3 +513,9 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 重新归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r5.zip`，SHA-256 为 `110025c2962a67005020f066fe98d297ad372addec359aff0c982908de69d66e`；`unzip -t` 通过。包内更新器已确认包含 `validate_existing_legacy_receipt`、`write_legacy_receipt` 和 `--settings-app`。相关更新器测试 20 项、发布脚本测试 48 项通过；本次构建输出中的成套自检与 release manifest 验签通过。
 
 该制品仍是本地测试签名的可安装体验包，不是公开发布包。Developer ID、公证、正式安装器/回滚界面、生产 NativeAdapter、真实旧库迁移和 7 天观察仍未完成；本次没有执行 `--apply`，没有覆盖当前电脑上的旧组件、切换输入源或写入真实安装收据。
+
+### 第五十批：收据轨道与权限门禁收紧
+
+收据只读预检现在额外要求 `channel=candidate`、合法 `inputia-*` release_id、当前用户为文件所有者，并拒绝 group/other 可写或可读的安装收据；同时删除重复的 data 条件。这样 stable 或权限放宽的收据不会被当成 candidate legacy 更新的已登记归属。
+
+验证：更新器测试 21 项通过，包含 stable 收据和 0644 收据拒绝；Python 语法与 diff 检查通过。重新归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r6.zip`，SHA-256 为 `a48c6df33baae91ff3c936bdf30a83eedfcb2a08e8c7c7999d7737349a15c157`，ZIP 完整性检查通过。该收据门禁只影响 v2 预检，未执行真实覆盖安装。
