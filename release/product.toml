@@ -53,5 +53,5 @@ required_outbox_capabilities = ["idempotent-consumer"]
 
 [pipeline]
 python_min = "3.11"
-pair_trust_format = 1
+pair_trust_format = 2
 public_release_enabled = false

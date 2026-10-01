@@ -537,3 +537,9 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 重新归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r7.zip`，SHA-256 为 `1bfdb9dbf32c7bde06495f5cf3ef5691315e840a9d7d724dc923ee9ffc7a75b0`；`unzip -t` 通过。包内更新器包含收据预检、收据写入和 `--settings-app` 三组件入口。
 
 对当前电脑已安装的 1.1.0/build84 旧组件执行归档内只读预检，返回 `installationReceiptPresent=false`、`releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`；没有执行 `--apply`，没有覆盖已安装组件、切换输入源或写入真实收据。当前工作区保持干净。
+
+### 第五十四批：产品发布身份切换到配对 v2
+
+体验包和配对校验已经使用 v2 releaseId 绑定，但 `release/product.toml` 仍将 `pair_trust_format` 声明为 1，导致公共预检把已淘汰的 profile-bound v1 信任继续列为阻断项。现已将产品唯一元数据切换为 `pair_trust_format = 2`，并把回归断言改为确认 v1 阻断消失、Developer ID/公证等真实未完成门禁仍保留。
+
+验证：发布合同测试 24 项通过；产品结构校验和生成配置漂移检查通过。公共预检仍明确阻断于脏工作区、公共发布开关、Developer ID/公证、发布签名验证器和最终制品验收，未因本次元数据修正而放行公开发布。

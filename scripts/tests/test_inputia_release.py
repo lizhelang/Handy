@@ -176,7 +176,8 @@ class ReleaseContractTests(unittest.TestCase):
         with mock.patch.object(release, "git_state", return_value={"source_commit": "a" * 40, "working_tree_clean": False}):
             result = release.preflight(self.product, "public")
         self.assertIn("dirty_release_checkout", result["blockers"])
-        self.assertIn("profile_bound_pair_trust_v1", result["blockers"])
+        self.assertNotIn("profile_bound_pair_trust_v1", result["blockers"])
+        self.assertIn("developer_id_and_notarization_not_verified", result["blockers"])
         self.assertFalse(result["public_release_eligible"])
         self.assertFalse(result["certificate_accessed"])
 
