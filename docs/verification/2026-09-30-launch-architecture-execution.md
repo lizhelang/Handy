@@ -519,3 +519,7 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 收据只读预检现在额外要求 `channel=candidate`、合法 `inputia-*` release_id、当前用户为文件所有者，并拒绝 group/other 可写或可读的安装收据；同时删除重复的 data 条件。这样 stable 或权限放宽的收据不会被当成 candidate legacy 更新的已登记归属。
 
 验证：更新器测试 21 项通过，包含 stable 收据和 0644 收据拒绝；Python 语法与 diff 检查通过。重新归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r6.zip`，SHA-256 为 `a48c6df33baae91ff3c936bdf30a83eedfcb2a08e8c7c7999d7737349a15c157`，ZIP 完整性检查通过。该收据门禁只影响 v2 预检，未执行真实覆盖安装。
+
+### 第五十一批：收据门禁后的跨层回归
+
+收据门禁提交后的回归结果：更新器 Python 测试 21 项通过，发布脚本测试 48 项通过，`inputia-release` Rust 测试 24 项通过，`inputia-updater` 单元测试 36 项、归档测试 17 项、事务测试 21 项通过。对当前电脑旧安装重新执行 v2 只读预检，仍返回 `installationReceiptPresent=false`、`releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`；没有执行 apply、没有创建真实收据，也没有改变已安装组件。
