@@ -42,6 +42,7 @@ PACKAGE_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd -P)"
   --run-id '{run_id}' --release-v2 \\
   --control-app "$PACKAGE_DIR/Inputia.app" \\
   --inputia-app "$PACKAGE_DIR/InputiaUnifiedCandidate.app" \\
+  --settings-app "$PACKAGE_DIR/Inputia 设置.app" \\
   --pair-manifest "$PACKAGE_DIR/pair-manifest.json" \\
   --public-build "$PACKAGE_DIR/public-build.json" \\
   --build-context "$PACKAGE_DIR/metadata/build-context.json"{action}

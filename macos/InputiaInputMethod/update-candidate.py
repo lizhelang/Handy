@@ -54,6 +54,18 @@ def control_installation(applications=Path('/Applications')):
     raise ValueError('未找到唯一可更新的 Inputia 安装')
 
 
+def settings_installation(applications=Path('/Applications')):
+    """定位唯一设置启动器；v2 必须与主程序、输入法一起换代。"""
+    system = canonical(applications/'Inputia 设置.app')
+    user = canonical(Path.home()/'Applications'/'Inputia 设置.app')
+    existing = [path for path in (system, user) if path.exists()]
+    if len(existing) > 1:
+        raise ValueError('系统与用户目录同时存在设置启动器；拒绝选择其一覆盖')
+    if not existing:
+        raise ValueError('未找到已安装的 Inputia 设置.app；v2 不执行缺组件安装')
+    return existing[0]
+
+
 def unregister_legacy_control(old_control, new_control, old_backup=None):
     if old_control == new_control:
         return True
@@ -82,7 +94,11 @@ def validate_profile(app, role, run_id):
 
 
 def validate_release_v2(app, role, release_id):
-    expected_id = 'com.pais.handy.UnifiedCandidate' if role == 'control' else 'com.inputia.inputmethod.Inputia.UnifiedCandidate'
+    expected_id = {
+        'control': 'com.pais.handy.UnifiedCandidate',
+        'ime': 'com.inputia.inputmethod.Inputia.UnifiedCandidate',
+        'settings': 'com.inputia.settings.UnifiedCandidate',
+    }[role]
     with (app/'Contents/Info.plist').open('rb') as stream:
         info = plistlib.load(stream)
     if (info.get('CFBundleIdentifier') != expected_id
@@ -188,6 +204,7 @@ def main():
     parser.add_argument('--run-id', required=True)
     parser.add_argument('--control-app', required=True)
     parser.add_argument('--inputia-app', required=True)
+    parser.add_argument('--settings-app', help='v2 设置启动器；v1 路径不使用')
     parser.add_argument('--pair-manifest', required=True)
     parser.add_argument('--public-build', required=True)
     parser.add_argument('--build-context', help='v2 public-build 对应的 metadata/build-context.json')
@@ -206,9 +223,13 @@ def main():
         raise RuntimeError('另一个候选更新正在执行')
     old_control, new_control = control_installation()
     ime = canonical(Path.home()/'Library/Input Methods/InputiaUnifiedCandidate.app')
-    originals = [old_control, ime]
-    destinations = [new_control, ime]
-    sources = [canonical(args.control_app), canonical(args.inputia_app)]
+    old_settings = settings_installation() if args.release_v2 else None
+    new_settings = canonical(args.settings_app) if args.release_v2 and args.settings_app else None
+    if args.release_v2 and new_settings is None:
+        raise ValueError('v2 更新缺少 --settings-app；拒绝留下旧设置组件')
+    originals = [old_control, ime] + ([old_settings] if old_settings else [])
+    destinations = [new_control, ime] + ([old_settings] if old_settings else [])
+    sources = [canonical(args.control_app), canonical(args.inputia_app)] + ([new_settings] if new_settings else [])
     metadata = canonical(args.public_build); manifest = canonical(args.pair_manifest)
     if args.release_v2:
         public = json.loads(metadata.read_text())
@@ -219,11 +240,20 @@ def main():
         release_id = public['release_id']
     else:
         release_id = None
-    for role, old, new in zip(['control', 'ime'], originals, sources):
+    roles = ['control', 'ime'] + (['settings'] if args.release_v2 else [])
+    for role, old, new in zip(roles, originals, sources):
         if new in originals or new in destinations: raise ValueError('构建源不能是安装路径')
-        validate_profile(old, role, args.run_id)
+        if role != 'settings':
+            validate_profile(old, role, args.run_id)
+        else:
+            # 旧设置启动器可能是历史 ad-hoc 身份；只确认它是完整 bundle，
+            # 新入口必须通过严格签名和 v2 release 身份检查。
+            run('/usr/bin/codesign', '--verify', '--deep', '--strict', old)
         validate_release_v2(new, role, release_id) if args.release_v2 else validate_profile(new, role, args.run_id)
-        if identity(old) != identity(new): raise ValueError('更新签名身份改变；拒绝要求用户反复重新授权')
+        if role != 'settings' and identity(old) != identity(new):
+            raise ValueError('更新签名身份改变；拒绝要求用户反复重新授权')
+        if role == 'settings':
+            run('/usr/bin/codesign', '--verify', '--deep', '--strict', new)
     # 验证编译期公开元数据的归属/权限/内容；不使用清单本身提供的新信任根。
     import importlib.util
     spec = importlib.util.spec_from_file_location('build_trust', REPO/'native/unified-pair-auth/build_trust.py')
@@ -236,7 +266,7 @@ def main():
         verifier = Path(temporary)/'verify'
         if args.release_v2:
             run('/usr/bin/swiftc', '-parse-as-library', REPO/'native/unified-pair-auth/UnifiedPairAuth.swift', REPO/'native/unified-pair-auth/ReleasePairAuthVerify.swift', '-o', verifier, timeout=90)
-            print(run(verifier, metadata, metadata, manifest, *sources).strip())
+            print(run(verifier, metadata, metadata, manifest, *sources[:2]).strip())
         else:
             run('/usr/bin/swiftc', '-parse-as-library', REPO/'native/unified-pair-auth/UnifiedPairAuth.swift', ROOT/'Tools/CandidateUpdateVerify.swift', '-o', verifier, timeout=90)
             print(run(verifier, metadata, pair, pair, *originals, args.run_id).strip())
@@ -251,7 +281,8 @@ def main():
         backup_base = Path.home()/'Library/Application Support/HandyUnifiedBuilds'
         backup_base.mkdir(mode=0o700, parents=True, exist_ok=True)
         backup = Path(tempfile.mkdtemp(prefix='permission-update-', dir=backup_base))
-        staged = [backup/'control-staged.app', backup/'ime-staged.app']
+        staged_names = ['control-staged.app', 'ime-staged.app'] + (['settings-staged.app'] if args.release_v2 else [])
+        staged = [backup/name for name in staged_names]
         for src, dst in zip(sources, staged): shutil.copytree(src, dst, symlinks=True)
         shutil.copy2(pair, backup/'pair-before.json')
         shutil.copy2(manifest, backup/'pair-new.json')
@@ -275,17 +306,18 @@ def main():
         switched = run(tis, '--select-source-id', 'com.apple.keylayout.ABC')
         if 'selectCurrentMatchesTarget=true' not in switched: raise RuntimeError('未确认切离输入法，停止更新')
         stop_known(originals)
-        backups = [backup/'control-before.app', backup/'ime-before.app']
+        backup_names = ['control-before.app', 'ime-before.app'] + (['settings-before.app'] if args.release_v2 else [])
+        backups = [backup/name for name in backup_names]
         install_transaction(destinations, staged, backups, pair, backup/'pair-new.json', backup/'pair-before.json', originals)
         try:
-            run(verifier, metadata, backup/'pair-before.json', pair, *destinations, args.run_id)
+            run(verifier, metadata, backup/'pair-before.json', pair, *destinations[:2], args.run_id)
             atomic_json(marker, {'schema_version':1, 'active':False, 'epoch':str(uuid.uuid4())})
             start_registered_components(destinations)
             deadline = time.monotonic()+10
-            while len(process_ids(destinations)) < 2:
+            while len(process_ids(destinations[:2])) < 2:
                 if time.monotonic() >= deadline: raise RuntimeError('新组件未启动')
                 time.sleep(.2)
-            for app in destinations:
+            for app in destinations[:2]:
                 pids = process_ids([app])
                 if len(pids) != 1: raise RuntimeError('检测到重复组件进程')
                 print(run('/bin/bash', ROOT/'install-check.sh', '--running-identity', app, pids[0]).strip())

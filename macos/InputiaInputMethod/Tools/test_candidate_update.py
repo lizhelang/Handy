@@ -89,6 +89,24 @@ class CandidateUpdateTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 module.validate_release_v2(app, 'control', 'inputia-1.1.1-85-abc12345')
 
+    def test_release_v2_validates_the_settings_component_identity(self):
+        import plistlib
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / 'Inputia 设置.app'
+            (app / 'Contents').mkdir(parents=True)
+            (app / 'Contents' / 'Info.plist').write_bytes(plistlib.dumps({
+                'CFBundleIdentifier': 'com.inputia.settings.UnifiedCandidate',
+                'InputiaReleaseID': 'inputia-1.1.1-85-abc12345',
+            }))
+            module.validate_release_v2(app, 'settings', 'inputia-1.1.1-85-abc12345')
+            with (app / 'Contents' / 'Info.plist').open('wb') as stream:
+                stream.write(plistlib.dumps({
+                    'CFBundleIdentifier': 'com.inputia.inputmethod.Inputia.Settings',
+                    'InputiaReleaseID': 'inputia-1.1.1-85-abc12345',
+                }))
+            with self.assertRaises(ValueError):
+                module.validate_release_v2(app, 'settings', 'inputia-1.1.1-85-abc12345')
+
     def test_rename_failure_restores_original_path_and_pair(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

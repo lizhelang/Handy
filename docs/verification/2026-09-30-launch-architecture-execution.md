@@ -13,7 +13,7 @@
 | P0   | 进行中 | 固定基线；本地 v2 成套制品来源已绑定提交和 releaseId；公开 G0 仍待正式制品门禁。 |
 | P1   | 进行中 | 输出与跨库删除恢复已接入；附件清理、设置协调与跨域遗忘继续实施。         |
 | P2   | 进行中 | 本地配对 v2、releaseId、公开清单和双端 cdhash 验签已通过；真实桥接与安装身份迁移待验收。 |
-| P3   | 未完成 | 原生更新核心、耐久恢复、预编译 helper、图形安装器与故障注入。            |
+| P3   | 未完成 | 原生更新核心、耐久恢复和故障注入已有库级证据；v2 三组件实际 writer、生产 NativeAdapter、预编译 helper 与图形安装器仍待接线。 |
 | P4   | 未完成 | 签名 feed、UpdateService、构建公证流水线；正式凭据与身份迁移需对应授权。 |
 | P5   | 进行中 | 严格验收账本与聚合工具；原生、质量、性能、干净机证据仍待采集。           |
 | P6   | 未完成 | 公开候选与稳定晋级需对应授权、下载验证及至少 7 天观察。                  |
@@ -471,3 +471,11 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 对当前电脑已安装的旧双组件执行归档内“仅检查v2更新.command”实测返回 `releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`，退出码 0；未执行 `--apply`，未替换程序、未切换输入源、未启动新组件。
 
 边界：本批只完善本地构建与配对信任边界，不安装、不覆盖日用组件、不上传公开渠道。当前仍使用本机测试签名；Developer ID、公证、安装器/回滚、生产 NativeAdapter、真实旧库迁移与 App pending 启动接线仍未完成，不能把本地签名产物称为公开发布版本。
+
+### 第四十四批：v2 更新入口收敛为三组件替换
+
+修正 v2 受控更新入口此前只传入主程序和输入法的缺口。现在 v2 要求显式提供 `Inputia 设置.app`，定位系统或用户目录中唯一的既有设置启动器；同时暂存、备份、替换和失败回滚均纳入第三个组件。新设置启动器必须具备 `com.inputia.settings.UnifiedCandidate`、同一 releaseId、无 v1 开发标记并通过严格代码签名检查。历史设置启动器可能是旧 bundle ID 或 ad-hoc 身份，因此只作为待替换的完整 bundle 验证，不把它的旧 designated requirement 当作新签名授权。v1 两组件路径保持不变。
+
+更新后仍只启动主程序和输入法，设置启动器只刷新 LaunchServices 登记，避免安装过程意外打开设置窗口。v2 的 pair-manifest 验签继续覆盖配对的主程序/输入法；设置组件另行执行 release 元数据和代码签名门禁。
+
+验证：更新器测试 16 项、发布脚本 48 项通过；对当前电脑旧版双组件及旧设置启动器执行 v2 只读预检，返回 `releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`。本次没有执行 `--apply`，没有替换任何 App、切换输入源或启动新组件。下一步仍需在临时安装根完成真实三组件 apply/回滚夹具，再接入 Rust `NativeAdapter` 与生产维护屏障；本批不等于已安装迁移完成。
