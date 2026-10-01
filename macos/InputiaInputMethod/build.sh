@@ -164,6 +164,9 @@ fi
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/../../crates/inputia-capi/target}"
 if [[ "$IS_CANDIDATE" == "1" ]]; then
   export CARGO_TARGET_DIR="$BUILD_DIR/cargo-target"
+  # 候选输入法构建目录是一次性隔离产物。关闭增量编译，避免 macOS
+  # 对 proc-macro 动态库复用不完整 LINKEDIT 的中间文件。
+  export CARGO_INCREMENTAL=0
 fi
 RUST_TOOLCHAIN="${INPUTIA_RUST_TOOLCHAIN:-1.96.0}"
 if [[ -n "${MACOSX_DEPLOYMENT_TARGET:-}" && "$MACOSX_DEPLOYMENT_TARGET" != "$MIN_MACOS_VERSION" && "$MACOSX_DEPLOYMENT_TARGET" != "13" && "$MACOSX_DEPLOYMENT_TARGET" != "13.0.0" ]]; then

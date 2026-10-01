@@ -453,3 +453,11 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 验证：交接 fixture 23 项通过；连接租约既有 9 项通过，设置核心编译、范围格式与 diff 检查通过。新增跨进程测试修正了测试自身外层更新锁生命周期，确保测到实际 service.lock 边界。独立有界复核未发现阻断；生产 origin_authority 仍拒绝，本包不代表真实旧库迁移已经接通。
 
 用户于 2026-10-01 收窄当前任务为停止扩架构、收尾并交付体验版。未完成 HF 受管下载和 App pending 启动接线分别完整保存到 docs/codex-plans/deferred/20261001-\*.patch，并以 git apply --check 验证，当前源码恢复到已验证入口。设置 54 项、启动迁移 71 项通过（1 项真实数据测试忽略），浏览器 39 项通过；前端生产构建通过，发布脚本 24 项通过。体验版定为 1.1.1/build85；仅构建签名已获授权，未覆盖安装或推送。完整清单见 2026-10-01-preview-build85.md。
+
+### 第四十三批：本地配对构建绑定 releaseId
+
+发布脚本新增 `--build-local-v2`。v2 不再接受可复用的 `trial-*` profile，而是在同一份 release context 下由配对私钥派生公开信任材料，生成 `schema_version=2` 的 `public-build.json`，并把 `release_id` 绑定到控制中心与输入法配对清单。v2 控制中心的 release plist 会移除 `HandyProfileRunID` 与 `HandyDevelopmentCandidate`，输入法构建使用同一 releaseId 生成隔离 run slot；v1 本地体验构建路径保持不变。
+
+验证：`build_trust.py` 12 项、`scripts/tests` 输入ia 定向 48 项、脚本语法与 diff 检查通过。首次 v2 主应用已完成 arm64 release 编译和本地证书签名，生成的公开元数据显示 `schema_version=2`、`product_id=com.inputia`、releaseId 与 source commit 一致；不会把私钥放入构建目录。输入法候选构建随后命中 macOS `serde_derive` proc-macro 动态库的 `mis-aligned LINKEDIT string pool`，即使换用全新隔离目录仍复现；已将候选构建固定为 `CARGO_INCREMENTAL=0` 后做最后一次重跑，结果待本次构建结束确认。
+
+边界：本批只完善本地构建与配对信任边界，不安装、不覆盖日用组件、不上传公开渠道。当前仍使用本机测试签名；Developer ID、公证、安装器/回滚、生产 NativeAdapter、真实旧库迁移与 App pending 启动接线仍未完成，不能把本地签名产物称为公开发布版本。
