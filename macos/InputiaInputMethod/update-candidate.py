@@ -190,6 +190,7 @@ def main():
     parser.add_argument('--inputia-app', required=True)
     parser.add_argument('--pair-manifest', required=True)
     parser.add_argument('--public-build', required=True)
+    parser.add_argument('--build-context', help='v2 public-build 对应的 metadata/build-context.json')
     parser.add_argument('--release-v2', action='store_true', help='新组件使用 releaseId 绑定的 v2 身份；目标数据域仍由 --run-id 指定')
     parser.add_argument('--apply', action='store_true', help='默认只校验；此开关才执行更新')
     args = parser.parse_args()
@@ -213,6 +214,8 @@ def main():
         public = json.loads(metadata.read_text())
         if public.get('schema_version') != 2 or public.get('product_id') != 'com.inputia' or not isinstance(public.get('release_id'), str):
             raise ValueError('无效 v2 public-build 元数据')
+        if not args.build_context:
+            raise ValueError('v2 更新缺少 build context')
         release_id = public['release_id']
     else:
         release_id = None
@@ -226,7 +229,7 @@ def main():
     spec = importlib.util.spec_from_file_location('build_trust', REPO/'native/unified-pair-auth/build_trust.py')
     trust_module = importlib.util.module_from_spec(spec); spec.loader.exec_module(trust_module)
     if args.release_v2:
-        trust_module.load(metadata, context_path=canonical(metadata.parent/'metadata/build-context.json'))
+        trust_module.load(metadata, context_path=canonical(Path(args.build_context)))
     else:
         trust_module.load(metadata, args.run_id)
     with tempfile.TemporaryDirectory(prefix='inputia-update-verify-') as temporary:
