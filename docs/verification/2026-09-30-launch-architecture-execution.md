@@ -503,3 +503,5 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 验证：更新器测试 19 项、发布脚本 48 项通过；新增收据生成、ID 保留、权限和 foreign-scope 拒绝回归。真实 `--apply` 尚未执行，因此当前电脑仍没有因为本批代码自动产生收据；安装收据只有在用户明确执行 v2 覆盖安装后才会写入。
 
 在提交 `8c2488b134feb0f2ada21a7898d77fc1f8af9dd7` 的干净工作区重新构建三组件，输出目录为 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-00701NOR`，releaseId 为 `inputia-1.1.1-85-8c2488b134fe-35d886d4615e4e4c8c8349201b45ee32`。重新归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r4.zip`，SHA-256 为 `8dbd4817e7b7c847ae2d487153ea9f1f8ff39d887fd712aecc33e777f2fa7d72`；ZIP 完整性通过，包内更新器已确认包含 `write_legacy_receipt` 和 `--settings-app`。构建、公证和安装状态仍分别为 `publicReleaseEligible=false`、`notarization=NOT_RUN`、`installed=false`。
+
+新增 v2 预检收据门禁：已有 `installation.json` 时必须匹配当前 UID、`legacy_single_user`、`unified-candidate:<run_id>`、三组件准确路径和 legacy 数据对象；不匹配即拒绝，缺失则明确输出 `installationReceiptPresent=false` 并允许首次登记。更新器测试增至 20 项，发布脚本 48 项继续通过。该门禁仍未把预检等同于真实安装迁移。

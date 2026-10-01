@@ -267,6 +267,20 @@ class CandidateUpdateTests(unittest.TestCase):
                                             [home / 'a', home / 'b', home / 'c'], home=home)
             self.assertEqual(json.loads(path.read_text())['scope'], 'user')
 
+    def test_v2_preflight_accepts_missing_receipt_and_rejects_wrong_component_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            destinations = [home / 'control.app', home / 'ime.app', home / 'settings.app']
+            self.assertFalse(module.validate_existing_legacy_receipt(
+                'trial-20260905', destinations, home=home))
+            module.write_legacy_receipt(
+                'trial-20260905', 'inputia-1.1.1-85-test', destinations, home=home)
+            self.assertTrue(module.validate_existing_legacy_receipt(
+                'trial-20260905', destinations, home=home))
+            changed = list(destinations); changed[2] = home / 'other-settings.app'
+            with self.assertRaises(ValueError):
+                module.validate_existing_legacy_receipt('trial-20260905', changed, home=home)
+
     def test_symlink_source_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'real').mkdir();(root/'alias').symlink_to(root/'real')

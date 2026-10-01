@@ -159,6 +159,31 @@ def write_legacy_receipt(run_id, release_id, destinations, home=None):
     return receipt_path
 
 
+def validate_existing_legacy_receipt(run_id, destinations, home=None):
+    """只读核对已有收据；缺失表示首次登记，不把缺失伪装成已验证。"""
+    home = Path.home() if home is None else Path(home)
+    path = home / 'Library/Application Support/Inputia/installation.json'
+    if not path.exists():
+        return False
+    with path.open('r', encoding='utf-8') as stream:
+        value = json.load(stream)
+    expected_components = {
+        'control': str(destinations[0]),
+        'ime': str(destinations[1]),
+        'settings': str(destinations[2]),
+    }
+    if (value.get('schema_version') != 1
+            or value.get('product_id') != 'com.inputia'
+            or value.get('scope') != 'legacy_single_user'
+            or value.get('profile_id') != f'unified-candidate:{run_id}'
+            or value.get('uid') != os.getuid()
+            or value.get('data') != {'kind': 'legacy_candidate', 'run_id': run_id}
+            or value.get('components') != expected_components
+            or not re.fullmatch(r'[0-9a-f-]{36}', str(value.get('installation_id', '')))):
+        raise ValueError('已有安装收据与当前 legacy 组件或数据 profile 不匹配')
+    return True
+
+
 def identity(path):
     text = run('/usr/bin/codesign', '-d', '-r-', path)
     requirement = next(line.split('designated => ', 1)[1] for line in text.splitlines() if 'designated => ' in line)
@@ -272,6 +297,9 @@ def main():
     originals = [old_control, ime] + ([old_settings] if old_settings else [])
     destinations = [new_control, ime] + ([old_settings] if old_settings else [])
     sources = [canonical(args.control_app), canonical(args.inputia_app)] + ([new_settings] if new_settings else [])
+    receipt_present = validate_existing_legacy_receipt(args.run_id, originals) if args.release_v2 else False
+    if args.release_v2:
+        print(f'installationReceiptPresent={str(receipt_present).lower()}', flush=True)
     metadata = canonical(args.public_build); manifest = canonical(args.pair_manifest)
     if args.release_v2:
         public = json.loads(metadata.read_text())
