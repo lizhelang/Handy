@@ -36,7 +36,6 @@ case "${1:---preflight}" in
 esac
 # 元数据与工具链检查发生在读取签名输入及创建输出之前。
 "$RELEASE_PYTHON" "$REPO_ROOT/scripts/inputia_release.py" preflight --mode local
-: "${INPUTIA_PAIR_BUILD_METADATA:?必须提供配对公开构建元数据路径}"
 : "${INPUTIA_PAIR_PRIVATE_KEY:?必须提供配对签名私钥路径}"
 : "${INPUTIA_CODESIGN_IDENTITY:?必须提供已有稳定签名证书身份}"
 if [[ "$INPUTIA_CODESIGN_IDENTITY" == "-" ]]; then
@@ -57,6 +56,7 @@ else
   fi
 fi
 if [[ "$PAIR_IS_RELEASE_V2" == "0" ]]; then
+  : "${INPUTIA_PAIR_BUILD_METADATA:?必须提供配对公开构建元数据路径}"
   input_paths=("$INPUTIA_PAIR_BUILD_METADATA" "$INPUTIA_PAIR_PRIVATE_KEY")
 else
   input_paths=("$INPUTIA_PAIR_PRIVATE_KEY")
