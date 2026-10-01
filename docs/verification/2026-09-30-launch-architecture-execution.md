@@ -543,3 +543,9 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 体验包和配对校验已经使用 v2 releaseId 绑定，但 `release/product.toml` 仍将 `pair_trust_format` 声明为 1，导致公共预检把已淘汰的 profile-bound v1 信任继续列为阻断项。现已将产品唯一元数据切换为 `pair_trust_format = 2`，并把回归断言改为确认 v1 阻断消失、Developer ID/公证等真实未完成门禁仍保留。
 
 验证：发布合同测试 24 项通过；产品结构校验和生成配置漂移检查通过。公共预检仍明确阻断于脏工作区、公共发布开关、Developer ID/公证、发布签名验证器和最终制品验收，未因本次元数据修正而放行公开发布。
+
+### 第五十五批：v2 身份合同版体验包重新绑定
+
+在提交 `4e143435a8a0efdc53ca9d6a0f2c9609e412cee3` 的干净工作区重新构建本地 v2 三组件包，releaseId 为 `inputia-1.1.1-85-4e143435a8a0-edb2b549e66f4320ab3950c3b97783b6`，构建目录为 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-gM8LJZLj`。主程序、输入法和设置组件均通过本地签名、元数据、架构和配对清单检查；构建状态仍为 `installed=false`、`publicReleaseEligible=false`，公证未运行。
+
+归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r8.zip`，SHA-256 为 `4c2b8f98fc68889787c241015b7419e1beae3da261240ce315a1984d251de50f`；ZIP 完整性通过。对当前电脑旧版安装执行包内只读预检，返回 `installationReceiptPresent=false`、`releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`，没有执行覆盖安装或写入收据。
