@@ -81,6 +81,16 @@ def validate_profile(app, role, run_id):
         raise ValueError('组件身份或数据 profile 不匹配；拒绝迁移')
 
 
+def validate_release_v2(app, role, release_id):
+    expected_id = 'com.pais.handy.UnifiedCandidate' if role == 'control' else 'com.inputia.inputmethod.Inputia.UnifiedCandidate'
+    with (app/'Contents/Info.plist').open('rb') as stream:
+        info = plistlib.load(stream)
+    if (info.get('CFBundleIdentifier') != expected_id
+            or info.get('InputiaReleaseID') != release_id
+            or any(key in info for key in ('HandyProfileRunID', 'HandyDevelopmentCandidate', 'InputiaProfileRunID', 'InputiaDevelopmentCandidate'))):
+        raise ValueError('组件 release 身份或 v1 开发标记不匹配；拒绝 v2 迁移')
+
+
 def atomic_json(path, data):
     fd, temporary = tempfile.mkstemp(prefix='.permission-update-', dir=path.parent)
     try:
@@ -180,6 +190,7 @@ def main():
     parser.add_argument('--inputia-app', required=True)
     parser.add_argument('--pair-manifest', required=True)
     parser.add_argument('--public-build', required=True)
+    parser.add_argument('--release-v2', action='store_true', help='新组件使用 releaseId 绑定的 v2 身份；目标数据域仍由 --run-id 指定')
     parser.add_argument('--apply', action='store_true', help='默认只校验；此开关才执行更新')
     args = parser.parse_args()
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', args.run_id): raise ValueError('invalid run ID')
@@ -197,22 +208,36 @@ def main():
     originals = [old_control, ime]
     destinations = [new_control, ime]
     sources = [canonical(args.control_app), canonical(args.inputia_app)]
+    metadata = canonical(args.public_build); manifest = canonical(args.pair_manifest)
+    if args.release_v2:
+        public = json.loads(metadata.read_text())
+        if public.get('schema_version') != 2 or public.get('product_id') != 'com.inputia' or not isinstance(public.get('release_id'), str):
+            raise ValueError('无效 v2 public-build 元数据')
+        release_id = public['release_id']
+    else:
+        release_id = None
     for role, old, new in zip(['control', 'ime'], originals, sources):
         if new in originals or new in destinations: raise ValueError('构建源不能是安装路径')
         validate_profile(old, role, args.run_id)
-        validate_profile(new, role, args.run_id)
+        validate_release_v2(new, role, release_id) if args.release_v2 else validate_profile(new, role, args.run_id)
         if identity(old) != identity(new): raise ValueError('更新签名身份改变；拒绝要求用户反复重新授权')
-    metadata = canonical(args.public_build); manifest = canonical(args.pair_manifest)
     # 验证编译期公开元数据的归属/权限/内容；不使用清单本身提供的新信任根。
     import importlib.util
     spec = importlib.util.spec_from_file_location('build_trust', REPO/'native/unified-pair-auth/build_trust.py')
     trust_module = importlib.util.module_from_spec(spec); spec.loader.exec_module(trust_module)
-    trust_module.load(metadata, args.run_id)
+    if args.release_v2:
+        trust_module.load(metadata, context_path=canonical(metadata.parent/'metadata/build-context.json'))
+    else:
+        trust_module.load(metadata, args.run_id)
     with tempfile.TemporaryDirectory(prefix='inputia-update-verify-') as temporary:
         verifier = Path(temporary)/'verify'
-        run('/usr/bin/swiftc', '-parse-as-library', REPO/'native/unified-pair-auth/UnifiedPairAuth.swift', ROOT/'Tools/CandidateUpdateVerify.swift', '-o', verifier, timeout=90)
-        print(run(verifier, metadata, pair, pair, *originals, args.run_id).strip())
-        print(run(verifier, metadata, pair, manifest, *sources, args.run_id).strip())
+        if args.release_v2:
+            run('/usr/bin/swiftc', '-parse-as-library', REPO/'native/unified-pair-auth/UnifiedPairAuth.swift', REPO/'native/unified-pair-auth/ReleasePairAuthVerify.swift', '-o', verifier, timeout=90)
+            print(run(verifier, metadata, metadata, manifest, *sources).strip())
+        else:
+            run('/usr/bin/swiftc', '-parse-as-library', REPO/'native/unified-pair-auth/UnifiedPairAuth.swift', ROOT/'Tools/CandidateUpdateVerify.swift', '-o', verifier, timeout=90)
+            print(run(verifier, metadata, pair, pair, *originals, args.run_id).strip())
+            print(run(verifier, metadata, pair, manifest, *sources, args.run_id).strip())
         if not args.apply:
             print('updatePreflight=true permissionRecordsUnchanged=true'); return
         db_path = profile/'Handy/integration.db'
