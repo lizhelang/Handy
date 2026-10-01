@@ -113,8 +113,50 @@ def atomic_json(path, data):
         with os.fdopen(fd, 'w') as stream:
             json.dump(data, stream); stream.flush(); os.fsync(stream.fileno())
         os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
         if os.path.exists(temporary): os.unlink(temporary)
+
+
+def write_legacy_receipt(run_id, release_id, destinations, home=None):
+    """在 v2 提交点登记旧 profile；收据不改变数据路径，也不授权系统目录操作。"""
+    home = Path.home() if home is None else Path(home)
+    support = home / 'Library/Application Support/Inputia'
+    support.mkdir(mode=0o700, parents=True, exist_ok=True)
+    receipt_path = support / 'installation.json'
+    installation_id = str(uuid.uuid4())
+    if receipt_path.exists():
+        with receipt_path.open('r', encoding='utf-8') as stream:
+            previous = json.load(stream)
+        if (previous.get('schema_version') != 1
+                or previous.get('product_id') != 'com.inputia'
+                or previous.get('scope') != 'legacy_single_user'
+                or previous.get('profile_id') != f'unified-candidate:{run_id}'
+                or not re.fullmatch(r'[0-9a-f-]{36}', str(previous.get('installation_id', '')))):
+            raise ValueError('已有安装收据身份或作用域不匹配；拒绝覆盖')
+        installation_id = previous['installation_id']
+    receipt = {
+        'schema_version': 1,
+        'product_id': 'com.inputia',
+        'installation_id': installation_id,
+        'profile_id': f'unified-candidate:{run_id}',
+        'uid': os.getuid(),
+        'scope': 'legacy_single_user',
+        'data': {'kind': 'legacy_candidate', 'run_id': run_id},
+        'components': {
+            'control': str(destinations[0]),
+            'ime': str(destinations[1]),
+            'settings': str(destinations[2]),
+        },
+        'release_id': release_id,
+        'channel': 'candidate',
+    }
+    atomic_json(receipt_path, receipt)
+    return receipt_path
 
 
 def identity(path):
@@ -326,6 +368,8 @@ def main():
             if 'selectCurrentMatchesTarget=true' not in restored:
                 raise RuntimeError('原输入源恢复未得到确认')
             print(restored.strip())
+            receipt_path = write_legacy_receipt(args.run_id, release_id, destinations)
+            print(f'installationReceipt={receipt_path}', flush=True)
         except Exception:
             atomic_json(marker, {'schema_version':1, 'active':True, 'epoch':str(uuid.uuid4())})
             stop_known(destinations)

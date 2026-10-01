@@ -239,6 +239,34 @@ class CandidateUpdateTests(unittest.TestCase):
             self.assertEqual([path.joinpath('value').read_text() for path in destinations],
                              ['old-control', 'old-ime', 'old-settings'])
 
+    def test_v2_commit_writes_durable_legacy_receipt_and_preserves_installation_id(self):
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            destinations = [home / 'control.app', home / 'ime.app', home / 'settings.app']
+            receipt = module.write_legacy_receipt(
+                'trial-20260905', 'inputia-1.1.1-85-test', destinations, home=home)
+            self.assertEqual(receipt.stat().st_mode & 0o777, 0o600)
+            first = json.loads(receipt.read_text())
+            self.assertEqual(first['scope'], 'legacy_single_user')
+            self.assertEqual(first['data'], {'kind': 'legacy_candidate', 'run_id': 'trial-20260905'})
+            self.assertEqual(first['uid'], os.getuid())
+            second = module.write_legacy_receipt(
+                'trial-20260905', 'inputia-1.1.1-86-test', destinations, home=home)
+            self.assertEqual(first['installation_id'], json.loads(second.read_text())['installation_id'])
+            self.assertEqual(json.loads(second.read_text())['release_id'], 'inputia-1.1.1-86-test')
+
+    def test_v2_receipt_refuses_foreign_scope_without_overwriting_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            path = home / 'Library/Application Support/Inputia/installation.json'
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({'schema_version': 1, 'scope': 'user'}))
+            with self.assertRaises(ValueError):
+                module.write_legacy_receipt('trial-20260905', 'inputia-1.1.1-85-test',
+                                            [home / 'a', home / 'b', home / 'c'], home=home)
+            self.assertEqual(json.loads(path.read_text())['scope'], 'user')
+
     def test_symlink_source_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'real').mkdir();(root/'alias').symlink_to(root/'real')

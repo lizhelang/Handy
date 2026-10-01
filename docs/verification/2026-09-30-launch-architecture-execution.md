@@ -495,3 +495,9 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 验证：设置 crate 38 项单元测试、安装 6 项、维护 5 项和 updater 相关收据回归 1 项通过；两个 crate 的 rustfmt 检查和 diff 检查通过。该修正只改变路径解析，不创建目录、不迁移数据、不修改当前安装。
 
 随后补齐同一合同的配对清单定位：`Managed` 安装仍使用按 releaseId 分层的 `Inputia/Releases/<releaseId>/pair-manifest.json`；`LegacyCandidate` 则固定读取现有 `HandyUnifiedCandidate/<run_id>/pair-manifest.json`，与当前实际旧 profile 一致。安装测试新增旧 profile 配对清单路径断言并通过。该路径只用于收据解析和预检，实际旧单用户接管仍需具备独立系统目录授权的生产迁移助手。
+
+### 第四十八批：v2 提交点写入 legacy 安装收据
+
+此前 v2 Python 更新器在三组件替换成功后只留下 profile 配对清单，没有生成 `Inputia/installation.json`，Rust 更新核心无法从旧安装取得稳定的 installation ID、组件路径和 release 身份。现在 v2 成功恢复输入源后、结束维护标记前写入版本化 legacy 收据：首次生成随机 installation ID，后续更新保留该 ID；收据固定 `legacy_single_user`、`unified-candidate:<run_id>` 数据域和三组件绝对路径，使用 0600 临时文件、原子替换及父目录 fsync。已有非匹配收据会拒绝覆盖，v1 路径不写该收据。
+
+验证：更新器测试 19 项、发布脚本 48 项通过；新增收据生成、ID 保留、权限和 foreign-scope 拒绝回归。真实 `--apply` 尚未执行，因此当前电脑仍没有因为本批代码自动产生收据；安装收据只有在用户明确执行 v2 覆盖安装后才会写入。
