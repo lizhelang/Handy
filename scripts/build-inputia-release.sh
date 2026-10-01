@@ -141,6 +141,14 @@ bun run tauri build --bundles app \
   --config "$SIGN_OVERLAY"
 CONTROL_APP="$CARGO_TARGET_DIR/release/bundle/macos/Inputia.app"
 [[ -d "$CONTROL_APP" ]] || { echo "控制中心构建产物缺失" >&2; exit 1; }
+if [[ "$PAIR_IS_RELEASE_V2" == "1" ]]; then
+  # Tauri 会把候选配置中的标记合并回最终 Info.plist；v2 不得携带
+  # 可复用的 trial 身份，因此在最终签名后再次删除并重新封装签名。
+  control_plist="$CONTROL_APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Delete :HandyProfileRunID" "$control_plist" 2>/dev/null || true
+  /usr/libexec/PlistBuddy -c "Delete :HandyDevelopmentCandidate" "$control_plist" 2>/dev/null || true
+  codesign --force --deep --sign "$INPUTIA_CODESIGN_IDENTITY" "$CONTROL_APP" >/dev/null
+fi
 
 INPUTIA_UNIFIED_CANDIDATE=1 INPUTIA_RELEASE=1 \
   zsh macos/InputiaInputMethod/build.sh
