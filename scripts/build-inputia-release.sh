@@ -7,14 +7,14 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 RELEASE_PYTHON="${INPUTIA_RELEASE_PYTHON:-python3}"
 if [[ "${1:-}" == "--help" ]]; then
   cat <<'HELP'
-用法：scripts/build-inputia-release.sh [--preflight | --preflight-public | --build-local]
-默认只读预检；--build-local 才执行已有本机 v1 配对构建。
+用法：scripts/build-inputia-release.sh [--preflight | --preflight-public | --build-local | --build-local-v2]
+默认只读预检；--build-local 构建 v1 本机体验版，--build-local-v2 构建绑定 releaseId 的 v2 本机配对制品。
 本机构建必须显式提供：
   INPUTIA_PAIR_BUILD_METADATA  已有配对公开构建元数据的绝对路径
   INPUTIA_PAIR_PRIVATE_KEY     配对签名私钥的绝对路径（不复制、不输出内容）
   INPUTIA_CODESIGN_IDENTITY    已有稳定证书身份，不能为临时签名 -
 可选：
-  INPUTIA_PROFILE_RUN_ID       默认 trial-20260905
+  INPUTIA_PROFILE_RUN_ID       v1 默认 trial-20260905；v2 禁止设置
   CARGO_TARGET_DIR             控制中心编译输出目录
   INPUTIA_RELEASE_PYTHON       Python >= 3.11（默认 PATH python3）
 公共签名、公证、独立安装器和制品验收尚未完成时，公共预检始终阻断。
@@ -26,10 +26,12 @@ if [[ $# -gt 1 ]]; then
   echo "未知参数；使用 --help 查看用法" >&2
   exit 2
 fi
+PAIR_IS_RELEASE_V2=0
 case "${1:---preflight}" in
   --preflight) exec "$RELEASE_PYTHON" "$REPO_ROOT/scripts/inputia_release.py" preflight --mode local ;;
   --preflight-public) exec "$RELEASE_PYTHON" "$REPO_ROOT/scripts/inputia_release.py" preflight --mode public ;;
   --build-local) ;;
+  --build-local-v2) PAIR_IS_RELEASE_V2=1 ;;
   *) echo "未知参数；使用 --help 查看用法" >&2; exit 2 ;;
 esac
 # 元数据与工具链检查发生在读取签名输入及创建输出之前。
@@ -41,12 +43,25 @@ if [[ "$INPUTIA_CODESIGN_IDENTITY" == "-" ]]; then
   echo "正式版拒绝临时签名身份" >&2
   exit 2
 fi
-export INPUTIA_PROFILE_RUN_ID="${INPUTIA_PROFILE_RUN_ID:-trial-20260905}"
-if [[ ! "$INPUTIA_PROFILE_RUN_ID" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
-  echo "无效 profile ID" >&2
-  exit 2
+if [[ "$PAIR_IS_RELEASE_V2" == "1" ]]; then
+  if [[ -n "${INPUTIA_PROFILE_RUN_ID:-}" ]]; then
+    echo "v2 构建不能携带 v1 profile ID" >&2
+    exit 2
+  fi
+  unset INPUTIA_PROFILE_RUN_ID || true
+else
+  export INPUTIA_PROFILE_RUN_ID="${INPUTIA_PROFILE_RUN_ID:-trial-20260905}"
+  if [[ ! "$INPUTIA_PROFILE_RUN_ID" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
+    echo "无效 profile ID" >&2
+    exit 2
+  fi
 fi
-for input_path in "$INPUTIA_PAIR_BUILD_METADATA" "$INPUTIA_PAIR_PRIVATE_KEY"; do
+if [[ "$PAIR_IS_RELEASE_V2" == "0" ]]; then
+  input_paths=("$INPUTIA_PAIR_BUILD_METADATA" "$INPUTIA_PAIR_PRIVATE_KEY")
+else
+  input_paths=("$INPUTIA_PAIR_PRIVATE_KEY")
+fi
+for input_path in "${input_paths[@]}"; do
   if [[ "$input_path" != /* || ! -f "$input_path" || -L "$input_path" ]]; then
     echo "配对输入必须是绝对路径的普通文件，不能使用符号链接" >&2
     exit 2
@@ -54,9 +69,6 @@ for input_path in "$INPUTIA_PAIR_BUILD_METADATA" "$INPUTIA_PAIR_PRIVATE_KEY"; do
 done
 
 cd "$REPO_ROOT"
-# 校验公开元数据合同；只生成公钥常量，不读取私钥。
-/usr/bin/python3 native/unified-pair-auth/build_trust.py \
-  --metadata "$INPUTIA_PAIR_BUILD_METADATA" --run-id "$INPUTIA_PROFILE_RUN_ID" --emit rust >/dev/null
 BUILD_BASE="$HOME/Library/Application Support/HandyUnifiedBuilds"
 mkdir -p "$BUILD_BASE"
 RELEASE_DIR="$(/usr/bin/mktemp -d "$BUILD_BASE/release-XXXXXXXX")"
@@ -65,17 +77,45 @@ METADATA_DIR="$RELEASE_DIR/metadata"
 "$RELEASE_PYTHON" scripts/inputia_release.py prepare --mode local --output-dir "$METADATA_DIR"
 export INPUTIA_RELEASE_CONTEXT="$METADATA_DIR/build-context.json"
 export INPUTIA_RELEASE_PYTHON="$RELEASE_PYTHON"
+if [[ "$PAIR_IS_RELEASE_V2" == "1" ]]; then
+  # v2 信任材料绑定本次已准备的 release context；只从私钥工具读取公钥，不把私钥复制到构建目录。
+  /usr/bin/swiftc -parse-as-library \
+    native/unified-pair-auth/UnifiedPairAuth.swift \
+    native/unified-pair-auth/PairAuthTool.swift \
+    -o "$RELEASE_DIR/PairAuthTool"
+  PUBLIC_KEY_HEX="$("$RELEASE_DIR/PairAuthTool" public-key "$INPUTIA_PAIR_PRIVATE_KEY")"
+  if [[ ! "$PUBLIC_KEY_HEX" =~ ^04[0-9a-fA-F]{128}$ ]]; then
+    echo "配对工具返回的公钥格式无效" >&2
+    exit 2
+  fi
+  /usr/bin/printf '%s' "$PUBLIC_KEY_HEX" | /usr/bin/xxd -r -p > "$RELEASE_DIR/public-key.x963"
+  chmod 600 "$RELEASE_DIR/public-key.x963"
+  /usr/bin/python3 native/unified-pair-auth/build_trust.py \
+    --metadata "$RELEASE_DIR/public-build.json" \
+    --public-key "$RELEASE_DIR/public-key.x963" \
+    --release-context "$INPUTIA_RELEASE_CONTEXT"
+  INPUTIA_PAIR_BUILD_METADATA="$RELEASE_DIR/public-build.json"
+  export INPUTIA_PAIR_BUILD_METADATA
+else
+  # 校验公开元数据合同；只生成公钥常量，不读取私钥。
+  /usr/bin/python3 native/unified-pair-auth/build_trust.py \
+    --metadata "$INPUTIA_PAIR_BUILD_METADATA" --run-id "$INPUTIA_PROFILE_RUN_ID" --emit rust >/dev/null
+fi
 SIGN_OVERLAY="$RELEASE_DIR/signing-overlay.json"
-"$RELEASE_PYTHON" - "$SIGN_OVERLAY" "$INPUTIA_CODESIGN_IDENTITY" "$RELEASE_DIR" "$INPUTIA_PROFILE_RUN_ID" <<'PY'
+"$RELEASE_PYTHON" - "$SIGN_OVERLAY" "$INPUTIA_CODESIGN_IDENTITY" "$RELEASE_DIR" "${INPUTIA_PROFILE_RUN_ID:-}" "$PAIR_IS_RELEASE_V2" <<'PY'
 import json
 import plistlib
 import sys
 from pathlib import Path
 with Path("src-tauri/InputiaReleaseInfo.plist").open("rb") as stream:
     info = plistlib.load(stream)
-info["HandyProfileRunID"] = sys.argv[4]
-# 仅保留当前本机 v1 信任桥；渠道不进入不可变程序。
-info["HandyDevelopmentCandidate"] = True
+if sys.argv[5] == "1":
+    info["HandyProfileRunID"] = sys.argv[4]
+    # 仅保留当前本机 v1 信任桥；渠道不进入不可变程序。
+    info["HandyDevelopmentCandidate"] = True
+else:
+    info.pop("HandyProfileRunID", None)
+    info.pop("HandyDevelopmentCandidate", None)
 release_plist = Path(sys.argv[3]) / "InputiaReleaseInfo.plist"
 with release_plist.open("wb") as stream:
     plistlib.dump(info, stream)
@@ -104,19 +144,25 @@ CONTROL_APP="$CARGO_TARGET_DIR/release/bundle/macos/Inputia.app"
 
 INPUTIA_UNIFIED_CANDIDATE=1 INPUTIA_RELEASE=1 \
   zsh macos/InputiaInputMethod/build.sh
-IME_BUILD="$REPO_ROOT/macos/InputiaInputMethod/candidate-builds/$INPUTIA_PROFILE_RUN_ID"
+if [[ "$PAIR_IS_RELEASE_V2" == "1" ]]; then
+  V2_RUN_ID="release-$(/usr/bin/shasum -a 256 "$INPUTIA_PAIR_BUILD_METADATA" | /usr/bin/awk '{print substr($1,1,24)}')"
+  IME_BUILD="$REPO_ROOT/macos/InputiaInputMethod/candidate-builds/$V2_RUN_ID"
+else
+  IME_BUILD="$REPO_ROOT/macos/InputiaInputMethod/candidate-builds/$INPUTIA_PROFILE_RUN_ID"
+fi
 # 固定最终包副本，避免后续构建改变清单对应的文件。
 /usr/bin/ditto "$CONTROL_APP" "$RELEASE_DIR/Inputia.app"
 /usr/bin/ditto "$IME_BUILD/InputiaUnifiedCandidate.app" "$RELEASE_DIR/InputiaUnifiedCandidate.app"
 /usr/bin/ditto "$IME_BUILD/Inputia 候选设置.app" "$RELEASE_DIR/Inputia 设置.app"
 "$RELEASE_PYTHON" scripts/inputia_release.py verify-bundles \
   --directory "$RELEASE_DIR" --context "$INPUTIA_RELEASE_CONTEXT" --scope local-legacy
-/usr/bin/swiftc -parse-as-library \
-  native/unified-pair-auth/UnifiedPairAuth.swift \
-  native/unified-pair-auth/PairAuthTool.swift \
-  -o "$RELEASE_DIR/PairAuthTool"
+if [[ "$PAIR_IS_RELEASE_V2" == "1" ]]; then
+  PAIR_BINDING_ARGS=(--release-context "$INPUTIA_RELEASE_CONTEXT")
+else
+  PAIR_BINDING_ARGS=(--run-id "$INPUTIA_PROFILE_RUN_ID")
+fi
 /usr/bin/python3 native/unified-pair-auth/build_trust.py \
-  --metadata "$INPUTIA_PAIR_BUILD_METADATA" --run-id "$INPUTIA_PROFILE_RUN_ID" \
+  --metadata "$INPUTIA_PAIR_BUILD_METADATA" "${PAIR_BINDING_ARGS[@]}" \
   --sign-pair --handy "$RELEASE_DIR/Inputia.app" \
   --inputia "$RELEASE_DIR/InputiaUnifiedCandidate.app" \
   --build-tool "$RELEASE_DIR/PairAuthTool" \
