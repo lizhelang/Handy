@@ -466,4 +466,6 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 
 新增 `ReleasePairAuthVerify.swift`，使用嵌入的 v2 公钥、keyID、productID 和 releaseID 验证 pair-manifest，再以 manifest 中的 cdhash/identifier 检查控制中心与输入法；对本次成品实测 `releasePairVerified=true`。后续 v2 构建脚本会在生成清单后自动执行同一验签。
 
+更新器预检增加 `--release-v2` 分支：目标数据域仍由显式 `--run-id` 指定，旧安装按 v1 profile 校验，新组件按 releaseId、无开发标记和 v2 pair-manifest 校验；v1 更新路径不变。v2 归档现在附带“安装v2体验版.command”和“仅检查v2更新.command”，命令默认只预检，安装仍需用户输入确认。针对身份门禁的更新器测试 15 项通过；重新归档得到 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r2.zip`，两个入口 shell 语法和 ZIP 解压检查通过。
+
 边界：本批只完善本地构建与配对信任边界，不安装、不覆盖日用组件、不上传公开渠道。当前仍使用本机测试签名；Developer ID、公证、安装器/回滚、生产 NativeAdapter、真实旧库迁移与 App pending 启动接线仍未完成，不能把本地签名产物称为公开发布版本。
