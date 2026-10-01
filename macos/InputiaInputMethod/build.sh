@@ -170,6 +170,10 @@ if [[ "$IS_CANDIDATE" == "1" ]]; then
   # macOS 27 上候选目录的 proc-macro dylib 在并行链接时可能出现
   # LINKEDIT 未对齐；单任务构建牺牲吞吐，换取确定性和可复现性。
   export CARGO_BUILD_JOBS=1
+  # workspace release profile 的 strip=true 会让 SDK 27.2 生成的
+  # proc-macro dylib 的 string pool 失去 8 字节对齐；候选中间产物保留
+  # 符号，最终 App 仍由 Tauri/codesign 负责签名与外层体积控制。
+  export CARGO_PROFILE_RELEASE_STRIP=none
 fi
 RUST_TOOLCHAIN="${INPUTIA_RUST_TOOLCHAIN:-1.96.0}"
 if [[ -n "${MACOSX_DEPLOYMENT_TARGET:-}" && "$MACOSX_DEPLOYMENT_TARGET" != "$MIN_MACOS_VERSION" && "$MACOSX_DEPLOYMENT_TARGET" != "13" && "$MACOSX_DEPLOYMENT_TARGET" != "13.0.0" ]]; then
