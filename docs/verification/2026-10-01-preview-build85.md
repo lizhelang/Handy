@@ -75,9 +75,9 @@
 
 ## 最终交付记录
 
-- 压缩包：`/Users/lzl/Downloads/Inputia-1.1.1-build85-preview-20261001.zip`，959,606,155 字节（约 960 MB）。
+- 压缩包：`/Users/lzl/Downloads/Inputia-1.1.1-build85-preview-20261001.zip`（约 960 MB）。
 - 已解压目录：`/Users/lzl/Downloads/Inputia-1.1.1-build85-preview-20261001`；保留整个目录，安装入口为其中的 `安装体验版.command`。
-- SHA-256：`fc64b6016eaa564aa098db51c725d26f87f3edb6f0202dad0bf03da00dcee9c9`。同目录提供 `.zip.sha256` 和 `.verification.json`。
+- SHA-256 与解压/签名校验摘要保存在压缩包旁的 `.zip.sha256` 和 `.verification.json`；摘要不嵌入自身所描述的压缩包，避免形成循环引用。
 - 压缩包 1,002 个条目的 CRC 检查通过；另行解压后，三个 App 的签名和双组件配对再次通过验证；入口可执行权限及公开元数据 0600 保持正确。
 - 未包含私钥、构建签名配置或本机构建续跑脚本。安装状态仍为 **未安装**；等待用户确认覆盖安装后再进行真实输入体验。
 
