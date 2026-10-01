@@ -228,6 +228,29 @@ class ReleaseContractTests(unittest.TestCase):
             with self.assertRaises(release.ReleaseError):
                 release.verify_artifacts(self.manifest, root)
 
+    def test_bind_manifest_recomputes_frozen_artifact_digests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            artifact_root = root / "artifacts"
+            artifact_root.mkdir()
+            for item in [*self.manifest["components"], *self.manifest["distribution_artifacts"], self.manifest["pair_manifest"]]:
+                path = artifact_root / item["artifact"]
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"bound-artifact")
+            context = {"schema_version": 1, "phase": "prepared", "product_id": self.product["product_id"], "release_id": self.manifest["release_id"], "version": self.manifest["version"], "build": self.manifest["build"], "source_commit": self.manifest["source_commit"], "target": self.manifest["target"], "product_digest": hashlib.sha256(release.canonical_bytes(self.product)).hexdigest()}
+            context_path = root / "context.json"
+            context_path.write_text(json.dumps(context))
+            template_path = root / "template.json"
+            template_path.write_text(json.dumps(self.manifest))
+            output = root / "release-manifest.json"
+            result = release.bind_manifest(template_path, context_path, artifact_root, output, self.product)
+            self.assertTrue(result["manifest_bound"])
+            bound = release.read_json(output)
+            expected = hashlib.sha256(b"bound-artifact").hexdigest()
+            self.assertTrue(all(item["sha256"] == expected for item in bound["components"]))
+            self.assertEqual(bound["distribution_artifacts"][0]["size"], len(b"bound-artifact"))
+            self.assertEqual(bound["pair_manifest"]["sha256"], expected)
+
     def test_cli_does_not_claim_signature_verification(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory).resolve() / "manifest.json"

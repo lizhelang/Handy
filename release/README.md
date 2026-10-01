@@ -46,6 +46,18 @@ python3 scripts/inputia_release.py validate \
   --artifact-dir /绝对路径/冻结制品目录
 ```
 
+冻结制品后可用 `bind-manifest` 将模板绑定到本次 `build-context.json`，由工具重新计算组件、分发包和配对清单的摘要/大小：
+
+```sh
+python3 scripts/inputia_release.py bind-manifest \
+  --template /绝对路径/manifest-template.json \
+  --context /绝对路径/build-context.json \
+  --artifact-dir /绝对路径/冻结制品目录 \
+  --output /绝对路径/release-manifest.json
+```
+
+该命令拒绝上下文身份、目标或产品摘要不一致，拒绝软链接和目录制品，并以独占方式写出未签名清单；它不会生成签名、公证或公开发布授权。
+
 `--kind` 还支持 `attestation`、`feed`。输入可以是原始 payload，或符合 `signed-envelope.schema.json` 的 `{schema_version,payload_kind,payload,signatures}`。返回的 `document_sha256` 始终覆盖输入文件的原始字节。签名待签编码使用 `canonical_bytes(payload)`：UTF-8、排序字段、无多余空格、仅 schema 允许的有界整数；`signatures` 不进入待签字节。
 
 - 结构检查拒绝重复 JSON 字段、NaN/Infinity、未知字段、布尔值假整数、重复身份、越界范围、绝对路径和路径穿越。

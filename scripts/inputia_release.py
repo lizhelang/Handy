@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime as dt
 import hashlib
 import json
@@ -261,6 +262,39 @@ def verify_artifacts(manifest, directory):
         require(file_digest(path) == artifact["sha256"], "制品摘要不匹配")
 
 
+def bind_manifest(template_path, context_path, artifact_dir, output_path, product=None):
+    """将冻结制品摘要绑定到 manifest 模板；不执行签名或发布授权。"""
+    product = product or load_product()
+    template = read_json(template_path)
+    validate_manifest(template, product)
+    context = read_json(context_path)
+    require(context.get("schema_version") == 1 and context.get("phase") == "prepared", "构建上下文不是已预检的冻结上下文")
+    require(context.get("product_id") == product["product_id"], "构建上下文产品身份不匹配")
+    require(context.get("product_digest") == hashlib.sha256(canonical_bytes(product)).hexdigest(), "构建上下文产品摘要不匹配")
+    for key in ("release_id", "version", "build", "source_commit"):
+        require(template.get(key) == context.get(key), f"manifest 与构建上下文的 {key} 不一致")
+    require(template["target"] == context["target"], "manifest 与构建目标不一致")
+    bound = copy.deepcopy(template)
+    entries = [*bound["components"], *bound["distribution_artifacts"], bound["pair_manifest"]]
+    root = Path(artifact_dir).resolve(strict=True)
+    for entry in entries:
+        relative = safe_relative(entry["artifact"])
+        path = root / relative
+        require(path.resolve(strict=True).is_relative_to(root), "制品越出冻结目录")
+        cursor = root
+        for part in Path(relative).parts:
+            cursor = cursor / part
+            require(not cursor.is_symlink(), "制品路径禁止符号链接")
+        require(stat.S_ISREG(path.stat().st_mode), "制品必须是冻结的普通文件")
+        entry["sha256"] = file_digest(path)
+        if "size" in entry:
+            entry["size"] = path.stat().st_size
+    validate_manifest(bound, product, expect_current_build=True)
+    verify_artifacts(bound, root)
+    write_file(output_path, (json.dumps(bound, ensure_ascii=False, indent=2) + "\n").encode(), exclusive=True)
+    return {"manifest_bound": True, "document_sha256": file_digest(output_path), "public_release_eligible": False}
+
+
 def generated_files(product):
     control = next(c for c in product["components"] if c["role"] == "control")
     overlay = {"$schema": "https://schema.tauri.app/config/2", "productName": product["name"], "identifier": control["bundle_id"], "version": product["version"], "bundle": {"createUpdaterArtifacts": False, "targets": ["app"], "resources": ["resources/**/*"], "macOS": {"minimumSystemVersion": product["target"]["min_os"], "infoPlist": "InputiaReleaseInfo.plist", "signingIdentity": "-"}}}
@@ -438,6 +472,11 @@ def main(argv=None):
     bundles.add_argument("--directory", type=Path, required=True)
     bundles.add_argument("--context", type=Path, required=True)
     bundles.add_argument("--scope", choices=["release", "local-legacy"], default="release")
+    bind = sub.add_parser("bind-manifest")
+    bind.add_argument("--template", type=Path, required=True)
+    bind.add_argument("--context", type=Path, required=True)
+    bind.add_argument("--artifact-dir", type=Path, required=True)
+    bind.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         product = load_product(args.product)
@@ -461,6 +500,8 @@ def main(argv=None):
             result = {"metadata_applied": True, "role": args.role}
         elif args.command == "verify-bundles":
             result = verify_bundles(args.directory, args.context, product, args.scope)
+        elif args.command == "bind-manifest":
+            result = bind_manifest(args.template, args.context, args.artifact_dir, args.output, product)
         else:
             value = unwrap_document(read_json(args.document), args.kind, product)
             if args.artifact_dir:
