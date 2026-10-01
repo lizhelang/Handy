@@ -505,3 +505,11 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 在提交 `8c2488b134feb0f2ada21a7898d77fc1f8af9dd7` 的干净工作区重新构建三组件，输出目录为 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-00701NOR`，releaseId 为 `inputia-1.1.1-85-8c2488b134fe-35d886d4615e4e4c8c8349201b45ee32`。重新归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r4.zip`，SHA-256 为 `8dbd4817e7b7c847ae2d487153ea9f1f8ff39d887fd712aecc33e777f2fa7d72`；ZIP 完整性通过，包内更新器已确认包含 `write_legacy_receipt` 和 `--settings-app`。构建、公证和安装状态仍分别为 `publicReleaseEligible=false`、`notarization=NOT_RUN`、`installed=false`。
 
 新增 v2 预检收据门禁：已有 `installation.json` 时必须匹配当前 UID、`legacy_single_user`、`unified-candidate:<run_id>`、三组件准确路径和 legacy 数据对象；不匹配即拒绝，缺失则明确输出 `installationReceiptPresent=false` 并允许首次登记。更新器测试增至 20 项，发布脚本 48 项继续通过。该门禁仍未把预检等同于真实安装迁移。
+
+### 第四十九批：收据门禁版最终体验包
+
+在提交 `7a581dff264b65f5ae58da2b41347937608b98b8` 的干净工作区重新运行 v2 三组件构建，确保体验包包含收据预检门禁、收据写入和三组件更新入口的同一源码版本。构建输出目录为 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-SYf5Ho7p`，releaseId 为 `inputia-1.1.1-85-7a581dff264b-b840707e1d844189b9139fc00acc567d`；主程序、输入法、设置组件均为 arm64、macOS 13+，构建结果明确 `installed=false`、`publicReleaseEligible=false`，公证为 `NOT_RUN`。
+
+重新归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r5.zip`，SHA-256 为 `110025c2962a67005020f066fe98d297ad372addec359aff0c982908de69d66e`；`unzip -t` 通过。包内更新器已确认包含 `validate_existing_legacy_receipt`、`write_legacy_receipt` 和 `--settings-app`。相关更新器测试 20 项、发布脚本测试 48 项通过；本次构建输出中的成套自检与 release manifest 验签通过。
+
+该制品仍是本地测试签名的可安装体验包，不是公开发布包。Developer ID、公证、正式安装器/回滚界面、生产 NativeAdapter、真实旧库迁移和 7 天观察仍未完成；本次没有执行 `--apply`，没有覆盖当前电脑上的旧组件、切换输入源或写入真实安装收据。
