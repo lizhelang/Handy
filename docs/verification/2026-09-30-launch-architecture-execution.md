@@ -458,6 +458,8 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 
 发布脚本新增 `--build-local-v2`。v2 不再接受可复用的 `trial-*` profile，而是在同一份 release context 下由配对私钥派生公开信任材料，生成 `schema_version=2` 的 `public-build.json`，并把 `release_id` 绑定到控制中心与输入法配对清单。v2 控制中心的 release plist 会移除 `HandyProfileRunID` 与 `HandyDevelopmentCandidate`，输入法构建使用同一 releaseId 生成隔离 run slot；v1 本地体验构建路径保持不变。
 
-验证：`build_trust.py` 12 项、`scripts/tests` 输入ia 定向 48 项、脚本语法与 diff 检查通过。v2 主应用已完成 arm64 release 编译和本地证书签名，生成的公开元数据显示 `schema_version=2`、`product_id=com.inputia`、releaseId 与 source commit 一致；不会把私钥放入构建目录。输入法候选构建在三个全新隔离目录中均命中 macOS `serde_derive` proc-macro 动态库的 `mis-aligned LINKEDIT string pool`，固定 `CARGO_INCREMENTAL=0` 后仍复现，并最终因静态库数量不足退出。双组件 v2 安装包因此未生成。
+验证：`build_trust.py` 12 项、`scripts/tests` 输入ia 定向 48 项、脚本语法与 diff 检查通过。失败的 `serde_derive` 动态库经 `otool` 核对为 strip 后 `LC_SYMTAB.stroff` 未按 8 字节对齐；候选构建现固定 `CARGO_INCREMENTAL=0`、`CARGO_BUILD_JOBS=1` 和 `CARGO_PROFILE_RELEASE_STRIP=none`。在提交 `05ed5621353c7e2f11d591df75cc13d48b4764d0` 的干净工作区重跑后，主应用、输入法和设置辅助应用均完成 arm64 release 编译、签名和候选夹具自检。`scripts/inputia_release.py verify-bundles --scope local-legacy` 三组件元数据/最低系统检查通过，三个 App `codesign --verify --deep --strict` 通过；`public-build.json` 为 schema v2，pair-manifest 的 releaseID 与 release context 一致，私钥未进入输出目录。
+
+本次成套本地 v2 构建目录为 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-uQ6DZAQp`，版本为 1.1.1/build85，releaseId 为 `inputia-1.1.1-85-05ed5621353c-37a703a27f344cb387c2c290933a6627`。构建仍明确标记 `installed=false`、`publicReleaseEligible=false`；本机测试证书、公证、独立安装器/更新器生产接线、真实已安装迁移和公开渠道仍未完成。
 
 边界：本批只完善本地构建与配对信任边界，不安装、不覆盖日用组件、不上传公开渠道。当前仍使用本机测试签名；Developer ID、公证、安装器/回滚、生产 NativeAdapter、真实旧库迁移与 App pending 启动接线仍未完成，不能把本地签名产物称为公开发布版本。
