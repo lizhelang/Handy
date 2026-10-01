@@ -176,6 +176,18 @@ fi
   --build-tool "$RELEASE_DIR/PairAuthTool" \
   --private-key "$INPUTIA_PAIR_PRIVATE_KEY" \
   --manifest "$RELEASE_DIR/pair-manifest.json"
+if [[ "$PAIR_IS_RELEASE_V2" == "1" ]]; then
+  VERIFY_DIR="$(/usr/bin/mktemp -d "$RELEASE_DIR/.pair-verify-XXXXXX")"
+  /usr/bin/swiftc -parse-as-library \
+    native/unified-pair-auth/UnifiedPairAuth.swift \
+    native/unified-pair-auth/ReleasePairAuthVerify.swift \
+    -o "$VERIFY_DIR/verify"
+  "$VERIFY_DIR/verify" \
+    "$RELEASE_DIR/public-build.json" "$RELEASE_DIR/public-build.json" \
+    "$RELEASE_DIR/pair-manifest.json" "$RELEASE_DIR/Inputia.app" \
+    "$RELEASE_DIR/InputiaUnifiedCandidate.app"
+  /bin/rm -rf "$VERIFY_DIR"
+fi
 printf 'releaseDirectory=%s\ncontrolApp=%s\ninputiaApp=%s\nsettingsApp=%s\npairManifest=%s\ninstalled=false\npublicReleaseEligible=false\n' \
   "$RELEASE_DIR" "$RELEASE_DIR/Inputia.app" "$RELEASE_DIR/InputiaUnifiedCandidate.app" \
   "$RELEASE_DIR/Inputia 设置.app" "$RELEASE_DIR/pair-manifest.json"
