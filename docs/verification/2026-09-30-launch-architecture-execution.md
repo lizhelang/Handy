@@ -462,4 +462,6 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 
 本次成套本地 v2 构建目录为 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-uQ6DZAQp`，版本为 1.1.1/build85，releaseId 为 `inputia-1.1.1-85-05ed5621353c-37a703a27f344cb387c2c290933a6627`。构建仍明确标记 `installed=false`、`publicReleaseEligible=false`；本机测试证书、公证、独立安装器/更新器生产接线、真实已安装迁移和公开渠道仍未完成。
 
+新增 `scripts/package-inputia-v2-local-bundle.py` 对该目录做只读身份/签名/私钥排除检查后，用无资源叉、无扩展属性、无 ACL、无 quarantine 的 `ditto` 归档，输出 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local.zip` 及外置 SHA-256；ZIP 完整性测试通过。该归档是可审查的本地成套制品，不是可直接替换现有安装的 v2 安装器。
+
 边界：本批只完善本地构建与配对信任边界，不安装、不覆盖日用组件、不上传公开渠道。当前仍使用本机测试签名；Developer ID、公证、安装器/回滚、生产 NativeAdapter、真实旧库迁移与 App pending 启动接线仍未完成，不能把本地签名产物称为公开发布版本。
