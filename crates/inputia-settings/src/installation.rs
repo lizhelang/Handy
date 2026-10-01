@@ -176,14 +176,22 @@ impl InstallationReceipt {
             return Err(InstallationError::IdentityMismatch);
         }
         let home = &context.home;
-        let control = match self.scope {
-            InstallationScope::User => home.join("Applications/Inputia.app"),
-            InstallationScope::LegacySingleUser => PathBuf::from("/Applications/Inputia.app"),
+        let (control, settings) = match self.scope {
+            InstallationScope::User => (
+                home.join("Applications/Inputia.app"),
+                home.join("Applications/Inputia 设置.app"),
+            ),
+            // 旧版安装的三个公开组件都位于系统 Applications / Input Methods 路径；
+            // 数据仍然按当前用户的 legacy profile 定位，不把程序路径当作数据迁移。
+            InstallationScope::LegacySingleUser => (
+                PathBuf::from("/Applications/Inputia.app"),
+                PathBuf::from("/Applications/Inputia 设置.app"),
+            ),
         };
         let expected = ComponentPaths {
             control,
             ime: home.join("Library/Input Methods/InputiaUnifiedCandidate.app"),
-            settings: home.join("Applications/Inputia 设置.app"),
+            settings,
         };
         for path in [
             &self.components.control,

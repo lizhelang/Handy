@@ -487,3 +487,9 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 重新归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r3.zip`，SHA-256 为 `e16150de2ad82934fef81060b554221ce412745100f86aea513b3f27429b448f`；ZIP 条目检查通过。入口已携带 `--settings-app`，因此交付包和源码现在都要求 v2 更新同时处理设置组件。该包仍未执行覆盖安装。
 
 同一工作区随后完成发布与更新核心回归：`crates/inputia-release` 为 24 项，`crates/inputia-updater` 单元测试 36 项、归档测试 17 项、事务故障矩阵 21 项，合计 98 项全部通过。测试均使用临时目录、合成密钥或合成 NativeAdapter；没有读取 Developer ID/公证凭据，也没有操作已安装程序或真实用户数据库。P3 的生产 NativeAdapter、登录恢复入口、图形安装器以及 P4 的正式签名/公证/渠道仍是未完成条件。
+
+### 第四十六批：旧单用户收据的三组件路径修正
+
+修正 `inputia-settings::installation` 对 `LegacySingleUser` 的路径合同：旧版三组件安装的主程序和设置启动器都在 `/Applications`，输入法仍在当前用户的 `~/Library/Input Methods`；数据目录继续按当前用户的 `trial-*` legacy profile 定位。此前解析器只把主程序放到 `/Applications`，会把设置组件错误算到 `~/Applications`，从而阻断旧收据与三组件更新事务的绑定。
+
+验证：设置 crate 38 项单元测试、安装 6 项、维护 5 项和 updater 相关收据回归 1 项通过；两个 crate 的 rustfmt 检查和 diff 检查通过。该修正只改变路径解析，不创建目录、不迁移数据、不修改当前安装。

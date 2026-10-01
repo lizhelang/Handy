@@ -73,6 +73,7 @@ fn legacy_trial_retains_exact_profile_and_both_data_roots() {
     let (context, mut receipt) = fixture();
     receipt.scope = InstallationScope::LegacySingleUser;
     receipt.components.control = "/Applications/Inputia.app".into();
+    receipt.components.settings = "/Applications/Inputia 设置.app".into();
     receipt.data = DataLocation::LegacyCandidate {
         run_id: "trial-20260905".into(),
     };
