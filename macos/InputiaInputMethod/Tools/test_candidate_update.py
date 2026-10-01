@@ -72,6 +72,23 @@ class CandidateUpdateTests(unittest.TestCase):
             path.write_bytes(plistlib.dumps(info))
             with self.assertRaises(ValueError): module.validate_profile(app, 'control', 'same')
 
+    def test_release_v2_requires_release_identity_and_rejects_profile_markers(self):
+        import plistlib
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory)/'Inputia.app'
+            (app/'Contents').mkdir(parents=True)
+            path = app/'Contents/Info.plist'
+            path.write_bytes(plistlib.dumps({
+                'CFBundleIdentifier': 'com.pais.handy.UnifiedCandidate',
+                'InputiaReleaseID': 'inputia-1.1.1-85-abc12345',
+            }))
+            module.validate_release_v2(app, 'control', 'inputia-1.1.1-85-abc12345')
+            info = plistlib.loads(path.read_bytes())
+            info['HandyDevelopmentCandidate'] = True
+            path.write_bytes(plistlib.dumps(info))
+            with self.assertRaises(ValueError):
+                module.validate_release_v2(app, 'control', 'inputia-1.1.1-85-abc12345')
+
     def test_rename_failure_restores_original_path_and_pair(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
