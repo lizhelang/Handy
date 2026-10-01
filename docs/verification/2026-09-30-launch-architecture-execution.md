@@ -478,7 +478,7 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 
 更新后仍只启动主程序和输入法，设置启动器只刷新 LaunchServices 登记，避免安装过程意外打开设置窗口。v2 的 pair-manifest 验签继续覆盖配对的主程序/输入法；设置组件另行执行 release 元数据和代码签名门禁。
 
-验证：更新器测试 16 项、发布脚本 48 项通过；对当前电脑旧版双组件及旧设置启动器执行 v2 只读预检，返回 `releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`。本次没有执行 `--apply`，没有替换任何 App、切换输入源或启动新组件。下一步仍需在临时安装根完成真实三组件 apply/回滚夹具，再接入 Rust `NativeAdapter` 与生产维护屏障；本批不等于已安装迁移完成。
+验证：更新器测试 17 项（含三组件替换与回滚夹具）、发布脚本 48 项通过；对当前电脑旧版双组件及旧设置启动器执行 v2 只读预检，返回 `releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`。本次没有执行 `--apply`，没有替换任何 App、切换输入源或启动新组件。下一步仍需在临时安装根完成真实三组件 apply/回滚夹具，再接入 Rust `NativeAdapter` 与生产维护屏障；本批不等于已安装迁移完成。
 
 ### 第四十五批：重新冻结三组件体验包
 

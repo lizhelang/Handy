@@ -213,6 +213,32 @@ class CandidateUpdateTests(unittest.TestCase):
             self.assertTrue(all((p/'value').read_text()=='new' for p in dst))
             self.assertTrue(all((p/'value').read_text()=='old' for p in back))
 
+    def test_v2_transaction_replaces_and_rolls_back_all_three_components(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            destinations, staged, backups = [], [], []
+            for name in ['control', 'ime', 'settings']:
+                destination = root / name
+                source = root / f'{name}-new'
+                backup = root / f'{name}-old'
+                destination.mkdir(); (destination / 'value').write_text('old-' + name)
+                source.mkdir(); (source / 'value').write_text('new-' + name)
+                destinations.append(destination); staged.append(source); backups.append(backup)
+            pair = root / 'pair'; pair.write_text('old-pair')
+            old_pair = root / 'pair-before'; old_pair.write_text('old-pair')
+            new_pair = root / 'pair-after'; new_pair.write_text('new-pair')
+
+            module.install_transaction(destinations, staged, backups, pair, new_pair, old_pair)
+            self.assertEqual(pair.read_text(), 'new-pair')
+            self.assertEqual([path.joinpath('value').read_text() for path in destinations],
+                             ['new-control', 'new-ime', 'new-settings'])
+
+            failed = root / 'failed'; failed.mkdir()
+            module.rollback_installation(destinations, destinations, backups, failed, pair, old_pair)
+            self.assertEqual(pair.read_text(), 'old-pair')
+            self.assertEqual([path.joinpath('value').read_text() for path in destinations],
+                             ['old-control', 'old-ime', 'old-settings'])
+
     def test_symlink_source_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'real').mkdir();(root/'alias').symlink_to(root/'real')
