@@ -495,7 +495,7 @@ fn recovered_journal_rename_sync_windows_preserve_repair_only_after_terminal() {
     }
 }
 #[test]
-fn real_settings_observer_creates_exact_owned_pair_before_manager_failure() {
+fn legacy_startup_rejects_new_pending_and_preserves_it_for_v3_recovery() {
     let f = Fixture::new();
     let mut guard = f.run(|| f.strict()).unwrap().unwrap();
     guard.begin_mutations().unwrap();
@@ -517,20 +517,14 @@ fn real_settings_observer_creates_exact_owned_pair_before_manager_failure() {
     let created = f.read();
     drop(runtime);
     drop(guard);
-    let guard = f.run(|| f.strict()).unwrap().unwrap();
-    drop(guard);
-    assert!(!f.settings().exists());
-    assert!(!f.marker().exists());
-    let recovered = fs::read_dir(f.handy.join("migration_restore_quarantine"))
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
-    assert_eq!(
-        fs::read(recovered.join("settings_store.json")).unwrap(),
-        created
-    );
+    let error = match f.run(|| f.strict()) {
+        Ok(_) => panic!("legacy startup unexpectedly accepted new pending"),
+        Err(error) => error,
+    };
+    assert_eq!(kind(&error), StartupFailureKind::RepairRequired);
+    assert!(f.settings().exists());
+    assert!(f.marker().exists());
+    assert_eq!(f.read(), created);
 }
 
 #[test]

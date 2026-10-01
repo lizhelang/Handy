@@ -1,6 +1,9 @@
 //! 启动阶段与配置快照分离：业务入口只能在全部初始化完成后开放。
+use super::document::startup::{PreparedSettings, Reconciliation};
 use super::{session::Coordinator, AppSettings};
-use inputia_settings::store::{Error, InitializationIntent};
+use inputia_settings::store::Error;
+#[cfg(test)]
+use inputia_settings::store::InitializationIntent;
 use serde::Serialize;
 use std::{
     path::Path,
@@ -30,6 +33,7 @@ pub(crate) struct RuntimeSettings {
     initialization: Mutex<()>,
     coordinator: OnceLock<Arc<Coordinator>>,
     phase: RwLock<StartupStatus>,
+    reconciliation: RwLock<Option<Reconciliation>>,
 }
 impl Default for RuntimeSettings {
     fn default() -> Self {
@@ -37,6 +41,7 @@ impl Default for RuntimeSettings {
             initialization: Mutex::new(()),
             coordinator: OnceLock::new(),
             phase: RwLock::new(StartupStatus::Starting),
+            reconciliation: RwLock::new(None),
         }
     }
 }
@@ -58,6 +63,7 @@ impl RuntimeSettings {
     }
 
     /// 迁移 guard 已授权 Mutating 后调用；observer 必须先耐久登记初始化写入。
+    #[cfg(test)]
     pub fn initialize(
         &self,
         path: &Path,
@@ -77,6 +83,64 @@ impl RuntimeSettings {
         self.coordinator
             .set(Arc::new(coordinator))
             .map_err(|_| "settings_already_initialized".to_owned())
+    }
+
+    pub fn prepare_app(&self, app: &tauri::AppHandle, home: &Path, uid: u32) -> anyhow::Result<()> {
+        let (preparation, stores) = crate::data_migration::v3::prepare_app_with_guard(
+            app,
+            |root, inputia| {
+                super::document::startup::StartupStore::open(root, inputia, home, uid)
+                    .map_err(Into::into)
+            },
+            |stores| stores.inspect().map_err(Into::into),
+        )?;
+        let prepared = stores.prepare(preparation)?;
+        self.initialize_prepared(prepared)
+            .map_err(anyhow::Error::msg)
+    }
+
+    pub(super) fn initialize_prepared(&self, prepared: PreparedSettings) -> Result<(), String> {
+        let _guard = self
+            .initialization
+            .lock()
+            .map_err(|_| "settings_state_unavailable")?;
+        if self.status() != StartupStatus::Starting || self.coordinator.get().is_some() {
+            return Err("settings_startup_state".into());
+        }
+        *self
+            .reconciliation
+            .write()
+            .map_err(|_| "settings_state_unavailable")? = prepared.reconciliation;
+        self.coordinator
+            .set(Arc::new(Coordinator::from_prepared(
+                prepared.loaded,
+                prepared.transaction,
+            )))
+            .map_err(|_| "settings_already_initialized".into())
+    }
+    pub fn reconciliation(&self) -> Option<Reconciliation> {
+        self.reconciliation
+            .read()
+            .ok()
+            .and_then(|value| value.clone())
+    }
+    pub fn confirm_startup(&self) -> Result<(), String> {
+        let _guard = self
+            .initialization
+            .lock()
+            .map_err(|_| "settings_state_unavailable")?;
+        let phase = self
+            .phase
+            .write()
+            .map_err(|_| "settings_state_unavailable")?;
+        if *phase != StartupStatus::Starting {
+            return Err("settings_startup_state".into());
+        }
+        self.coordinator
+            .get()
+            .ok_or("settings_not_initialized")?
+            .complete_startup()
+            .map_err(failure_code)
     }
 
     /// 仅内部初始化可在 Starting 读取。IPC 的统一入口必须先检查 ready。
@@ -139,6 +203,11 @@ impl RuntimeSettings {
         if *phase != StartupStatus::Starting || self.coordinator.get().is_none() {
             return Err("settings_startup_state".into());
         }
+        self.coordinator
+            .get()
+            .ok_or("settings_not_initialized")?
+            .complete_startup()
+            .map_err(failure_code)?;
         *phase = StartupStatus::Ready;
         Ok(())
     }

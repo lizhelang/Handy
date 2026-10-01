@@ -322,6 +322,7 @@ impl Drop for MigrationLock {
 mod startup;
 #[cfg(test)]
 use startup::prepare_startup_backup_for_paths;
+pub(crate) use startup::v3;
 pub use startup::{
     prepare_startup_backup, prepare_startup_backup_with_preflight, StartupFailure,
     StartupFailureKind, StartupMigration,

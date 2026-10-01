@@ -3,10 +3,9 @@ use super::{document, AppSettings};
 use document::{LoadedSettings, PlannedChange, SavedSettings};
 use inputia_settings::store::Error;
 use serde::Serialize;
-use std::{
-    path::Path,
-    sync::{Arc, Mutex, RwLock},
-};
+#[cfg(test)]
+use std::path::Path;
+use std::sync::{Arc, Mutex, RwLock};
 
 /// 只由当前协调器创建；不进入 JSON、Specta 或日志。
 #[derive(Clone)]
@@ -24,6 +23,8 @@ pub(super) struct Coordinator {
 struct WriterState {
     pending: Option<PendingSave>,
     blocked: Option<Error>,
+    startup: Option<crate::data_migration::v3::StartupTransaction>,
+    startup_complete: bool,
 }
 struct PendingSave {
     plan: PlannedChange,
@@ -60,9 +61,11 @@ pub(super) enum SaveReport {
 }
 
 impl Coordinator {
+    #[cfg(test)]
     pub fn open(path: &Path, home: &Path, uid: u32) -> Result<Self, Failure> {
         Ok(Self::from_loaded(LoadedSettings::read(path, home, uid)?))
     }
+    #[cfg(test)]
     pub fn open_observed(
         path: &Path,
         home: &Path,
@@ -75,11 +78,27 @@ impl Coordinator {
             path, home, uid, observer,
         )?))
     }
+    #[cfg(test)]
     fn from_loaded(loaded: LoadedSettings) -> Self {
+        let mut result = Self::from_prepared(loaded, None);
+        result
+            .writer
+            .get_mut()
+            .expect("new fixture mutex")
+            .startup_complete = true;
+        result
+    }
+    pub(super) fn from_prepared(
+        loaded: LoadedSettings,
+        startup: Option<crate::data_migration::v3::StartupTransaction>,
+    ) -> Self {
         Self {
             owner: Arc::new(()),
             cached: RwLock::new(Arc::new(loaded)),
-            writer: Mutex::new(WriterState::default()),
+            writer: Mutex::new(WriterState {
+                startup,
+                ..WriterState::default()
+            }),
         }
     }
 
@@ -98,16 +117,14 @@ impl Coordinator {
     }
 
     pub fn save(&self, settings: &AppSettings) -> Result<SaveReport, Failure> {
-        self.save_with(settings, |plan, floor| plan.apply_at_least(floor))
+        self.save_with_apply(settings, Self::apply_plan)
     }
 
     /// 为原生组件返回原提交版本的读取凭据。后续失败补偿只能从此凭据构造，
     /// 不能先重新读取较新配置再覆盖用户已经确认的新选择。
     pub fn save_with_snapshot(&self, settings: &AppSettings) -> Result<AppSettings, Failure> {
         let mut writer = self.writer.lock().map_err(|_| Error::StorageUnavailable)?;
-        let report = self.save_locked(settings, &mut writer, |plan, floor| {
-            plan.apply_at_least(floor)
-        })?;
+        let report = self.save_locked(settings, &mut writer, Self::apply_plan)?;
         let expected_revision = match report {
             SaveReport::Unchanged => {
                 let original = &settings
@@ -136,20 +153,87 @@ impl Coordinator {
         Ok(current)
     }
 
+    #[cfg(test)]
     fn save_with(
         &self,
         settings: &AppSettings,
         apply: impl FnOnce(&PlannedChange, &LoadedSettings) -> Result<SavedSettings, Error>,
     ) -> Result<SaveReport, Failure> {
+        self.save_with_apply(settings, |plan, floor, startup| {
+            assert!(
+                startup.is_none(),
+                "fault fixture cannot bypass startup observer"
+            );
+            apply(plan, floor)
+        })
+    }
+    fn save_with_apply(
+        &self,
+        settings: &AppSettings,
+        apply: impl FnOnce(
+            &PlannedChange,
+            &LoadedSettings,
+            Option<&mut crate::data_migration::v3::StartupTransaction>,
+        ) -> Result<SavedSettings, Error>,
+    ) -> Result<SaveReport, Failure> {
         let mut writer = self.writer.lock().map_err(|_| Error::StorageUnavailable)?;
         self.save_locked(settings, &mut writer, apply)
+    }
+    fn apply_plan(
+        plan: &PlannedChange,
+        floor: &LoadedSettings,
+        startup: Option<&mut crate::data_migration::v3::StartupTransaction>,
+    ) -> Result<SavedSettings, Error> {
+        if let Some(startup) = startup {
+            plan.apply_observed(floor, &mut |intent| {
+                startup
+                    .record_settings_transition(intent)
+                    .map_err(|_| Error::CommitUncertain)
+            })
+        } else {
+            plan.apply_at_least(floor)
+        }
+    }
+    /// 与所有 manager 保存共用 writer 锁；完成、移除 observer 与释放迁移锁不可交错。
+    pub(super) fn complete_startup(&self) -> Result<(), Failure> {
+        let mut writer = self.writer.lock().map_err(|_| Error::StorageUnavailable)?;
+        if writer.startup_complete {
+            return Ok(());
+        }
+        if let Some(pending) = &writer.pending {
+            return Err(Failure::Pending {
+                operation_id: pending.plan.operation_id().into(),
+            });
+        }
+        if let Some(error) = &writer.blocked {
+            return Err(error.clone().into());
+        }
+        let loaded = self
+            .cached
+            .read()
+            .map_err(|_| Error::StorageUnavailable)?
+            .clone();
+        let current = loaded
+            .complete_startup(writer.startup.as_mut())
+            .map_err(|_| {
+                writer.blocked = Some(Error::CommitUncertain);
+                Failure::from(Error::CommitUncertain)
+            })?;
+        self.publish(current)?;
+        writer.startup = None;
+        writer.startup_complete = true;
+        Ok(())
     }
 
     fn save_locked(
         &self,
         settings: &AppSettings,
         writer: &mut WriterState,
-        apply: impl FnOnce(&PlannedChange, &LoadedSettings) -> Result<SavedSettings, Error>,
+        apply: impl FnOnce(
+            &PlannedChange,
+            &LoadedSettings,
+            Option<&mut crate::data_migration::v3::StartupTransaction>,
+        ) -> Result<SavedSettings, Error>,
     ) -> Result<SaveReport, Failure> {
         let ticket = settings
             .read_ticket
@@ -250,13 +334,17 @@ impl Coordinator {
         {
             return Err(Failure::WrongOperation);
         }
-        self.apply_pending(&mut writer, |plan, floor| plan.apply_at_least(floor))
+        self.apply_pending(&mut writer, Self::apply_plan)
     }
 
     fn apply_pending(
         &self,
         writer: &mut WriterState,
-        apply: impl FnOnce(&PlannedChange, &LoadedSettings) -> Result<SavedSettings, Error>,
+        apply: impl FnOnce(
+            &PlannedChange,
+            &LoadedSettings,
+            Option<&mut crate::data_migration::v3::StartupTransaction>,
+        ) -> Result<SavedSettings, Error>,
     ) -> Result<SaveReport, Failure> {
         let pending = writer.pending.as_mut().ok_or(Failure::WrongOperation)?;
         let operation_id = pending.plan.operation_id().to_owned();
@@ -266,7 +354,7 @@ impl Coordinator {
             .read()
             .map_err(|_| Error::StorageUnavailable)?
             .clone();
-        match apply(&pending.plan, &floor) {
+        match apply(&pending.plan, &floor, writer.startup.as_mut()) {
             Ok(SavedSettings::Saved {
                 current,
                 commit_revision,

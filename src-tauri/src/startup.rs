@@ -1,5 +1,7 @@
 //! 启动设置校验先于任何业务模块；恢复页面只有固定的两项操作。
-use crate::data_migration::{self, StartupMigration};
+use crate::data_migration;
+#[cfg(not(unix))]
+use crate::data_migration::StartupMigration;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 
@@ -30,66 +32,67 @@ fn enter_recovery(app: &AppHandle, reason: RecoveryReason, editable: bool) {
     }
 }
 
+#[cfg(unix)]
+pub(crate) struct StartupGuard {
+    app: AppHandle,
+    completed: bool,
+}
+#[cfg(not(unix))]
+pub(crate) type StartupGuard = StartupMigration;
+#[cfg(unix)]
+impl StartupGuard {
+    pub fn complete(&mut self) -> anyhow::Result<()> {
+        self.app
+            .state::<RuntimeSettings>()
+            .confirm_startup()
+            .map_err(anyhow::Error::msg)?;
+        self.completed = true;
+        Ok(())
+    }
+}
+#[cfg(unix)]
+impl Drop for StartupGuard {
+    fn drop(&mut self) {
+        if !self.completed {
+            // manager 可能已打开业务资源；这里只关闭准入，不能在线恢复 DB。
+            enter_recovery(&self.app, RecoveryReason::MigrationRecoveryRequired, false);
+        }
+    }
+}
+
 /// 只有此函数成功返回后，调用者才可构造业务 manager。
-pub(crate) fn prepare(app: &AppHandle) -> anyhow::Result<Option<StartupMigration>> {
+pub(crate) fn prepare(app: &AppHandle) -> anyhow::Result<Option<StartupGuard>> {
     #[cfg(unix)]
     {
-        let paths = (|| -> anyhow::Result<_> {
-            Ok((
-                crate::portable::app_data_dir(app)?.join(crate::settings::SETTINGS_STORE_PATH),
-                app.path().home_dir()?,
-                unsafe { libc::geteuid() },
-            ))
-        })();
-        let (path, home, uid) = match paths {
-            Ok(paths) => paths,
+        let home = match app.path().home_dir() {
+            Ok(home) => home,
             Err(_) => {
                 enter_recovery(app, RecoveryReason::StorageUnavailable, false);
                 anyhow::bail!("startup_storage_unavailable");
             }
         };
-        let prepared = data_migration::prepare_startup_backup_with_preflight(app, || {
-            RuntimeSettings::preflight(&path, &home, uid).map_err(Into::into)
-        });
-        let mut migration = match prepared {
-            Ok(migration) => migration,
-            Err(error) => {
-                let editable = error
-                    .downcast_ref::<data_migration::StartupFailure>()
-                    .is_some_and(|failure| failure.allows_configuration_repair());
-                enter_recovery(
-                    app,
-                    if editable {
-                        RecoveryReason::SettingsInvalid
-                    } else {
-                        RecoveryReason::MigrationRecoveryRequired
-                    },
-                    editable,
-                );
-                anyhow::bail!("startup_preflight_failed");
-            }
-        };
-        if let Some(guard) = migration.as_mut() {
-            if guard.begin_mutations().is_err() {
-                enter_recovery(app, RecoveryReason::MigrationRecoveryRequired, false);
-                anyhow::bail!("startup_mutation_authorization_failed");
-            }
-        }
-        let result = app
+        if let Err(error) = app
             .state::<RuntimeSettings>()
-            .initialize(&path, &home, uid, &mut |intent| {
-                // 既有 Completed 不授权重建丢失文件；必须由新恢复流程明确处理。
-                migration
-                    .as_mut()
-                    .ok_or(inputia_settings::store::Error::RepairRequired)?
-                    .record_settings_initialization(intent)
-                    .map_err(|_| inputia_settings::store::Error::CommitUncertain)
-            });
-        if result.is_err() {
-            enter_recovery(app, RecoveryReason::MigrationRecoveryRequired, false);
-            anyhow::bail!("startup_settings_initialization_failed");
+            .prepare_app(app, &home, unsafe { libc::geteuid() })
+        {
+            let editable = error
+                .downcast_ref::<data_migration::StartupFailure>()
+                .is_some_and(|failure| failure.allows_configuration_repair());
+            enter_recovery(
+                app,
+                if editable {
+                    RecoveryReason::SettingsInvalid
+                } else {
+                    RecoveryReason::MigrationRecoveryRequired
+                },
+                editable,
+            );
+            anyhow::bail!("startup_settings_preparation_failed");
         }
-        Ok(migration)
+        Ok(Some(StartupGuard {
+            app: app.clone(),
+            completed: false,
+        }))
     }
     #[cfg(not(unix))]
     {
@@ -117,8 +120,14 @@ pub(crate) fn finish(app: &AppHandle) -> Result<(), String> {
 pub(crate) fn control_settings_status(app: AppHandle) -> serde_json::Value {
     #[cfg(unix)]
     {
-        serde_json::to_value(app.state::<RuntimeSettings>().status())
-            .unwrap_or_else(|_| serde_json::json!({ "phase": "starting" }))
+        let runtime = app.state::<RuntimeSettings>();
+        let mut status = serde_json::to_value(runtime.status())
+            .unwrap_or_else(|_| serde_json::json!({ "phase": "starting" }));
+        if let Some(reconciliation) = runtime.reconciliation() {
+            status["settings_reconciliation"] =
+                serde_json::to_value(reconciliation).unwrap_or(serde_json::Value::Null);
+        }
+        status
     }
     #[cfg(not(unix))]
     {

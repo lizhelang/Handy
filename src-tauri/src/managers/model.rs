@@ -3,7 +3,7 @@ use super::model_capabilities::{
 };
 use crate::settings::{get_settings, write_settings};
 use anyhow::Result;
-use hf_hub::api::tokio::{ApiBuilder, CancellationToken, Progress};
+use hf_hub::api::tokio::CancellationToken;
 use hf_hub::{Cache, Repo, RepoType};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -13,11 +13,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 mod archive;
 mod download;
+mod managed;
 mod storage;
 pub use storage::ModelStorageBudget;
 pub(crate) fn download_failure_code(error: &anyhow::Error) -> Option<&'static str> {
@@ -27,7 +28,7 @@ pub(crate) fn download_failure_code(error: &anyhow::Error) -> Option<&'static st
         .or_else(|| storage::is_space_error(error).then_some("model_storage_insufficient_space"))
 }
 
-use download::{HttpDownloadOutcome, DOWNLOAD_STALL_TIMEOUT};
+use download::HttpDownloadOutcome;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub enum EngineType {
@@ -54,8 +55,8 @@ pub enum ModelSource {
         /// Expected SHA-256 for integrity verification; `None` skips it.
         sha256: Option<String>,
     },
-    /// A file inside a Hugging Face Hub repo, fetched via hf-hub into the shared
-    /// HF cache (so other tools reuse it). The file within the repo is
+    /// A file inside a Hugging Face Hub repo. New downloads use managed storage;
+    /// existing shared-cache copies remain discoverable. The file within the repo is
     /// [`ModelInfo::filename`].
     HuggingFace { repo_id: String, revision: String },
     /// Already present on disk — a user-provided custom model, or one discovered
@@ -353,6 +354,44 @@ fn hf_cached_path(repo_id: &str, revision: &str, filename: &str) -> Option<PathB
     get(revision).or_else(|| (revision != "main").then(|| get("main")).flatten())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HfOrigin {
+    Managed,
+    SharedCache,
+    LegacyFile,
+}
+
+struct ResolvedHfModel {
+    path: PathBuf,
+    origin: HfOrigin,
+}
+
+/// 状态、加载与删除共用来源判定。损坏的受管索引是错误，不猜最新目录或隐式降级。
+fn resolve_hf_model(
+    models: &Path,
+    repo_id: &str,
+    revision: &str,
+    filename: &str,
+) -> Result<Option<ResolvedHfModel>> {
+    if let Some(path) = managed::resolve(models, repo_id, filename)? {
+        return Ok(Some(ResolvedHfModel {
+            path,
+            origin: HfOrigin::Managed,
+        }));
+    }
+    if let Some(path) = hf_cached_path(repo_id, revision, filename).filter(|path| path.is_file()) {
+        return Ok(Some(ResolvedHfModel {
+            path,
+            origin: HfOrigin::SharedCache,
+        }));
+    }
+    let path = models.join(filename);
+    Ok(path.is_file().then_some(ResolvedHfModel {
+        path,
+        origin: HfOrigin::LegacyFile,
+    }))
+}
+
 /// Friendly name advertised by GGUF metadata, if present. Empty strings are not
 /// useful display names, so callers can keep their filename/repo fallback.
 fn probed_display_name(probe: &CapabilityProbe) -> Option<String> {
@@ -387,102 +426,6 @@ fn local_caps(probe: &CapabilityProbe) -> LocalCaps {
         supports_language_selection: languages.len() > 1,
         supports_language_detection: probe.supports_language_detect.unwrap_or(false),
         supported_languages: languages,
-    }
-}
-
-/// Bridges hf-hub's async download progress to Handy's `model-download-progress`
-/// event. hf-hub clones the reporter, so shared state lives behind an `Arc`.
-#[derive(Clone)]
-struct HfDownloadProgress {
-    app_handle: AppHandle,
-    model_id: String,
-    state: Arc<Mutex<HfProgressState>>,
-}
-
-struct HfProgressState {
-    total: u64,
-    downloaded: u64,
-    last_emit: Instant,
-    /// Every callback (even throttled-out ones) bumps this; the stall watchdog
-    /// reads it. Starts at construction so a hang before the first byte —
-    /// e.g. a wedged metadata/resolve request — also counts as a stall.
-    last_activity: Instant,
-}
-
-impl HfDownloadProgress {
-    fn new(app_handle: AppHandle, model_id: String) -> Self {
-        Self {
-            app_handle,
-            model_id,
-            state: Arc::new(Mutex::new(HfProgressState {
-                total: 0,
-                downloaded: 0,
-                last_emit: Instant::now(),
-                last_activity: Instant::now(),
-            })),
-        }
-    }
-
-    /// Instant of the most recent sign of life from the transfer.
-    fn last_activity(&self) -> Instant {
-        self.state.lock().unwrap().last_activity
-    }
-
-    fn emit(&self, downloaded: u64, total: u64) {
-        let percentage = if total > 0 {
-            (downloaded as f64 / total as f64) * 100.0
-        } else {
-            0.0
-        };
-        let _ = self.app_handle.emit(
-            "model-download-progress",
-            &DownloadProgress {
-                model_id: self.model_id.clone(),
-                downloaded,
-                total,
-                percentage,
-            },
-        );
-    }
-}
-
-impl Progress for HfDownloadProgress {
-    async fn init(&mut self, size: usize, _filename: &str) {
-        {
-            let mut st = self.state.lock().unwrap();
-            st.total = size as u64;
-            st.downloaded = 0;
-            st.last_emit = Instant::now();
-            st.last_activity = Instant::now();
-        }
-        self.emit(0, size as u64);
-    }
-
-    async fn update(&mut self, size: usize) {
-        let (downloaded, total, emit) = {
-            let mut st = self.state.lock().unwrap();
-            st.downloaded = st.downloaded.saturating_add(size as u64);
-            let now = Instant::now();
-            st.last_activity = now;
-            // Throttle to ~10 updates/sec, but always emit the final byte.
-            let emit = now.duration_since(st.last_emit) >= Duration::from_millis(100)
-                || (st.total > 0 && st.downloaded >= st.total);
-            if emit {
-                st.last_emit = now;
-            }
-            (st.downloaded, st.total, emit)
-        };
-        if emit {
-            self.emit(downloaded, total);
-        }
-    }
-
-    async fn finish(&mut self) {
-        let total = {
-            let st = self.state.lock().unwrap();
-            st.total.max(st.downloaded)
-        };
-        self.emit(total, total);
     }
 }
 
@@ -1145,6 +1088,7 @@ impl ModelManager {
 
         // Auto-discover transcribe-cpp GGUF models already in the shared HF cache.
         Self::discover_hf_cache_models(&mut available_models);
+        Self::discover_managed_models(&models_dir, &mut available_models);
 
         let manager = Self {
             app_handle: app_handle.clone(),
@@ -1258,6 +1202,7 @@ impl ModelManager {
             warn!("Rescan: failed to discover custom models: {}", e);
         }
         Self::discover_hf_cache_models(&mut snapshot);
+        Self::discover_managed_models(&self.models_dir, &mut snapshot);
 
         // Merge only the genuinely-new ids back into the live registry. `or_insert`
         // leaves every existing entry exactly as it was.
@@ -1404,14 +1349,19 @@ impl ModelManager {
 
         for model in models.values_mut() {
             if let ModelSource::HuggingFace { repo_id, revision } = &model.source {
-                // A models-dir copy counts too: mirror-fallback downloads land
-                // there, and it makes manual drop-ins of catalog files work.
-                let local_path = self.models_dir.join(&model.filename);
                 let partial_path = self.models_dir.join(format!("{}.partial", &model.filename));
-                model.is_downloaded = hf_cached_path(repo_id, revision, &model.filename).is_some()
-                    || local_path.exists();
-                model.is_downloading = false;
-                model.partial_size = partial_path.metadata().map(|m| m.len()).unwrap_or(0);
+                model.is_downloaded =
+                    match resolve_hf_model(&self.models_dir, repo_id, revision, &model.filename) {
+                        Ok(found) => found.is_some(),
+                        Err(error) => {
+                            warn!("Managed model {} requires repair: {}", model.id, error);
+                            false
+                        }
+                    };
+                model.is_downloading = downloading_ids.contains(&model.id);
+                model.partial_size =
+                    managed::partial_size(&self.models_dir, repo_id, &model.filename, revision)
+                        .saturating_add(partial_path.metadata().map(|m| m.len()).unwrap_or(0));
                 // Alternate-quant entries exist only because their file was
                 // discovered on disk — the catalog offers just the default
                 // quant, so they are never presented for download. When the
@@ -1827,6 +1777,62 @@ impl ModelManager {
         }
     }
 
+    fn discover_managed_models(models: &Path, available: &mut HashMap<String, ModelInfo>) {
+        for receipt in managed::discover(models) {
+            let id = format!("{}/{}", receipt.repo_id, receipt.filename);
+            if available.contains_key(&id) {
+                continue;
+            }
+            let info = if let Some((descriptor, file)) =
+                crate::catalog::file_in_catalog(&receipt.filename, Some(&receipt.repo_id))
+            {
+                descriptor.to_model_info_for_file(
+                    file,
+                    &DiskStatus {
+                        is_downloaded: true,
+                        ..Default::default()
+                    },
+                )
+            } else {
+                let Ok(Some(path)) = managed::resolve(models, &receipt.repo_id, &receipt.filename)
+                else {
+                    continue;
+                };
+                let probe = GgufHeaderProber.probe_file(&path);
+                if probe.verdict != Compatibility::Compatible {
+                    continue;
+                }
+                let caps = local_caps(&probe);
+                ModelInfo {
+                    id: id.clone(),
+                    name: probed_display_name(&probe).unwrap_or_else(|| receipt.filename.clone()),
+                    description: "Locally managed model".into(),
+                    filename: receipt.filename.clone(),
+                    source: ModelSource::HuggingFace {
+                        repo_id: receipt.repo_id.clone(),
+                        revision: receipt.revision.clone(),
+                    },
+                    size_mb: receipt.size_bytes / (1024 * 1024),
+                    is_downloaded: true,
+                    is_downloading: false,
+                    partial_size: 0,
+                    is_directory: false,
+                    engine_type: EngineType::TranscribeCpp,
+                    accuracy_score: 0.0,
+                    speed_score: 0.0,
+                    supports_translation: caps.supports_translation,
+                    is_recommended: false,
+                    supported_languages: caps.supported_languages,
+                    supports_language_selection: caps.supports_language_selection,
+                    is_custom: false,
+                    supports_streaming: caps.supports_streaming,
+                    supports_language_detection: caps.supports_language_detection,
+                }
+            };
+            available.insert(id, info);
+        }
+    }
+
     /// Pick a cache ref to resolve a snapshot from, preferring `main`.
     fn pick_hf_revision(refs_dir: &Path) -> Option<String> {
         if refs_dir.join("main").is_file() {
@@ -1841,311 +1847,113 @@ impl ModelManager {
         })
     }
 
-    /// Download a Hugging Face-sourced model into the shared HF cache via
-    /// hf-hub, reporting progress through the same `model-download-progress`
-    /// event the URL path uses. Uses hf-hub's stock cache, but deliberately
-    /// disables authentication because every catalog repository is public.
+    /// 所有新 HF 下载与镜像使用相同限额传输，完成后发布到私有受管代际。
     async fn download_hf_model(
         &self,
         model_info: &ModelInfo,
         repo_id: String,
         revision: String,
+        lease: &Arc<storage::ModelWriteLease>,
     ) -> Result<()> {
         let model_id = model_info.id.clone();
-        let filename = model_info.filename.clone();
-
-        // Already in the shared cache (possibly from another tool), or dropped
-        // into the models dir (mirror fallback / manual install)? Done.
-        if hf_cached_path(&repo_id, &revision, &filename).is_some()
-            || self.models_dir.join(&filename).exists()
-        {
+        let filename = &model_info.filename;
+        let (_, catalog_file) = crate::catalog::file_in_catalog(filename, Some(&repo_id))
+            .ok_or_else(|| anyhow::anyhow!("model_download_unverified_source"))?;
+        let receipt = managed::Receipt::new(
+            &repo_id,
+            filename,
+            &revision,
+            catalog_file
+                .sha256
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("model_download_unverified_source"))?,
+            catalog_file.size_bytes,
+        )?;
+        let partial = receipt.prepare(lease)?;
+        // 代际已发布而 active 未落盘的重启窗口也走真实校验与补同步。
+        if {
+            let receipt = receipt.clone();
+            let lease = Arc::clone(lease);
+            tokio::task::spawn_blocking(move || receipt.publish_existing(&lease)).await??
+        } {
             self.update_download_status()?;
             let _ = self.app_handle.emit("model-download-complete", &model_id);
             return Ok(());
         }
-
-        // Mark downloading; the guard resets the flag on any error path.
         {
             let mut models = self.available_models.lock().unwrap();
             if let Some(model) = models.get_mut(&model_id) {
                 model.is_downloading = true;
             }
         }
-
-        // Register a cancellation token so `cancel_download` can abort this
-        // transfer promptly. The guard removes it on every exit path.
         let cancel_token = CancellationToken::new();
-        {
-            let mut flags = self.cancel_flags.lock().unwrap();
-            flags.insert(model_id.clone(), cancel_token.clone());
-        }
-
-        let mut cleanup = DownloadCleanup {
+        self.cancel_flags
+            .lock()
+            .unwrap()
+            .insert(model_id.clone(), cancel_token.clone());
+        let cleanup = DownloadCleanup {
             available_models: &self.available_models,
             cancel_flags: &self.cancel_flags,
             model_id: model_id.clone(),
             disarmed: false,
         };
-
-        info!(
-            "Downloading HF model {} from {}@{} ({})",
-            model_id, repo_id, revision, filename
-        );
-
-        // hf-hub has no working internal retry (its retry knobs are hardcoded
-        // to zero), so a single transient fault — dropped connection, a 429
-        // from the resolve endpoint, a CDN blip — would otherwise fail the
-        // whole download. Each attempt resumes from the `.sync.part`
-        // committed-offset marker, so a retry only re-fetches what the failed
-        // attempt hadn't finished.
-        // Stay sequential on every attempt. Earlier parallel chunk transfers
-        // could report 100% while leaving an invalid `.sync.part`; retries,
-        // watchdog cancellation and mirror fallback retain resilience without
-        // reintroducing that corruption mode.
-        const ATTEMPT_STREAMS: [usize; 4] = [1, 1, 1, 1];
-        let mut attempt: usize = 1;
-        let hf_error = loop {
-            let stream_count = ATTEMPT_STREAMS[attempt - 1];
-            info!(
-                "HF download attempt {}/{} for {} using {} concurrent stream(s)",
-                attempt,
-                ATTEMPT_STREAMS.len(),
-                model_id,
-                stream_count
-            );
-
-            // Fresh client per attempt so a wedged connection from the previous
-            // try can't poison the retry.
-            let api = ApiBuilder::from_env()
-                // Ignore cached and environment-provided credentials. A stale token
-                // can make otherwise-public downloads fail authentication.
-                .with_token(None)
-                .with_progress(false)
-                .with_max_files(stream_count)
-                .build()
-                .map_err(|e| anyhow::anyhow!("Failed to init Hugging Face API: {}", e))?;
-            let repo = api.repo(Repo::with_revision(
-                repo_id.clone(),
-                RepoType::Model,
-                revision.clone(),
-            ));
-            let progress = HfDownloadProgress::new(self.app_handle.clone(), model_id.clone());
-
-            // hf-hub has no internal timeouts, so a wedged connection would
-            // otherwise hang this attempt forever and neither the retry loop
-            // nor the mirror fallback would ever fire. The watchdog cancels a
-            // per-attempt child token when progress goes stale; a user cancel
-            // on the parent propagates through the same child.
-            let attempt_token = cancel_token.child_token();
-            let watchdog = tokio::spawn({
-                let probe = progress.clone();
-                let attempt_token = attempt_token.clone();
-                async move {
-                    loop {
-                        tokio::time::sleep(Duration::from_secs(5)).await;
-                        if attempt_token.is_cancelled() {
-                            break;
-                        }
-                        if probe.last_activity().elapsed() > DOWNLOAD_STALL_TIMEOUT {
-                            attempt_token.cancel();
-                            break;
-                        }
-                    }
+        // 沿用 HF_ENDPOINT，但不读取或发送用户缓存的访问令牌。
+        let endpoint =
+            std::env::var("HF_ENDPOINT").unwrap_or_else(|_| "https://huggingface.co".into());
+        let primary = receipt.url(&endpoint)?;
+        let mirrors = crate::catalog::mirror_fallbacks(&model_id);
+        let mut urls = vec![primary; 4];
+        urls.extend(mirrors.into_iter().map(|mirror| mirror.url));
+        let mut last_error = None;
+        for (attempt, url) in urls.iter().enumerate() {
+            if attempt > 0 {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(1 << attempt.min(3))) => {},
+                    _ = cancel_token.cancelled() => return Ok(()),
                 }
-            });
-            // hf-hub only observes its token inside the chunk loop — the
-            // metadata/resolve request and cache lock run before it, so a hang
-            // there would ignore the cancel entirely. Race the whole future
-            // against the token: on cancel, grant a short grace so an attempt
-            // that IS in the chunk loop can unwind gracefully (committing the
-            // `.sync.part` resume offset), then drop the future outright,
-            // which aborts whatever request it was wedged in.
-            let mut download = std::pin::pin!(repo.download_with_progress_cancellable(
-                &filename,
-                progress,
-                attempt_token.clone()
-            ));
-            let result = tokio::select! {
-                r = &mut download => r,
-                _ = attempt_token.cancelled() => {
-                    match tokio::time::timeout(Duration::from_secs(5), &mut download).await {
-                        Ok(r) => r,
-                        Err(_) => Err(hf_hub::api::tokio::ApiError::Cancelled),
-                    }
-                }
-            };
-            watchdog.abort();
-
-            match result {
-                Ok(_) => break None,
-                Err(hf_hub::api::tokio::ApiError::Cancelled) if cancel_token.is_cancelled() => {
-                    // User cancelled. hf-hub leaves the partially downloaded
-                    // `.sync.part` in the shared cache, so a later attempt resumes
-                    // instead of restarting. The guard resets is_downloading and
-                    // drops the token; `cancel_download` already emitted
-                    // `model-download-cancelled`.
-                    info!("HF download cancelled for: {}", model_id);
+            }
+            match self
+                .download_http_resumable(
+                    &model_id,
+                    url,
+                    &partial,
+                    Some(receipt.size_bytes),
+                    Some(&receipt.sha256),
+                    &cancel_token,
+                )
+                .await
+            {
+                Ok(HttpDownloadOutcome::Cancelled) => return Ok(()),
+                Ok(HttpDownloadOutcome::Completed) => {
+                    // 同一 lease 贯穿校验、耐久发布、索引切换；失败不报 complete。
+                    let receipt = receipt.clone();
+                    let lease = Arc::clone(lease);
+                    tokio::task::spawn_blocking(move || receipt.publish(&lease)).await??;
+                    drop(cleanup);
+                    self.update_download_status()?;
+                    let _ = self.app_handle.emit("model-download-complete", &model_id);
                     return Ok(());
                 }
-                Err(hf_hub::api::tokio::ApiError::Cancelled) => {
-                    let err = anyhow::anyhow!(
-                        "transfer stalled: no progress for {}s",
-                        DOWNLOAD_STALL_TIMEOUT.as_secs()
-                    );
-                    // A parallel attempt may be what wedged the network. Give
-                    // the connection pool a brief pause, then retry once using
-                    // the known-compatible single-stream path. A sequential
-                    // stall already cost DOWNLOAD_STALL_TIMEOUT, so further
-                    // retries would likely just repeat it — use the mirror.
-                    if stream_count == 1 || attempt >= ATTEMPT_STREAMS.len() {
-                        break Some(err);
+                Err(error) => {
+                    // 额度/磁盘错误不会因换镜像改善，保留 partial 并立即返回类型化原因。
+                    if download_failure_code(&error).is_some() {
+                        return Err(error);
                     }
-                    let delay = Duration::from_secs(1_u64 << attempt);
                     warn!(
-                        "HF download attempt {}/{} stalled for {} using {} concurrent stream(s); retrying with {} stream(s) in {}s",
-                        attempt,
-                        ATTEMPT_STREAMS.len(),
+                        "Model download attempt {} failed for {}: {}",
+                        attempt + 1,
                         model_id,
-                        stream_count,
-                        ATTEMPT_STREAMS[attempt],
-                        delay.as_secs()
+                        error
                     );
-                    tokio::select! {
-                        _ = tokio::time::sleep(delay) => {}
-                        _ = cancel_token.cancelled() => {
-                            info!("HF download cancelled for: {}", model_id);
-                            return Ok(());
-                        }
-                    }
-                    attempt += 1;
-                }
-                Err(e) => {
-                    // {:?} keeps the error source chain (reset vs TLS vs timeout);
-                    // Display truncates it to "error sending request".
-                    let err = anyhow::anyhow!("{:?}", e);
-                    if attempt >= ATTEMPT_STREAMS.len() {
-                        break Some(err);
-                    }
-                    let delay = Duration::from_secs(1_u64 << attempt);
-                    warn!(
-                        "HF download attempt {}/{} failed for {} using {} concurrent stream(s): {}; retrying with {} stream(s) in {}s",
-                        attempt,
-                        ATTEMPT_STREAMS.len(),
-                        model_id,
-                        stream_count,
-                        err,
-                        ATTEMPT_STREAMS[attempt],
-                        delay.as_secs()
-                    );
-                    tokio::select! {
-                        _ = tokio::time::sleep(delay) => {}
-                        _ = cancel_token.cancelled() => {
-                            info!("HF download cancelled for: {}", model_id);
-                            return Ok(());
-                        }
-                    }
-                    attempt += 1;
+                    last_error = Some(error);
                 }
             }
-        };
-
-        if let Some(hf_error) = hf_error {
-            // `attempt`, not the schedule length: a sequential stall breaks out early.
-            error!(
-                "HF download failed for {} after {} attempt(s): {:?}",
-                model_id, attempt, hf_error
-            );
-            let mirrors = crate::catalog::mirror_fallbacks(&model_id);
-            if mirrors.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "Hugging Face download failed after {} attempt(s): {}",
-                    attempt,
-                    hf_error
-                ));
-            }
-            let mut completed = false;
-            for mirror in &mirrors {
-                info!("Falling back to mirror for {}: {}", model_id, mirror.url);
-                match self
-                    .download_from_mirror(&model_id, &filename, mirror, cancel_token.clone())
-                    .await
-                {
-                    Ok(true) => {
-                        completed = true;
-                        break;
-                    }
-                    Ok(false) => {
-                        info!("Mirror download cancelled for: {}", model_id);
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Mirror download failed for {} from {}: {:?}",
-                            model_id, mirror.url, e
-                        );
-                    }
-                }
-            }
-            if !completed {
-                return Err(anyhow::anyhow!(
-                    "Download failed from Hugging Face ({}) and {} mirror(s)",
-                    hf_error,
-                    mirrors.len()
-                ));
-            }
         }
-
-        cleanup.disarmed = true;
-        self.update_download_status()?;
-        self.cancel_flags.lock().unwrap().remove(&model_id);
-        let _ = self.app_handle.emit("model-download-complete", &model_id);
-        info!("HF model {} downloaded", model_id);
-        Ok(())
-    }
-
-    /// Direct-HTTP download of a catalog model's file from a mirror into the
-    /// models dir (HF-model resolution accepts that location too). Returns
-    /// `Ok(true)` on completion, `Ok(false)` if cancelled (partial kept).
-    async fn download_from_mirror(
-        &self,
-        model_id: &str,
-        filename: &str,
-        mirror: &crate::catalog::MirrorFile,
-        cancel_token: CancellationToken,
-    ) -> Result<bool> {
-        fs::create_dir_all(&self.models_dir)?;
-        let model_path = self.models_dir.join(filename);
-        let partial_path = self.models_dir.join(format!("{}.partial", filename));
-
-        if model_path.exists() {
-            return Ok(true);
-        }
-
-        match self
-            .download_http_resumable(
-                model_id,
-                &mirror.url,
-                &partial_path,
-                Some(mirror.size_bytes),
-                Some(&mirror.sha256),
-                &cancel_token,
-            )
-            .await?
-        {
-            HttpDownloadOutcome::Cancelled => Ok(false),
-            HttpDownloadOutcome::Completed => {
-                fs::rename(&partial_path, &model_path)?;
-                info!(
-                    "Mirror download of {} completed and verified ({:?})",
-                    model_id, model_path
-                );
-                Ok(true)
-            }
-        }
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("model_download_no_source")))
     }
 
     pub async fn download_model(&self, model_id: &str) -> Result<()> {
-        let _writing = storage::ModelWriteLease::acquire(&self.models_dir)?;
+        let _writing = Arc::new(storage::ModelWriteLease::acquire(&self.models_dir)?);
         let model_info = {
             let models = self.available_models.lock().unwrap();
             models.get(model_id).cloned()
@@ -2158,7 +1966,7 @@ impl ModelManager {
             ModelSource::Url { url, sha256 } => (url.clone(), sha256.clone()),
             ModelSource::HuggingFace { repo_id, revision } => {
                 return self
-                    .download_hf_model(&model_info, repo_id.clone(), revision.clone())
+                    .download_hf_model(&model_info, repo_id.clone(), revision.clone(), &_writing)
                     .await;
             }
             ModelSource::Local => {
@@ -2362,6 +2170,19 @@ impl ModelManager {
         debug!("ModelManager: Found model info: {:?}", model_info);
 
         if let ModelSource::HuggingFace { repo_id, revision } = &model_info.source {
+            let resolved =
+                resolve_hf_model(&self.models_dir, repo_id, revision, &model_info.filename)?;
+            if resolved
+                .as_ref()
+                .is_some_and(|found| found.origin == HfOrigin::Managed)
+                || managed::has_entry(&self.models_dir, repo_id, &model_info.filename)?
+            {
+                managed::remove(&_writing, repo_id, &model_info.filename)?;
+                self.update_download_status()?;
+                // 兼容缓存可能仍存在；更新后的真实可用状态由前端重新读取。
+                let _ = self.app_handle.emit("model-deleted", model_id);
+                return Ok(());
+            }
             let is_alternate_quant =
                 Self::is_catalog_alternate_quant(repo_id, &model_info.filename);
             let mut deleted = false;
@@ -2479,27 +2300,17 @@ impl ModelManager {
             return Err(anyhow::anyhow!("Model not available: {}", model_id));
         }
 
+        // 新代下载期间，已发布的旧代仍可用；获取状态不等于可用状态。
+        if let ModelSource::HuggingFace { repo_id, revision } = &model_info.source {
+            return resolve_hf_model(&self.models_dir, repo_id, revision, &model_info.filename)?
+                .map(|found| found.path)
+                .ok_or_else(|| anyhow::anyhow!("model_storage_model_missing"));
+        }
+
         // Ensure we don't return partial files/directories
         if model_info.is_downloading {
             return Err(anyhow::anyhow!(
                 "Model is currently downloading: {}",
-                model_id
-            ));
-        }
-
-        if let ModelSource::HuggingFace { repo_id, revision } = &model_info.source {
-            if let Some(path) = hf_cached_path(repo_id, revision, &model_info.filename) {
-                return Ok(path);
-            }
-            // Mirror-fallback download or manual drop-in in the models dir.
-            // The complete file only ever appears after verification, so a
-            // A separate partial never authorizes mutation in this read path.
-            let local_path = self.models_dir.join(&model_info.filename);
-            if local_path.exists() {
-                return Ok(local_path);
-            }
-            return Err(anyhow::anyhow!(
-                "Complete model file not found in HF cache or models dir: {}",
                 model_id
             ));
         }

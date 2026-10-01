@@ -1,4 +1,4 @@
-//! 固定启动日志的第三版。此模块尚未启用 App 的 pending 协议。
+//! 固定启动日志的第三版，与 App 设置 Files 锁共同保护恢复链。
 use super::*;
 mod model;
 mod restore;
@@ -304,7 +304,7 @@ fn read_versioned(path: &Path) -> Result<Option<Versioned>> {
     }
 }
 
-/// 第一包只提供受控内核；现 App 调用仍为 schema 2，不能提前开启永久 pending 门禁。
+/// 无额外资源的内核入口用于独立夹具；App 使用 prepare_app_with_guard 持有 Files 锁。
 pub(crate) fn prepare_with_state(
     handy: &Path,
     inputia: Option<&Path>,
@@ -313,8 +313,42 @@ pub(crate) fn prepare_with_state(
     legacy: Option<&Path>,
     inspect: impl FnOnce() -> Result<StartupNeed>,
 ) -> Result<StartupPreparation> {
+    prepare_with_guard(
+        handy,
+        inputia,
+        backup,
+        lock,
+        legacy,
+        || Ok(()),
+        |_| inspect(),
+    )
+    .map(|(prepared, ())| prepared)
+}
+
+/// 先取得迁移锁，再取得设置 Files 锁。guard 在恢复前创建，交付前始终存活。
+pub(crate) fn prepare_with_guard<G>(
+    handy: &Path,
+    inputia: Option<&Path>,
+    backup: &Path,
+    lock: &Path,
+    legacy: Option<&Path>,
+    acquire: impl FnOnce() -> Result<G>,
+    inspect: impl FnOnce(&G) -> Result<StartupNeed>,
+) -> Result<(StartupPreparation, G)> {
     let lock = StartupLock::acquire(lock)
         .map_err(|e| classified(StartupFailureKind::PendingRecovery, e))?;
+    let guard = acquire().map_err(|e| classified(StartupFailureKind::PendingRecovery, e))?;
+    let prepared = prepare_locked(handy, inputia, backup, legacy, lock, || inspect(&guard))?;
+    Ok((prepared, guard))
+}
+fn prepare_locked(
+    handy: &Path,
+    inputia: Option<&Path>,
+    backup: &Path,
+    legacy: Option<&Path>,
+    lock: StartupLock,
+    inspect: impl FnOnce() -> Result<StartupNeed>,
+) -> Result<StartupPreparation> {
     let mut roots = vec![MigrationSourceRoot {
         label: "handy".into(),
         root: handy.into(),
@@ -421,6 +455,35 @@ pub(crate) fn prepare_with_state(
         }
     };
     new_attempt(lock, roots, backup, purpose, full).map(StartupPreparation::Attempt)
+}
+/// 保持 schema 2 的日志目录，不能通过更换路径跳过旧恢复链。
+pub(crate) fn prepare_app_with_guard<G>(
+    app: &tauri::AppHandle,
+    acquire: impl FnOnce(&Path, Option<&Path>) -> Result<G>,
+    inspect: impl FnOnce(&G) -> Result<StartupNeed>,
+) -> Result<(StartupPreparation, G)> {
+    let handy = crate::portable::app_data_dir(app)?;
+    let migration = handy.join("migration_backups");
+    #[cfg(target_os = "macos")]
+    let inputia = crate::candidate_profile::current()
+        .map(|p| p.inputia_root.clone())
+        .or_else(|| {
+            app.path()
+                .home_dir()
+                .ok()
+                .map(|home| home.join("Library/Application Support/Inputia"))
+        });
+    #[cfg(not(target_os = "macos"))]
+    let inputia: Option<PathBuf> = None;
+    prepare_with_guard(
+        &handy,
+        inputia.as_deref(),
+        &migration.join(MIGRATION_ID),
+        &handy.join("migration_locks"),
+        Some(&migration.join(STARTUP_MIGRATION_ID)),
+        || acquire(&handy, inputia.as_deref()),
+        inspect,
+    )
 }
 fn specs(roots: &[MigrationSourceRoot], purpose: StartupPurpose) -> Result<Vec<Member>> {
     let mut result = vec![];

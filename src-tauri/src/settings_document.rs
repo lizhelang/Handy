@@ -9,6 +9,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "settings_document/startup.rs"]
+pub(super) mod startup;
+
 pub(super) struct Schema;
 pub(super) fn preflight(path: &Path, home: &Path, uid: u32) -> Result<(), Error> {
     DocumentStore::<Schema>::open(path, home, uid)?.preflight()
@@ -17,6 +20,7 @@ impl DocumentSchema for Schema {
     const FILE_NAME: &'static str = SETTINGS_STORE_PATH;
     const MARKER_NAME: &'static str = ".inputia-control-settings-initialized.json";
     const DOMAIN: &'static str = "inputia.control-settings";
+    const PENDING_NAME: Option<&'static str> = Some(".inputia-control-settings-pending.json");
     const PATCH_ROOT: &'static [&'static str] = &["settings"];
 
     fn defaults(_: &Path) -> Result<Map<String, Value>, Error> {
@@ -177,9 +181,26 @@ pub(super) enum SavedSettings {
 }
 impl LoadedSettings {
     pub fn reload(&self) -> Result<Self, Error> {
-        let snapshot = DocumentStore::<Schema>::open(&self.path, &self.home, self.uid)?
-            .read_at_least(&self.snapshot)?;
+        let store = DocumentStore::<Schema>::open(&self.path, &self.home, self.uid)?;
+        startup::ensure_ready(&store)?;
+        let snapshot = store.read_at_least(&self.snapshot)?;
         Self::from_snapshot(snapshot, self.path.clone(), self.home.clone(), self.uid)
+    }
+    pub fn complete_startup(
+        &self,
+        transaction: Option<&mut crate::data_migration::v3::StartupTransaction>,
+    ) -> anyhow::Result<Self> {
+        let store = DocumentStore::<Schema>::open(&self.path, &self.home, self.uid)?;
+        startup::confirm_ready(&store)?;
+        let snapshot = store.read_at_least(&self.snapshot)?;
+        if let Some(transaction) = transaction {
+            transaction.complete(
+                crate::data_migration::v3::StartupConfirmation::FullStartupReady,
+                || startup::ensure_ready(&store).map_err(Into::into),
+            )?;
+        }
+        Self::from_snapshot(snapshot, self.path.clone(), self.home.clone(), self.uid)
+            .map_err(Into::into)
     }
     pub fn follows(&self, previous: &Self) -> bool {
         self.path == previous.path
@@ -230,10 +251,21 @@ impl LoadedSettings {
             uid,
         })
     }
+    #[cfg(test)]
     pub fn read(path: &Path, home: &Path, uid: u32) -> Result<Self, Error> {
-        let snapshot = DocumentStore::<Schema>::open(path, home, uid)?.read()?;
+        let store = DocumentStore::<Schema>::open(path, home, uid)?;
+        store.read_observed_initialization(&mut |_| Ok(()))?;
+        if matches!(
+            store.pending_status()?,
+            inputia_settings::store::PendingStatus::RequiresActivation
+        ) {
+            store.activate_pending_protocol(&mut |_| Ok(()))?;
+        }
+        startup::ensure_ready(&store)?;
+        let snapshot = store.read()?;
         Self::from_snapshot(snapshot, path.into(), home.into(), uid)
     }
+    #[cfg(test)]
     pub fn read_observed(
         path: &Path,
         home: &Path,
@@ -242,8 +274,16 @@ impl LoadedSettings {
             &inputia_settings::store::InitializationIntent,
         ) -> Result<(), Error>,
     ) -> Result<Self, Error> {
-        let snapshot = DocumentStore::<Schema>::open(path, home, uid)?
-            .read_observed_initialization(observer)?;
+        let store = DocumentStore::<Schema>::open(path, home, uid)?;
+        store.read_observed_initialization(observer)?;
+        if matches!(
+            store.pending_status()?,
+            inputia_settings::store::PendingStatus::RequiresActivation
+        ) {
+            store.activate_pending_protocol(&mut |_| Ok(()))?;
+        }
+        startup::ensure_ready(&store)?;
+        let snapshot = store.read()?;
         Self::from_snapshot(snapshot, path.into(), home.into(), uid)
     }
     pub fn plan(&self, edited: &AppSettings) -> Result<Option<PlannedChange>, Error> {
@@ -295,6 +335,17 @@ impl PlannedChange {
         let result = DocumentStore::<Schema>::open(&self.path, &self.home, self.uid)?
             .apply_at_least(&self.request, &floor.snapshot)?;
         self.result(result)
+    }
+    pub fn apply_observed(
+        &self,
+        floor: &LoadedSettings,
+        observer: &mut inputia_settings::store::TransitionObserver<'_>,
+    ) -> Result<SavedSettings, Error> {
+        if self.path != floor.path || self.home != floor.home || self.uid != floor.uid {
+            return Err(Error::RepairRequired);
+        }
+        let store = DocumentStore::<Schema>::open(&self.path, &self.home, self.uid)?;
+        self.result(store.apply_observed(&self.request, &floor.snapshot, observer)?)
     }
     /// 同一实例可按原 ID 重试；错误不清除原请求或捏造成功。
     pub fn apply(&self) -> Result<SavedSettings, Error> {

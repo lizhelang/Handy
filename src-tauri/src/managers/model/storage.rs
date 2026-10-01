@@ -114,8 +114,12 @@ pub(super) fn is_space_error(error: &anyhow::Error) -> bool {
 /// 固定独立锁跨进程持有；不锁模型文件本身，也不阻止已有模型被读取。
 pub(super) struct ModelWriteLease {
     _file: File,
+    root: std::path::PathBuf,
 }
 impl ModelWriteLease {
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
     pub fn acquire(root: &Path) -> anyhow::Result<Self> {
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
@@ -142,7 +146,10 @@ impl ModelWriteLease {
             }
         }
         match file.try_lock() {
-            Ok(()) => Ok(Self { _file: file }),
+            Ok(()) => Ok(Self {
+                _file: file,
+                root: root.to_path_buf(),
+            }),
             Err(std::fs::TryLockError::WouldBlock) => Err(ModelStorageFailure {
                 code: StorageFailureCode::Busy,
                 required_bytes: 0,
