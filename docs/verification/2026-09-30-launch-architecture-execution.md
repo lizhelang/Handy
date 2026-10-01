@@ -464,4 +464,6 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 
 新增 `scripts/package-inputia-v2-local-bundle.py` 对该目录做只读身份/签名/私钥排除检查后，用无资源叉、无扩展属性、无 ACL、无 quarantine 的 `ditto` 归档，输出 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local.zip` 及外置 SHA-256；ZIP 完整性测试通过。该归档是可审查的本地成套制品，不是可直接替换现有安装的 v2 安装器。
 
+新增 `ReleasePairAuthVerify.swift`，使用嵌入的 v2 公钥、keyID、productID 和 releaseID 验证 pair-manifest，再以 manifest 中的 cdhash/identifier 检查控制中心与输入法；对本次成品实测 `releasePairVerified=true`。后续 v2 构建脚本会在生成清单后自动执行同一验签。
+
 边界：本批只完善本地构建与配对信任边界，不安装、不覆盖日用组件、不上传公开渠道。当前仍使用本机测试签名；Developer ID、公证、安装器/回滚、生产 NativeAdapter、真实旧库迁移与 App pending 启动接线仍未完成，不能把本地签名产物称为公开发布版本。
