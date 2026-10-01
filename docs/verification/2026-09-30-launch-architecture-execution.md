@@ -501,3 +501,5 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 此前 v2 Python 更新器在三组件替换成功后只留下 profile 配对清单，没有生成 `Inputia/installation.json`，Rust 更新核心无法从旧安装取得稳定的 installation ID、组件路径和 release 身份。现在 v2 成功恢复输入源后、结束维护标记前写入版本化 legacy 收据：首次生成随机 installation ID，后续更新保留该 ID；收据固定 `legacy_single_user`、`unified-candidate:<run_id>` 数据域和三组件绝对路径，使用 0600 临时文件、原子替换及父目录 fsync。已有非匹配收据会拒绝覆盖，v1 路径不写该收据。
 
 验证：更新器测试 19 项、发布脚本 48 项通过；新增收据生成、ID 保留、权限和 foreign-scope 拒绝回归。真实 `--apply` 尚未执行，因此当前电脑仍没有因为本批代码自动产生收据；安装收据只有在用户明确执行 v2 覆盖安装后才会写入。
+
+在提交 `8c2488b134feb0f2ada21a7898d77fc1f8af9dd7` 的干净工作区重新构建三组件，输出目录为 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-00701NOR`，releaseId 为 `inputia-1.1.1-85-8c2488b134fe-35d886d4615e4e4c8c8349201b45ee32`。重新归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r4.zip`，SHA-256 为 `8dbd4817e7b7c847ae2d487153ea9f1f8ff39d887fd712aecc33e777f2fa7d72`；ZIP 完整性通过，包内更新器已确认包含 `write_legacy_receipt` 和 `--settings-app`。构建、公证和安装状态仍分别为 `publicReleaseEligible=false`、`notarization=NOT_RUN`、`installed=false`。
