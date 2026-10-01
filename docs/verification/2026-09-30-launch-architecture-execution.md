@@ -493,3 +493,5 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 修正 `inputia-settings::installation` 对 `LegacySingleUser` 的路径合同：旧版三组件安装的主程序和设置启动器都在 `/Applications`，输入法仍在当前用户的 `~/Library/Input Methods`；数据目录继续按当前用户的 `trial-*` legacy profile 定位。此前解析器只把主程序放到 `/Applications`，会把设置组件错误算到 `~/Applications`，从而阻断旧收据与三组件更新事务的绑定。
 
 验证：设置 crate 38 项单元测试、安装 6 项、维护 5 项和 updater 相关收据回归 1 项通过；两个 crate 的 rustfmt 检查和 diff 检查通过。该修正只改变路径解析，不创建目录、不迁移数据、不修改当前安装。
+
+随后补齐同一合同的配对清单定位：`Managed` 安装仍使用按 releaseId 分层的 `Inputia/Releases/<releaseId>/pair-manifest.json`；`LegacyCandidate` 则固定读取现有 `HandyUnifiedCandidate/<run_id>/pair-manifest.json`，与当前实际旧 profile 一致。安装测试新增旧 profile 配对清单路径断言并通过。该路径只用于收据解析和预检，实际旧单用户接管仍需具备独立系统目录授权的生产迁移助手。

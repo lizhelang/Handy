@@ -92,6 +92,12 @@ fn legacy_trial_retains_exact_profile_and_both_data_roots() {
             .join("Library/Application Support/HandyUnifiedCandidate/trial-20260905/Inputia")
     );
     assert_eq!(
+        located.pair_manifest,
+        context.home.join(
+            "Library/Application Support/HandyUnifiedCandidate/trial-20260905/pair-manifest.json"
+        )
+    );
+    assert_eq!(
         located.receipt.profile_id,
         "unified-candidate:trial-20260905"
     );

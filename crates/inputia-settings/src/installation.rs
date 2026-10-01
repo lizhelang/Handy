@@ -225,10 +225,18 @@ impl InstallationReceipt {
                 support.join("HandyUnifiedCandidate").join(run_id)
             }
         };
-        let pair_manifest = support
-            .join("Inputia/Releases")
-            .join(&self.release_id)
-            .join("pair-manifest.json");
+        let pair_manifest = match &self.data {
+            DataLocation::Managed => support
+                .join("Inputia/Releases")
+                .join(&self.release_id)
+                .join("pair-manifest.json"),
+            // 旧 updater 将配对清单与 legacy profile 放在同一数据根；迁移前
+            // 必须从这个真实位置读取，不能凭新装目录规则猜一个不存在的路径。
+            DataLocation::LegacyCandidate { run_id } => support
+                .join("HandyUnifiedCandidate")
+                .join(run_id)
+                .join("pair-manifest.json"),
+        };
         Ok(LocatedInstallation {
             receipt: self,
             handy_root: data_root.join("Handy"),
