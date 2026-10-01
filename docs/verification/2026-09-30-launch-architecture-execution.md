@@ -468,4 +468,6 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 
 更新器预检增加 `--release-v2` 分支：目标数据域仍由显式 `--run-id` 指定，旧安装按 v1 profile 校验，新组件按 releaseId、无开发标记和 v2 pair-manifest 校验；v1 更新路径不变。v2 归档现在附带“安装v2体验版.command”和“仅检查v2更新.command”，命令默认只预检，安装仍需用户输入确认。针对身份门禁的更新器测试 15 项通过；重新归档得到 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r2.zip`，两个入口 shell 语法和 ZIP 解压检查通过。
 
+对当前电脑已安装的旧双组件执行归档内“仅检查v2更新.command”实测返回 `releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`，退出码 0；未执行 `--apply`，未替换程序、未切换输入源、未启动新组件。
+
 边界：本批只完善本地构建与配对信任边界，不安装、不覆盖日用组件、不上传公开渠道。当前仍使用本机测试签名；Developer ID、公证、安装器/回滚、生产 NativeAdapter、真实旧库迁移与 App pending 启动接线仍未完成，不能把本地签名产物称为公开发布版本。
