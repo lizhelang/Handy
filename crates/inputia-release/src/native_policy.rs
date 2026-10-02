@@ -42,6 +42,7 @@ pub struct NativeComponentPolicy {
     bundle_id: String,
     team_id: String,
     artifact: String,
+    bundle_root: String,
     archive_sha256: String,
     archive_size: u64,
     slices: Vec<NativeSlicePolicy>,
@@ -58,6 +59,9 @@ impl NativeComponentPolicy {
     }
     pub fn artifact(&self) -> &str {
         &self.artifact
+    }
+    pub fn bundle_root(&self) -> &str {
+        &self.bundle_root
     }
     pub fn archive_sha256(&self) -> &str {
         &self.archive_sha256
@@ -160,6 +164,7 @@ impl NativeReleasePolicy {
                     bundle_id: text(&component["bundle_id"])?.into(),
                     team_id: text(&component["signing_requirement"]["team_id"])?.into(),
                     artifact: text(&component["artifact"])?.into(),
+                    bundle_root: text(&component["bundle_root"])?.into(),
                     archive_sha256: text(&component["sha256"])?.into(),
                     archive_size: integer(&component["size"])?,
                     slices: cdhashes

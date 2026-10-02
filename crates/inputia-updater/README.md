@@ -107,8 +107,9 @@ cargo clippy --locked --manifest-path crates/inputia-updater/Cargo.toml --all-ta
 根 fd 身份及读取预算计数。macOS 新根若继承扩展 ACL 会拒绝，避免只看 0700 误判私有目录。**它只证明本次解包一致性，不证明 Apple 签名、公证、组件角色、
 发布授权或允许安装。** `required_root` 是调用者从受信 role→组件根映射取得的单段名称，
 不能从 ZIP 自行选择；本库要求该目录显式存在、所有条目仅在该根内，链接也不能跨根。
-当前 manifest 尚未定义 `bundle_root`，正式 writer 应加入版本化布局合同；不猜测 role 布局。
-proof 绑定该精确根名。调用方仍须按授权 role 检查精确布局，在受控 stage 对实际 `.app`
+manifest 现已为每个组件定义并签名 `bundle_root`；调用方必须从
+`AuthorizedReleaseMetadata.native_release_policy()` 的对应角色策略取得它，不能猜测 role 布局。
+archive 到 `ExtractedArchive` 的组合接线仍未完成。proof 绑定该精确根名。调用方仍须按授权 role 检查精确布局，在受控 stage 对实际 `.app`
 做原生验证；恢复时重验，旧 proof 不豁免这些步骤。
 
 处理顺序：同一个源 fd 的 SHA256 与 size → 全量中央目录、局部头和 descriptor 一致性 →

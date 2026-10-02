@@ -177,6 +177,7 @@ def validate_manifest(value, product, *, expect_current_build=False):
     for expected in product["components"]:
         require(expected["role"] in components, "缺少产品组件")
         require(components[expected["role"]]["bundle_id"] == expected["bundle_id"], "组件 Bundle ID 与产品不匹配")
+        require(components[expected["role"]]["bundle_root"] == expected["app_name"], "组件根目录与产品不匹配")
     teams = set()
     for component in components.values():
         require(component["bundle_id"] == component["signing_requirement"]["bundle_id"], "签名身份与组件不匹配")

@@ -91,7 +91,9 @@ pub fn validate_manifest(value: &Value) -> Result<()> {
         require(components.contains_key(role))?;
     }
     for expected in array(&product["components"])? {
-        require(components[text(&expected["role"])?]["bundle_id"] == expected["bundle_id"])?;
+        let component = components[text(&expected["role"])?];
+        require(component["bundle_id"] == expected["bundle_id"])?;
+        require(component["bundle_root"] == expected["app_name"])?;
     }
     let mut teams = BTreeSet::new();
     for component in components.values() {
@@ -225,6 +227,15 @@ mod tests {
             (
                 "/components/0/cdhashes",
                 serde_json::json!(["b".repeat(64)]),
+            ),
+            (
+                "/components/0/bundle_root",
+                serde_json::json!("nested/Inputia.app"),
+            ),
+            ("/components/0/bundle_root", serde_json::json!("Other.app")),
+            (
+                "/components/0/bundle_root",
+                serde_json::json!("bad\u{0085}.app"),
             ),
             (
                 "/components/1/cdhashes",

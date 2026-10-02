@@ -21,7 +21,7 @@ spec.loader.exec_module(release)
 def fixture(product):
     digest = "a" * 64
     stores = [{"id": sid, "readable_schema_range": {"min": 1, "max": 2}, "writable_schema_range": {"min": 2, "max": 2}, "migration_id": "expand-2", "event_formats": {"readable_versions": [1, 2], "writable_version": 2}, "outbox_capabilities": ["idempotent-consumer"], "revision_capabilities": ["monotonic-revision"], "privacy_capabilities": ["deletion-barrier", "forgetting-barrier"]} for sid in product["compatibility"]["required_stores"]]
-    components = [{"role": c["role"], "bundle_id": c["bundle_id"], "artifact": f"components/{c['role']}.zip", "sha256": digest, "size": 4, "cdhashes": ["b" * 40], "signing_requirement": {"trust_domain": "developer-id", "team_id": "TESTTEAM01", "bundle_id": c["bundle_id"]}} for c in product["components"]]
+    components = [{"role": c["role"], "bundle_id": c["bundle_id"], "artifact": f"components/{c['role']}.zip", "bundle_root": c["app_name"], "sha256": digest, "size": 4, "cdhashes": ["b" * 40], "signing_requirement": {"trust_domain": "developer-id", "team_id": "TESTTEAM01", "bundle_id": c["bundle_id"]}} for c in product["components"]]
     return {"schema_version": 2, "product_id": product["product_id"], "release_id": "inputia-test-current", "version": product["version"], "build": product["build"], "source_commit": "c" * 40, "target": {"platform": "macos", "architecture": "arm64", "min_os": "13.0", "tested_os": ["13", "26"]}, "components": components, "protocol": {"supported_majors": [1, 2], "capabilities": ["pair-auth"]}, "stores": stores, "rollback_targets": [{"release_id": "inputia-test-compatible", "artifact_digests": [digest], "stores": copy.deepcopy(stores)}], "resources": [{"id": "fixture-resource", "version": "1", "digest": digest, "license": "MIT", "required": True, "distribution_mode": "bundled"}], "pair_manifest": {"schema": 2, "artifact": "pair-manifest.json", "sha256": digest, "signer_key_id": "pair-key-1"}, "updater": {"min_version": "1.0.0", "transaction_schema": 1, "migration_requirements": []}, "distribution_artifacts": [{"role": "installer-dmg", "artifact": "Inputia.dmg", "sha256": digest, "size": 4}], "sbom_digest": digest}
 
 
@@ -114,6 +114,14 @@ class ReleaseContractTests(unittest.TestCase):
         self.manifest = fixture(self.product)
         self.manifest["components"][0]["bundle_id"] = "com.other.control"
         self.rejected(self.manifest)
+        self.manifest = fixture(self.product)
+        self.manifest["components"][0]["bundle_root"] = "Other.app"
+        self.rejected(self.manifest)
+        for root in ("../Inputia.app", "nested/Inputia.app", "Inputia", "Inputia.app/", "bad\\Inputia.app", "bad\n.app", "bad\u0085.app"):
+            with self.subTest(bundle_root=root):
+                value = fixture(self.product)
+                value["components"][0]["bundle_root"] = root
+                self.rejected(value)
 
     def test_rejects_missing_recovery_component(self):
         self.manifest["components"] = [c for c in self.manifest["components"] if c["role"] != "bootstrap"]

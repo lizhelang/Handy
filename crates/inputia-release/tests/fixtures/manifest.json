@@ -4,6 +4,7 @@
     {
       "artifact": "components/control.zip",
       "bundle_id": "com.pais.handy.UnifiedCandidate",
+      "bundle_root": "Inputia.app",
       "cdhashes": [
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       ],
@@ -19,6 +20,7 @@
     {
       "artifact": "components/ime.zip",
       "bundle_id": "com.inputia.inputmethod.Inputia.UnifiedCandidate",
+      "bundle_root": "InputiaUnifiedCandidate.app",
       "cdhashes": [
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       ],
@@ -34,6 +36,7 @@
     {
       "artifact": "components/settings.zip",
       "bundle_id": "com.inputia.settings.UnifiedCandidate",
+      "bundle_root": "Inputia 设置.app",
       "cdhashes": [
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       ],
@@ -49,6 +52,7 @@
     {
       "artifact": "components/updater.zip",
       "bundle_id": "com.inputia.updater",
+      "bundle_root": "Inputia Updater.app",
       "cdhashes": [
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       ],
@@ -64,6 +68,7 @@
     {
       "artifact": "components/bootstrap.zip",
       "bundle_id": "com.inputia.bootstrap",
+      "bundle_root": "Inputia Installer.app",
       "cdhashes": [
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       ],

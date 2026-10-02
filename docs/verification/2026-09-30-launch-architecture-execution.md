@@ -902,3 +902,19 @@ binding；manifest 继续由连接握手完成签名认证。无效输入也经�
 launcher self-check 通过，使用已有公开配对元数据的隔离 paired candidate 全构建、原生自检、
 ad-hoc hardened runtime 签名与最低系统检查通过。该证据没有安装新包、终止日用进程或修改用户数据；
 安装后长期 CPU 与真实服务滚动换代仍需绑定新制品复验。
+
+### 第一百零九批：发布归档根名进入签名合同
+
+发布 manifest 的每个 `components[]` 新增必填 `bundle_root`，固定该 ZIP 内唯一允许的单段
+`.app` 根名。schema 拒绝路径分隔符、反斜线、控制字符、非 `.app` 后缀和超长名称；Python
+发布语义校验进一步要求五个角色的根名分别与 `release/product.toml` 唯一 `app_name` 精确一致。
+这样 bootstrap 后续调用受限 ZIP 解包器时，`required_root` 可以来自已验签发布策略，不能从归档
+内容或请求参数自行选择。
+
+完整发布信任链授权后，`NativeReleasePolicy` 同时冻结并只读暴露 `bundle_root`；授权对象内部 JSON
+随后发生仍合法的根名变化也不会改写冻结策略。manifest 夹具、Python 生产者夹具和负例已升级，
+覆盖产品错配、路径穿越、嵌套根、反斜线、控制字符和非 `.app` 名称。验证：`inputia-release`
+25/25、发布/验收 Python 56/56、严格 Clippy、格式与配置漂移检查通过。独立复审确认 Rust
+授权路径对五角色的 `bundle_root` 与 `product.toml` 中 `app_name` 逐一精确对账，schema 同时
+拒绝 C0、DEL 和 C1 控制字符，结论 CLEAR。该批建立了受信根名，不等于下载 archive 已与
+`ExtractedArchive` 和最终 `InstallRequest` 能力接通；该来源链仍需下一层显式组合。

@@ -315,6 +315,8 @@ mod tests {
                 && component.slices()[0].architecture() == "arm64"
                 && component.slices()[0].cdhash() == "b".repeat(40)
                 && component.artifact().starts_with("components/")
+                && component.bundle_root().ends_with(".app")
+                && !component.bundle_root().contains('/')
                 && !component.bundle_id().is_empty()
         }));
         assert_eq!(native.pair_manifest().artifact(), "pair-manifest.json");
@@ -355,10 +357,15 @@ mod tests {
         let mut authorized = f.authorize().unwrap();
         let frozen = authorized.native_release_policy().clone();
         authorized.manifest["components"][0]["cdhashes"][0] = json!("c".repeat(40));
+        authorized.manifest["components"][0]["bundle_root"] = json!("Other.app");
         assert_eq!(authorized.native_release_policy(), &frozen);
         assert_eq!(
             authorized.native_release_policy().components()[0].slices()[0].cdhash(),
             "b".repeat(40)
+        );
+        assert_ne!(
+            authorized.native_release_policy().components()[0].bundle_root(),
+            "Other.app"
         );
     }
 

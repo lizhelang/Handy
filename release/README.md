@@ -83,7 +83,7 @@ python3 scripts/inputia_release.py bind-manifest \
 
 - 结构检查拒绝重复 JSON 字段、NaN/Infinity、未知字段、布尔值假整数、重复身份、越界范围、绝对路径和路径穿越。
 - 每个数据库必须声明可读/可写 schema、可读/写事件格式、outbox、修订和删除/遗忘能力。回滚目标必须能读写当前数据、双向理解事件并保留当前能力，不能只声明“可读取”。这些是待实测的合同，不自动构成兼容证明。
-- `components[].sha256` 覆盖冻结的普通归档文件；`.app` 目录不能被当成一个普通文件计算摘要。代码 CDHash 与 Developer ID requirement 另存。当前公开目标固定 arm64，每个组件必须恰好有一个 40 位小写 Apple CDHash；多值或 64 位值会在原生 manifest 语义校验中拒绝。`distribution_artifacts` 覆盖最终 DMG/安装器归档。
+- `components[].sha256` 覆盖冻结的普通归档文件；`.app` 目录不能被当成一个普通文件计算摘要。`components[].bundle_root` 固定该归档内唯一允许的单段 `.app` 根名，并必须与产品配置的 `app_name` 一致；解包器不能从 ZIP 内容或调用方猜选根目录。代码 CDHash 与 Developer ID requirement 另存。当前公开目标固定 arm64，每个组件必须恰好有一个 40 位小写 Apple CDHash；多值或 64 位值会在原生 manifest 语义校验中拒绝。`distribution_artifacts` 覆盖最终 DMG/安装器归档。
 - `--artifact-dir` 对实际普通文件核对摘要、大小与目录边界，拒绝 symlink。它不会解包归档，也不表示已检查内部归档路径或可执行签名。
 - 当前签名校验只对显式提供的受信公钥集执行；未提供时返回 `signature_verification=NOT_RUN`，签名无效或阈值不足会失败。`public_release_eligible` 始终为 false。
 
