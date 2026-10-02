@@ -99,10 +99,57 @@ final class InputiaVoiceReceiptGate {
 /// 只复用已经完整认证的 socket；权限或配对清单变化使该租约失效。
 struct InputiaAuthenticatedConnectionScope {
   let permissionEpoch: UInt64
+  let endpoint: Data
   let manifest: Data
   let server: String
-  func matches(epoch: UInt64, manifest: Data, expectedServer: String?) -> Bool {
-    permissionEpoch == epoch && self.manifest == manifest && (expectedServer == nil || expectedServer == server)
+  func matches(epoch: UInt64, endpoint: Data, manifest: Data, expectedServer: String) -> Bool {
+    permissionEpoch == epoch && self.endpoint == endpoint && self.manifest == manifest && expectedServer == server
+  }
+}
+
+/// 不同后台队列共享失败冷却和在途限制；已认证连接的复用不经过该门。
+final class InputiaConnectionRetryGate {
+  struct Attempt: Equatable {
+    fileprivate let identifier: UInt64
+    fileprivate let recoveryGeneration: UInt64
+  }
+  private let lock = NSLock()
+  private var inFlight: Attempt?
+  private var nextIdentifier: UInt64 = 0
+  private var recoveryGeneration: UInt64 = 0
+  private var consecutiveFailures = 0
+  private var retryAfter: TimeInterval = 0
+
+  func begin(now: TimeInterval) -> Attempt? {
+    lock.lock(); defer { lock.unlock() }
+    guard inFlight == nil else { return nil }
+    guard now >= retryAfter else { return nil }
+    nextIdentifier &+= 1
+    let attempt = Attempt(identifier: nextIdentifier, recoveryGeneration: recoveryGeneration)
+    inFlight = attempt
+    return attempt
+  }
+
+  func finish(_ attempt: Attempt, succeeded: Bool, now: TimeInterval) {
+    lock.lock(); defer { lock.unlock() }
+    guard inFlight == attempt else { return }
+    inFlight = nil
+    // 显式恢复发生后，旧的在途失败不能再次施加冷却。
+    guard attempt.recoveryGeneration == recoveryGeneration else { return }
+    if succeeded {
+      consecutiveFailures = 0
+      retryAfter = 0
+    } else {
+      consecutiveFailures = min(consecutiveFailures + 1, 4)
+      retryAfter = now + TimeInterval(1 << (consecutiveFailures - 1))
+    }
+  }
+
+  func resumeForExplicitStart() {
+    lock.lock(); defer { lock.unlock() }
+    recoveryGeneration &+= 1
+    consecutiveFailures = 0
+    retryAfter = 0
   }
 }
 
@@ -131,6 +178,8 @@ enum InputiaVoiceInputLauncher {
   private static let readinessLaunches = DispatchGroup()
   private static var explicitStartPending = false
   private static var serviceTerminationObserver: NSObjectProtocol?
+  private static let connectionRetryGate = InputiaConnectionRetryGate()
+  private static let readinessRetryGate = InputiaConnectionRetryGate()
 
   private struct BusinessConnection {
     let connection: InputiaVoiceServiceConnection
@@ -138,24 +187,33 @@ enum InputiaVoiceInputLauncher {
   }
   private static var personalizationConnection: BusinessConnection?
   private static var typedCaptureConnection: BusinessConnection?
+  private static var menuStatusConnection: BusinessConnection?
   private static func reusableBusinessConnection(_ cached: inout BusinessConnection?, epoch: UInt64,
     expectedServer: String?) throws -> InputiaVoiceServiceConnection {
     guard InputiaPermissionLifecycle.shared.epoch == epoch,
       InputiaPermissionLifecycle.shared.allowsServiceConnection,
       InputiaPermissionLifecycle.shared.backgroundMaintenanceAllowsWork() else { throw InputiaVoiceServiceError.policy }
-    let manifest = try InputiaProfile.current.readPairManifest()
-    guard manifest.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
-    if let previous = cached, previous.scope.matches(epoch: epoch, manifest: manifest, expectedServer: expectedServer) {
-      return previous.connection
+    let profile = InputiaProfile.current
+    let inputs = try? authenticatedInputs(profile: profile)
+    if let inputs {
+      guard expectedServer == nil || expectedServer == inputs.endpoint.server_instance else {
+        throw InputiaVoiceServiceError.policy
+      }
+      if let previous = cached, previous.scope.matches(epoch: epoch, endpoint: inputs.endpointBytes,
+        manifest: inputs.manifest, expectedServer: inputs.endpoint.server_instance) {
+        return previous.connection
+      }
     }
     cached?.connection.closeTypedCaptureConnection(); cached = nil
-    let connection = try openAuthenticatedConnection()
+    let connection = try openAuthenticatedConnection(profile: profile, inputs: inputs)
+    guard let inputs else { connection.closeTypedCaptureConnection(); throw InputiaVoiceServiceError.profile }
     guard InputiaPermissionLifecycle.shared.epoch == epoch,
-      expectedServer == nil || expectedServer == connection.server.instance_id else {
+      inputs.endpoint.server_instance == connection.server.instance_id else {
       connection.closeTypedCaptureConnection(); throw InputiaVoiceServiceError.policy
     }
     cached = BusinessConnection(connection: connection,
-      scope: InputiaAuthenticatedConnectionScope(permissionEpoch: epoch, manifest: manifest, server: connection.server.instance_id))
+      scope: InputiaAuthenticatedConnectionScope(permissionEpoch: epoch, endpoint: inputs.endpointBytes,
+        manifest: inputs.manifest, server: connection.server.instance_id))
     return connection
   }
   private static func retireBusinessConnections() {
@@ -164,6 +222,9 @@ enum InputiaVoiceInputLauncher {
     }
     typedCaptureQueue.async {
       typedCaptureConnection?.connection.closeTypedCaptureConnection(); typedCaptureConnection = nil
+    }
+    voiceQueue.async {
+      menuStatusConnection?.connection.close(); menuStatusConnection = nil
     }
   }
   private static let personalizationQueue = DispatchQueue(label: "Inputia.personalization")
@@ -282,8 +343,14 @@ enum InputiaVoiceInputLauncher {
   static func ensureUnifiedServiceReady() {
     readinessQueue.async {
       guard readiness.needsAutomaticPreparation, InputiaPermissionLifecycle.shared.allowsServiceConnection else { return }
+      let profile = InputiaProfile.current
+      guard let retryAttempt = readinessRetryGate.begin(now: ProcessInfo.processInfo.systemUptime) else { return }
+      var prepared = false
+      defer {
+        readinessRetryGate.finish(retryAttempt, succeeded: prepared,
+          now: ProcessInfo.processInfo.systemUptime)
+      }
       do {
-        let profile = InputiaProfile.current
         try profile.validateRuntimeConnectionPaths()
         let bytes = try profile.readPairManifest()
         let manifest = try SignedPairManifest.verify(bytes, trust: InputiaEmbeddedPairTrust.trust)
@@ -299,7 +366,7 @@ enum InputiaVoiceInputLauncher {
           }
         }
         let running = try trustedServiceIsRunning(identity: identity)
-        if running { readiness.markServiceObserved(); return }
+        if running { readiness.markServiceObserved(); prepared = true; return }
         guard readiness.requestStart(isRunning: false) else { return }
         let app = try verifiedInstalledService(identity: identity)
         guard InputiaPermissionLifecycle.shared.allowsServiceConnection,
@@ -310,6 +377,7 @@ enum InputiaVoiceInputLauncher {
           if error != nil { NSLog("inputia_service_prepare_failed automatic_retry=false") }
           else { NSLog("inputia_service_hidden_start_requested recording_command_sent=false") }
         }
+        prepared = true
       } catch {
         NSLog("inputia_service_prepare_unavailable automatic_retry=false")
       }
@@ -366,6 +434,8 @@ enum InputiaVoiceInputLauncher {
     readinessQueue.async {
       guard !explicitStartPending else { DispatchQueue.main.async { completion(false) }; return }
       explicitStartPending = true
+      readinessRetryGate.resumeForExplicitStart()
+      connectionRetryGate.resumeForExplicitStart()
       do {
         let identity = try verifiedServiceIdentity()
         let app = try verifiedInstalledService(identity: identity)
@@ -436,6 +506,21 @@ enum InputiaVoiceInputLauncher {
   private static let sharedTermsQueue = DispatchQueue(label: "Inputia.shared-terms")
   private static var sharedTermsConnection: InputiaVoiceServiceConnection?
   private struct Endpoint: Decodable { let profile_id: String; let protocol_major: Int; let server_instance: String; let socket_path: String; let pair_binding: InputiaPairBinding? }
+  private struct AuthenticatedInputs {
+    let endpointBytes: Data
+    let endpoint: Endpoint
+    let manifest: Data
+  }
+  private static func authenticatedInputs(profile: InputiaProfile) throws -> AuthenticatedInputs {
+    try profile.validateRuntimeConnectionPaths()
+    let endpointBytes = try profile.readEndpoint()
+    let endpoint = try JSONDecoder().decode(Endpoint.self, from: endpointBytes)
+    guard endpoint.protocol_major == 1, endpoint.profile_id == profile.profileID,
+      endpoint.pair_binding == profile.pairBinding else { throw InputiaVoiceServiceError.profile }
+    let manifest = try profile.readPairManifest()
+    guard manifest.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
+    return AuthenticatedInputs(endpointBytes: endpointBytes, endpoint: endpoint, manifest: manifest)
+  }
 
   /// All IPC ownership is released on its owning queues. Never wait for a socket on main.
   static func invalidatePermissionWork(completion: @escaping () -> Void = {}) {
@@ -646,20 +731,29 @@ enum InputiaVoiceInputLauncher {
   static func openAuthenticatedConnection() throws -> InputiaVoiceServiceConnection {
     guard InputiaPermissionLifecycle.shared.allowsServiceConnection, InputiaPermissionLifecycle.shared.backgroundMaintenanceAllowsWork() else { throw InputiaVoiceServiceError.policy }
     let profile = InputiaProfile.current
-    try profile.validateRuntimeConnectionPaths()
-    let endpoint = try JSONDecoder().decode(Endpoint.self,
-      from: profile.readEndpoint())
-    guard endpoint.protocol_major == 1,
-      endpoint.profile_id == profile.profileID, endpoint.pair_binding == profile.pairBinding else { throw InputiaVoiceServiceError.profile }
-    let manifest = try profile.readPairManifest()
-    guard manifest.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
+    let inputs = try? authenticatedInputs(profile: profile)
+    return try openAuthenticatedConnection(profile: profile, inputs: inputs)
+  }
+
+  private static func openAuthenticatedConnection(profile: InputiaProfile,
+    inputs: AuthenticatedInputs?) throws -> InputiaVoiceServiceConnection {
+    guard let retryAttempt = connectionRetryGate.begin(now: ProcessInfo.processInfo.systemUptime) else {
+      throw InputiaVoiceServiceError.policy
+    }
+    var authenticated = false
+    defer {
+      connectionRetryGate.finish(retryAttempt, succeeded: authenticated,
+        now: ProcessInfo.processInfo.systemUptime)
+    }
+    guard let inputs else { throw InputiaVoiceServiceError.profile }
     let state = try InputiaVoiceSharedState(profile: profile)
-    let connection = try InputiaVoiceServiceConnection.connect(endpoint: endpoint.socket_path,
-      signedManifest: manifest, trust: InputiaEmbeddedPairTrust.trust, profile: profile,
+    let connection = try InputiaVoiceServiceConnection.connect(endpoint: inputs.endpoint.socket_path,
+      signedManifest: inputs.manifest, trust: InputiaEmbeddedPairTrust.trust, profile: profile,
       previousEpoch: state.lastVersion().policy_epoch)
     do {
-      guard connection.server.instance_id == endpoint.server_instance else { throw InputiaVoiceServiceError.handshake }
+      guard connection.server.instance_id == inputs.endpoint.server_instance else { throw InputiaVoiceServiceError.handshake }
       try connection.synchronizePolicy(using: state)
+      authenticated = true
       return connection
     } catch { connection.close(); throw error }
   }
@@ -819,24 +913,13 @@ enum InputiaVoiceInputLauncher {
           DispatchQueue.main.async { completion(reply.status == "menu" ? reply : nil) }
           return
         }
-        let profile = InputiaProfile.current
-        try profile.validateRuntimeConnectionPaths()
-        let endpoint = try JSONDecoder().decode(Endpoint.self,
-          from: profile.readEndpoint())
-        guard endpoint.protocol_major == 1,
-          endpoint.profile_id == profile.profileID, endpoint.pair_binding == profile.pairBinding else { throw InputiaVoiceServiceError.profile }
-        let manifest = try profile.readPairManifest()
-        guard manifest.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
-        let state = try InputiaVoiceSharedState(profile: profile)
-        let connection = try InputiaVoiceServiceConnection.connect(endpoint: endpoint.socket_path,
-          signedManifest: manifest, trust: InputiaEmbeddedPairTrust.trust, profile: profile,
-          previousEpoch: state.lastVersion().policy_epoch)
-        defer { connection.close() }
-        guard connection.server.instance_id == endpoint.server_instance else { throw InputiaVoiceServiceError.handshake }
-        try connection.synchronizePolicy(using: state)
+        let connection = try reusableBusinessConnection(&menuStatusConnection,
+          epoch: InputiaPermissionLifecycle.shared.epoch, expectedServer: nil)
         let reply = try connection.menuRequest(kind: kind, modelID: modelID)
+        if kind != "status" { menuStatusConnection?.connection.close(); menuStatusConnection = nil }
         DispatchQueue.main.async { completion(reply.status == "menu" ? reply : nil) }
       } catch {
+        menuStatusConnection?.connection.close(); menuStatusConnection = nil
         retireMenuServiceConnection()
         NSLog("inputia_menu_request_unconfirmed automatic_replay=false")
         DispatchQueue.main.async { completion(nil) }
