@@ -555,3 +555,9 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 发布工具新增 `bind-manifest`：读取已预检的 `build-context.json` 和显式 manifest 模板，重新计算组件、安装器/分发包及配对清单的 SHA-256/大小，核对 releaseId、版本、源码提交、产品摘要和目标矩阵后，以独占方式写出未签名 `release-manifest.json`。模板仍必须显式提供 CDHash、Developer ID 团队、逐库兼容、回滚和资源合同；工具不会生成签名、公证或公开放行状态。
 
 验证：发布合同测试 25 项通过；新增测试覆盖冻结文件摘要重算、配对清单摘要和输出大小。软链接、越界路径、上下文身份不一致和输出覆盖仍由现有门禁拒绝。该工具为 P4/P5 的最终制品绑定提供可复用入口，但不替代正式签名、公证或 G10a/G10b 实测。
+
+### 第五十七批：清单绑定工具版体验包重新冻结
+
+在提交 `f7a87283f0d7db2a0b12734f89346c8adf64e233` 的干净工作区重新构建三组件本地 v2 体验包，releaseId 为 `inputia-1.1.1-85-f7a87283f0d7-c577920f81894742ac963e4acb0c429d`，构建目录为 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-57ZdIlej`。构建、配对清单验签、三组件元数据/架构检查通过；`installed=false`、`publicReleaseEligible=false`，公证未运行。
+
+归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r9.zip`，SHA-256 为 `5615eabd1b1c575ba74136391bb9b64a78c57a873537294c08c6d13ffe1529ad`；ZIP 完整性通过。对当前旧安装执行只读预检仍返回 `installationReceiptPresent=false`、`releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`，未执行覆盖安装或输入源切换。
