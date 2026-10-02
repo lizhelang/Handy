@@ -284,7 +284,7 @@ enum InputiaVoiceInputLauncher {
       guard readiness.needsAutomaticPreparation, InputiaPermissionLifecycle.shared.allowsServiceConnection else { return }
       do {
         let profile = InputiaProfile.current
-        try profile.validateCandidatePaths()
+        try profile.validateRuntimeConnectionPaths()
         let bytes = try profile.readPairManifest()
         let manifest = try SignedPairManifest.verify(bytes, trust: InputiaEmbeddedPairTrust.trust)
         let identity = try manifest.identity(for: .handy)
@@ -334,7 +334,7 @@ enum InputiaVoiceInputLauncher {
 
   private static func verifiedServiceIdentity() throws -> PairCodeIdentity {
     let profile = InputiaProfile.current
-    try profile.validateCandidatePaths()
+    try profile.validateRuntimeConnectionPaths()
     let bytes = try profile.readPairManifest()
     guard bytes.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
     return try SignedPairManifest.verify(bytes, trust: InputiaEmbeddedPairTrust.trust).identity(for: .handy)
@@ -646,7 +646,7 @@ enum InputiaVoiceInputLauncher {
   static func openAuthenticatedConnection() throws -> InputiaVoiceServiceConnection {
     guard InputiaPermissionLifecycle.shared.allowsServiceConnection, InputiaPermissionLifecycle.shared.backgroundMaintenanceAllowsWork() else { throw InputiaVoiceServiceError.policy }
     let profile = InputiaProfile.current
-    try profile.validateCandidatePaths()
+    try profile.validateRuntimeConnectionPaths()
     let endpoint = try JSONDecoder().decode(Endpoint.self,
       from: profile.readEndpoint())
     guard endpoint.protocol_major == 1,
@@ -820,7 +820,7 @@ enum InputiaVoiceInputLauncher {
           return
         }
         let profile = InputiaProfile.current
-        try profile.validateCandidatePaths()
+        try profile.validateRuntimeConnectionPaths()
         let endpoint = try JSONDecoder().decode(Endpoint.self,
           from: profile.readEndpoint())
         guard endpoint.protocol_major == 1,
@@ -858,7 +858,7 @@ enum InputiaVoiceInputLauncher {
       var stage = "candidate_profile"
       do {
         let profile = InputiaProfile.current
-        try profile.validateCandidatePaths()
+        try profile.validateRuntimeConnectionPaths()
         if let session = unifiedSession, let connection = unifiedConnection {
           stage = "stop_request"
           let reply = try connection.request(sessionID: session, requestID: UUID().uuidString, command: .stop)

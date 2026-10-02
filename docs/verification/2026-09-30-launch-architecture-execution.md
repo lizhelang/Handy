@@ -845,3 +845,38 @@ Python 语法、AST 解析和 diff 检查通过；没有重新包装、安装或
 独立首轮复审发现两个缺口：仅重跑 schema 不能阻止 crate 内部对已授权裸 JSON 做仍合法的 CDHash 变更；发布 schema 原先又允许多个或 64 位 CDHash，无法无歧义映射到 updater 的 architecture/CDHash 合同。现把策略作为授权对象的独立拥有字段，并在当前 arm64 首发语义层要求每组件恰好一个 40 位小写 Apple CDHash；导出结构改为显式 `NativeSlicePolicy { architecture, cdhash }`。合法内部 CDHash 突变不会改变冻结策略，64 位与双 hash 负例均被拒绝。另将源码提交合同按 release schema 在 Rust/Swift 两侧统一为 40 或 64 位小写十六进制，补齐长度和大写负例。修复后复审 CLEAR。
 
 验证：`inputia-release` 25/25、严格 Clippy、Rust 原生期望定向测试通过；Swift 安装支持自检 46 项通过，明确 `real_developer_id_positive=NOT_RUN system_install_touched=false`；格式和差异检查通过。本批没有生成 `VerificationReceipt`，不等于 Apple 原生验签或 PairSignature 已完成，也没有创建更新事务、访问签名凭据或修改当前安装和用户数据。
+
+### 第一百零六批：受信发布身份与事务盘面合并
+
+更新器新增 `ArtifactVerificationPlan`，只接受 `AuthorizedReleaseMetadata` 冻结出的
+`NativeReleasePolicy`，再与当前事务 `Subject`、准确四角色 `Entry` 和
+`VerificationPurpose` 合并。新版本下载/暂存/安装与回滚旧版本分别绑定相应 release；三套代码
+角色和配对清单必须准确各一份，重复、缺失、夹带收据、release 不匹配、相对 App 路径或非
+schema 2 配对清单均拒绝。代码目标同时携带原生 `CodeExpectation` 和事务树摘要；
+配对目标携带准确路径、原始摘要、签名 key ID、schema 和树摘要。Updater/Bootstrap 继续属于
+外置恢复环境合同，没有被错误并入三组件替换盘面。
+
+独立复审指出，事务 `Entry` 当前接收的是已解包目录树，如果把 signed archive 摘要与该树摘要
+直接并列，会造成二者已有来源链的错误印象。现已从本计划移除 archive 摘要/大小；受信归档、
+实际文件身份与 `ExtractedArchive` 的能力绑定明确留在进入事务前的 bootstrap/downloader 合同，
+在该接线完成前不宣称归档到树的闭环。
+
+定向测试 4/4、更新器严格 Clippy（含 `native-code-verification`）通过；完整更新器单线程回归为
+库 43/43、CLI 2/2、归档 17/17、事务故障矩阵 21/21。本对象只是不可伪造来源的验证计划，不是 Apple/PairSignature 成功回执，
+仍不能替代生产 `NativeAdapter`、Developer ID/公证正向或正式制品验收。
+
+### 第一百零七批：输入法权限探测目录遍历过载修正
+
+对已安装 build85 的只读采样确认，输入法进程持续占用约 80%–154% CPU，热点位于权限轮询的
+`probeServicePermission → openAuthenticatedConnection → validateCandidatePaths → auditExistingTree`。
+该路径每次失败重连都重新遍历候选 Rime/Handy 数据树，与源码已经声明的“完整目录审计仅用于
+启动/重新初始化”边界不一致。现保留 `InputiaProfile.current` 初始化时的完整树审计，运行期服务
+准备、身份读取、连接、共享状态初始化与语音入口改为 `validateRuntimeConnectionPaths`：复核固定目录链；端点和
+配对清单仍由 `readBoundedFile` 逐层 `openat/O_NOFOLLOW` 有界读取，后续签名、服务身份和策略
+握手不放宽。
+
+`UnifiedInputProfileSelfCheck` 增加运行期不扫描无关 Rime 后代的合同断言，完整 101/101 通过；
+使用已有公开配对元数据的隔离 paired candidate 全构建、原生自检、ad-hoc hardened runtime 签名与
+最低系统检查通过。独立复审确认权限轮询链不再调用全树审计，且固定文件和代码身份边界未放宽，结论 CLEAR。
+本轮只读采样没有停止或替换当前日用进程；源码修复尚需进入新的签名安装制品后，才能形成安装后
+CPU 回归证据，不能把合成自检当作当前已安装版本已修复。

@@ -239,6 +239,13 @@ struct InputiaProfile: Equatable {
     try Self.auditExistingTree(handyRoot)
   }
 
+  /// 运行期连接只复核固定目录链；端点与配对清单正文由 readBoundedFile 逐层拒绝链接并有界读取。
+  /// 完整目录树已经由 current 初始化执行，不能在权限轮询或重连路径重复遍历。
+  func validateRuntimeConnectionPaths() throws {
+    guard isCandidate else { return }
+    try validateDirectPaths()
+  }
+
   func validateSettingsPath(_ path: String) throws {
     guard isCandidate else { return }
     guard URL(fileURLWithPath: path).standardizedFileURL == settings.standardizedFileURL else {

@@ -246,7 +246,7 @@ final class InputiaVoiceSharedState: InputiaSharedStateBarrierApplying {
   private var database: OpaquePointer?
   init(profile: InputiaProfile) throws {
     guard !Thread.isMainThread, profile.isCandidate else { throw InputiaVoiceServiceError.profile }
-    try profile.validateCandidatePaths()
+    try profile.validateRuntimeConnectionPaths()
     try FileManager.default.createDirectory(at: profile.root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     guard sqlite3_open_v2(profile.outbox.path, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOFOLLOW, nil) == SQLITE_OK else {
       if let database { sqlite3_close(database) }; database = nil

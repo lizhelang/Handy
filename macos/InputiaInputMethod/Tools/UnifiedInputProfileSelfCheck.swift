@@ -113,6 +113,8 @@ struct UnifiedInputProfileSelfCheck {
     try FileManager.default.createDirectory(at: profile.rime, withIntermediateDirectories: true)
     let userdb = profile.rime.appendingPathComponent("luna_pinyin_simp.userdb", isDirectory: true)
     try FileManager.default.createSymbolicLink(at: userdb, withDestinationURL: daily.root)
+    try profile.validateRuntimeConnectionPaths()
+    check(true, "runtime connection validation does not rescan unrelated Rime descendants")
     rejects(.symbolicLink) { try profile.validateCandidatePaths() }
     try FileManager.default.removeItem(at: userdb)
     try FileManager.default.createDirectory(at: userdb, withIntermediateDirectories: true)
