@@ -739,3 +739,9 @@ Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过
 `inputia_release.py preflight --mode public` 新增可选 `--public-evidence`。没有证据时仍返回原有公开阻断；schema v2 证据必须引用真实 signed manifest、受信公钥集、冻结制品根目录、验收报告和公证制品。预检会重新计算摘要、验签 manifest、逐文件核对制品、检查所有 pre-public 案例并在 macOS 执行 `codesign`/`spctl`。公开发布开关仍必须在产品元数据中显式开启，当前仓库没有开启，也没有真实证据。
 
 发布脚本回归由 26 项增至 28 项，完整发布/验收 Python 回归 54/54 通过。该入口只解决“未来接入真实证据后工具不会因硬编码永远阻断”的结构问题，不把可手写 JSON 当作真实签名、公证或 G10a/G10b 证据。
+
+### 第八十八批：公开证据真实载荷与信任根收紧
+
+修正公开预检的真实执行路径：`verify_envelope_signature` 返回的是验签结果，不再被误当作 manifest payload；预检现在先确认验签结果为 `PASS`，再重新解包并校验签名载荷中的 `source_commit`。受信公钥集路径也必须是绝对普通文件，避免证据 JSON 借路径字符串绕过信任根文件边界。测试夹具同步覆盖该返回合同。
+
+同时移除已完成的 `release_signature_verifier_not_integrated` 阻断，缺少外部证据时改为明确的 `public_release_evidence_required`。`scripts.tests.test_inputia_release` 28/28、全套 `test_inputia_*.py` 54/54 和 diff 检查通过；真实公开预检仍返回 `can_build=false`，当前阻断为工作区无关未提交改动、公开开关未启用、缺少真实证据包及最终制品验收。

@@ -479,8 +479,11 @@ def validate_public_evidence(path, product, source_commit):
     require(type(manifest) is dict, "公开发布证据缺少 manifest 引用")
     manifest_path = _evidence_file(manifest.get("path", ""))
     require(file_digest(manifest_path) == manifest.get("sha256"), "manifest 证据摘要不匹配")
+    trusted_keys_path = _evidence_file(manifest.get("trusted_keys", ""))
     envelope = read_json(manifest_path)
-    payload = verify_envelope_signature(envelope, "manifest", product, manifest.get("trusted_keys", ""))
+    signature_result = verify_envelope_signature(envelope, "manifest", product, str(trusted_keys_path))
+    require(signature_result.get("signature_verification") == "PASS", "签名 manifest 验证未通过")
+    payload = unwrap_document(envelope, "manifest", product)
     require(payload["source_commit"] == source_commit, "签名 manifest 提交身份不匹配")
     verify_artifacts(payload, manifest.get("artifact_dir", ""))
     acceptance = value.get("acceptance")
@@ -513,7 +516,7 @@ def preflight(product, mode, root=ROOT, public_evidence=None):
         if product["pipeline"]["pair_trust_format"] < 2:
             blockers.append("profile_bound_pair_trust_v1")
         if public_evidence is None:
-            blockers.extend(["developer_id_and_notarization_not_verified", "release_signature_verifier_not_integrated", "final_artifact_acceptance_required"])
+            blockers.extend(["developer_id_and_notarization_not_verified", "public_release_evidence_required", "final_artifact_acceptance_required"])
         else:
             try:
                 validate_public_evidence(public_evidence, product, state["source_commit"])

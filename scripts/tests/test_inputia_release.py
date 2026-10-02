@@ -191,18 +191,20 @@ class ReleaseContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             manifest = root / "manifest.json"
+            keys = root / "keys.json"
             acceptance = root / "acceptance.json"
             artifact = root / "Inputia.dmg"
-            manifest.write_text("{}"); acceptance.write_text("{}"); artifact.write_bytes(b"dmg")
+            manifest.write_text("{}"); keys.write_text("{}"); acceptance.write_text("{}"); artifact.write_bytes(b"dmg")
             evidence = {
                 "schema_version": 2, "product_id": product["product_id"], "source_commit": source_commit,
-                "manifest": {"path": str(manifest), "sha256": release.file_digest(manifest), "trusted_keys": str(root / "keys.json"), "artifact_dir": str(root)},
+                "manifest": {"path": str(manifest), "sha256": release.file_digest(manifest), "trusted_keys": str(keys), "artifact_dir": str(root)},
                 "acceptance": {"path": str(acceptance), "sha256": release.file_digest(acceptance)},
                 "notarization": {"artifact_path": str(artifact), "sha256": release.file_digest(artifact)},
             }
             path = root / "public-evidence.json"; path.write_text(json.dumps(evidence))
             with mock.patch.object(release, "git_state", return_value={"source_commit": source_commit, "working_tree_clean": True}), \
-                 mock.patch.object(release, "verify_envelope_signature", return_value={"source_commit": source_commit}), \
+                 mock.patch.object(release, "verify_envelope_signature", return_value={"signature_verification": "PASS"}), \
+                 mock.patch.object(release, "unwrap_document", return_value={"source_commit": source_commit}), \
                  mock.patch.object(release, "verify_artifacts"), \
                  mock.patch.object(release, "_acceptance_pre_public_passes"), \
                  mock.patch.object(release, "_verify_notarized_artifact"):
