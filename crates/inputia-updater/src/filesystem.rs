@@ -192,6 +192,9 @@ fn children(directory: &File) -> Result<Vec<OsString>> {
         }
     }
     let guard = Directory(ptr);
+    // `dup` 共享目录的 open-file description；每次摘要都必须从头枚举，
+    // 否则对同一个 held fd 的第二次复核会错误地看到空目录。
+    unsafe { libc::rewinddir(guard.0) };
     let mut names = Vec::new();
     loop {
         // errno 只在 readdir 返回空指针时读取；区分目录结束与读取失败。

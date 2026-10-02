@@ -12,6 +12,7 @@ mod model;
 pub mod native_code;
 pub mod native_input_source;
 pub mod native_quiescence;
+pub mod release_artifacts;
 
 pub use authorization::{request_artifact_set_digest, AuthorizationEvidence, InstallAuthorization};
 pub use engine::{artifact_set_digest, Transaction, Updater};

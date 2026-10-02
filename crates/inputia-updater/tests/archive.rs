@@ -185,7 +185,7 @@ fn extracts_real_stored_deflate_and_framework_links_preserving_modes() {
         .destination
         .join("Inputia.app/App.app/Contents/MacOS/run");
     assert_eq!(fs::metadata(&executable).unwrap().mode() & 0o777, 0o755);
-    assert_eq!(fs::read(executable).unwrap(), b"executable");
+    assert_eq!(fs::read(&executable).unwrap(), b"executable");
     let link = fixture
         .destination
         .join("Inputia.app/App.app/Contents/Frameworks/F.framework/F");
@@ -198,6 +198,21 @@ fn extracts_real_stored_deflate_and_framework_links_preserving_modes() {
         proof.tree(),
         &inputia_updater::fingerprint(&fixture.destination, unsafe { libc::geteuid() }).unwrap()
     );
+    assert_eq!(
+        proof.bundle_tree(),
+        &inputia_updater::fingerprint(&fixture.destination.join("Inputia.app"), unsafe {
+            libc::geteuid()
+        })
+        .unwrap()
+    );
+    assert_eq!(proof.bundle_path(), fixture.destination.join("Inputia.app"));
+    proof
+        .verify_bound_bundle(unsafe { libc::geteuid() }, &|| Ok(()))
+        .unwrap();
+    fs::write(&executable, b"tampered").unwrap();
+    assert!(proof
+        .verify_bound_bundle(unsafe { libc::geteuid() }, &|| Ok(()))
+        .is_err());
     assert!(proof.source_read_bytes() >= fixture.expected.size * 2);
 }
 #[test]

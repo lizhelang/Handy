@@ -109,8 +109,11 @@ cargo clippy --locked --manifest-path crates/inputia-updater/Cargo.toml --all-ta
 不能从 ZIP 自行选择；本库要求该目录显式存在、所有条目仅在该根内，链接也不能跨根。
 manifest 现已为每个组件定义并签名 `bundle_root`；调用方必须从
 `AuthorizedReleaseMetadata.native_release_policy()` 的对应角色策略取得它，不能猜测 role 布局。
-archive 到 `ExtractedArchive` 的组合接线仍未完成。proof 绑定该精确根名。调用方仍须按授权 role 检查精确布局，在受控 stage 对实际 `.app`
-做原生验证；恢复时重验，旧 proof 不豁免这些步骤。
+`release_artifacts::extract_authorized_component` 现在从同一个已授权策略选择归档摘要和
+`bundle_root`，再返回同时持有外层目录与精确 `.app` 子树 fd 的 proof；其 `artifact()` 可生成
+直接交给 `Updater::prepare` 的三组件制品描述，摘要绑定精确 `.app` 子树而不是外层临时目录。
+调用方仍须持有该 proof 到预检结束，并在受控 stage 对实际 `.app` 做原生验证；恢复时重验，旧
+proof 不豁免这些步骤。该层仍不是完整 `NativeAdapter`，不执行 Apple 代码/配对验签或安装。
 
 处理顺序：同一个源 fd 的 SHA256 与 size → 全量中央目录、局部头和 descriptor 一致性 →
 完整路径/链接图 → `mkdirat` 独占建立 0700 根 → `openat(NO_FOLLOW|EXCL)` 建普通文件 →

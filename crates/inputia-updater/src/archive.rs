@@ -68,8 +68,10 @@ pub struct ExtractedArchive {
     destination: PathBuf,
     required_root: String,
     source: ArchiveDigest,
-    tree: Fingerprint,
+    outer_tree: Fingerprint,
+    bundle_tree: Fingerprint,
     root: File,
+    bundle: File,
     source_read_bytes: u64,
 }
 impl ExtractedArchive {
@@ -83,14 +85,52 @@ impl ExtractedArchive {
         &self.source
     }
     pub fn tree(&self) -> &Fingerprint {
-        &self.tree
+        &self.outer_tree
+    }
+    /// 安装事务使用的精确 `.app` 子树摘要；`tree()` 仍表示解包容器整体。
+    pub fn bundle_tree(&self) -> &Fingerprint {
+        &self.bundle_tree
+    }
+    pub fn bundle_path(&self) -> PathBuf {
+        self.destination.join(&self.required_root)
     }
     pub fn root_identity(&self) -> Result<(u64, u64)> {
         let meta = self.root.metadata()?;
         Ok((meta.dev(), meta.ino()))
     }
+    pub fn bundle_identity(&self) -> Result<(u64, u64)> {
+        let meta = self.bundle.metadata()?;
+        Ok((meta.dev(), meta.ino()))
+    }
     pub fn source_read_bytes(&self) -> u64 {
         self.source_read_bytes
+    }
+
+    /// 复核公开路径仍指向本次解包固定的外层与 bundle fd，并重算两棵树。
+    pub fn verify_bound_bundle(&self, uid: u32, check: &dyn Fn() -> Result<()>) -> Result<()> {
+        check()?;
+        if filesystem::fingerprint_file(self.root.try_clone()?, uid, check)? != self.outer_tree
+            || filesystem::fingerprint_file(self.bundle.try_clone()?, uid, check)?
+                != self.bundle_tree
+        {
+            return Err(Error::ArtifactMismatch);
+        }
+        let outer = self.root.metadata()?;
+        let bundle = self.bundle.metadata()?;
+        let (parent, leaf) = filesystem::parent(&self.destination, uid, false)?;
+        let named_outer = filesystem::open_child(&parent, &leaf, true)?;
+        let named_outer_meta = named_outer.metadata()?;
+        if named_outer_meta.dev() != outer.dev() || named_outer_meta.ino() != outer.ino() {
+            return Err(Error::ArtifactMismatch);
+        }
+        let bundle_name =
+            CString::new(self.required_root.as_bytes()).map_err(|_| Error::UnsafePath)?;
+        let named_bundle = filesystem::open_child(&named_outer, &bundle_name, true)?;
+        let named_bundle_meta = named_bundle.metadata()?;
+        if named_bundle_meta.dev() != bundle.dev() || named_bundle_meta.ino() != bundle.ino() {
+            return Err(Error::ArtifactMismatch);
+        }
+        check()
     }
 }
 
@@ -329,7 +369,11 @@ pub fn extract_zip(
     root.sync_all()?;
     parent.sync_all()?;
     source.digest(expected)?;
-    let tree = filesystem::fingerprint_file(root.try_clone()?, uid, &|| source.check())?;
+    let outer_tree = filesystem::fingerprint_file(root.try_clone()?, uid, &|| source.check())?;
+    let bundle_name = CString::new(required_root.as_bytes()).map_err(|_| Error::UnsafePath)?;
+    let bundle = filesystem::open_child(&root, &bundle_name, true)?;
+    let bundle_identity = bundle.metadata()?;
+    let bundle_tree = filesystem::fingerprint_file(bundle.try_clone()?, uid, &|| source.check())?;
     source.unchanged()?;
     // proof 的公开路径也必须仍解析到 held root，不能只复查旧父 fd 下的名称。
     let (current_parent, current_leaf) = filesystem::parent(destination, uid, false)?;
@@ -337,13 +381,24 @@ pub fn extract_zip(
     if named_root.dev() != root_identity.dev() || named_root.ino() != root_identity.ino() {
         return Err(Error::ArtifactMismatch);
     }
+    let named_bundle = filesystem::open_child(
+        &filesystem::open_child(&current_parent, &current_leaf, true)?,
+        &bundle_name,
+        true,
+    )?
+    .metadata()?;
+    if named_bundle.dev() != bundle_identity.dev() || named_bundle.ino() != bundle_identity.ino() {
+        return Err(Error::ArtifactMismatch);
+    }
     source.check()?;
     Ok(ExtractedArchive {
         destination: destination.to_owned(),
         required_root: required_root.to_owned(),
         source: expected.clone(),
-        tree,
+        outer_tree,
+        bundle_tree,
         root,
+        bundle,
         source_read_bytes: source.read_bytes.get(),
     })
 }
