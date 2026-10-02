@@ -6,6 +6,38 @@ from pathlib import Path
 import sys
 
 
+MANIFEST_SCHEMA_VERSION = 1
+
+
+def resolve_manifest_artifact(output, metadata, field, relative, architecture):
+    """把清单引用限制在当前制品根；旧绝对路径只作为布局标识兼容。"""
+    value = metadata.get(field)
+    expected = Path(relative)
+    schema = metadata.get("schema_version")
+    if schema == MANIFEST_SCHEMA_VERSION:
+        if value != expected.as_posix():
+            raise RuntimeError("static Rime manifest relative path mismatch: " + field)
+    elif schema is None:
+        legacy = Path(value) if isinstance(value, str) else Path()
+        suffix = Path("native/static-rime/artifacts/output") / architecture / expected
+        if not legacy.is_absolute() or legacy.parts[-len(suffix.parts) :] != suffix.parts:
+            raise RuntimeError("static Rime legacy manifest path mismatch: " + field)
+    else:
+        raise RuntimeError("unsupported static Rime manifest schema")
+    return output / expected
+
+
+def manifest_changed_fields(observed, expected):
+    """返回完整清单中缺失、新增或正文不同的字段。"""
+    return sorted(
+        key
+        for key in set(observed) | set(expected)
+        if key not in observed
+        or key not in expected
+        or observed[key] != expected[key]
+    )
+
+
 def sha(path):
     value = hashlib.sha256()
     with path.open("rb") as stream:

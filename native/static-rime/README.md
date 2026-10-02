@@ -33,7 +33,7 @@
 - `include/rime_api.h` 等同版本公共 API 头文件。
 - `link-flags.txt`：`-Wl,-force_load,<archive>`、系统 `-lc++`、最低 macOS 13.0。
 - `static-rime-probe`：没有 library-validation 放宽 entitlement 的 hardened ad-hoc 探针。
-- `manifest.json`：库/探针/来源锁/许可证 SHA、所有 Mach-O 对象最低系统版本、签名、依赖及实际运行日志路径。
+- `manifest.json`：库/探针/来源锁/许可证 SHA、所有 Mach-O 对象最低系统版本、签名、依赖及制品根内的运行日志引用。schema 1 的文件引用均为受限相对路径，整套输出可复制到隔离工作树复验。
 - `codesign.txt`、`dependencies.txt`、`licenses/`、`sources.lock.json`。
 
 调用端可直接包含头文件并调用 `rime_get_api()`。静态模块依赖 constructor 注册，**必须 force-load archive**；仅按普通 archive 链接可能丢失未直接引用的模块注册器。当前 archive 已包含其非系统依赖，不要再链接外部 librime、Lua 或 OpenCC dylib。

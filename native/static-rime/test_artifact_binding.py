@@ -3,7 +3,13 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from artifact_binding import begin, seal, verify
+from artifact_binding import (
+    begin,
+    manifest_changed_fields,
+    resolve_manifest_artifact,
+    seal,
+    verify,
+)
 
 
 class BindingTests(unittest.TestCase):
@@ -62,6 +68,84 @@ class BindingTests(unittest.TestCase):
     def test_old_unbound_manifest_cannot_be_upgraded_by_verification(self):
         with self.assertRaisesRegex(RuntimeError, "binding mismatch"):
             verify(self.root, self.output, {"library_sha256": "old"})
+
+    def test_relative_manifest_artifact_rebinds_to_copied_output(self):
+        metadata = {
+            "schema_version": 1,
+            "library": "lib/libinputia_rime_static.a",
+        }
+        self.assertEqual(
+            resolve_manifest_artifact(
+                self.output,
+                metadata,
+                "library",
+                "lib/libinputia_rime_static.a",
+                "arm64",
+            ),
+            self.output / "lib/libinputia_rime_static.a",
+        )
+
+    def test_manifest_rejects_traversal_and_future_schema(self):
+        with self.assertRaisesRegex(RuntimeError, "relative path mismatch"):
+            resolve_manifest_artifact(
+                self.output,
+                {"schema_version": 1, "library": "../libinputia_rime_static.a"},
+                "library",
+                "lib/libinputia_rime_static.a",
+                "arm64",
+            )
+        with self.assertRaisesRegex(RuntimeError, "unsupported"):
+            resolve_manifest_artifact(
+                self.output,
+                {"schema_version": 2, "library": "lib/libinputia_rime_static.a"},
+                "library",
+                "lib/libinputia_rime_static.a",
+                "arm64",
+            )
+
+    def test_legacy_absolute_reference_only_accepts_old_layout(self):
+        expected = Path(
+            "/tmp/source/native/static-rime/artifacts/output/arm64/lib/libinputia_rime_static.a"
+        )
+        self.assertEqual(
+            resolve_manifest_artifact(
+                self.output,
+                {"library": str(expected)},
+                "library",
+                "lib/libinputia_rime_static.a",
+                "arm64",
+            ),
+            self.output / "lib/libinputia_rime_static.a",
+        )
+        with self.assertRaisesRegex(RuntimeError, "legacy manifest path mismatch"):
+            resolve_manifest_artifact(
+                self.output,
+                {"library": "/tmp/libinputia_rime_static.a"},
+                "library",
+                "lib/libinputia_rime_static.a",
+                "arm64",
+            )
+
+    def test_complete_manifest_comparison_detects_changed_and_extra_evidence(self):
+        expected = {
+            "architecture": "arm64",
+            "minimum_macos": "13.0",
+            "signature": "verified",
+        }
+        observed = {
+            **expected,
+            "signature": "tampered",
+            "extra": True,
+            "unexpected_none": None,
+        }
+        self.assertEqual(
+            manifest_changed_fields(observed, expected),
+            ["extra", "signature", "unexpected_none"],
+        )
+        self.assertEqual(
+            manifest_changed_fields({}, {"expected_none": None}),
+            ["expected_none"],
+        )
 
 
 if __name__ == "__main__":

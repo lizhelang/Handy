@@ -7,7 +7,7 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
-from artifact_binding import verify
+from artifact_binding import resolve_manifest_artifact, verify
 
 ROOT = Path(__file__).resolve().parent
 supplied = Path(sys.argv[1])
@@ -39,7 +39,13 @@ manifest = json.loads((supplied / "manifest.json").read_text())
 verify(ROOT, supplied, manifest)
 if manifest["architecture"] != architecture or manifest["minimum_macos"] != "13.0":
     raise SystemExit("static Rime target metadata mismatch")
-if manifest["library"] != str(library) or manifest["library_sha256"] != digest(library):
+try:
+    manifest_library = resolve_manifest_artifact(
+        supplied, manifest, "library", "lib/libinputia_rime_static.a", architecture
+    )
+except RuntimeError as error:
+    raise SystemExit(str(error)) from error
+if manifest_library != library or manifest["library_sha256"] != digest(library):
     raise SystemExit("static Rime archive does not match its verified manifest")
 if manifest["source_lock_sha256"] != digest(ROOT / "sources.lock.json") or digest(supplied / "sources.lock.json") != digest(ROOT / "sources.lock.json"):
     raise SystemExit("static Rime archive was built from a different source lock")

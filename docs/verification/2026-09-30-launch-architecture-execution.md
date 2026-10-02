@@ -815,3 +815,13 @@ Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过
 修正 `scripts/package-inputia-local-preview.py` 的交付说明：安装/检查入口不再硬编码历史 `1.1.0/build84`，而是从两个待包装组件的 `Info.plist` 读取并确认一致的 `CFBundleShortVersionString` 与 `CFBundleVersion`，再把该版本写入入口说明。这样体验包的双击文案、组件身份和构建版本保持同一来源；组件版本不一致仍在生成包装前拒绝。
 
 Python 语法、AST 解析和 diff 检查通过；没有重新包装、安装或修改用户数据。该修正只改善本地体验包的可审查性，不改变公开发布门禁。
+
+### 第一百零二批：静态 Rime 制品可迁移清单与完整证据复验
+
+真实隔离发布构建暴露出静态 Rime `manifest.json` 把归档绝对路径绑定到原工作树：同一字节的已验证 archive 复制到干净工作树后，构建期 `verify_link_input.py` 因路径不同拒绝。清单现引入 schema 1，库、探针日志、最低系统证据和链接说明使用固定的制品根内相对路径；构建期仍要求显式规范绝对输出根、当前用户安全所有权、无链接/多硬链接，并在该根内重新核实际摘要。旧 schema 绝对路径只按历史固定布局识别，读取和链接始终重新绑定当前受检制品根。
+
+发布复验同时改为完整证据对账：每次重新运行真实 hardened probe、Mach-O 最低系统、代码签名和动态依赖检查，生成规范化 expected manifest，并与 schema 1 已发布清单逐字段精确比较；缺失、新增、`null` 新字段或正文变化都拒绝。`codesign.txt`、`dependencies.txt`、`link-flags.txt` 和制品根内 `evidence/probe.log` 也必须与实时结果一致，日志摘要进入清单。旧 schema 缓存继续核对目标、最低系统、签名、依赖、模块、许可证和受 artifacts 根约束的旧日志，重新 publish 后统一升级 schema 1。
+
+验证：静态 Rime Python 单元测试 14/14、`py_compile`、diff 检查通过；现有 arm64 静态探针复验通过。把整套输出复制到独立目录后，`verify_link_input.py` 和 `inputia-capi` 的 bundled-static-rime 编译检查通过，清单及旁路证据不再包含原工作树路径。路径穿越、篡改 signature、增加 `unexpected_evidence: null` 均被真实门禁拒绝，恢复原清单后复验通过。独立复审先后指出完整证据未比较和 `None` 成员资格缺口；修复后最终结论为 CLEAR。
+
+该批解决 G0/P4 的制品搬运与复验一致性，不等于静态库本身已字节级可重现，也不补足 Developer ID、公证、第三方许可法律结论、x86_64 或完整 Host 原生验收。
