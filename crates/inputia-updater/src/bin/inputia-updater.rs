@@ -64,7 +64,17 @@ fn print_status(updater: &Updater) -> Result<(), String> {
             .map_err(|error| format!("读取维护标记失败：{error}"))?;
         let marker: inputia_updater::MaintenanceMarker = serde_json::from_slice(&raw)
             .map_err(|error| format!("维护标记格式无效：{error}"))?;
-        status.transaction_id = Some(marker.transaction_id);
+        let transaction_id = marker.transaction_id;
+        let journal = updater
+            .inspect(&transaction_id)
+            .map_err(|error| format!("维护标记对应事务日志不可用：{error}"))?;
+        if journal.subject.transaction_id != transaction_id {
+            return Err("维护标记与事务日志身份不一致".into());
+        }
+        status.transaction_id = Some(transaction_id);
+        status.phase = Some(journal.phase);
+        status.writes_released = Some(journal.writes_released);
+        status.rollback_requested = Some(journal.rollback_requested);
     }
     println!(
         "{}",
