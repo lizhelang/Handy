@@ -524,7 +524,7 @@ def validate_public_evidence(path, product, source_commit):
     require(type(acceptance) is dict, "公开发布证据缺少 acceptance 引用")
     acceptance_path = _evidence_file(acceptance.get("path", ""))
     require(file_digest(acceptance_path) == acceptance.get("sha256"), "验收报告摘要不匹配")
-    _acceptance_pre_public_passes(acceptance_path, source_commit, manifest.get("sha256"), product["product_id"], acceptance.get("evidence_root", acceptance_path.parent))
+    _acceptance_pre_public_passes(acceptance_path, source_commit, manifest.get("sha256"), product["product_id"], acceptance.get("evidence_root", ""))
     notarization = value.get("notarization")
     require(type(notarization) is dict, "公开发布证据缺少 notarization 引用")
     notarized = _evidence_file(notarization.get("artifact_path", ""))
