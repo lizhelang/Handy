@@ -671,3 +671,7 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 验证：`cargo test --locked --manifest-path crates/inputia-updater/Cargo.toml --quiet` 返回 37 个库测试、17 个归档测试、21 个事务故障矩阵全部通过；`cargo fmt` 通过。未创建事务、维护标记、安装收据或修改当前安装。
 
 随后将该核对收拢为 `Updater::prepare_authorized`，避免未来 Installer 先调用裸 `prepare` 再自行决定是否检查授权；命令行和库入口共享同一顺序。`cargo check --locked --manifest-path crates/inputia-updater/Cargo.toml` 通过。
+
+### 第七十六批：G10a 最终分发制品逐文件核对
+
+验收脚本新增 `--artifact-root` 受控入口。提供最终制品根目录时，manifest 中每个 `distribution_artifacts` 项都会逐文件检查相对路径、祖先和文件本身不得为符号链接、路径不得越界，并重新计算完整 SHA-256 与大小；清单自报摘要不能单独形成制品证据。新增大小变更和符号链接负例，验收脚本 26/26 通过，全部发布脚本回归 52/52 通过。未把该可选参数当作已完成的 G10a：当前仍缺少正式最终制品和签名/公证证据。

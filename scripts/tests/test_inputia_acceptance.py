@@ -193,6 +193,28 @@ class AcceptanceTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             acceptance.write_report(path, self.report)
 
+    def test_distribution_artifacts_are_verified_against_manifest(self):
+        artifact = self.root / "Inputia.dmg"
+        artifact.write_bytes(b"x")
+        subject = copy.deepcopy(self.subject)
+        subject["artifacts"][0]["sha256"] = acceptance.digest(artifact)
+        subject["artifacts"][0]["size"] = 1
+        acceptance.verify_distribution_artifacts(subject, self.root)
+        artifact.write_bytes(b"changed")
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "大小不符"):
+            acceptance.verify_distribution_artifacts(subject, self.root)
+
+    def test_distribution_artifacts_reject_symlink(self):
+        target = self.root / "outside.dmg"
+        target.write_bytes(b"x")
+        link = self.root / "Inputia.dmg"
+        link.symlink_to(target)
+        subject = copy.deepcopy(self.subject)
+        subject["artifacts"][0]["sha256"] = acceptance.digest(target)
+        subject["artifacts"][0]["size"] = 1
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "符号链接"):
+            acceptance.verify_distribution_artifacts(subject, self.root)
+
     def test_cli_not_run_exit_is_nonzero(self):
         report_path = self.root / "report.json"
         acceptance.write_report(report_path, self.report)

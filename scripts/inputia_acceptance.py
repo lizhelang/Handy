@@ -103,7 +103,29 @@ def catalog():
     return data
 
 
-def manifest_subject(path):
+def artifact_file(root, value):
+    relative = relative_path(value)
+    root = Path(root).resolve()
+    candidate = root.joinpath(relative)
+    require(candidate.resolve().is_relative_to(root), "最终制品路径越界")
+    current = root
+    for part in relative.parts:
+        current = current / part
+        require(not current.is_symlink(), "最终制品不能经过符号链接")
+    require(candidate.is_file(), "最终制品缺失或不是普通文件")
+    return candidate
+
+
+def verify_distribution_artifacts(subject, root):
+    """逐文件核对 manifest 的分发制品摘要和大小；不接受清单自报作为证据。"""
+    for artifact in subject["artifacts"]:
+        file = artifact_file(root, artifact["artifact"])
+        size = file.stat().st_size
+        require(size == artifact["size"], f"最终制品大小不符：{artifact['artifact']}")
+        require(digest(file) == artifact["sha256"], f"最终制品摘要不符：{artifact['artifact']}")
+
+
+def manifest_subject(path, artifact_root=None):
     # 这里只校验结构与绑定；签名、公证与放行由 G10a 及发布器验证。
     from inputia_release import load_product, unwrap_document
     document = read_json(path)
@@ -111,10 +133,13 @@ def manifest_subject(path):
     artifacts = [{key: item[key] for key in ("role", "artifact", "sha256", "size")}
                  for item in payload["distribution_artifacts"]]
     require(artifacts, "验收必须绑定最终分发制品")
-    return {"product_id": payload["product_id"], "release_id": payload["release_id"],
+    subject = {"product_id": payload["product_id"], "release_id": payload["release_id"],
             "source_commit": payload["source_commit"], "manifest_sha256": digest(path),
             "target": payload["target"],
             "artifacts": artifacts}
+    if artifact_root is not None:
+        verify_distribution_artifacts(subject, artifact_root)
+    return subject
 
 
 def validate_subject(subject):
@@ -403,14 +428,20 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     initialize = sub.add_parser("init", help="生成完整 NOT_RUN 矩阵，不执行应用")
     initialize.add_argument("--manifest", required=True, type=Path)
+    initialize.add_argument("--artifact-root", type=Path,
+                            help="最终分发制品根目录；提供后逐文件核对 manifest 摘要")
     initialize.add_argument("--output", required=True, type=Path)
     run = sub.add_parser("run-rust", help="在固定干净提交运行 Rust 契约并生成完整账本")
     run.add_argument("--manifest", required=True, type=Path)
+    run.add_argument("--artifact-root", type=Path,
+                     help="最终分发制品根目录；提供后逐文件核对 manifest 摘要")
     run.add_argument("--evidence-root", required=True, type=Path)
     run.add_argument("--output", required=True, type=Path)
     for command in ("verify", "merge"):
         item = sub.add_parser(command)
         item.add_argument("--manifest", required=True, type=Path)
+        item.add_argument("--artifact-root", type=Path,
+                          help="最终分发制品根目录；提供后逐文件核对 manifest 摘要")
         item.add_argument("--report", required=True, action="append", type=Path)
         item.add_argument("--evidence-root", required=True, type=Path)
         if command == "merge":
@@ -419,7 +450,7 @@ def main(argv=None):
             item.add_argument("--stage", choices=STAGES, default="pre-public")
     args = parser.parse_args(argv)
     try:
-        subject = manifest_subject(args.manifest)
+        subject = manifest_subject(args.manifest, args.artifact_root)
         verify_source_catalog(subject)
         if args.command == "init":
             write_report(args.output, initial_report(subject))
