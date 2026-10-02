@@ -809,3 +809,9 @@ Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过
 在提交 `cfa7e26a` 的干净检出上，控制中心 Cargo 编译完成后，`prepare:qwen-helper` 已从隔离 `CARGO_TARGET_DIR` 成功生成 `handy-qwen-custom-words` 资源，确认第九十九批路径修复接线有效。随后人为指定另一检出生成的 Cargo target 进行复用，Tauri 编译出现 `can't find crate for tauri_macros`；该缓存跨检出复用不再作为支持路径，默认每次构建的独立 target 仍是有效路径。
 
 用户反馈已在当前已安装组件上连续进行中文实体键盘输入，并测试语音相关操作，未发现问题；该反馈记录为用户体验层证据，覆盖的安装版本沿用对应安装记录，尚未绑定本提交的最终制品摘要，也不能替代 G4/G6 的完整样本、录音和报告。
+
+### 第一百零一批：本地体验入口版本动态绑定
+
+修正 `scripts/package-inputia-local-preview.py` 的交付说明：安装/检查入口不再硬编码历史 `1.1.0/build84`，而是从两个待包装组件的 `Info.plist` 读取并确认一致的 `CFBundleShortVersionString` 与 `CFBundleVersion`，再把该版本写入入口说明。这样体验包的双击文案、组件身份和构建版本保持同一来源；组件版本不一致仍在生成包装前拒绝。
+
+Python 语法、AST 解析和 diff 检查通过；没有重新包装、安装或修改用户数据。该修正只改善本地体验包的可审查性，不改变公开发布门禁。

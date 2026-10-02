@@ -23,10 +23,10 @@ TOOL_FILES = (
 )
 
 
-def command_text(run_id, apply):
+def command_text(run_id, version, build, apply):
     explanation = f"""Inputia 本机体验版：更新现有的两个组件
 
-本入口用于升级本机已有安装；本次体验交付的原版本为 1.1.0/build84。
+本入口用于升级本机已有安装；本次体验交付版本为 {version}/build{build}。
 
 将替换：/Applications/Inputia.app（兼容旧名称 Inputia Candidate.app）
         ~/Library/Input Methods/InputiaUnifiedCandidate.app
@@ -124,6 +124,7 @@ def main():
         versions.append((info["CFBundleShortVersionString"], info["CFBundleVersion"]))
     if versions[0] != versions[1]:
         parser.error("两个组件的版本或 build 不一致")
+    version, build = versions[0]
     if not (release / "pair-manifest.json").is_file():
         parser.error("缺少 pair-manifest.json")
     for relative in TOOL_FILES:
@@ -150,9 +151,8 @@ def main():
         trust.load(public_copy, args.run_id)
         for name, apply in ((entries[0], True), (entries[1], False)):
             command = staging / name
-            command.write_text(command_text(args.run_id, apply), encoding="utf-8")
+            command.write_text(command_text(args.run_id, version, build, apply), encoding="utf-8")
             command.chmod(0o755)
-        version, build = versions[0]
         (staging / entries[2]).write_text(
             f"Inputia {version} / build {build} 本机体验版\n\n"
             "请将整个目录保留在一起，不要单独拖动 app 或 command。\n"
