@@ -717,3 +717,7 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 `OutputIntent` 增加可选的 `source`、`profile_id` 和 `deadline_at_ms` 字段。新字段经过长度、控制字符和零期限校验，进入 v2 摘要扩展；voice/history 生产入口分别记录稳定来源标识，旧账本缺少这些字段时仍按 v1 摘要读取。新增摘要差异和旧 JSON 反序列化回归；运行时输出账本、通知和 store 相关测试通过。
 
 当前生产入口仍未为所有平台派发路径填入真实期限，`deadline_at_ms` 仍可为 `None`；平台 token/TTL 绑定和正式安装适配器接线仍属于后续发布门禁，不能据此宣称完整 P1 或公开发行已完成。
+
+### 第八十三批：Tauri 集成输出合同补齐
+
+`src-tauri/src/commands/integration.rs` 的两个生产 `OutputIntent` 构造入口补齐 `source=integration`、可选 profile 与期限字段，避免新增输出合同字段只在 runtime 内部和测试夹具生效而导致主应用编译断裂。`cargo check --locked --manifest-path src-tauri/Cargo.toml --lib` 通过；仅保留仓库既有 unused/dead-code 警告。当前期限仍未从原生目标 token 取得，继续按第八十二批边界记录。
