@@ -160,7 +160,7 @@ impl CodeExpectation {
                 .team_id
                 .bytes()
                 .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
-            || !digest_text(&self.source_commit, 40)
+            || !(digest_text(&self.source_commit, 40) || digest_text(&self.source_commit, 64))
             || self.build == 0
             || version.len() != 3
             || version
@@ -450,6 +450,13 @@ mod tests {
     fn native_expectation_rejects_injection_wrong_binding_and_ambiguous_sets() {
         let value = expectation();
         value.validate().unwrap();
+        let mut sha256_commit = value.clone();
+        sha256_commit.source_commit = "b".repeat(64);
+        sha256_commit.validate().unwrap();
+        sha256_commit.source_commit.pop();
+        assert!(sha256_commit.validate().is_err());
+        sha256_commit.source_commit = "A".repeat(64);
+        assert!(sha256_commit.validate().is_err());
         let mut invalid = value.clone();
         invalid.team_id.push('"');
         assert!(invalid.validate().is_err());

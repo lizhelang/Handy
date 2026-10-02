@@ -8,6 +8,7 @@ pub mod canonical;
 pub mod catalog;
 pub mod feed;
 pub mod manifest;
+pub mod native_policy;
 mod schema;
 #[cfg(unix)]
 pub mod state;

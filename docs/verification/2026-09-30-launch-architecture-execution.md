@@ -837,3 +837,11 @@ Python 语法、AST 解析和 diff 检查通过；没有重新包装、安装或
 `inputia-updater` 现在在帮助、HOME、事务日志和公开参数解析之前调用 `guardian_entry()`。同一已验二进制的内部恢复模式成功时直接退出；私有 FD、事务锁、nonce 或原生能力不满足时固定以 70 失败，不回落到公开 CLI，也不打印普通命令用法。未启用 `native-code-verification` 的构建遇到内部模式也明确返回 `NativeUnavailable`，避免把私有参数误当作普通命令。
 
 新增真实子进程 CLI 回归，分别核对普通 `--help` 保持原行为、内部模式不能落入公开解析器。独立复审发现内部标记前置 `--help` 等参数时会旁路到公开 CLI；现已改为扫描全部参数，标记一旦出现而形态不是精确 `[MODE, nonce]` 就失败关闭，并覆盖 `--help`、`--status` 和未知前置参数。修复后复审 CLEAR。默认构建 2/2、启用原生特性的构建 2/2 通过；原生特性下 guardian 11/11 通过，严格 Clippy、格式与差异检查通过。该批只接通安全 reexec 入口，没有开放 `--run`、创建更新事务、停止日用进程、切换输入源或读写用户数据。完整生产 `NativeAdapter`、正式 Updater/Bootstrap App、Developer ID 正向与后续 TIS/fence/快照/postcheck 证据仍未完成。
+
+### 第一百零五批：已授权发布身份冻结为原生策略
+
+`inputia-release` 新增不可反序列化、字段私有的 `NativeReleasePolicy`。完整 root→keyset→feed→manifest/attestation→验收与回滚合同授权成功后，在构造 `AuthorizedReleaseMetadata` 前立即冻结五组件的角色、bundle ID、Team、归档路径/摘要/大小、逐 slice 架构与 CDHash，以及配对清单 schema、signer key ID 和摘要。下游只能取得冻结引用，不能从请求 JSON、待验 App 或日志构造该策略。
+
+独立首轮复审发现两个缺口：仅重跑 schema 不能阻止 crate 内部对已授权裸 JSON 做仍合法的 CDHash 变更；发布 schema 原先又允许多个或 64 位 CDHash，无法无歧义映射到 updater 的 architecture/CDHash 合同。现把策略作为授权对象的独立拥有字段，并在当前 arm64 首发语义层要求每组件恰好一个 40 位小写 Apple CDHash；导出结构改为显式 `NativeSlicePolicy { architecture, cdhash }`。合法内部 CDHash 突变不会改变冻结策略，64 位与双 hash 负例均被拒绝。另将源码提交合同按 release schema 在 Rust/Swift 两侧统一为 40 或 64 位小写十六进制，补齐长度和大写负例。修复后复审 CLEAR。
+
+验证：`inputia-release` 25/25、严格 Clippy、Rust 原生期望定向测试通过；Swift 安装支持自检 46 项通过，明确 `real_developer_id_positive=NOT_RUN system_install_touched=false`；格式和差异检查通过。本批没有生成 `VerificationReceipt`，不等于 Apple 原生验签或 PairSignature 已完成，也没有创建更新事务、访问签名凭据或修改当前安装和用户数据。

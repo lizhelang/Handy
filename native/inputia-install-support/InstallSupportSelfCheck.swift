@@ -59,6 +59,14 @@ struct InstallSupportSelfCheck {
     let expected = request(root.path)
     let raw = try installCanonical(expected)
     check(try decodeInstallRequest(raw) == expected, "canonical decode including unicode path")
+    let sha256Commit = try decodeInstallRequest(replacement(expected, "source_commit", String(repeating: "c", count: 64)))
+    check(sha256Commit.source_commit.count == 64, "sha256 source commit accepted")
+    rejects("invalid source commit length") {
+      _ = try decodeInstallRequest(replacement(expected, "source_commit", String(repeating: "c", count: 63)))
+    }
+    rejects("uppercase source commit") {
+      _ = try decodeInstallRequest(replacement(expected, "source_commit", String(repeating: "A", count: 64)))
+    }
     _ = try installRequirement(expected)
     assertions += 1
     for (key, value) in [("skip_notarization", true as Any), ("schema_version", 2), ("role", "other"),

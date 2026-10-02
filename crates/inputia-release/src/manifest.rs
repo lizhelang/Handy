@@ -96,6 +96,15 @@ pub fn validate_manifest(value: &Value) -> Result<()> {
     let mut teams = BTreeSet::new();
     for component in components.values() {
         require(component["bundle_id"] == component["signing_requirement"]["bundle_id"])?;
+        let cdhashes = array(&component["cdhashes"])?;
+        // 当前公开目标只有单一 arm64 slice；Apple CDHash 固定为 20 字节。
+        require(
+            cdhashes.len() == 1
+                && text(&cdhashes[0])?.len() == 40
+                && text(&cdhashes[0])?
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        )?;
         teams.insert(text(&component["signing_requirement"]["team_id"])?);
     }
     require(teams.len() == 1)?;
@@ -212,6 +221,14 @@ mod tests {
             (
                 "/components/4/bundle_id",
                 serde_json::json!("com.other.bootstrap"),
+            ),
+            (
+                "/components/0/cdhashes",
+                serde_json::json!(["b".repeat(64)]),
+            ),
+            (
+                "/components/1/cdhashes",
+                serde_json::json!(["b".repeat(40), "c".repeat(40)]),
             ),
             (
                 "/distribution_artifacts/0/artifact",

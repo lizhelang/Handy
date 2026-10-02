@@ -88,7 +88,7 @@ func validateInstallRequest(_ request: InstallCodeRequest) throws {
     matches(request.bundle_id, "^[A-Za-z0-9][A-Za-z0-9.-]{1,190}$"),
     matches(request.team_id, "^[A-Z0-9]{10}$"),
     matches(request.version, "^[0-9]+[.][0-9]+[.][0-9]+$"), request.build > 0,
-    matches(request.source_commit, "^[0-9a-f]{40}$"),
+    matches(request.source_commit, "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"),
     !request.architectures.isEmpty, request.architectures.count <= 3,
     request.architectures == Array(Set(request.architectures)).sorted(),
     request.architectures.allSatisfy({ ["arm64", "arm64e", "x86_64"].contains($0) }),

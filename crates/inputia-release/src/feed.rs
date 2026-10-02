@@ -284,7 +284,43 @@ mod tests {
     #[test]
     fn complete_signed_metadata_chain_binds_reports_host_and_immutable_bytes() {
         let mut f = Fixture::new();
-        f.authorize().unwrap();
+        let authorized = f.authorize().unwrap();
+        let native = authorized.native_release_policy();
+        assert_eq!(native.product_id(), "com.inputia");
+        assert_eq!(native.release_id(), "inputia-test-current");
+        assert_eq!(native.version(), "1.1.0");
+        assert_eq!(native.build(), 84);
+        assert_eq!(native.source_commit(), "c".repeat(40));
+        assert_eq!(native.architecture(), "arm64");
+        assert_eq!(native.components().len(), 5);
+        assert_eq!(
+            native
+                .components()
+                .iter()
+                .map(|component| component.role())
+                .collect::<Vec<_>>(),
+            vec![
+                crate::native_policy::NativeComponentRole::Control,
+                crate::native_policy::NativeComponentRole::Ime,
+                crate::native_policy::NativeComponentRole::Settings,
+                crate::native_policy::NativeComponentRole::Updater,
+                crate::native_policy::NativeComponentRole::Bootstrap,
+            ]
+        );
+        assert!(native.components().iter().all(|component| {
+            component.team_id() == "TESTTEAM01"
+                && component.archive_sha256() == "a".repeat(64)
+                && component.archive_size() == 4
+                && component.slices().len() == 1
+                && component.slices()[0].architecture() == "arm64"
+                && component.slices()[0].cdhash() == "b".repeat(40)
+                && component.artifact().starts_with("components/")
+                && !component.bundle_id().is_empty()
+        }));
+        assert_eq!(native.pair_manifest().artifact(), "pair-manifest.json");
+        assert_eq!(native.pair_manifest().sha256(), "a".repeat(64));
+        assert_eq!(native.pair_manifest().signer_key_id(), "pair-key-1");
+        assert_eq!(native.pair_manifest().schema(), 2);
         let feed = f
             .keyset
             .authorize_feed(&f.raw_feed(), &candidate(), now())
@@ -311,6 +347,19 @@ mod tests {
         assert!(f.authorize().is_err());
         f.feed.manifest_digest = digest(&f.manifest);
         assert!(f.authorize().is_err()); // attestation 仍绑定原 manifest。
+    }
+
+    #[test]
+    fn native_policy_is_frozen_at_authorization_even_if_internal_json_changes() {
+        let f = Fixture::new();
+        let mut authorized = f.authorize().unwrap();
+        let frozen = authorized.native_release_policy().clone();
+        authorized.manifest["components"][0]["cdhashes"][0] = json!("c".repeat(40));
+        assert_eq!(authorized.native_release_policy(), &frozen);
+        assert_eq!(
+            authorized.native_release_policy().components()[0].slices()[0].cdhash(),
+            "b".repeat(40)
+        );
     }
 
     #[test]
@@ -458,6 +507,7 @@ pub struct AuthorizedReleaseMetadata {
     manifest: Value,
     attestation: Value,
     feed: VerifiedFeed,
+    native_policy: crate::native_policy::NativeReleasePolicy,
 }
 impl AuthorizedReleaseMetadata {
     pub fn manifest(&self) -> &Value {
@@ -468,6 +518,9 @@ impl AuthorizedReleaseMetadata {
     }
     pub fn feed(&self) -> &VerifiedFeed {
         &self.feed
+    }
+    pub fn native_release_policy(&self) -> &crate::native_policy::NativeReleasePolicy {
+        &self.native_policy
     }
 }
 
@@ -654,10 +707,12 @@ impl VerifiedKeyset {
         } else if feed.feed.rollback.is_some() {
             return Err(ReleaseError::Incompatible);
         }
+        let native_policy = crate::native_policy::NativeReleasePolicy::from_manifest(&manifest)?;
         Ok(AuthorizedReleaseMetadata {
             manifest,
             attestation,
             feed: feed.clone(),
+            native_policy,
         })
     }
 }
