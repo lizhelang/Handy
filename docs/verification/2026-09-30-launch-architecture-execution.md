@@ -745,3 +745,9 @@ Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过
 修正公开预检的真实执行路径：`verify_envelope_signature` 返回的是验签结果，不再被误当作 manifest payload；预检现在先确认验签结果为 `PASS`，再重新解包并校验签名载荷中的 `source_commit`。受信公钥集路径也必须是绝对普通文件，避免证据 JSON 借路径字符串绕过信任根文件边界。测试夹具同步覆盖该返回合同。
 
 同时移除已完成的 `release_signature_verifier_not_integrated` 阻断，缺少外部证据时改为明确的 `public_release_evidence_required`。`scripts.tests.test_inputia_release` 28/28、全套 `test_inputia_*.py` 54/54 和 diff 检查通过；真实公开预检仍返回 `can_build=false`，当前阻断为工作区无关未提交改动、公开开关未启用、缺少真实证据包及最终制品验收。
+
+### 第八十九批：公证归档校验与制品根目录边界
+
+公开证据校验不再对 `.dmg` 归档调用 `codesign --verify`；该命令针对应用/嵌套可执行文件，不能作为 DMG 本身的公证证明。预检现在要求公证证据是绝对路径普通 `.dmg` 或 `.pkg` 文件，并在 macOS 上执行 `spctl --assess --type open --context context:primary-signature`；组件代码签名仍由清单绑定的组件检查负责。冻结制品根目录也必须是绝对路径普通目录，不能通过符号链接替代。
+
+现有发布/验收 Python 回归继续为 54/54，diff 检查通过；没有伪造公证结果或更改公开发布开关。

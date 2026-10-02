@@ -459,13 +459,11 @@ def _acceptance_pre_public_passes(path, source_commit):
 
 def _verify_notarized_artifact(path):
     artifact = Path(path)
-    require(artifact.is_absolute() and not artifact.is_symlink() and artifact.exists(), "公证制品路径无效")
+    require(artifact.is_absolute() and not artifact.is_symlink() and artifact.is_file(), "公证制品必须是绝对路径普通归档文件")
     if sys.platform != "darwin":
         raise ReleaseError("公证制品只能在 macOS 主机核验")
-    kind = "execute" if artifact.suffix == ".app" else "open"
-    result = subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(artifact)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, timeout=30)
-    require(result.returncode == 0, "公证制品代码签名核验失败")
-    result = subprocess.run(["/usr/sbin/spctl", "--assess", "--type", kind, "--context", "context:primary-signature", str(artifact)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, timeout=30)
+    require(artifact.suffix.lower() in (".dmg", ".pkg"), "公证制品必须是 DMG 或 PKG 分发归档")
+    result = subprocess.run(["/usr/sbin/spctl", "--assess", "--type", "open", "--context", "context:primary-signature", str(artifact)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, timeout=30)
     require(result.returncode == 0, "公证制品 Gatekeeper 核验失败")
 
 
@@ -480,12 +478,14 @@ def validate_public_evidence(path, product, source_commit):
     manifest_path = _evidence_file(manifest.get("path", ""))
     require(file_digest(manifest_path) == manifest.get("sha256"), "manifest 证据摘要不匹配")
     trusted_keys_path = _evidence_file(manifest.get("trusted_keys", ""))
+    artifact_root = Path(manifest.get("artifact_dir", ""))
+    require(artifact_root.is_absolute() and not artifact_root.is_symlink() and artifact_root.is_dir(), "冻结制品根目录必须是绝对路径普通目录")
     envelope = read_json(manifest_path)
     signature_result = verify_envelope_signature(envelope, "manifest", product, str(trusted_keys_path))
     require(signature_result.get("signature_verification") == "PASS", "签名 manifest 验证未通过")
     payload = unwrap_document(envelope, "manifest", product)
     require(payload["source_commit"] == source_commit, "签名 manifest 提交身份不匹配")
-    verify_artifacts(payload, manifest.get("artifact_dir", ""))
+    verify_artifacts(payload, artifact_root)
     acceptance = value.get("acceptance")
     require(type(acceptance) is dict, "公开发布证据缺少 acceptance 引用")
     acceptance_path = _evidence_file(acceptance.get("path", ""))

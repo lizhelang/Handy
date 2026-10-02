@@ -22,7 +22,7 @@ python3 scripts/inputia_release.py preflight --mode public \
   --public-evidence /绝对路径/public-release-evidence.json
 ```
 
-证据文件为 schema v2，必须引用真实的 signed manifest、受信公钥集、冻结制品根目录、验收报告和待核验的公证制品。预检会重新计算文件摘要、调用 manifest 信封验签、逐文件核对制品，并要求所有 pre-public 案例为 `PASS`；macOS 上还会执行 `codesign` 与 `spctl` 检查。缺少文件、提交不一致或任一项失败都会阻断。
+证据文件为 schema v2，必须引用真实的 signed manifest、受信公钥集、冻结制品根目录、验收报告和待核验的公证 DMG/PKG。预检会重新计算文件摘要、调用 manifest 信封验签、逐文件核对制品，并要求所有 pre-public 案例为 `PASS`；组件签名由 manifest/组件检查负责，分发归档在 macOS 上执行 `spctl --assess --type open`。缺少文件、提交不一致或任一项失败都会阻断。
 
 `generate-config` 只写指定输出目录下的三个受管文件：
 
@@ -91,7 +91,7 @@ Python 调用方可使用 `load_product()`、`read_json(path)`、`validate_manif
 
 ## 当前公共预检的明确阻断项
 
-公共入口会拒绝：配置漂移、脏提交、仍绑定 profile 的 v1 信任、尚未接入的发布签名验证、未经验证的 Developer ID/公证与最终制品验收。手动把 `public_release_enabled` 改为 true 不能绕过后三项。
+公共入口会拒绝：配置漂移、脏提交、仍绑定 profile 的 v1 信任、缺少真实证据包、未经验证的 Developer ID/公证与最终制品验收。手动把 `public_release_enabled` 改为 true 不能绕过这些门槛。
 
 此目录已实现元数据与预检合同。v2 配对认证与安装定位已接入源码；默认 `--build-local` 仍保留明确的 v1 本机桥接入口。发布签名/根密钥轮换、签名安装器、持久恢复更新核心和真实设备验收继续实施，不能将本机脚本测试计为这些门槛通过。
 
