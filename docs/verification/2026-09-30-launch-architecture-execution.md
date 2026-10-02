@@ -643,3 +643,7 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 将 `InputiaHandyMemorySyncSelfCheck` 对状态文案的断言与当前实现统一后，重新构建原生自检产物；记忆同步自检六项全部通过。随后运行 `CARGO_NET_OFFLINE=true bash macos/InputiaInputMethod/verify-nongui.sh`，返回 `devFastPassed=true`、`RC=0`。本轮包含 CAPI/Rime、Swift 状态机、权限/隐私桥、候选布局、设置合同、语音服务和延迟自检；策略输出仍明确 `touchesMenuBar=false`、`opensGUI=false`、`changesSystemInputSource=false`、`checksNotarization=false`。
 
 该结果收敛了当前非 GUI 回归中的实现/夹具失败，但不提升真实实体键盘、系统输入源切换、已安装迁移、Developer ID/公证、独立 updater/bootstrap 或公开渠道 G8–G10b 的状态。
+
+### 第七十一批：发布/更新核心回归
+
+在干净工作区完成快速回归：`inputia-release` Rust 测试 24/24、`inputia-updater` library 测试 36/36、发布脚本 Python 测试 50/50 通过。测试均使用临时目录或合成输入，没有写入当前安装、停止日用组件或读取用户数据。
