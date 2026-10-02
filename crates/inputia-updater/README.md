@@ -216,8 +216,10 @@ Updater 死后 guardian 仍保持原事务锁，以及阻塞核验期间过期 /
 原生 plan 断言，包含双边独立计划、幂等恢复、不可逆关闭、新旧暂停互斥。角色签名在这些正向
 夹具中是合成数据，不替代真实 Developer ID 三角色验证。
 
-**正式 Updater main 尚未调用 `guardian_entry()`；固定发布入口、Developer ID 同入口 reexec
-与完整 NativeAdapter 生产路径均为 NOT_RUN，当前禁止生产交接接线。** 双进程同时死亡、OS
+`inputia-updater` 的 main 现已在帮助、HOME、日志和公开命令解析之前调用 `guardian_entry()`；
+内部模式失败固定以 70 退出，不回落到公开 CLI，未启用原生特性时也明确拒绝。该接线只使同一
+二进制 reexec 入口可达，**固定发布 App、Developer ID 同入口正向与完整 NativeAdapter 生产路径
+仍为 NOT_RUN，当前禁止生产交接。** 双进程同时死亡、OS
 失效没有在线自动恢复保证；外部第三方在登记后另发 STOP 没有可区分的内核所有者计数。
 意外 fork 的对端使所有权不确定，进入恢复待处理而不猜测。TIS 切离、旧数据库路径 fence、
 快照和服务独占 FD 是后续独立门禁；未操作用户真实数据库或日用进程。

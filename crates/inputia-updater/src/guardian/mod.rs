@@ -12,6 +12,8 @@ mod session;
 #[cfg(all(target_os = "macos", feature = "native-code-verification"))]
 mod transport;
 
+const INTERNAL_MODE: &str = "--inputia-internal-suspension-guardian";
+
 use crate::{MaintenanceMarker, Subject};
 use std::{
     fs::File,
@@ -171,13 +173,25 @@ pub fn begin_guarded_suspension(
 /// 供未来已验Updater的main在初始化GUI/服务前调用。普通启动返回None；不从PATH启动helper。
 /// 单独存在库入口不等于产品已接线。
 pub fn guardian_entry() -> Result<Option<i32>, GuardianError> {
+    let args: Vec<_> = std::env::args_os().collect();
+    let requested = args
+        .iter()
+        .skip(1)
+        .any(|arg| arg == std::ffi::OsStr::new(INTERNAL_MODE));
+    if !requested {
+        return Ok(None);
+    }
+    // 内部标记出现在任意其它位置、重复或混入公开参数时都不能回落公开 CLI。
+    if args.len() != 3 || args.get(1).is_none_or(|arg| arg != INTERNAL_MODE) {
+        return Err(GuardianError::InvalidAuthority);
+    }
     #[cfg(all(target_os = "macos", feature = "native-code-verification"))]
     {
         runtime::entry()
     }
     #[cfg(not(all(target_os = "macos", feature = "native-code-verification")))]
     {
-        Ok(None)
+        Err(GuardianError::NativeUnavailable)
     }
 }
 

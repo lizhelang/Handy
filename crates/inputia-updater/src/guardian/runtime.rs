@@ -22,7 +22,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc, Mutex},
     time::Duration,
 };
-const MODE: &str = "--inputia-internal-suspension-guardian";
+const MODE: &str = super::INTERNAL_MODE;
 const SOCKET_FD: RawFd = 198;
 const LOCK_FD: RawFd = 199;
 const MAX_HOLD_MS: u64 = 30_000;

@@ -831,3 +831,9 @@ Python 语法、AST 解析和 diff 检查通过；没有重新包装、安装或
 重新核对 `docs/codex-plans/deferred/20261001-settings-startup-wip.patch` 与当前源码。该补丁保存的是 build85 首次冻结时的延期工作，不能再直接应用：其核心内容已经由提交 `bf1aa786` 接入，并在后续真实 build85 启动中写出 schema 3 `completed` 回执。当前调用链先取得迁移锁和设置 Files 锁，检查或激活固定 pending 协议；manager 初始化期间的设置写入进入同一启动事务；`StartupGuard.complete()` 封口迁移日志后，`startup::finish()` 才把业务准入切为 `Ready`。设置失败则进入固定恢复状态，不开放普通业务入口。
 
 在当前提交执行定向复验：设置链 54/54、schema 3 启动恢复 20/20、启动准入相关筛选 19/19 通过，均为单线程 Rust 测试；保留仓库既有 19 条 unused/dead-code 警告。同步修正架构状态与体验版历史说明，明确延期补丁仅作冻结时点记录，不再属于当前可应用待办。本批没有修改当前安装、用户数据、TCC、输入源或运行进程。
+
+### 第一百零四批：更新器 guardian 同入口接线
+
+`inputia-updater` 现在在帮助、HOME、事务日志和公开参数解析之前调用 `guardian_entry()`。同一已验二进制的内部恢复模式成功时直接退出；私有 FD、事务锁、nonce 或原生能力不满足时固定以 70 失败，不回落到公开 CLI，也不打印普通命令用法。未启用 `native-code-verification` 的构建遇到内部模式也明确返回 `NativeUnavailable`，避免把私有参数误当作普通命令。
+
+新增真实子进程 CLI 回归，分别核对普通 `--help` 保持原行为、内部模式不能落入公开解析器。独立复审发现内部标记前置 `--help` 等参数时会旁路到公开 CLI；现已改为扫描全部参数，标记一旦出现而形态不是精确 `[MODE, nonce]` 就失败关闭，并覆盖 `--help`、`--status` 和未知前置参数。修复后复审 CLEAR。默认构建 2/2、启用原生特性的构建 2/2 通过；原生特性下 guardian 11/11 通过，严格 Clippy、格式与差异检查通过。该批只接通安全 reexec 入口，没有开放 `--run`、创建更新事务、停止日用进程、切换输入源或读写用户数据。完整生产 `NativeAdapter`、正式 Updater/Bootstrap App、Developer ID 正向与后续 TIS/fence/快照/postcheck 证据仍未完成。

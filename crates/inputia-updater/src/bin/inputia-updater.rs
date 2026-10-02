@@ -251,6 +251,16 @@ fn digest_file(value: &str) -> Result<String, String> {
 }
 
 fn main() -> ExitCode {
+    // guardian 必须在帮助、HOME、日志及公开命令解析之前接管同一已验二进制。
+    // 内部模式失败时固定失败关闭，不回落到普通 CLI，也不输出公开用法。
+    match inputia_updater::guardian::guardian_entry() {
+        Ok(Some(code)) => return ExitCode::from(u8::try_from(code).unwrap_or(70)),
+        Ok(None) => {}
+        Err(_) => {
+            eprintln!("Inputia 内部恢复守护进程无法启动");
+            return ExitCode::from(70);
+        }
+    }
     let args: Vec<_> = env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         usage();
