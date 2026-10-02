@@ -607,3 +607,9 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 所有者门禁版工作区回归完成：发布脚本测试 50 项通过，候选更新器 Python 测试 23 项通过，`inputia-release` Rust 测试 24 项通过，`inputia-updater` 单元 36 项、归档 17 项、事务故障矩阵 21 项全部通过（事务矩阵耗时 175.67 秒）。测试使用临时目录和合成适配器/密钥，没有停止日用组件、写入真实安装收据或修改用户数据。
 
 这些结果证明 r13 所含更新器门禁与现有发布/事务合同没有回归；不改变生产 NativeAdapter、Developer ID/公证、干净机、实体键盘和公开渠道仍未取得真实证据的结论。
+
+### 第六十五批：当前工作区发布前置复核
+
+在提交 `f5ab7b8aabac4f14fa018127b2a02c60fb47e478` 的干净工作区重新运行发布前置检查。产品结构校验通过，配置漂移为空；`preflight --mode local` 返回 `can_build=true`、`certificate_accessed=false`、`installed=false`。`preflight --mode public` 按合同拒绝，阻断项为 `public_release_not_enabled`、`developer_id_and_notarization_not_verified`、`release_signature_verifier_not_integrated`、`final_artifact_acceptance_required`。
+
+该结果确认当前可以继续生成本地候选包，但不能把本地测试签名包宣称为正式公开版本；外部证书、公证、最终制品 G0–G10a/G10b 和真实安装验收仍是未完成条件。
