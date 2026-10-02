@@ -114,6 +114,17 @@ fn repeated_result_has_one_ime_owner_and_cannot_change_item_or_revision() {
 }
 
 #[test]
+fn voice_result_preserves_verified_target_deadline_when_provided() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = seeded(&temp.path().join("integration.db"));
+    let id = item_id("voice-store", "one");
+    let output = store
+        .prepare_voice_result_with_deadline("session", "host", "server", &id, 1, Some(123_456))
+        .unwrap();
+    assert_eq!(output.intent.deadline_at_ms, Some(123_456));
+}
+
+#[test]
 fn result_and_output_prepare_roll_back_together_when_association_write_fails() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("integration.db");

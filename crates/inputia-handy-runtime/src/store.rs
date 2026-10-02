@@ -558,6 +558,18 @@ impl IntegrationStore {
         item_id: &str,
         revision: u64,
     ) -> StoreResult<crate::output_ledger::OutputRecord> {
+        self.prepare_voice_result_with_deadline(session_id, client, server, item_id, revision, None)
+    }
+
+    pub fn prepare_voice_result_with_deadline(
+        &mut self,
+        session_id: &str,
+        client: &str,
+        server: &str,
+        item_id: &str,
+        revision: u64,
+        deadline_at_ms: Option<u64>,
+    ) -> StoreResult<crate::output_ledger::OutputRecord> {
         use crate::{output_ledger::*, voice_protocol::VoicePhase};
         let tx = self
             .conn
@@ -606,7 +618,7 @@ impl IntegrationStore {
             revision,
             source: Some("voice".into()),
             profile_id: None,
-            deadline_at_ms: None,
+            deadline_at_ms,
             target_id: Some(target.target_id.clone()),
             owner: OutputOwner::Ime,
             policy_epoch: session.start.policy_epoch,

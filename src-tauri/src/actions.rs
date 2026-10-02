@@ -45,9 +45,22 @@ async fn prepare_owned_voice_result(
         .service
         .clone();
     let task_app = app.clone();
+    let deadline_at_ms = start.start_identity().and_then(|(target, _)| {
+        let id = target.target_id.clone();
+        crate::integration_output::main_thread_call(app, move || {
+            crate::integration_output::target_deadline(&id)
+        })
+        .ok()
+        .flatten()
+    });
     tauri::async_runtime::spawn_blocking(move || {
         crate::input_permission::check_epoch(permission_epoch)?;
-        let output = service.prepare_saved_voice_result(start.clone(), history_id, text)?;
+        let output = service.prepare_saved_voice_result_with_deadline(
+            start.clone(),
+            history_id,
+            text,
+            deadline_at_ms,
+        )?;
         crate::input_permission::check_epoch(permission_epoch)?;
         let coordinator = task_app
             .try_state::<TranscriptionCoordinator>()

@@ -1667,6 +1667,16 @@ impl HistoryService {
         history_id: i64,
         expected_text: String,
     ) -> ServiceResult<crate::output_ledger::OutputRecord> {
+        self.prepare_saved_voice_result_with_deadline(start, history_id, expected_text, None)
+    }
+
+    pub fn prepare_saved_voice_result_with_deadline(
+        &self,
+        start: crate::voice_protocol::VoiceRequest,
+        history_id: i64,
+        expected_text: String,
+        deadline_at_ms: Option<u64>,
+    ) -> ServiceResult<crate::output_ledger::OutputRecord> {
         self.call(move |worker| {
             if history_id <= 0 || expected_text.is_empty() {
                 return Err("invalid saved voice result".into());
@@ -1698,12 +1708,13 @@ impl HistoryService {
             }
             worker
                 .store
-                .prepare_voice_result(
+                .prepare_voice_result_with_deadline(
                     &start.session_id,
                     &start.client_instance,
                     &start.server_instance,
                     &id,
                     item.revision,
+                    deadline_at_ms,
                 )
                 .map_err(|error| error.to_string())
         })
