@@ -721,3 +721,7 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 ### 第八十三批：Tauri 集成输出合同补齐
 
 `src-tauri/src/commands/integration.rs` 的两个生产 `OutputIntent` 构造入口补齐 `source=integration`、可选 profile 与期限字段，避免新增输出合同字段只在 runtime 内部和测试夹具生效而导致主应用编译断裂。`cargo check --locked --manifest-path src-tauri/Cargo.toml --lib` 通过；仅保留仓库既有 unused/dead-code 警告。当前期限仍未从原生目标 token 取得，继续按第八十二批边界记录。
+
+### 第八十四批：原生目标租约截止时间进入输出意图
+
+macOS `TargetRegistry` 已暴露当前不透明目标租约的绝对截止时间，集成输出在创建平台 `OutputIntent` 时写入 `deadline_at_ms`；期限取不到时保持 `None`，不伪造 TTL。派发前仍必须通过原有主线程 `validate` 重新检查焦点、进程和租约，因此该字段只作为持久合同和恢复时的过期线索。`cargo check --locked --manifest-path src-tauri/Cargo.toml --lib`、rustfmt 和 diff 检查通过；语音 Host token 尚无可验证期限，继续不填期限。

@@ -23,7 +23,7 @@ use std::ptr;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 type Ref = *const c_void;
 type AxCallback = unsafe extern "C" fn(Ref, Ref, Ref, *mut c_void);
@@ -680,6 +680,23 @@ impl TargetRegistry {
     /// 必须在实际派发前同一个主线程任务里再次调用；不得把结果缓存后异步派发。
     pub fn validate(&self, id: &str) -> Result<TargetSnapshot, PendingReason> {
         self.validate_identity(id, false)
+    }
+
+    /// 返回注册表租约的绝对截止时间；实际派发前仍需重新调用 `validate`。
+    pub fn deadline_unix_ms(&self, id: &str) -> Result<u64, PendingReason> {
+        main_thread()?;
+        let lease = self.leases.get(id).ok_or(PendingReason::UnknownTarget)?;
+        let remaining = lease.deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(PendingReason::Expired);
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| PendingReason::Expired)?;
+        Ok(now
+            .as_millis()
+            .saturating_add(remaining.as_millis())
+            .min(u64::MAX as u128) as u64)
     }
 
     /// 键入后的来源证明允许正文/选区变化，但必须仍是原字段、窗口和进程。

@@ -59,8 +59,21 @@ pub fn current_target() -> Option<String> {
             .and_then(|state| state.current.clone())
     })
 }
+#[cfg(target_os = "macos")]
+pub fn current_target_deadline() -> Option<u64> {
+    TARGETS.with(|slot| {
+        let slot = slot.borrow();
+        let state = slot.as_ref()?;
+        let id = state.current.as_deref()?;
+        state.registry.deadline_unix_ms(id).ok()
+    })
+}
 #[cfg(not(target_os = "macos"))]
 pub fn current_target() -> Option<String> {
+    None
+}
+#[cfg(not(target_os = "macos"))]
+pub fn current_target_deadline() -> Option<u64> {
     None
 }
 

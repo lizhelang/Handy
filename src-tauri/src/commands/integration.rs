@@ -242,7 +242,10 @@ pub async fn insert_unified_history_item(
                 revision: expected_revision,
                 source: Some("integration".into()),
                 profile_id: None,
-                deadline_at_ms: None,
+                deadline_at_ms: main_thread_call(
+                    &app,
+                    crate::integration_output::current_target_deadline,
+                )?,
                 target_id: main_thread_call(&app, crate::integration_output::current_target)?,
                 owner: OutputOwner::Platform,
                 policy_epoch: service.policy_epoch()?,
