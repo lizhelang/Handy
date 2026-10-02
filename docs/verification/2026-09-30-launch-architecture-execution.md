@@ -595,3 +595,9 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 ### 第六十二批：安装源所有者前置门禁
 
 实机诊断确认 `/Applications` 父目录探针可通过，但旧设置 bundle 本身由 `root:wheel` 持有，实际 rename 仍被拒绝。更新器现在额外核对每个待替换源 bundle 的所有者；外部所有者会在停进程、切换输入源和写维护标记前直接返回管理员权限错误。新增回归覆盖外部 UID 拒绝与探针无残留；更新器测试 23 项通过。该修正尚未重新打包，r12 不包含本批代码。
+
+### 第六十三批：所有者门禁版 r13 体验包
+
+在提交 `181109ae4caf037d0c31b088664153221942d066` 的工作区构建三组件 v2 本地体验包，releaseId 为 `inputia-1.1.1-85-181109ae4caf-4bf683af96eb44b68b211a91fb215bb2`，构建目录为 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-kkAgVkxE`。主程序、输入法和设置组件均完成 arm64、macOS 13+ 构建、本地测试证书签名、元数据检查与配对清单验签；构建状态明确为 `installed=false`、`publicReleaseEligible=false`，公证为 `NOT_RUN`。
+
+归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r13.zip`，SHA-256 为 `676159fc02f5d8995dfd0b3ed13bf3df1ef30ecb56d65ae5bd7d45259d7f9a54`，文件大小约 960 MB；`unzip -t` 通过。包内 `仅检查v2更新.command` 对当前旧安装返回 `installationReceiptPresent=false`、`releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`。本包包含安装源 bundle 所有者前置门禁和失败后的维护标记/输入源/旧组件恢复路径，但尚未执行覆盖安装；当前仍需管理员先把旧 `/Applications/Inputia 设置.app` 从 `root:wheel` 调整为当前用户可替换范围。
