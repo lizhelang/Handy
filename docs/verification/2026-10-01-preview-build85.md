@@ -25,7 +25,7 @@
 完整改动已保存为普通 Git 补丁，源码恢复到已提交、已验证路径。两份补丁均通过 `git apply --check`，没有删除设计或实现工作。恢复时需按当时源码重新检查，不能直接启用未经集成验证的入口。
 
 - [HF 受管存储切换](../codex-plans/deferred/20261001-managed-hf-wip.patch)：新代目录、active 索引、统一下载与来源解析；尚缺完整集成和崩溃回归。
-- [设置启动协议接线](../codex-plans/deferred/20261001-settings-startup-wip.patch)：App pending、Files 锁、manager 观察和最终准入接线；当前 App 开关保持关闭。
+- [设置启动协议接线](../codex-plans/deferred/20261001-settings-startup-wip.patch)：这是本页冻结时尚未启用的历史补丁；其 App pending、Files 锁、manager 观察和最终准入接线后来已由提交 `bf1aa786` 吸收，当前源码不得再次直接套用该补丁。
 
 这些后续架构工作不作为本地体验包的前置条件。
 

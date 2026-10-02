@@ -825,3 +825,9 @@ Python 语法、AST 解析和 diff 检查通过；没有重新包装、安装或
 验证：静态 Rime Python 单元测试 14/14、`py_compile`、diff 检查通过；现有 arm64 静态探针复验通过。把整套输出复制到独立目录后，`verify_link_input.py` 和 `inputia-capi` 的 bundled-static-rime 编译检查通过，清单及旁路证据不再包含原工作树路径。路径穿越、篡改 signature、增加 `unexpected_evidence: null` 均被真实门禁拒绝，恢复原清单后复验通过。独立复审先后指出完整证据未比较和 `None` 成员资格缺口；修复后最终结论为 CLEAR。
 
 该批解决 G0/P4 的制品搬运与复验一致性，不等于静态库本身已字节级可重现，也不补足 Developer ID、公证、第三方许可法律结论、x86_64 或完整 Host 原生验收。
+
+### 第一百零三批：设置启动延期项现状复核
+
+重新核对 `docs/codex-plans/deferred/20261001-settings-startup-wip.patch` 与当前源码。该补丁保存的是 build85 首次冻结时的延期工作，不能再直接应用：其核心内容已经由提交 `bf1aa786` 接入，并在后续真实 build85 启动中写出 schema 3 `completed` 回执。当前调用链先取得迁移锁和设置 Files 锁，检查或激活固定 pending 协议；manager 初始化期间的设置写入进入同一启动事务；`StartupGuard.complete()` 封口迁移日志后，`startup::finish()` 才把业务准入切为 `Ready`。设置失败则进入固定恢复状态，不开放普通业务入口。
+
+在当前提交执行定向复验：设置链 54/54、schema 3 启动恢复 20/20、启动准入相关筛选 19/19 通过，均为单线程 Rust 测试；保留仓库既有 19 条 unused/dead-code 警告。同步修正架构状态与体验版历史说明，明确延期补丁仅作冻结时点记录，不再属于当前可应用待办。本批没有修改当前安装、用户数据、TCC、输入源或运行进程。
