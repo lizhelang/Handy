@@ -23,6 +23,7 @@ const installReactHarness = async (page: Page, path: string) => {
     const { default: RefreshRuntime } = await import("/@react-refresh");
     RefreshRuntime.injectIntoGlobalHook(window);
     Object.assign(window, {
+      __TAURI_OS_PLUGIN_INTERNALS__: { os_type: "macos", platform: "macos" },
       $RefreshReg$: () => {},
       $RefreshSig$: () => (type: unknown) => type,
       __vite_plugin_react_preamble_installed__: true,
@@ -46,6 +47,10 @@ const installClipboardMocks = async (page: Page) => {
         unregisterListener: () => null,
       },
       __TAURI_INTERNALS__: {
+        metadata: {
+          currentWindow: { label: "main" },
+          currentWebview: { label: "main" },
+        },
         transformCallback: () => 1,
         unregisterCallback: () => null,
         invoke: async (cmd: string, args?: Record<string, unknown>) => {

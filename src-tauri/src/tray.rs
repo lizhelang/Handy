@@ -206,7 +206,7 @@ pub fn get_icon_path(theme: AppTheme, state: TrayIconState, warning: bool) -> &'
             AppTheme::Light => "resources/tray_idle_warning_dark.png",
             // Linux never sets the warning flag (Secure Input is macOS-only),
             // but fall back to the normal icon just in case.
-            AppTheme::Colored => "resources/handy.png",
+            AppTheme::Colored => "resources/tray_idle_warning_colored.png",
         };
     }
     match (theme, state) {
@@ -218,10 +218,12 @@ pub fn get_icon_path(theme: AppTheme, state: TrayIconState, warning: bool) -> &'
         (AppTheme::Light, TrayIconState::Idle) => "resources/tray_idle_dark.png",
         (AppTheme::Light, TrayIconState::Recording) => "resources/tray_recording_dark.png",
         (AppTheme::Light, TrayIconState::Transcribing) => "resources/tray_transcribing_dark.png",
-        // Colored theme uses pink icons (for Linux)
-        (AppTheme::Colored, TrayIconState::Idle) => "resources/handy.png",
-        (AppTheme::Colored, TrayIconState::Recording) => "resources/recording.png",
-        (AppTheme::Colored, TrayIconState::Transcribing) => "resources/transcribing.png",
+        // Linux 彩色托盘使用与应用一致的 Inputia 圆环标记。
+        (AppTheme::Colored, TrayIconState::Idle) => "resources/tray_idle_colored.png",
+        (AppTheme::Colored, TrayIconState::Recording) => "resources/tray_recording_colored.png",
+        (AppTheme::Colored, TrayIconState::Transcribing) => {
+            "resources/tray_transcribing_colored.png"
+        }
     }
 }
 

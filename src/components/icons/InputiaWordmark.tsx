@@ -1,4 +1,4 @@
-import inputiaLogoUrl from "../../../macos/InputiaInputMethod/Resources/InputiaLogo.svg";
+import InputiaMark from "./InputiaMark";
 
 const PRODUCT_NAME = "Inputia";
 
@@ -18,20 +18,9 @@ const InputiaWordmark = ({
       className={`flex shrink-0 items-center justify-center ${isHero ? "gap-4" : "gap-2"} ${className}`}
       aria-label={PRODUCT_NAME}
     >
-      <span
-        data-inputia-mark=""
-        aria-hidden="true"
-        className={`block shrink-0 bg-accent-text ${isHero ? "h-16 w-16" : "h-9 w-9"}`}
-        style={{
-          maskImage: `url(${JSON.stringify(inputiaLogoUrl)})`,
-          WebkitMaskImage: `url(${JSON.stringify(inputiaLogoUrl)})`,
-          maskSize: "contain",
-          WebkitMaskSize: "contain",
-          maskPosition: "center",
-          WebkitMaskPosition: "center",
-          maskRepeat: "no-repeat",
-          WebkitMaskRepeat: "no-repeat",
-        }}
+      <InputiaMark
+        size={isHero ? 64 : 36}
+        className="block shrink-0 text-accent-text"
       />
       <span
         className={`whitespace-nowrap font-semibold tracking-normal text-text ${

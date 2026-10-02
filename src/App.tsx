@@ -21,8 +21,7 @@ import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
-import type { UnifiedHistoryActionResult } from "./lib/types/unifiedHistory";
-import { listUnresolvedOutputs } from "./lib/unresolvedOutputs";
+import { OutputFeedback } from "./components/history/OutputFeedback";
 
 type OnboardingStep = "accessibility" | "model" | "done";
 
@@ -157,50 +156,6 @@ function App() {
     });
     return () => {
       unlisten.then((fn) => fn());
-    };
-  }, [t]);
-
-  // A pending or uncertain voice result remains available in unified history.
-  useEffect(() => {
-    let active = true;
-    type OutputResult = {
-      operation_id: string;
-      item_id: string;
-      state: UnifiedHistoryActionResult["status"];
-    };
-    const showNotice = ({ operation_id, state }: OutputResult) => {
-      if (!active) return;
-      if (
-        state !== "pending_target" &&
-        state !== "uncertain" &&
-        state !== "rejected"
-      ) {
-        return;
-      }
-      toast.warning(t(`unifiedHistory.feedback.${state}`), {
-        id: operation_id,
-        duration: Infinity,
-        action: {
-          label: t("sidebar.history"),
-          onClick: () => setCurrentSection("history"),
-        },
-      });
-    };
-    const unlisten = listen<OutputResult>("voice-output-result", (event) =>
-      showNotice(event.payload),
-    );
-    void unlisten
-      .then(async () => {
-        const page = await listUnresolvedOutputs();
-        // The paginated history panel remains the durable inbox for all notices.
-        page.items.slice(0, 3).forEach(showNotice);
-      })
-      .catch(() => {
-        // History shows a retryable error if the service is not ready yet.
-      });
-    return () => {
-      active = false;
-      void unlisten.then((fn) => fn()).catch(() => {});
     };
   }, [t]);
 
@@ -423,6 +378,7 @@ function App() {
   return (
     <>
       {toaster}
+      <OutputFeedback onOpenHistory={() => setCurrentSection("history")} />
       {content}
       {!knowledgeOnly && onboardingStep !== "done" && (
         <div

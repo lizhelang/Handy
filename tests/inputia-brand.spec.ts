@@ -57,7 +57,9 @@ for (const theme of ["light", "dark"] as const) {
     );
     expect(accent).toBe("#2f6f73");
     await page.waitForLoadState("networkidle");
-    await expect(image).not.toHaveCSS("mask-image", "none");
+    await expect(image.locator("circle")).toHaveCount(1);
+    await expect(image.locator("path")).toHaveCount(1);
+    await expect(page.getByText(/handy/i)).toHaveCount(0);
     await page.screenshot({
       path: testInfo.outputPath(`inputia-${theme}.png`),
     });

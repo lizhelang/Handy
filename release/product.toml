@@ -2,8 +2,8 @@
 schema_version = 1
 product_id = "com.inputia"
 name = "Inputia"
-version = "1.1.1"
-build = 85
+version = "1.1.2"
+build = 86
 
 [target]
 platform = "macos"

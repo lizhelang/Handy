@@ -276,7 +276,7 @@ fn activate_core_logic(app_handle: &AppHandle) -> anyhow::Result<()> {
         recording_manager.start_microphone_stream()?;
     }
     if settings.clipboard_enabled {
-        clipboard_manager.start_monitoring();
+        clipboard_manager.start_monitoring()?;
     }
 
     // macOS 的后台权限监视器持有原生监听器的生命周期；隐藏窗口不会退休监听器。

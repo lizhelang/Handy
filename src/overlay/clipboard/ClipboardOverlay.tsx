@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { commands } from "@/bindings";
+import { InputiaMark } from "@/components/icons";
 import type { UnifiedOutputResult } from "@/bindings";
 import { useUnifiedHistoryStore } from "@/stores/unifiedHistoryStore";
 import {
@@ -672,7 +673,8 @@ const ClipboardOverlay: React.FC = () => {
           data-tauri-drag-region
           onMouseDown={handleStartDrag}
         >
-          <div className="clipboard-overlay-brand">
+          <div className="clipboard-overlay-brand flex items-center gap-2">
+            <InputiaMark />
             {t("settings.clipboard.title")}
           </div>
           <div

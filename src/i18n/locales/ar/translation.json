@@ -70,7 +70,9 @@
     "outputNotices": {
       "heading": "Outputs needing attention",
       "acknowledge": "Dismiss reminder",
-      "acknowledgeHelp": "Dismissing a reminder does not retry or undo insertion. Check the target before inserting again."
+      "acknowledgeHelp": "Dismissing a reminder does not retry or undo insertion. Check the target before inserting again.",
+      "historyHelp": "These are earlier unfinished outputs, not ongoing retry attempts. Your content remains in history.",
+      "startupSummary": "Earlier outputs need attention. Review them in history; they will not be retried automatically."
     }
   },
   "tray": {
@@ -578,7 +580,7 @@
       "updateChecks": {
         "label": "التحقق من وجود تحديثات",
         "description": "التحقق تلقائياً من وجود إصدارات جديدة من Inputia",
-        "lockedDescription": "معطّل بواسطة إعدادات النظام (HANDY_DISABLE_UPDATER)"
+        "lockedDescription": "معطّل بواسطة إعدادات النظام"
       },
       "soundTheme": {
         "label": "سمة الصوت",
@@ -629,6 +631,8 @@
         "bindingsReset": "كانت اختصارات لوحة المفاتيح غير متوافقة وتمت إعادة تعيينها إلى القيم الافتراضية"
       },
       "paths": {
+        "title": "Data paths",
+        "description": "The data directories used by this installation.",
         "appData": "بيانات التطبيق:",
         "models": "النماذج:",
         "settings": "الإعدادات:"
@@ -716,8 +720,8 @@
       },
       "upstream": {
         "title": "Open-source attribution",
-        "description": "Inputia builds on the open-source Handy project and retains its copyright and license notices.",
-        "source": "View upstream Handy source",
+        "description": "Inputia uses open-source components and retains their copyright and license notices.",
+        "source": "View Inputia source",
         "license": "View original license"
       }
     },

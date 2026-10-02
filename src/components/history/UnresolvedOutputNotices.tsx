@@ -84,6 +84,9 @@ export function UnresolvedOutputNotices() {
         {t("unifiedHistory.outputNotices.heading")}
       </h2>
       <p className="mb-2 text-xs text-text/60">
+        {t("unifiedHistory.outputNotices.historyHelp")}
+      </p>
+      <p className="mb-2 text-xs text-text/60">
         {t("unifiedHistory.outputNotices.acknowledgeHelp")}
       </p>
       {error && <p role="alert">{t("unifiedHistory.errors.load")}</p>}

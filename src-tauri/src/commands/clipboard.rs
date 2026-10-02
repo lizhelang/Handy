@@ -1,5 +1,5 @@
 use crate::managers::clipboard::{ClipboardManager, ClipboardPageResult, ClipboardStats};
-use log::{error, info};
+use log::info;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 
@@ -203,17 +203,27 @@ pub fn change_clipboard_enabled_setting(
         return Ok(());
     }
 
+    if !enabled {
+        manager.stop_monitoring().map_err(|e| e.to_string())?;
+    }
     settings.clipboard_enabled = enabled;
-    crate::settings::write_settings(&app, settings)?;
+    if let Err(error) = crate::settings::write_settings(&app, settings) {
+        if !enabled {
+            manager
+                .start_monitoring()
+                .map_err(|restart| format!("{error}; {restart}"))?;
+        }
+        return Err(error);
+    }
     crate::tray::update_tray_menu(&app);
 
     if enabled {
-        manager.start_monitoring();
-        if let Err(err) = manager.sync_current_clipboard() {
-            error!(
-                "Failed to sync clipboard after enabling experimental clipboard feature: {}",
-                err
-            );
+        if let Err(err) = manager.start_monitoring() {
+            let mut settings = crate::settings::get_settings(&app);
+            settings.clipboard_enabled = false;
+            crate::settings::write_settings(&app, settings)?;
+            crate::tray::update_tray_menu(&app);
+            return Err(err.to_string());
         }
     }
 

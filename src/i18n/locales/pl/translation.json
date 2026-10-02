@@ -70,7 +70,9 @@
     "outputNotices": {
       "heading": "Outputs needing attention",
       "acknowledge": "Dismiss reminder",
-      "acknowledgeHelp": "Dismissing a reminder does not retry or undo insertion. Check the target before inserting again."
+      "acknowledgeHelp": "Dismissing a reminder does not retry or undo insertion. Check the target before inserting again.",
+      "historyHelp": "These are earlier unfinished outputs, not ongoing retry attempts. Your content remains in history.",
+      "startupSummary": "Earlier outputs need attention. Review them in history; they will not be retried automatically."
     }
   },
   "tray": {
@@ -601,7 +603,7 @@
       "updateChecks": {
         "label": "Sprawdzaj aktualizacje",
         "description": "Automatycznie sprawdzaj nowe wersje Inputia",
-        "lockedDescription": "Wyłączone przez konfigurację systemową (HANDY_DISABLE_UPDATER)"
+        "lockedDescription": "Wyłączone przez konfigurację systemową"
       },
       "soundTheme": {
         "label": "Motyw dźwiękowy",
@@ -652,6 +654,8 @@
         "bindingsReset": "Skróty klawiaturowe były niekompatybilne i zostały zresetowane do wartości domyślnych"
       },
       "paths": {
+        "title": "Data paths",
+        "description": "The data directories used by this installation.",
         "appData": "Dane aplikacji:",
         "models": "Modele:",
         "settings": "Ustawienia:"
@@ -739,8 +743,8 @@
       },
       "upstream": {
         "title": "Open-source attribution",
-        "description": "Inputia builds on the open-source Handy project and retains its copyright and license notices.",
-        "source": "View upstream Handy source",
+        "description": "Inputia uses open-source components and retains their copyright and license notices.",
+        "source": "View Inputia source",
         "license": "View original license"
       }
     },

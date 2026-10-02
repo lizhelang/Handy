@@ -21,7 +21,7 @@ use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
 use std::time::Duration;
@@ -36,6 +36,30 @@ use tauri_nspanel::objc2::MainThreadMarker;
 const TEXT_PREVIEW_MAX_CHARS: usize = 200;
 const SEARCH_RESULT_LIMIT: i64 = 100;
 const FILE_PREVIEW_MAX_PATHS: usize = 3;
+
+#[derive(Default)]
+struct ClipboardMonitorLifecycle {
+    started: AtomicBool,
+    generation: AtomicU64,
+}
+
+impl ClipboardMonitorLifecycle {
+    fn start(&self) -> Option<u64> {
+        if self.started.swap(true, Ordering::SeqCst) {
+            return None;
+        }
+        Some(self.generation.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+
+    fn stop(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.started.store(false, Ordering::SeqCst);
+    }
+
+    fn active(&self, generation: u64) -> bool {
+        self.started.load(Ordering::SeqCst) && self.generation.load(Ordering::SeqCst) == generation
+    }
+}
 
 // The monitor keeps ownership of a queued read until its closure/result is dropped.
 #[cfg(any(target_os = "macos", test))]
@@ -180,7 +204,10 @@ pub struct ClipboardManager {
     app_handle: AppHandle,
     db_path: PathBuf,
     images_dir: PathBuf,
-    monitoring_started: Arc<AtomicBool>,
+    monitor_lifecycle: Arc<ClipboardMonitorLifecycle>,
+    monitor_commit_gate: Arc<Mutex<()>>,
+    #[cfg(not(target_os = "macos"))]
+    watcher_shutdown: Arc<Mutex<Option<(u64, clipboard_rs::WatcherShutdown)>>>,
     last_seen_hash: Arc<Mutex<Option<String>>>,
     #[cfg(target_os = "macos")]
     monitor_read_in_flight: Arc<AtomicBool>,
@@ -511,7 +538,10 @@ impl ClipboardManager {
             app_handle: app_handle.clone(),
             db_path,
             images_dir,
-            monitoring_started: Arc::new(AtomicBool::new(false)),
+            monitor_lifecycle: Arc::new(ClipboardMonitorLifecycle::default()),
+            monitor_commit_gate: Arc::new(Mutex::new(())),
+            #[cfg(not(target_os = "macos"))]
+            watcher_shutdown: Arc::new(Mutex::new(None)),
             last_seen_hash: Arc::new(Mutex::new(None)),
             #[cfg(target_os = "macos")]
             monitor_read_in_flight: Arc::new(AtomicBool::new(false)),
@@ -634,19 +664,32 @@ impl ClipboardManager {
     }
 
     /// Start monitoring clipboard changes
-    pub fn start_monitoring(&self) {
-        if self.monitoring_started.swap(true, Ordering::SeqCst) {
+    pub fn start_monitoring(&self) -> Result<()> {
+        let _gate = self
+            .monitor_commit_gate
+            .lock()
+            .map_err(|_| anyhow!("Clipboard monitor lock poisoned"))?;
+        if self.monitor_lifecycle.started.load(Ordering::SeqCst) {
             debug!("Clipboard monitoring already active");
-            return;
+            return Ok(());
         }
-
+        self.prime_current_clipboard()?;
+        let Some(generation) = self.monitor_lifecycle.start() else {
+            return Ok(());
+        };
         let manager = self.clone();
 
         std::thread::spawn(move || {
             info!("Starting clipboard monitoring thread");
 
-            loop {
-                let result = catch_unwind(AssertUnwindSafe(|| manager.run_monitoring_backend()));
+            while manager.monitor_lifecycle.active(generation) {
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    manager.run_monitoring_backend(generation)
+                }));
+
+                if !manager.monitor_lifecycle.active(generation) {
+                    break;
+                }
 
                 match result {
                     Ok(()) => {
@@ -657,29 +700,89 @@ impl ClipboardManager {
 
                 std::thread::sleep(Duration::from_secs(1));
             }
+            info!("Clipboard monitoring thread stopped");
         });
+        Ok(())
     }
 
-    fn run_monitoring_backend(&self) {
-        self.sync_current_clipboard_for_monitor("capture initial clipboard state");
+    /// 关闭采集并等待已经进入提交阶段的记录完成；旧监听代次不得在重开后继续写入。
+    pub fn stop_monitoring(&self) -> Result<()> {
+        let _gate = self
+            .monitor_commit_gate
+            .lock()
+            .map_err(|_| anyhow!("Clipboard monitor lock poisoned"))?;
+        self.monitor_lifecycle.stop();
+        #[cfg(not(target_os = "macos"))]
+        {
+            // Drop 会通知底层 watcher 退出，不能只屏蔽事件而遗留监听线程。
+            self.watcher_shutdown
+                .lock()
+                .map_err(|_| anyhow!("Clipboard watcher lock poisoned"))?
+                .take();
+        }
+        info!("Clipboard monitoring disabled");
+        Ok(())
+    }
 
+    /// 将启用前的剪贴板设为基线，只监听之后的复制操作。
+    fn prime_current_clipboard(&self) -> Result<()> {
         #[cfg(target_os = "macos")]
-        self.run_polling_monitor();
+        {
+            let count = self
+                .run_on_main_thread_sync("capture clipboard baseline", |_| {
+                    objc2_app_kit::NSPasteboard::generalPasteboard().changeCount()
+                })
+                .ok_or_else(|| {
+                    anyhow!("Failed to capture clipboard baseline on the macOS main thread")
+                })?;
+            *self
+                .monitor_change_count
+                .lock()
+                .map_err(|_| anyhow!("Clipboard baseline lock poisoned"))? = Some(count);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let clipboard = ClipboardContext::new()
+                .map_err(|e| anyhow!("Failed to access clipboard: {}", e))?;
+            let hash = if let Some(paths) =
+                clipboard.get_files().ok().filter(|paths| !paths.is_empty())
+            {
+                Some(Self::compute_file_hash(&serialize_clipboard_file_paths(
+                    &paths,
+                )?))
+            } else if let Some(text) = clipboard.get_text().ok().filter(|text| !text.is_empty()) {
+                Some(Self::compute_hash(text.as_bytes()))
+            } else if let Ok(image) = clipboard.get_image() {
+                let png = image
+                    .to_png()
+                    .map_err(|e| anyhow!("Failed to encode clipboard baseline: {}", e))?;
+                Some(Self::compute_hash(png.get_bytes()))
+            } else {
+                None
+            };
+            *self
+                .last_seen_hash
+                .lock()
+                .map_err(|_| anyhow!("Clipboard baseline lock poisoned"))? = hash;
+        }
+        Ok(())
+    }
+
+    fn run_monitoring_backend(&self, generation: u64) {
+        #[cfg(target_os = "macos")]
+        self.run_polling_monitor(generation);
 
         #[cfg(not(target_os = "macos"))]
-        self.run_watcher_monitor_loop();
+        self.run_watcher_monitor_loop(generation);
     }
 
     #[cfg(target_os = "macos")]
-    fn run_polling_monitor(&self) {
+    fn run_polling_monitor(&self, generation: u64) {
         info!("Using main-thread clipboard polling monitor on macOS");
 
-        loop {
+        while self.monitor_lifecycle.active(generation) {
             if self.monitoring_enabled() {
-                self.sync_current_clipboard_for_monitor("poll clipboard state");
-            } else if let Ok(mut count) = self.monitor_change_count.lock() {
-                // Re-enabling capture should inspect the current clipboard once.
-                *count = None;
+                self.sync_current_clipboard_for_monitor(generation, "poll clipboard state");
             }
 
             std::thread::sleep(Duration::from_millis(750));
@@ -740,8 +843,8 @@ impl ClipboardManager {
     }
 
     #[cfg(target_os = "macos")]
-    fn sync_current_clipboard_for_monitor(&self, context: &str) {
-        if !self.monitoring_enabled() {
+    fn sync_current_clipboard_for_monitor(&self, generation: u64, context: &str) {
+        if !self.monitor_lifecycle.active(generation) || !self.monitoring_enabled() {
             return;
         }
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
@@ -759,7 +862,9 @@ impl ClipboardManager {
         if let Err(err) = self.app_handle.run_on_main_thread(move || {
             // A receiver timeout cannot cancel a queued AppKit closure. Keep the permit
             // in this closure and skip expired work before touching the pasteboard.
-            if !permit.may_start(std::time::Instant::now()) {
+            if !permit.may_start(std::time::Instant::now())
+                || !manager.monitor_lifecycle.active(generation)
+            {
                 return;
             }
             let result = catch_unwind(AssertUnwindSafe(|| {
@@ -774,7 +879,10 @@ impl ClipboardManager {
         }
         match receiver.recv_timeout(Duration::from_secs(2)) {
             Ok((_permit, Ok(Ok(Some((change_count, snapshot)))))) => {
-                if !self.monitoring_enabled() {
+                let Ok(_gate) = self.monitor_commit_gate.lock() else {
+                    return;
+                };
+                if !self.monitor_lifecycle.active(generation) || !self.monitoring_enabled() {
                     return;
                 }
                 let result = match snapshot {
@@ -852,7 +960,10 @@ impl ClipboardManager {
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn sync_current_clipboard_for_monitor(&self, context: &str) {
+    fn sync_current_clipboard_for_monitor(&self, generation: u64, context: &str) {
+        if !self.monitor_lifecycle.active(generation) {
+            return;
+        }
         match catch_unwind(AssertUnwindSafe(|| self.sync_current_clipboard())) {
             Ok(Ok(())) => {}
             Ok(Err(e)) => error!("Failed to {}: {}", context, e),
@@ -861,16 +972,19 @@ impl ClipboardManager {
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn run_watcher_monitor_loop(&self) {
-        loop {
-            self.run_watcher_monitor();
+    fn run_watcher_monitor_loop(&self, generation: u64) {
+        while self.monitor_lifecycle.active(generation) {
+            self.run_watcher_monitor(generation);
+            if !self.monitor_lifecycle.active(generation) {
+                break;
+            }
             error!("Clipboard watcher stopped; restarting in 1 second");
             std::thread::sleep(Duration::from_secs(1));
         }
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn run_watcher_monitor(&self) {
+    fn run_watcher_monitor(&self, generation: u64) {
         let ctx = match ClipboardContext::new() {
             Ok(ctx) => ctx,
             Err(e) => {
@@ -890,10 +1004,31 @@ impl ClipboardManager {
         let handler = ClipboardChangeHandler {
             manager: self.clone(),
             clipboard: ctx,
+            generation,
         };
 
         watcher.add_handler(handler);
+        {
+            let Ok(_gate) = self.monitor_commit_gate.lock() else {
+                return;
+            };
+            if !self.monitor_lifecycle.active(generation) {
+                return;
+            }
+            let Ok(mut shutdown) = self.watcher_shutdown.lock() else {
+                return;
+            };
+            *shutdown = Some((generation, watcher.get_shutdown_channel()));
+        }
         watcher.start_watch(); // Blocking call
+        if let Ok(mut shutdown) = self.watcher_shutdown.lock() {
+            if shutdown
+                .as_ref()
+                .is_some_and(|(owner, _)| *owner == generation)
+            {
+                shutdown.take();
+            }
+        }
     }
 
     fn emit_deleted_many(&self, ids: Vec<i64>) {
@@ -936,14 +1071,12 @@ impl ClipboardManager {
         let serialized_paths = serialize_clipboard_file_paths(file_paths)?;
         let hash = Self::compute_file_hash(&serialized_paths);
 
-        #[cfg(target_os = "macos")]
         if self.is_last_seen_hash(&hash) {
             return Ok(());
         }
 
         let result = self.add_files(file_paths).map(|_| ());
 
-        #[cfg(target_os = "macos")]
         if result.is_ok() {
             self.remember_last_seen_hash(hash);
         }
@@ -951,7 +1084,6 @@ impl ClipboardManager {
         result
     }
 
-    #[cfg(target_os = "macos")]
     fn is_last_seen_hash(&self, hash: &str) -> bool {
         self.last_seen_hash
             .lock()
@@ -959,7 +1091,6 @@ impl ClipboardManager {
             .unwrap_or(false)
     }
 
-    #[cfg(target_os = "macos")]
     fn remember_last_seen_hash(&self, hash: String) {
         if let Ok(mut last_seen) = self.last_seen_hash.lock() {
             *last_seen = Some(hash);
@@ -968,7 +1099,16 @@ impl ClipboardManager {
 
     #[cfg(not(target_os = "macos"))]
     fn process_image_change(&self, image_data: &clipboard_rs::RustImageData) -> Result<()> {
-        self.add_image(image_data).map(|_| ())
+        let png = image_data
+            .to_png()
+            .map_err(|e| anyhow!("Failed to encode clipboard image: {}", e))?;
+        let hash = Self::compute_hash(png.get_bytes());
+        if self.is_last_seen_hash(&hash) {
+            return Ok(());
+        }
+        self.add_image(image_data)?;
+        self.remember_last_seen_hash(hash);
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
@@ -1066,7 +1206,13 @@ impl ClipboardManager {
 
         if let Ok(text) = clipboard.get_text() {
             if !text.is_empty() {
-                return self.process_text_change(&text);
+                let hash = Self::compute_hash(text.as_bytes());
+                if self.is_last_seen_hash(&hash) {
+                    return Ok(());
+                }
+                self.process_text_change(&text)?;
+                self.remember_last_seen_hash(hash);
+                return Ok(());
             }
         }
 
@@ -2018,11 +2164,18 @@ impl ClipboardManager {
 struct ClipboardChangeHandler {
     manager: ClipboardManager,
     clipboard: ClipboardContext,
+    generation: u64,
 }
 
 #[cfg(not(target_os = "macos"))]
 impl ClipboardHandler for ClipboardChangeHandler {
     fn on_clipboard_change(&mut self) {
+        let Ok(_gate) = self.manager.monitor_commit_gate.lock() else {
+            return;
+        };
+        if !self.manager.monitor_lifecycle.active(self.generation) {
+            return;
+        }
         match catch_unwind(AssertUnwindSafe(|| {
             self.manager.process_clipboard_change(&mut self.clipboard)
         })) {
@@ -2035,6 +2188,34 @@ impl ClipboardHandler for ClipboardChangeHandler {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn monitor_stop_invalidates_queued_reads_even_after_restart() {
+        let lifecycle = super::ClipboardMonitorLifecycle::default();
+        let old = lifecycle.start().unwrap();
+        assert!(lifecycle.active(old));
+        assert!(lifecycle.start().is_none());
+        lifecycle.stop();
+        assert!(!lifecycle.active(old));
+        let new = lifecycle.start().unwrap();
+        assert!(lifecycle.active(new));
+        assert!(!lifecycle.active(old));
+        lifecycle.stop();
+        assert!(!lifecycle.active(new));
+    }
+
+    #[test]
+    fn monitor_enable_baseline_skips_existing_payload_but_records_next_copy() {
+        let baseline = Some(42);
+        let unchanged = super::read_changed_clipboard::<(), ()>(baseline, 42, || {
+            panic!("pre-enable clipboard must not be read into history")
+        });
+        assert_eq!(unchanged, Ok(None));
+        assert_eq!(
+            super::read_changed_clipboard(baseline, 43, || Ok::<_, ()>("new copy")),
+            Ok(Some("new copy"))
+        );
+    }
+
     #[test]
     fn monitor_unchanged_generation_does_not_read_or_encode_payload() {
         let result = super::read_changed_clipboard::<(), ()>(Some(42), 42, || {

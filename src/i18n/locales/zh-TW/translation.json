@@ -70,7 +70,9 @@
     "outputNotices": {
       "heading": "待處理的輸出結果",
       "acknowledge": "不再提醒",
-      "acknowledgeHelp": "關閉提醒不會重試或復原插入。再次插入前，請先檢查目標輸入框。"
+      "acknowledgeHelp": "關閉提醒不會重試或復原插入。再次插入前，請先檢查目標輸入框。",
+      "historyHelp": "這些是先前未完成的輸出結果，不代表正在反覆嘗試。內容仍保留在歷史記錄中。",
+      "startupSummary": "有歷史輸出尚未處理，可在歷史記錄查看。不會自動重試。"
     }
   },
   "tray": {
@@ -601,7 +603,7 @@
       "updateChecks": {
         "label": "檢查更新",
         "description": "自動檢查 Inputia 的新版本",
-        "lockedDescription": "已被系統設定停用 (HANDY_DISABLE_UPDATER)"
+        "lockedDescription": "已被系統設定停用"
       },
       "soundTheme": {
         "label": "聲音主題",
@@ -652,6 +654,8 @@
         "bindingsReset": "鍵盤快捷鍵不相容，已重設為預設值"
       },
       "paths": {
+        "title": "資料路徑",
+        "description": "目前安裝實際使用的資料目錄。",
         "appData": "應用程式資料:",
         "models": "模型:",
         "settings": "設定:"
@@ -739,8 +743,8 @@
       },
       "upstream": {
         "title": "開源來源與許可",
-        "description": "Inputia 復用開源 Handy 的技術基礎，保留上游版權與許可。",
-        "source": "查看上游 Handy 原始碼",
+        "description": "Inputia 使用開源元件，保留相關版權與許可。",
+        "source": "查看 Inputia 原始碼",
         "license": "查看原始許可證"
       }
     },
