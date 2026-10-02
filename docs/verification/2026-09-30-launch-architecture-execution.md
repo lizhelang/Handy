@@ -567,3 +567,11 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 发布脚本的 `validate` 已接入显式受信 P-256 公钥集：公钥以未压缩 X9.63 原始字节保存，`key_id` 必须等于其 SHA-256；工具使用系统 `openssl` 校验与 Rust 相同的 `Inputia.Release.v1` 域分隔待签字节，并按阈值统计有效签名。未提供受信公钥时报告 `NOT_RUN`，不会把信封内自报的 key ID 当成信任；验签成功也不会单独放行公开发布。
 
 验证：发布脚本测试 50 项通过，新增合成 ECDSA 信封、显式公钥集、阈值与 CLI `PASS` 回归；不安装依赖、不读取真实密钥、不访问网络。该修正只改变发布工具，已冻结的 r9 体验包仍可安装但不包含本次脚本更新；正式 Developer ID、公证、渠道接线和真实安装验收仍未完成。
+
+### 第五十九批：r11 受控安装尝试与权限阻断
+
+修正 v2 更新器的两个实际接线错误后，在提交 `79d5512bc9d898e95777111667e2ec8e6f7cfb18` 的干净工作区重新构建三组件体验包。构建目录为 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-CRsPORhp`，releaseId 为 `inputia-1.1.1-85-79d5512bc9d8-24ec35e4287f4fb3bc883fedcfad0312`；主程序、输入法和设置组件均完成 arm64/macOS 13+ 构建、本地签名、元数据和配对验签。
+
+归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r11.zip`，SHA-256 为 `e71756c79096200b849eb3a712072ad69460a4ffe80bc28a22ef1f00b42d9189`；ZIP 完整性通过。包内只读预检返回 `installationReceiptPresent=false`、`releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`。
+
+本次先后发现并修正两个更新入口参数问题：暂存复核不再把设置组件和 run_id 传给双 peer 验签器，且 `public-build` 参数顺序与预检阶段一致。修复后安装事务确实进入维护、停写和暂存复核，但在移动旧 `/Applications/Inputia 设置.app` 时因其所有者为 `root:wheel` 被系统拒绝；事务未完成替换，主程序和输入法仍为 build84，设置仍为 build50。失败后保留备份目录、维护标记已关闭，未写入安装收据，未切换输入源；继续安装只需要当前用户完成一次管理员授权，将旧设置启动器调整为同一用户范围。该包仍是本地测试签名，公证和公开发布状态为 `NOT_RUN`/`false`。
