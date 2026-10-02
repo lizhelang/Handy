@@ -57,8 +57,15 @@ for (const theme of ["light", "dark"] as const) {
     );
     expect(accent).toBe("#2f6f73");
     await page.waitForLoadState("networkidle");
-    await expect(image.locator("circle")).toHaveCount(1);
-    await expect(image.locator("path")).toHaveCount(1);
+    const mask = await image.evaluate(
+      (element) => getComputedStyle(element).maskImage,
+    );
+    expect(decodeURIComponent(mask)).toContain("Inputia 18-pearl logo");
+    const logoResponse = await page.request.get(
+      "/macos/InputiaInputMethod/Resources/InputiaLogo.svg",
+    );
+    expect(logoResponse.ok()).toBe(true);
+    expect(await logoResponse.text()).toContain("18-pearl logo");
     await expect(page.getByText(/handy/i)).toHaveCount(0);
     await page.screenshot({
       path: testInfo.outputPath(`inputia-${theme}.png`),
