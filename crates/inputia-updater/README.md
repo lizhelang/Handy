@@ -2,7 +2,7 @@
 
 这是可执行的 Rust 文件系统事务库，负责三组件、不可变配对清单和安装收据的协调替换。它不会执行日志中的命令，不调用 shell，不录音，不改 TCC，不复制旧数据库覆盖现有数据。
 
-仓库同时提供 `inputia-updater` 二进制入口。当前入口只做 `--status`、`--inspect <事务 UUID>`、`--authorization-for-request` 和 `--prepare <authorized-request.json>` 只读诊断/预检，输出严格 JSON；它使用与事务库相同的路径、收据和日志解析，不创建事务、不写维护标记、不执行更新。`--authorization-for-request` 只根据请求 expected fingerprint 和两个外部摘要生成候选信封；`--prepare` 要求请求文件是 `{"request": InstallRequest, "authorization": InstallAuthorization}` 信封，拒绝裸请求，并用真实文件计划重新核对。信封绑定产品、安装 ID、release ID、配对清单摘要、四角色制品集合摘要和上游发布信封摘要。最后一项必须是非空 SHA-256，但当前入口仍不会自行验签上游发布信封，正式 bootstrap 必须先完成该步骤。独立签名的 Installer/bootstrap 后续应复用该库，而不能复制一套更新算法。
+仓库同时提供 `inputia-updater` 二进制入口。当前入口只做 `--status`、`--inspect <事务 UUID>`、`--authorization-for-request` 和 `--prepare <authorized-request.json>` 只读诊断/预检，输出严格 JSON；它使用与事务库相同的路径、收据和日志解析，不创建事务、不写维护标记、不执行更新。`--authorization-for-request` 只根据请求 expected fingerprint 和两个外部摘要生成候选信封；发布信封既可用 `--release-envelope <file>` 由入口在 4 MiB 限制内计算摘要，也可使用上游已验证的 `--release-envelope-sha`。`--prepare` 要求请求文件是 `{"request": InstallRequest, "authorization": InstallAuthorization}` 信封，拒绝裸请求，并用真实文件计划重新核对。信封绑定产品、安装 ID、release ID、配对清单摘要、四角色制品集合摘要和上游发布信封摘要。摘要本身仍不是签名通过，正式 bootstrap 必须先完成 `inputia-release` 信任链验签。独立签名的 Installer/bootstrap 后续应复用该库，而不能复制一套更新算法。
 
 **当前还不是可交付安装器。** 真实 Security / TIS / SQLite 适配器、已签名 bootstrap、登录恢复入口、受限 postcheck 通道、下载和归档解包器尚需原生 helper 接入。没有默认通过的生产适配器；不能把测试中的合成回执当作签名、数据库一致性或系统验收结果。
 

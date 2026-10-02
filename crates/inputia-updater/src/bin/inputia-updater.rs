@@ -7,6 +7,7 @@
 use inputia_updater::{InstallAuthorization, InstallRequest, Phase, PreparedPlan, Updater};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::{env, path::PathBuf, process::ExitCode};
 
 #[derive(Serialize)]
@@ -23,7 +24,7 @@ struct Status {
 
 fn usage() {
     eprintln!(
-        "用法：inputia-updater --status [--home <用户目录>]\n       inputia-updater --inspect <事务 UUID> [--home <用户目录>]\n       inputia-updater --prepare <authorized-request.json> [--home <用户目录>]\n       inputia-updater --authorization-for-request <request.json> --pair-sha <sha256> --release-envelope-sha <sha256>"
+        "用法：inputia-updater --status [--home <用户目录>]\n       inputia-updater --inspect <事务 UUID> [--home <用户目录>]\n       inputia-updater --prepare <authorized-request.json> [--home <用户目录>]\n       inputia-updater --authorization-for-request <request.json> --pair-sha <sha256> (--release-envelope <file> | --release-envelope-sha <sha256>)"
     );
 }
 
@@ -133,15 +134,18 @@ fn prepare(updater: &Updater, request_path: &str) -> Result<(), String> {
 fn authorization_for_request(
     request_path: &str,
     pair_sha: &str,
-    release_envelope_sha: &str,
+    release_envelope: &str,
+    release_envelope_sha: Option<&str>,
 ) -> Result<(), String> {
     let request: InstallRequest = json_file(request_path)?;
-    let authorization = InstallAuthorization::for_request(
-        &request,
-        pair_sha.to_owned(),
-        release_envelope_sha.to_owned(),
-    )
-    .map_err(|error| format!("生成安装授权候选失败：{error}"))?;
+    let envelope_sha = match (release_envelope, release_envelope_sha) {
+        (path, None) if !path.is_empty() => digest_file(path)?,
+        ("", Some(value)) => value.to_owned(),
+        _ => return Err("必须且只能提供一个发布信封来源".into()),
+    };
+    let authorization =
+        InstallAuthorization::for_request(&request, pair_sha.to_owned(), envelope_sha)
+            .map_err(|error| format!("生成安装授权候选失败：{error}"))?;
     println!(
         "{}",
         serde_json::to_string(&authorization)
@@ -170,8 +174,9 @@ fn run(args: &[String]) -> Result<(), String> {
                 .get(index + 1)
                 .ok_or_else(|| "--authorization-for-request 缺少 request.json".to_string())?;
             let pair_sha = option_value(args, "--pair-sha")?;
-            let envelope_sha = option_value(args, "--release-envelope-sha")?;
-            authorization_for_request(request, pair_sha, envelope_sha)
+            let envelope_path = option_value(args, "--release-envelope").unwrap_or("");
+            let envelope_sha = optional_value(args, "--release-envelope-sha");
+            authorization_for_request(request, pair_sha, envelope_path, envelope_sha)
         }
         _ => {
             let updater = updater(args)?;
@@ -201,6 +206,33 @@ fn run(args: &[String]) -> Result<(), String> {
             }
         }
     }
+}
+
+fn optional_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
+    args.iter()
+        .position(|arg| arg == name)
+        .and_then(|index| args.get(index + 1))
+        .map(String::as_str)
+}
+
+fn digest_file(value: &str) -> Result<String, String> {
+    if !value.starts_with('/') || value.contains("//") || value.contains("..") {
+        return Err("发布信封路径必须是绝对且不含路径穿越的普通文件".into());
+    }
+    let path = PathBuf::from(value);
+    if path.is_symlink() || !path.is_file() {
+        return Err("发布信封不是普通文件".into());
+    }
+    let metadata =
+        std::fs::metadata(&path).map_err(|error| format!("读取发布信封元数据失败：{error}"))?;
+    if metadata.len() > 4 * 1024 * 1024 {
+        return Err("发布信封超过 4 MiB 限制".into());
+    }
+    let bytes = std::fs::read(&path).map_err(|error| format!("读取发布信封失败：{error}"))?;
+    Ok(Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }
 
 fn option_value<'a>(args: &'a [String], name: &str) -> Result<&'a str, String> {
