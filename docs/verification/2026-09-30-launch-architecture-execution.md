@@ -705,3 +705,7 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 ### 第八十批：最新公开发布门禁复核
 
 在提交 `7dba37a05f04e1d6dcd175f4b13bb86f7b35533b` 的干净 arm64 macOS 工作区运行 `python3 scripts/inputia_release.py preflight --mode public`。配置漂移为空、工作区干净，但工具仍明确返回 `can_build=false`、`public_release_eligible=false`，阻断项为 `public_release_not_enabled`、`developer_id_and_notarization_not_verified`、`release_signature_verifier_not_integrated`、`final_artifact_acceptance_required`；未访问证书、未安装、未上传。
+
+### 第八十一批：授权 CLI 单元回归与并行夹具抖动复核
+
+为授权候选命令新增 3 项单元测试，覆盖三态参数解析、受限普通文件摘要和路径穿越拒绝。一次默认并行库测试出现既有 `legacy_handoff` 夹具 `Storage(Busy)`；随后该测试单独 `--test-threads=1` 通过，授权 CLI 3/3 通过，库 39/39 在单线程下通过。该抖动记录为测试环境并发问题，未计作本次功能回归，也未隐藏首次失败。

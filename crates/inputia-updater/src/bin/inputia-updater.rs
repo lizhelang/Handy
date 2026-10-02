@@ -263,3 +263,42 @@ fn main() -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn optional_value_distinguishes_missing_and_missing_value() {
+        let absent = vec!["--pair-sha".to_string()];
+        assert_eq!(optional_value(&absent, "--release-envelope").unwrap(), None);
+        let missing = vec!["--release-envelope".to_string()];
+        assert!(optional_value(&missing, "--release-envelope").is_err());
+        let present = vec![
+            "--release-envelope".to_string(),
+            "/tmp/envelope".to_string(),
+        ];
+        assert_eq!(
+            optional_value(&present, "--release-envelope").unwrap(),
+            Some("/tmp/envelope")
+        );
+    }
+
+    #[test]
+    fn digest_file_reads_bounded_regular_file() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("envelope.json");
+        fs::write(&path, b"signed-envelope").unwrap();
+        assert_eq!(
+            digest_file(path.to_str().unwrap()).unwrap(),
+            "58acc1aa4021d73a9b910d318557028a814a82dd2b8aa71ee8edbea48fbd7fc4"
+        );
+    }
+
+    #[test]
+    fn digest_file_rejects_traversal() {
+        assert!(digest_file("/tmp/../envelope.json").is_err());
+    }
+}
