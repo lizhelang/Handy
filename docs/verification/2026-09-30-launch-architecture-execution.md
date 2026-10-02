@@ -669,3 +669,5 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 更新器入口不再接受可脱离发布身份的裸 `InstallRequest`。新增 `InstallAuthorization` 信封，固定绑定产品 ID、安装 ID、release ID、配对清单 SHA-256、四角色制品集合摘要和上游发布信封摘要；`--prepare` 在生成 `PreparedPlan` 后只读核对这些字段与实际计划，重复角色、`Receipt` 角色、身份不一致或摘要不匹配均失败。上游发布信封摘要必须为非空 SHA-256，但当前入口不把它自报为签名通过，仍需正式 bootstrap 使用 `inputia-release` 信任根验签。
 
 验证：`cargo test --locked --manifest-path crates/inputia-updater/Cargo.toml --quiet` 返回 37 个库测试、17 个归档测试、21 个事务故障矩阵全部通过；`cargo fmt` 通过。未创建事务、维护标记、安装收据或修改当前安装。
+
+随后将该核对收拢为 `Updater::prepare_authorized`，避免未来 Installer 先调用裸 `prepare` 再自行决定是否检查授权；命令行和库入口共享同一顺序。`cargo check --locked --manifest-path crates/inputia-updater/Cargo.toml` 通过。
