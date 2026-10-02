@@ -22,7 +22,7 @@ python3 scripts/inputia_release.py preflight --mode public \
   --public-evidence /绝对路径/public-release-evidence.json
 ```
 
-证据必须绑定当前产品和当前 Git 提交，并分别声明 Developer ID/公证、发布信封验签和最终验收为 `PASS`，每项带独立 64 位摘要。缺少文件、提交不一致或任一项不是 `PASS` 都会阻断；该 JSON 不是用户可手写的发布授权，也不能替代受控签名、公证和制品验收流水线。
+证据文件为 schema v2，必须引用真实的 signed manifest、受信公钥集、冻结制品根目录、验收报告和待核验的公证制品。预检会重新计算文件摘要、调用 manifest 信封验签、逐文件核对制品，并要求所有 pre-public 案例为 `PASS`；macOS 上还会执行 `codesign` 与 `spctl` 检查。缺少文件、提交不一致或任一项失败都会阻断。
 
 `generate-config` 只写指定输出目录下的三个受管文件：
 

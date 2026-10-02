@@ -440,17 +440,59 @@ def host_target():
     return {"platform": "macos" if sys.platform == "darwin" else sys.platform, "architecture": platform.machine()}
 
 
+def _evidence_file(path):
+    candidate = Path(path)
+    require(candidate.is_absolute() and not candidate.is_symlink() and candidate.is_file(), "发布证据文件必须是绝对路径普通文件")
+    require(candidate.stat().st_size <= MAX_DOCUMENT, "发布证据文件过大")
+    return candidate
+
+
+def _acceptance_pre_public_passes(path, source_commit):
+    report = read_json(_evidence_file(path))
+    require(isinstance(report, dict) and isinstance(report.get("subject"), dict), "验收报告结构不完整")
+    require(report["subject"].get("source_commit") == source_commit, "验收报告提交身份不匹配")
+    cases = {item.get("id"): item for item in report.get("cases", []) if isinstance(item, dict)}
+    catalog = read_json(ROOT / "release/acceptance-cases.json")
+    required = [case["id"] for case in catalog["cases"] if case["required"] and case["stage"] == "pre-public"]
+    require(required and all(cases.get(case_id, {}).get("status") == "PASS" for case_id in required), "最终验收报告仍有未通过的 pre-public 案例")
+
+
+def _verify_notarized_artifact(path):
+    artifact = Path(path)
+    require(artifact.is_absolute() and not artifact.is_symlink() and artifact.exists(), "公证制品路径无效")
+    if sys.platform != "darwin":
+        raise ReleaseError("公证制品只能在 macOS 主机核验")
+    kind = "execute" if artifact.suffix == ".app" else "open"
+    result = subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(artifact)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, timeout=30)
+    require(result.returncode == 0, "公证制品代码签名核验失败")
+    result = subprocess.run(["/usr/sbin/spctl", "--assess", "--type", kind, "--context", "context:primary-signature", str(artifact)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, timeout=30)
+    require(result.returncode == 0, "公证制品 Gatekeeper 核验失败")
+
+
 def validate_public_evidence(path, product, source_commit):
-    """校验外部发布证据的绑定关系；证据本身仍须来自受控签名/公证流水线。"""
+    """读取真实清单、受信密钥、最终制品和验收报告，不接受三项自报 PASS。"""
     value = read_json(path)
-    require(type(value) is dict and value.get("schema_version") == 1, "公开发布证据版本不支持")
+    require(type(value) is dict and value.get("schema_version") == 2, "公开发布证据版本不支持")
     require(value.get("product_id") == product["product_id"], "公开发布证据产品身份不匹配")
     require(value.get("source_commit") == source_commit, "公开发布证据提交身份不匹配")
-    require(HEX_DIGEST.fullmatch(value.get("manifest_digest", "")) is not None, "公开发布证据 manifest 摘要不合法")
-    for name in ("signature_verification", "notarization", "acceptance"):
-        item = value.get(name)
-        require(type(item) is dict and item.get("status") == "PASS", f"公开发布证据缺少 {name} PASS")
-        require(HEX_DIGEST.fullmatch(item.get("evidence_digest", "")) is not None, f"公开发布证据 {name} 摘要不合法")
+    manifest = value.get("manifest")
+    require(type(manifest) is dict, "公开发布证据缺少 manifest 引用")
+    manifest_path = _evidence_file(manifest.get("path", ""))
+    require(file_digest(manifest_path) == manifest.get("sha256"), "manifest 证据摘要不匹配")
+    envelope = read_json(manifest_path)
+    payload = verify_envelope_signature(envelope, "manifest", product, manifest.get("trusted_keys", ""))
+    require(payload["source_commit"] == source_commit, "签名 manifest 提交身份不匹配")
+    verify_artifacts(payload, manifest.get("artifact_dir", ""))
+    acceptance = value.get("acceptance")
+    require(type(acceptance) is dict, "公开发布证据缺少 acceptance 引用")
+    acceptance_path = _evidence_file(acceptance.get("path", ""))
+    require(file_digest(acceptance_path) == acceptance.get("sha256"), "验收报告摘要不匹配")
+    _acceptance_pre_public_passes(acceptance_path, source_commit)
+    notarization = value.get("notarization")
+    require(type(notarization) is dict, "公开发布证据缺少 notarization 引用")
+    notarized = _evidence_file(notarization.get("artifact_path", ""))
+    require(file_digest(notarized) == notarization.get("sha256"), "公证制品摘要不匹配")
+    _verify_notarized_artifact(notarized)
     return value
 
 

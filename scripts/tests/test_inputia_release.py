@@ -188,19 +188,24 @@ class ReleaseContractTests(unittest.TestCase):
         product = copy.deepcopy(self.product)
         product["pipeline"]["public_release_enabled"] = True
         source_commit = "a" * 40
-        evidence = {
-            "schema_version": 1,
-            "product_id": product["product_id"],
-            "source_commit": source_commit,
-            "manifest_digest": "b" * 64,
-            "signature_verification": {"status": "PASS", "evidence_digest": "c" * 64},
-            "notarization": {"status": "PASS", "evidence_digest": "d" * 64},
-            "acceptance": {"status": "PASS", "evidence_digest": "e" * 64},
-        }
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "public-evidence.json"
-            path.write_text(json.dumps(evidence))
-            with mock.patch.object(release, "git_state", return_value={"source_commit": source_commit, "working_tree_clean": True}):
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            acceptance = root / "acceptance.json"
+            artifact = root / "Inputia.dmg"
+            manifest.write_text("{}"); acceptance.write_text("{}"); artifact.write_bytes(b"dmg")
+            evidence = {
+                "schema_version": 2, "product_id": product["product_id"], "source_commit": source_commit,
+                "manifest": {"path": str(manifest), "sha256": release.file_digest(manifest), "trusted_keys": str(root / "keys.json"), "artifact_dir": str(root)},
+                "acceptance": {"path": str(acceptance), "sha256": release.file_digest(acceptance)},
+                "notarization": {"artifact_path": str(artifact), "sha256": release.file_digest(artifact)},
+            }
+            path = root / "public-evidence.json"; path.write_text(json.dumps(evidence))
+            with mock.patch.object(release, "git_state", return_value={"source_commit": source_commit, "working_tree_clean": True}), \
+                 mock.patch.object(release, "verify_envelope_signature", return_value={"source_commit": source_commit}), \
+                 mock.patch.object(release, "verify_artifacts"), \
+                 mock.patch.object(release, "_acceptance_pre_public_passes"), \
+                 mock.patch.object(release, "_verify_notarized_artifact"):
                 result = release.preflight(product, "public", public_evidence=path)
         self.assertEqual(result["blockers"], [])
         self.assertTrue(result["public_release_eligible"])
@@ -210,7 +215,7 @@ class ReleaseContractTests(unittest.TestCase):
         product["pipeline"]["public_release_enabled"] = True
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "public-evidence.json"
-            path.write_text(json.dumps({"schema_version": 1, "product_id": product["product_id"], "source_commit": "b" * 40}))
+            path.write_text(json.dumps({"schema_version": 2, "product_id": product["product_id"], "source_commit": "b" * 40}))
             with mock.patch.object(release, "git_state", return_value={"source_commit": "a" * 40, "working_tree_clean": True}):
                 result = release.preflight(product, "public", public_evidence=path)
         self.assertIn("public_release_evidence_invalid", result["blockers"])
