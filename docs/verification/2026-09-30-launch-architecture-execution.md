@@ -755,3 +755,9 @@ Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过
 ### 第九十批：验收报告绑定同一 manifest
 
 公开证据预检进一步要求验收报告的 `subject.product_id`、`subject.source_commit` 和 `subject.manifest_sha256` 分别与产品、当前源码提交及证据中实际重哈希的 signed manifest 一致。只报告“所有 pre-public 案例 PASS”而属于另一份清单的验收结果不能取得公开发布资格。发布/验收 Python 回归 54/54 继续通过，未生成或伪造外部验收证据。
+
+### 第九十一批：更新核心单线程完整回归
+
+在未改变产品安装和用户数据的条件下，对当前发布门禁后的 `inputia-updater` 做单线程完整回归：库测试 39/39、CLI 测试 3/3、归档测试 17/17、事务故障矩阵 21/21 全部通过；事务矩阵耗时 185 秒，`cargo fmt -- --check` 通过。此前一次并发启动导致两个事务夹具互相等待，已终止这两个由本轮命令启动的测试进程，并以单线程结果替代，未将夹具争用记为产品失败。
+
+该结果只证明耐久事务核心的合成回归没有回归；生产 NativeAdapter、独立 updater/bootstrap `.app`、Developer ID/公证、真实安装迁移和 G8–G10b 仍没有因此获得完成证据。
