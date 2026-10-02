@@ -797,3 +797,9 @@ Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过
 `release/README.md` 原先把当前版本写成历史本机基线 `1.1.0/84`，与 `release/product.toml` 的当前源码候选 `1.1.1/85` 不一致。现已改为明确引用唯一版本源，并同时注明该版本身份不等于已安装或已公开发布；历史验证文档中的旧版本事实保持不变。发布说明与产品配置的版本漂移不再误导安装、验收或渠道判断。
 
 文档差异检查通过；该修正不改变公开发布开关，也不生成签名、公证或安装证据。
+
+### 第九十九批：隔离 Cargo target 后辅助程序路径接线
+
+在最新干净检出上实际运行本地成套构建时，控制中心 Cargo 编译已成功，但 `prepare:qwen-helper` 因仍读取固定的 `src-tauri/target/release` 而失败。现已让 `scripts/prepare-qwen-helper.ts` 与 Cargo 一样读取 `CARGO_TARGET_DIR`；未设置时保持开发构建的原路径，发布构建则从本次隔离 target 复制辅助程序。前端 TypeScript/Vite 构建通过，`git diff --check` 通过。
+
+这修复了第九十七批隔离改动带来的真实接线回归；尚未把本地测试签名构建标记为公开制品，签名、公证、安装和最终验收门禁仍保持关闭。

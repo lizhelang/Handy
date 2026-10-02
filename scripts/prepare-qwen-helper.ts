@@ -10,6 +10,11 @@ const helperName =
   process.platform === "win32"
     ? "handy-qwen-custom-words.exe"
     : "handy-qwen-custom-words";
+// 发布构建为每次事务隔离 Cargo target；开发构建未设置时继续使用
+// src-tauri/target。Cargo 会读取同一个环境变量决定实际输出目录。
+const targetDir = process.env.CARGO_TARGET_DIR
+  ? path.resolve(tauriDir, process.env.CARGO_TARGET_DIR)
+  : path.join(tauriDir, "target");
 const resourceDir = path.join(tauriDir, "resources", "qwen-helper");
 
 mkdirSync(resourceDir, { recursive: true });
@@ -31,7 +36,7 @@ if (build.status !== 0) {
   process.exit(build.status ?? 1);
 }
 
-const source = path.join(tauriDir, "target", "release", helperName);
+const source = path.join(targetDir, "release", helperName);
 if (!existsSync(source)) {
   throw new Error(`Qwen helper binary was not built: ${source}`);
 }
