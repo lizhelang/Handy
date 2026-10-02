@@ -83,11 +83,11 @@ struct InputiaHandyMemorySyncSelfCheck {
     let statusTextFindsData = InputiaHandyMemorySync.statusText(
       paths: paths,
       fileExists: { existing.contains($0) }
-    ).hasPrefix("Handy 数据：")
+    ).hasPrefix("旧版语音服务数据：")
     let statusTextReportsMissing = InputiaHandyMemorySync.statusText(
       paths: paths,
       fileExists: { _ in false }
-    ).hasPrefix("未找到 Handy 数据：")
+    ).hasPrefix("未找到旧版语音服务数据：")
 
     let ok = importsBothSources
       && missingSkipsImports
