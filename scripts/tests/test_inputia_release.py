@@ -223,6 +223,13 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertIn("public_release_evidence_invalid", result["blockers"])
         self.assertFalse(result["public_release_eligible"])
 
+    def test_public_acceptance_evidence_must_match_acceptance_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "acceptance.json"
+            report.write_text("{}")
+            with self.assertRaises(release.ReleaseError):
+                release._acceptance_pre_public_passes(report, "a" * 40, "b" * 64, self.product["product_id"])
+
     def test_prepare_reads_real_commit_and_creates_unique_build_ids(self):
         with tempfile.TemporaryDirectory() as directory:
             first = release.prepare(self.product, Path(directory).resolve() / "first", "local")

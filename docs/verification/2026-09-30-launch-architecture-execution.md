@@ -761,3 +761,7 @@ Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过
 在未改变产品安装和用户数据的条件下，对当前发布门禁后的 `inputia-updater` 做单线程完整回归：库测试 39/39、CLI 测试 3/3、归档测试 17/17、事务故障矩阵 21/21 全部通过；事务矩阵耗时 185 秒，`cargo fmt -- --check` 通过。此前一次并发启动导致两个事务夹具互相等待，已终止这两个由本轮命令启动的测试进程，并以单线程结果替代，未将夹具争用记为产品失败。
 
 该结果只证明耐久事务核心的合成回归没有回归；生产 NativeAdapter、独立 updater/bootstrap `.app`、Developer ID/公证、真实安装迁移和 G8–G10b 仍没有因此获得完成证据。
+
+### 第九十二批：公开 acceptance 先过正式 schema
+
+公开证据预检在读取验收报告后先执行 `release/schema/acceptance.schema.json` 的完整结构校验，再检查 `product_id`、`source_commit`、`manifest_sha256` 和所有 pre-public 案例状态。空对象或只包含自报状态的简化 JSON 不再能进入后续绑定检查。新增空报告负例；发布/验收 Python 回归 55/55 通过，未生成任何通过型外部验收报告。

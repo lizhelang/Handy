@@ -449,6 +449,7 @@ def _evidence_file(path):
 
 def _acceptance_pre_public_passes(path, source_commit, manifest_sha256, product_id):
     report = read_json(_evidence_file(path))
+    validate_schema(report, schema("acceptance.schema.json"))
     require(isinstance(report, dict) and isinstance(report.get("subject"), dict), "验收报告结构不完整")
     require(report["subject"].get("product_id") == product_id, "验收报告产品身份不匹配")
     require(report["subject"].get("source_commit") == source_commit, "验收报告提交身份不匹配")
