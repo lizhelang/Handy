@@ -637,3 +637,9 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 完整 `verify-nongui` 的 Rime/CAPI 长回归首次暴露 `inputia-capi` 的安装 ABI 夹具错误：`installation_abi_loads_shared_receipt_without_rime_session` 将 `legacy_single_user` 的 settings 路径写成了用户目录，而正式 legacy 合同要求 `/Applications/Inputia 设置.app`。该失败不是运行时代码错误，而是测试收据与定位合同不一致。
 
 已修正夹具路径并验证：定向测试 1/1 通过；`inputia-capi` 全套 44/44 通过，文档测试 2/2 通过。未读取真实收据、未启动日用输入法、未切换输入源。
+
+### 第七十批：修正记忆同步文案后的完整非 GUI 长回归
+
+将 `InputiaHandyMemorySyncSelfCheck` 对状态文案的断言与当前实现统一后，重新构建原生自检产物；记忆同步自检六项全部通过。随后运行 `CARGO_NET_OFFLINE=true bash macos/InputiaInputMethod/verify-nongui.sh`，返回 `devFastPassed=true`、`RC=0`。本轮包含 CAPI/Rime、Swift 状态机、权限/隐私桥、候选布局、设置合同、语音服务和延迟自检；策略输出仍明确 `touchesMenuBar=false`、`opensGUI=false`、`changesSystemInputSource=false`、`checksNotarization=false`。
+
+该结果收敛了当前非 GUI 回归中的实现/夹具失败，但不提升真实实体键盘、系统输入源切换、已安装迁移、Developer ID/公证、独立 updater/bootstrap 或公开渠道 G8–G10b 的状态。
