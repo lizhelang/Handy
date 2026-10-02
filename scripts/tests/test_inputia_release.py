@@ -86,6 +86,7 @@ class ReleaseContractTests(unittest.TestCase):
                     release.verify_bundles(root, context_path, self.product)
                 self.assertIn("updater: 缺少正式组件 Info.plist", str(error.exception))
 
+
     def test_rejects_unknown_identity_and_hash_cycle_fields(self):
         for key in ("channel", "profile_id", "installation_id", "attestation_digest", "manifest_digest"):
             with self.subTest(key=key):

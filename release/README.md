@@ -27,6 +27,8 @@ python3 -m unittest discover -s scripts/tests -p test_inputia_release.py -v
 
 `prepare --output-dir <新的规范化绝对目录>` 可以独立生成本次构建输入，重复目录会被拒绝。每次调用都分配新 release ID，即使 version/build/commit 相同也不复用身份。工作树是否干净记录在上下文中；公共模式拒绝脏工作树。
 
+`--build-local-v2` 现在必须显式提供 `INPUTIA_UPDATER_APP` 和 `INPUTIA_BOOTSTRAP_APP`。两个路径必须指向已构建、非符号链接的独立 `.app`；脚本会把它们复制到冻结目录并按正式五组件范围检查。缺少任一组件时构建直接失败，不会再生成只有三组件却带 v2 配对身份的包。
+
 ## 四种文档各自负责什么
 
 | 文档                       | 内容                                                           | 不能放入的内容                                                     |

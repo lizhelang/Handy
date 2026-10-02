@@ -651,3 +651,7 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 ### 第七十二批：正式组件缺失的结构化审计错误
 
 发布工具此前在 `verify-bundles --scope release` 遇到缺失 `Inputia Updater.app` 时直接抛出原始 `FileNotFoundError`。现改为按组件角色返回受控 `ReleaseError`，并拒绝以符号链接冒充正式组件目录或 `Info.plist`。发布脚本回归 26/26 通过；对当前体验包的正式范围检查现在明确返回 `updater: 缺少正式组件 Info.plist`，仍拒绝公开放行。
+
+### 第七十三批：v2 构建拒绝不完整三组件包
+
+收紧 `scripts/build-inputia-release.sh --build-local-v2`：现在必须显式提供非符号链接的 `INPUTIA_UPDATER_APP` 与 `INPUTIA_BOOTSTRAP_APP`，并将两者复制进冻结目录后按正式五组件范围执行检查。缺少独立更新器或安装器时，在生成新制品前失败；不再把只有控制中心、输入法和设置入口的包继续标为 v2 成套制品。脚本语法检查和发布工具 50 项测试通过。

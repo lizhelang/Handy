@@ -96,6 +96,14 @@ if [[ "$PAIR_IS_RELEASE_V2" == "1" ]]; then
     --release-context "$INPUTIA_RELEASE_CONTEXT"
   INPUTIA_PAIR_BUILD_METADATA="$RELEASE_DIR/public-build.json"
   export INPUTIA_PAIR_BUILD_METADATA
+  : "${INPUTIA_UPDATER_APP:?v2 构建必须提供已构建的 Inputia Updater.app 路径}"
+  : "${INPUTIA_BOOTSTRAP_APP:?v2 构建必须提供已构建的 Inputia Installer.app 路径}"
+  for required_app in "$INPUTIA_UPDATER_APP" "$INPUTIA_BOOTSTRAP_APP"; do
+    if [[ "$required_app" != /* || ! -d "$required_app" || -L "$required_app" ]]; then
+      echo "v2 独立更新组件必须是绝对路径下的普通 .app 目录: $required_app" >&2
+      exit 2
+    fi
+  done
 else
   # 校验公开元数据合同；只生成公钥常量，不读取私钥。
   /usr/bin/python3 native/unified-pair-auth/build_trust.py \
@@ -162,8 +170,13 @@ fi
 /usr/bin/ditto "$CONTROL_APP" "$RELEASE_DIR/Inputia.app"
 /usr/bin/ditto "$IME_BUILD/InputiaUnifiedCandidate.app" "$RELEASE_DIR/InputiaUnifiedCandidate.app"
 /usr/bin/ditto "$IME_BUILD/Inputia 候选设置.app" "$RELEASE_DIR/Inputia 设置.app"
+if [[ "$PAIR_IS_RELEASE_V2" == "1" ]]; then
+  /usr/bin/ditto "$INPUTIA_UPDATER_APP" "$RELEASE_DIR/Inputia Updater.app"
+  /usr/bin/ditto "$INPUTIA_BOOTSTRAP_APP" "$RELEASE_DIR/Inputia Installer.app"
+fi
 "$RELEASE_PYTHON" scripts/inputia_release.py verify-bundles \
-  --directory "$RELEASE_DIR" --context "$INPUTIA_RELEASE_CONTEXT" --scope local-legacy
+  --directory "$RELEASE_DIR" --context "$INPUTIA_RELEASE_CONTEXT" \
+  --scope "$([[ "$PAIR_IS_RELEASE_V2" == "1" ]] && echo release || echo local-legacy)"
 if [[ "$PAIR_IS_RELEASE_V2" == "1" ]]; then
   PAIR_BINDING_ARGS=(--release-context "$INPUTIA_RELEASE_CONTEXT")
 else
