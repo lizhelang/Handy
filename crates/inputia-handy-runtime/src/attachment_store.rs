@@ -324,6 +324,7 @@ impl AttachmentStore {
     pub fn configure(&self, conn: &Connection, budget: &AttachmentBudget) -> Result<()> {
         if budget.max_file_bytes == 0
             || budget.max_file_bytes > budget.capacity_bytes
+            || budget.minimum_free_bytes > budget.capacity_bytes
             || budget.capacity_bytes > i64::MAX as u64
         {
             return Err(AttachmentError::Invalid("storage budget"));
@@ -2126,6 +2127,23 @@ mod tests {
             io_error(std::io::Error::from_raw_os_error(28)).reason(),
             PauseReason::InsufficientSpace
         );
+    }
+
+    #[test]
+    fn impossible_minimum_free_budget_is_rejected_before_persisting() {
+        let f = Fixture::new();
+        let result = f.store.configure(
+            &f.conn,
+            &AttachmentBudget {
+                capacity_bytes: 100,
+                max_file_bytes: 50,
+                minimum_free_bytes: 101,
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(AttachmentError::Invalid("storage budget"))
+        ));
     }
     #[test]
     fn cancelled_acquire_cannot_late_create_pin_and_release_identity_is_bound() {

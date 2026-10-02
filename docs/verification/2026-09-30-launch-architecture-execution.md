@@ -775,3 +775,7 @@ Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过
 ### 第九十四批：公开证据独立 schema
 
 新增 `release/schema/public-release-evidence.schema.json`，固定公开证据的版本、产品/提交身份、manifest/信任根/制品目录、验收报告/证据根目录和公证归档字段，并接入 `preflight --public-evidence` 的首层校验。未知字段、缺少引用或摘要格式错误会在读取外部验签/公证输入前失败。发布专项回归 30/30、全套脚本回归 56/56、产品结构校验通过；schema 仍不生成真实签名、公证或验收结果。
+
+### 第九十五批：拒绝不可实现的附件磁盘预算
+
+`AttachmentStore::configure` 现在拒绝 `minimum_free_bytes > capacity_bytes` 的预算，避免一个不可能满足的配置被持久化后让所有导入永久进入空间不足状态。新增负例回归；附件专项 20/20 通过，Rustfmt 与 diff 检查通过。该修复只影响受管附件预算校验，不改变现有用户数据或无关模块。
