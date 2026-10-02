@@ -361,7 +361,9 @@ def main():
         for src, dst in zip(sources, staged): shutil.copytree(src, dst, symlinks=True)
         shutil.copy2(pair, backup/'pair-before.json')
         shutil.copy2(manifest, backup/'pair-new.json')
-        print(run(verifier, metadata, pair, backup/'pair-new.json', *staged, args.run_id).strip())
+        # v2 配对清单只包含 control/IME 两个协议 peer；设置启动器仍做独立
+        # codesign 校验，不能把它和 run_id 误传给只接受五个业务参数的验签器。
+        print(run(verifier, metadata, pair, backup/'pair-new.json', *staged[:2]).strip())
         marker = profile/'permission-maintenance.json'
         token = str(uuid.uuid4())
         atomic_json(marker, {'schema_version':1, 'active':True, 'epoch':token})
