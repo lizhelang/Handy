@@ -729,3 +729,7 @@ macOS `TargetRegistry` 已暴露当前不透明目标租约的绝对截止时间
 ### 第八十五批：候选 profile 绑定到集成输出
 
 Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过启动身份核验的候选 profile，并把稳定 `profile_id` 写入账本；重试仍复用持久 intent，不从当前 profile 重写旧身份。`cargo check --locked --manifest-path src-tauri/Cargo.toml --lib` 与格式检查通过。没有候选 profile 时保留 `None`，不从环境变量或任意路径猜测 profile。
+
+### 第八十六批：输出期限成为实际派发门禁
+
+输出账本 `claim_dispatch` 现在在取得事务 claim 前检查 `deadline_at_ms`；已过期的 intent 返回无 claim，保持 `Prepared`，由调用方记录前置失败或由恢复审计收敛，不会自动重派。新增过期 claim 回归，输出账本专项 13/13 通过。该门禁只保护已绑定期限的目标；没有可验证 TTL 的旧/语音 intent 仍按既有原生适配器核验路径处理。

@@ -48,6 +48,28 @@ fn plain_text_copy_cannot_replay_native_copy_and_unknown_never_redispatches() {
 }
 
 #[test]
+fn expired_output_intent_cannot_claim_dispatch() {
+    let connection = database();
+    let mut request = intent("expired-output");
+    request.deadline_at_ms = Some(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+            - 1,
+    );
+    ledger::prepare(&connection, &request).unwrap();
+    assert!(!ledger::claim_dispatch(&connection, &request).unwrap());
+    assert_eq!(
+        ledger::get(&connection, &request.operation_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        OutputState::Prepared
+    );
+}
+
+#[test]
 fn a_hundred_identical_requests_dispatch_once_and_keep_confirmation() {
     let connection = database();
     let request = intent("confirmed-100");

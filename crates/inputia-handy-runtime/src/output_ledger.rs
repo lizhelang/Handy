@@ -6,6 +6,7 @@
 //! 因而这里不承诺跨崩溃 exactly-once：崩溃恢复保守保留未知结果，绝不自动重派。
 
 use std::fmt;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use inputia_core::integration::events::Identifier;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -333,11 +334,25 @@ fn is_notice_state(state: OutputState) -> bool {
 /// 目标/隐私前置检查必须在调用此函数之前完成；账本本身不验证原生目标。
 pub fn claim_dispatch(connection: &Connection, intent: &OutputIntent) -> Result<bool> {
     matching_record(connection, intent)?;
+    if intent
+        .deadline_at_ms
+        .is_some_and(|deadline| deadline <= unix_ms())
+    {
+        // 过期请求不取得派发资格；调用方可记录 PendingTarget，恢复阶段也不会自动重派。
+        return Ok(false);
+    }
     Ok(connection.execute(
         "UPDATE unified_output_operations SET state = 'dispatched'
          WHERE operation_id = ?1 AND intent_digest = ?2 AND state = 'prepared'",
         params![intent.operation_id, digest(intent).as_slice()],
     )? == 1)
+}
+
+fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(u64::MAX)
 }
 
 /// 写入明确结果或前置失败；同终态重复回执幂等，不同回执冲突不能覆盖。
