@@ -23,7 +23,7 @@ transaction.run(RecoveryPolicy::Resume, &mut native_adapter, &mut NoFaults)?;
 updater.recover(id, RecoveryPolicy::Resume, &mut native_adapter, &mut NoFaults)?;
 ```
 
-`InstallRequest` 必须由已验证发布授权映射而来。公开字段可用于序列化和测试，**不构成安装授权**。独立入口现在要求 `InstallAuthorization` 信封，并在只读预检结束后核对 `installation_id`、`release_id`、配对清单摘要和 `artifact_set_digest`；授权信封摘要本身仍需由未来 bootstrap 使用 `inputia-release` 信任根验签后才有安装意义。`NativeAdapter::verify_artifacts` 在首次复制前、暂存后、替换后及恢复时验证真实证据，必须绑定 `Subject` 和 `artifact_set_digest`，并区分 `DownloadedNew`、`StagedNew`、`InstalledNew`、`RollbackOld`。历史签名在数学上有效不等于可以现在安装。
+`InstallRequest` 必须由已验证发布授权映射而来。公开字段可用于序列化和测试，**不构成安装授权**。独立入口现在要求 `InstallAuthorization` 信封，并在只读预检结束后核对 `installation_id`、`release_id`、配对清单摘要和 `artifact_set_digest`；`InstallAuthorization::for_plan` 可从已完成计划生成未签名的本地绑定信封，但授权信封摘要本身仍需由未来 bootstrap 使用 `inputia-release` 信任根验签后才有安装意义。`NativeAdapter::verify_artifacts` 在首次复制前、暂存后、替换后及恢复时验证真实证据，必须绑定 `Subject` 和 `artifact_set_digest`，并区分 `DownloadedNew`、`StagedNew`、`InstalledNew`、`RollbackOld`。历史签名在数学上有效不等于可以现在安装。
 
 `PreparedPlan` 固定新旧收据、产品 / installation / profile / UID、三个角色目标、原配对清单和各制品摘要。角色路径由 `inputia-settings::installation` 计算，不能在请求中任意指定目标。新装拒绝覆盖没有收据的已有组件；更新保留 installation、profile、数据位置和作用域，只允许切换 release/channel。当前执行器仅支持 `User` 作用域；`LegacySingleUser` 明确返回 `PermissionRequired`，必须由后续具有独立授权和系统目录信任策略的原生 helper 迁移/接管，不能把 `/Applications` 的系统权限模型当成用户数据损坏。
 

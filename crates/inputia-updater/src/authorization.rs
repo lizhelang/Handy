@@ -65,6 +65,35 @@ pub fn request_artifact_set_digest(artifacts: &[Artifact]) -> Result<String> {
 }
 
 impl InstallAuthorization {
+    /// 从已完成只读计划生成未签名的本地绑定信封。`release_envelope_sha256`
+    /// 必须来自上游发布验证器；此函数不会把它当作已验签。
+    pub fn for_plan(
+        plan: &PreparedPlan,
+        pair_manifest_sha256: String,
+        release_envelope_sha256: String,
+    ) -> Result<Self> {
+        if !valid_sha(&pair_manifest_sha256) || !valid_sha(&release_envelope_sha256) {
+            return Err(Error::Invalid("授权信封摘要无效"));
+        }
+        let pair = plan
+            .entries
+            .iter()
+            .find(|entry| entry.role == Role::PairManifest)
+            .ok_or(Error::MissingArtifact)?;
+        if pair.new.sha256 != pair_manifest_sha256 {
+            return Err(Error::ArtifactMismatch);
+        }
+        Ok(Self {
+            schema_version: 1,
+            product_id: plan.request.new_receipt.product_id.clone(),
+            installation_id: plan.request.new_receipt.installation_id.clone(),
+            release_id: plan.request.new_receipt.release_id.clone(),
+            pair_manifest_sha256,
+            artifact_set_sha256: artifact_set_digest(&plan.entries)?,
+            release_envelope_sha256,
+        })
+    }
+
     pub fn validate_request(&self, plan: &PreparedPlan) -> Result<AuthorizationEvidence> {
         if self.schema_version != 1
             || self.product_id != "com.inputia"
