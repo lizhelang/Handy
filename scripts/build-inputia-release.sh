@@ -189,6 +189,14 @@ if [[ "$PAIR_IS_RELEASE_V2" == "1" ]]; then
 else
   PAIR_BINDING_ARGS=(--run-id "$INPUTIA_PROFILE_RUN_ID")
 fi
+# v1 与 v2 都需要公开工具从私钥导出公钥并签署最终配对清单。
+# v2 在准备公开信任材料时已经构建；v1 到这里才首次需要。
+if [[ ! -x "$RELEASE_DIR/PairAuthTool" ]]; then
+  /usr/bin/swiftc -parse-as-library \
+    native/unified-pair-auth/UnifiedPairAuth.swift \
+    native/unified-pair-auth/PairAuthTool.swift \
+    -o "$RELEASE_DIR/PairAuthTool"
+fi
 /usr/bin/python3 native/unified-pair-auth/build_trust.py \
   --metadata "$INPUTIA_PAIR_BUILD_METADATA" "${PAIR_BINDING_ARGS[@]}" \
   --sign-pair --handy "$RELEASE_DIR/Inputia.app" \
