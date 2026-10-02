@@ -791,3 +791,9 @@ Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过
 修正 `scripts/build-inputia-release.sh` 的默认构建目录：每次本地发布构建现在把 `CARGO_TARGET_DIR` 放在本次临时 release 目录下，只有调用方明确提供目录时才使用外部路径。这样控制中心的 Tauri/Cargo 构建不会与开发构建或另一份发布任务共享 proc-macro/dylib 产物，避免出现已记录的 `mis-aligned LINKEDIT` 和“找不到唯一 staticlib”这类交叉构建污染。脚本仍保持不安装、不启动应用、不修改用户数据；公共签名、公证和最终验收门禁未被放宽。
 
 `bash -n scripts/build-inputia-release.sh` 与 `git diff --check` 通过。该改动只提高构建隔离性，不能替代 Developer ID、公证、真实安装或 G8–G10b 验收。
+
+### 第九十八批：发布说明与唯一版本源对齐
+
+`release/README.md` 原先把当前版本写成历史本机基线 `1.1.0/84`，与 `release/product.toml` 的当前源码候选 `1.1.1/85` 不一致。现已改为明确引用唯一版本源，并同时注明该版本身份不等于已安装或已公开发布；历史验证文档中的旧版本事实保持不变。发布说明与产品配置的版本漂移不再误导安装、验收或渠道判断。
+
+文档差异检查通过；该修正不改变公开发布开关，也不生成签名、公证或安装证据。
