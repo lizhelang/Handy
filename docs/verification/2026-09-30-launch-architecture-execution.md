@@ -803,3 +803,9 @@ Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过
 在最新干净检出上实际运行本地成套构建时，控制中心 Cargo 编译已成功，但 `prepare:qwen-helper` 因仍读取固定的 `src-tauri/target/release` 而失败。现已让 `scripts/prepare-qwen-helper.ts` 与 Cargo 一样读取 `CARGO_TARGET_DIR`；未设置时保持开发构建的原路径，发布构建则从本次隔离 target 复制辅助程序。前端 TypeScript/Vite 构建通过，`git diff --check` 通过。
 
 这修复了第九十七批隔离改动带来的真实接线回归；尚未把本地测试签名构建标记为公开制品，签名、公证、安装和最终验收门禁仍保持关闭。
+
+### 第一百批：本地构建接线与用户实机反馈归档
+
+在提交 `cfa7e26a` 的干净检出上，控制中心 Cargo 编译完成后，`prepare:qwen-helper` 已从隔离 `CARGO_TARGET_DIR` 成功生成 `handy-qwen-custom-words` 资源，确认第九十九批路径修复接线有效。随后人为指定另一检出生成的 Cargo target 进行复用，Tauri 编译出现 `can't find crate for tauri_macros`；该缓存跨检出复用不再作为支持路径，默认每次构建的独立 target 仍是有效路径。
+
+用户反馈已在当前已安装组件上连续进行中文实体键盘输入，并测试语音相关操作，未发现问题；该反馈记录为用户体验层证据，覆盖的安装版本沿用对应安装记录，尚未绑定本提交的最终制品摘要，也不能替代 G4/G6 的完整样本、录音和报告。
