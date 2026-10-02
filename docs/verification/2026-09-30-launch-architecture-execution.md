@@ -613,3 +613,9 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 在提交 `f5ab7b8aabac4f14fa018127b2a02c60fb47e478` 的干净工作区重新运行发布前置检查。产品结构校验通过，配置漂移为空；`preflight --mode local` 返回 `can_build=true`、`certificate_accessed=false`、`installed=false`。`preflight --mode public` 按合同拒绝，阻断项为 `public_release_not_enabled`、`developer_id_and_notarization_not_verified`、`release_signature_verifier_not_integrated`、`final_artifact_acceptance_required`。
 
 该结果确认当前可以继续生成本地候选包，但不能把本地测试签名包宣称为正式公开版本；外部证书、公证、最终制品 G0–G10a/G10b 和真实安装验收仍是未完成条件。
+
+### 第六十六批：正式制品组件范围核对
+
+对 r13 构建目录分别执行 `verify-bundles`：`--scope local-legacy` 三组件（control、ime、settings）元数据、arm64 和 macOS 13+ 检查通过，签名/公证仍为 `NOT_RUN`。按正式 `--scope release` 核验时，工具在 `Inputia Updater.app/Contents/Info.plist` 缺失处拒绝，确认当前体验包没有正式 updater/bootstrap 组件。
+
+这项失败是 P3/P4 的真实制品缺口：不能通过修改报告范围或把三组件包改名来放行正式发布；后续必须接入并绑定 updater、bootstrap、安装器和相应签名/公证证据。
