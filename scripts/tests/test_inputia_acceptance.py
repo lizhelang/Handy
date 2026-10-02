@@ -222,7 +222,7 @@ class AcceptanceTests(unittest.TestCase):
              patch.object(acceptance, "verify_source_catalog"), \
              patch("builtins.print"):
             code = acceptance.main(["verify", "--manifest", "unused", "--report", str(report_path),
-                                    "--evidence-root", str(self.root)])
+                                    "--evidence-root", str(self.root), "--artifact-root", str(self.root)])
         self.assertEqual(code, 2)
 
     def test_runner_refuses_dirty_or_wrong_source(self):

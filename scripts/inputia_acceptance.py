@@ -433,15 +433,15 @@ def main(argv=None):
     initialize.add_argument("--output", required=True, type=Path)
     run = sub.add_parser("run-rust", help="在固定干净提交运行 Rust 契约并生成完整账本")
     run.add_argument("--manifest", required=True, type=Path)
-    run.add_argument("--artifact-root", type=Path,
-                     help="最终分发制品根目录；提供后逐文件核对 manifest 摘要")
+    run.add_argument("--artifact-root", required=True, type=Path,
+                     help="最终分发制品根目录；逐文件核对 manifest 摘要")
     run.add_argument("--evidence-root", required=True, type=Path)
     run.add_argument("--output", required=True, type=Path)
     for command in ("verify", "merge"):
         item = sub.add_parser(command)
         item.add_argument("--manifest", required=True, type=Path)
-        item.add_argument("--artifact-root", type=Path,
-                          help="最终分发制品根目录；提供后逐文件核对 manifest 摘要")
+        item.add_argument("--artifact-root", required=True, type=Path,
+                          help="最终分发制品根目录；逐文件核对 manifest 摘要")
         item.add_argument("--report", required=True, action="append", type=Path)
         item.add_argument("--evidence-root", required=True, type=Path)
         if command == "merge":
