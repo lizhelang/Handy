@@ -363,7 +363,7 @@ def main():
         shutil.copy2(manifest, backup/'pair-new.json')
         # v2 配对清单只包含 control/IME 两个协议 peer；设置启动器仍做独立
         # codesign 校验，不能把它和 run_id 误传给只接受五个业务参数的验签器。
-        print(run(verifier, metadata, pair, backup/'pair-new.json', *staged[:2]).strip())
+        print(run(verifier, metadata, metadata, backup/'pair-new.json', *staged[:2]).strip())
         marker = profile/'permission-maintenance.json'
         token = str(uuid.uuid4())
         atomic_json(marker, {'schema_version':1, 'active':True, 'epoch':token})
