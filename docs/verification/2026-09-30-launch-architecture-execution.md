@@ -785,3 +785,9 @@ Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过
 语音输出准备路径现在读取当前目标的真实 `TargetRegistry` 租约截止时间，并把它写入持久化 `OutputIntent.deadline_at_ms`；读取必须在主线程按启动身份中的精确目标 ID 完成。目标不存在、身份不匹配或读取失败时保持 `None`，不猜测或伪造 TTL。输出账本已有的过期 claim 门禁因此也覆盖带有可验证目标期限的语音结果；没有期限的旧数据和不可验证语音 Host token 仍保留原有路径。
 
 `voice_result` 专项测试 10/10 通过；`crates/inputia-handy-runtime` 与 `src-tauri` 的锁定依赖 `cargo check --lib` 均通过，rustfmt 与 diff 检查通过。该证据只证明期限合同和生产接线，仍不等同于真实物理键盘输入、真实安装迁移或公开签名/公证验收。
+
+### 第九十七批：发布构建隔离 Cargo 产物目录
+
+修正 `scripts/build-inputia-release.sh` 的默认构建目录：每次本地发布构建现在把 `CARGO_TARGET_DIR` 放在本次临时 release 目录下，只有调用方明确提供目录时才使用外部路径。这样控制中心的 Tauri/Cargo 构建不会与开发构建或另一份发布任务共享 proc-macro/dylib 产物，避免出现已记录的 `mis-aligned LINKEDIT` 和“找不到唯一 staticlib”这类交叉构建污染。脚本仍保持不安装、不启动应用、不修改用户数据；公共签名、公证和最终验收门禁未被放宽。
+
+`bash -n scripts/build-inputia-release.sh` 与 `git diff --check` 通过。该改动只提高构建隔离性，不能替代 Developer ID、公证、真实安装或 G8–G10b 验收。

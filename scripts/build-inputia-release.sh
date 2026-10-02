@@ -132,7 +132,10 @@ PY
 "$RELEASE_PYTHON" scripts/inputia_release.py apply-plist --role control \
   --plist "$RELEASE_DIR/InputiaReleaseInfo.plist" --context "$INPUTIA_RELEASE_CONTEXT"
 export HANDY_UNIFIED_PAIR_BUILD="$INPUTIA_PAIR_BUILD_METADATA"
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/src-tauri/target}"
+# 每次发布构建使用独立的 Cargo target，避免并行/重入构建互相覆盖
+# proc-macro/dylib 产物。调用方仍可显式指定目录，但默认不得共享源码树
+# 的 src-tauri/target；该目录可能同时被开发构建或另一份发布任务使用。
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$RELEASE_DIR/cargo-target}"
 # 固定绝对输出路径，避免 Rust/Tauri 对相对目录有不同解释。
 CARGO_TARGET_DIR="$(/usr/bin/python3 - "$CARGO_TARGET_DIR" <<'PY'
 import os
