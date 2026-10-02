@@ -81,4 +81,19 @@
 - 压缩包 1,002 个条目的 CRC 检查通过；另行解压后，三个 App 的签名和双组件配对再次通过验证；入口可执行权限及公开元数据 0600 保持正确。
 - 未包含私钥、构建签名配置或本机构建续跑脚本。安装状态仍为 **未安装**；等待用户确认覆盖安装后再进行真实输入体验。
 
+## 2026-10-02 覆盖安装记录
+
+用户明确授权后，使用包内 `安装体验版.command` 在当前 Mac、当前账号执行覆盖安装。更新器返回 `releaseUpdate=true`、`tccChanged=false`、`previousRecordingsReplayed=false`，并保留备份目录：
+
+`~/Library/Application Support/HandyUnifiedBuilds/permission-update-y_x1vg_t`
+
+安装后实测：
+
+- `/Applications/Inputia.app`：`1.1.1` / build `85`，进程 PID `227`。
+- `~/Library/Input Methods/InputiaUnifiedCandidate.app`：`1.1.1` / build `85`，进程 PID `232`。
+- 输入源 `com.inputia.inputmethod.Inputia.UnifiedCandidate.Hans` 可选、已启用且当前选中。
+- 更新器报告配对校验通过，未改变 TCC 权限。
+
+这证明当前 Mac 的双组件覆盖安装完成；不等同于 Developer ID 公证、干净机器安装或公开渠道资格。公开预检仍因发布配置、签名/公证验真器和最终制品验收缺失而阻断。
+
 本节是构建完成后的交付回执；App 对应的源码提交仍为上文的 `fdc90e0e`，没有因为追加文档而改变二进制来源。
