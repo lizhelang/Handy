@@ -65,6 +65,35 @@ pub fn request_artifact_set_digest(artifacts: &[Artifact]) -> Result<String> {
 }
 
 impl InstallAuthorization {
+    /// 从尚未预检的请求生成候选信封，供外部 bootstrap 在调用
+    /// `prepare_authorized` 前使用；真实计划仍会再次核对所有文件摘要。
+    pub fn for_request(
+        request: &crate::InstallRequest,
+        pair_manifest_sha256: String,
+        release_envelope_sha256: String,
+    ) -> Result<Self> {
+        if !valid_sha(&pair_manifest_sha256) || !valid_sha(&release_envelope_sha256) {
+            return Err(Error::Invalid("授权信封摘要无效"));
+        }
+        let pair = request
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.role == Role::PairManifest)
+            .ok_or(Error::MissingArtifact)?;
+        if pair.expected.sha256 != pair_manifest_sha256 {
+            return Err(Error::ArtifactMismatch);
+        }
+        Ok(Self {
+            schema_version: 1,
+            product_id: request.new_receipt.product_id.clone(),
+            installation_id: request.new_receipt.installation_id.clone(),
+            release_id: request.new_receipt.release_id.clone(),
+            pair_manifest_sha256,
+            artifact_set_sha256: request_artifact_set_digest(&request.artifacts)?,
+            release_envelope_sha256,
+        })
+    }
+
     /// 从已完成只读计划生成未签名的本地绑定信封。`release_envelope_sha256`
     /// 必须来自上游发布验证器；此函数不会把它当作已验签。
     pub fn for_plan(
@@ -137,7 +166,7 @@ impl InstallAuthorization {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Entry, Fingerprint};
+    use crate::{Artifact, Entry, Fingerprint};
     use inputia_settings::installation::{
         ComponentPaths, DataLocation, InstallationReceipt, InstallationScope, UpdateChannel,
     };
@@ -187,6 +216,19 @@ mod tests {
             new: fingerprint(sha),
         })
         .collect();
+        let artifacts = [
+            (Role::Control, 'a'),
+            (Role::Ime, 'b'),
+            (Role::Settings, 'c'),
+            (Role::PairManifest, 'd'),
+        ]
+        .into_iter()
+        .map(|(role, sha)| Artifact {
+            role,
+            source: PathBuf::from(format!("/tmp/{}.app", role.label())),
+            expected: fingerprint(sha),
+        })
+        .collect();
         PreparedPlan {
             schema_version: 1,
             home: PathBuf::from("/tmp"),
@@ -194,7 +236,7 @@ mod tests {
             request: crate::InstallRequest {
                 transaction_id: "123e4567-e89b-12d3-a456-426614174002".into(),
                 new_receipt: receipt(),
-                artifacts: vec![],
+                artifacts,
             },
             old_receipt: None,
             old_pair_manifest: None,
@@ -215,6 +257,19 @@ mod tests {
         );
         assert_eq!(evidence.release_id, plan.request.new_receipt.release_id);
         assert_eq!(evidence.pair_manifest_sha256, "d".repeat(64));
+        assert_eq!(
+            evidence.artifact_set_sha256,
+            authorization.artifact_set_sha256
+        );
+    }
+
+    #[test]
+    fn request_constructor_can_seed_prepare_authorization() {
+        let plan = plan();
+        let authorization =
+            InstallAuthorization::for_request(&plan.request, "d".repeat(64), "f".repeat(64))
+                .unwrap();
+        let evidence = authorization.validate_request(&plan).unwrap();
         assert_eq!(
             evidence.artifact_set_sha256,
             authorization.artifact_set_sha256

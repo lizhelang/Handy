@@ -685,3 +685,5 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 验证：更新器库 37 项测试通过，`cargo fmt` 与 diff 检查通过；没有创建事务或触碰当前安装。
 
 补充正向回归：用隔离 `PreparedPlan` 通过 `for_plan` 构造授权信封，再由同一计划重新验证，安装身份、release ID、配对摘要和制品集合摘要均一致。更新器库测试增至 38 项并全部通过。
+
+随后补充 `InstallAuthorization::for_request`，解除 bootstrap 必须先有 `PreparedPlan` 才能生成 `--prepare` 输入的循环：它只根据请求中的 expected fingerprint 生成候选信封，`prepare_authorized` 仍会对真实文件计划重新核对。请求构造器正向回归通过，更新器库测试增至 39 项并全部通过。
