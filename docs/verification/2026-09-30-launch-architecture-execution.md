@@ -702,6 +702,8 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 
 参数解析进一步区分“未提供来源”和“来源参数缺值”，缺少 `--release-envelope` 或 `--release-envelope-sha` 的值会在读取请求前明确失败，不再被当作两种来源都未提供。更新器库 39 项测试与格式检查继续通过。
 
+候选授权命令同步支持 `--pair-manifest <file>`，在 4 MiB 限制内计算实际配对清单 SHA-256；`--pair-sha` 仅保留给已经完成上游验证的流程，两者必须择一。CLI 3/3 测试、`cargo check` 和格式检查通过。
+
 ### 第八十批：最新公开发布门禁复核
 
 在提交 `7dba37a05f04e1d6dcd175f4b13bb86f7b35533b` 的干净 arm64 macOS 工作区运行 `python3 scripts/inputia_release.py preflight --mode public`。配置漂移为空、工作区干净，但工具仍明确返回 `can_build=false`、`public_release_eligible=false`，阻断项为 `public_release_not_enabled`、`developer_id_and_notarization_not_verified`、`release_signature_verifier_not_integrated`、`final_artifact_acceptance_required`；未访问证书、未安装、未上传。

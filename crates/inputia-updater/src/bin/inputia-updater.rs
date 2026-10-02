@@ -24,7 +24,7 @@ struct Status {
 
 fn usage() {
     eprintln!(
-        "用法：inputia-updater --status [--home <用户目录>]\n       inputia-updater --inspect <事务 UUID> [--home <用户目录>]\n       inputia-updater --prepare <authorized-request.json> [--home <用户目录>]\n       inputia-updater --authorization-for-request <request.json> --pair-sha <sha256> (--release-envelope <file> | --release-envelope-sha <sha256>)"
+        "用法：inputia-updater --status [--home <用户目录>]\n       inputia-updater --inspect <事务 UUID> [--home <用户目录>]\n       inputia-updater --prepare <authorized-request.json> [--home <用户目录>]\n       inputia-updater --authorization-for-request <request.json> (--pair-manifest <file> | --pair-sha <sha256>) (--release-envelope <file> | --release-envelope-sha <sha256>)"
     );
 }
 
@@ -173,10 +173,22 @@ fn run(args: &[String]) -> Result<(), String> {
             let request = args
                 .get(index + 1)
                 .ok_or_else(|| "--authorization-for-request 缺少 request.json".to_string())?;
-            let pair_sha = option_value(args, "--pair-sha")?;
+            let pair_file = optional_value(args, "--pair-manifest")?;
+            let pair_sha_arg = optional_value(args, "--pair-sha")?;
+            let pair_sha = match (pair_file, pair_sha_arg) {
+                (Some(path), None) => digest_file(path)?,
+                (None, Some(value)) => value.to_owned(),
+                (None, None) => return Err("必须且只能提供一个配对清单来源".into()),
+                (Some(_), Some(_)) => return Err("必须且只能提供一个配对清单来源".into()),
+            };
             let envelope_path = optional_value(args, "--release-envelope")?;
             let envelope_sha = optional_value(args, "--release-envelope-sha")?;
-            authorization_for_request(request, pair_sha, envelope_path.unwrap_or(""), envelope_sha)
+            authorization_for_request(
+                request,
+                &pair_sha,
+                envelope_path.unwrap_or(""),
+                envelope_sha,
+            )
         }
         _ => {
             let updater = updater(args)?;
@@ -236,16 +248,6 @@ fn digest_file(value: &str) -> Result<String, String> {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect())
-}
-
-fn option_value<'a>(args: &'a [String], name: &str) -> Result<&'a str, String> {
-    let index = args
-        .iter()
-        .position(|arg| arg == name)
-        .ok_or_else(|| format!("缺少 {name}"))?;
-    args.get(index + 1)
-        .map(String::as_str)
-        .ok_or_else(|| format!("{name} 缺少值"))
 }
 
 fn main() -> ExitCode {
