@@ -11,6 +11,13 @@ spec.loader.exec_module(module)
 
 
 class CandidateUpdateTests(unittest.TestCase):
+    def test_replacement_parent_probe_is_side_effect_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            target = parent / 'Inputia.app'
+            module.assert_replacement_parents([target])
+            self.assertEqual(list(parent.iterdir()), [])
+
     def test_legacy_registration_cleanup_is_bounded_and_failure_is_explicit(self):
         import subprocess
         with tempfile.TemporaryDirectory() as directory:

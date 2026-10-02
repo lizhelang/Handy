@@ -241,6 +241,25 @@ def maintenance_ready(profile, live_pids, marker_epoch=None, now=None):
     return live.issubset(covered)
 
 
+def assert_replacement_parents(paths):
+    """在停止组件前验证目标父目录可执行目录替换。"""
+    for path in paths:
+        parent = Path(path).parent
+        probe = parent / f'.inputia-update-probe-{uuid.uuid4().hex}'
+        moved = parent / f'{probe.name}-moved'
+        try:
+            os.mkdir(probe, 0o700)
+            os.rename(probe, moved)
+            os.rmdir(moved)
+        except OSError as error:
+            for leftover in (probe, moved):
+                try:
+                    if leftover.is_dir(): os.rmdir(leftover)
+                except OSError:
+                    pass
+            raise PermissionError(f'无法替换 {path} 所在目录；请先授予当前用户管理员权限') from error
+
+
 def install_transaction(destinations, staged, backups, pair_path, new_pair, old_pair, originals=None):
     originals = destinations if originals is None else originals
     moved, installed = [], []
@@ -348,6 +367,7 @@ def main():
             print(run(verifier, metadata, pair, manifest, *sources, args.run_id).strip())
         if not args.apply:
             print('updatePreflight=true permissionRecordsUnchanged=true'); return
+        assert_replacement_parents(destinations)
         db_path = profile/'Handy/integration.db'
         with sqlite3.connect(db_path.as_uri()+'?mode=ro', uri=True) as db:
             active = db.execute("select count(*) from unified_voice_sessions where retired=0 and json_extract(view_json,'$.phase') in ('preparing','recording','processing')").fetchone()[0]
@@ -385,30 +405,44 @@ def main():
         stop_known(originals)
         backup_names = ['control-before.app', 'ime-before.app'] + (['settings-before.app'] if args.release_v2 else [])
         backups = [backup/name for name in backup_names]
-        install_transaction(destinations, staged, backups, pair, backup/'pair-new.json', backup/'pair-before.json', originals)
         try:
-            run(verifier, metadata, backup/'pair-before.json', pair, *destinations[:2], args.run_id)
-            atomic_json(marker, {'schema_version':1, 'active':False, 'epoch':str(uuid.uuid4())})
-            start_registered_components(destinations)
-            deadline = time.monotonic()+10
-            while len(process_ids(destinations[:2])) < 2:
-                if time.monotonic() >= deadline: raise RuntimeError('新组件未启动')
-                time.sleep(.2)
-            for app in destinations[:2]:
-                pids = process_ids([app])
-                if len(pids) != 1: raise RuntimeError('检测到重复组件进程')
-                print(run('/bin/bash', ROOT/'install-check.sh', '--running-identity', app, pids[0]).strip())
-            # 恢复原输入源；没有权限的语音功能仍由后端闭门，不更改系统授权。
-            restored = run(tis, '--select-source-id', previous_source)
-            if 'selectCurrentMatchesTarget=true' not in restored:
-                raise RuntimeError('原输入源恢复未得到确认')
-            print(restored.strip())
-            receipt_path = write_legacy_receipt(args.run_id, release_id, destinations)
-            print(f'installationReceipt={receipt_path}', flush=True)
+            install_transaction(destinations, staged, backups, pair, backup/'pair-new.json', backup/'pair-before.json', originals)
+            try:
+                run(verifier, metadata, backup/'pair-before.json', pair, *destinations[:2], args.run_id)
+                atomic_json(marker, {'schema_version':1, 'active':False, 'epoch':str(uuid.uuid4())})
+                start_registered_components(destinations)
+                deadline = time.monotonic()+10
+                while len(process_ids(destinations[:2])) < 2:
+                    if time.monotonic() >= deadline: raise RuntimeError('新组件未启动')
+                    time.sleep(.2)
+                for app in destinations[:2]:
+                    pids = process_ids([app])
+                    if len(pids) != 1: raise RuntimeError('检测到重复组件进程')
+                    print(run('/bin/bash', ROOT/'install-check.sh', '--running-identity', app, pids[0]).strip())
+                # 恢复原输入源；没有权限的语音功能仍由后端闭门，不更改系统授权。
+                restored = run(tis, '--select-source-id', previous_source)
+                if 'selectCurrentMatchesTarget=true' not in restored:
+                    raise RuntimeError('原输入源恢复未得到确认')
+                print(restored.strip())
+                receipt_path = write_legacy_receipt(args.run_id, release_id, destinations)
+                print(f'installationReceipt={receipt_path}', flush=True)
+            except Exception:
+                atomic_json(marker, {'schema_version':1, 'active':True, 'epoch':str(uuid.uuid4())})
+                stop_known(destinations)
+                rollback_installation(destinations, originals, backups, backup, pair, backup/'pair-before.json')
+                raise
         except Exception:
-            atomic_json(marker, {'schema_version':1, 'active':True, 'epoch':str(uuid.uuid4())})
-            stop_known(destinations)
-            rollback_installation(destinations, originals, backups, backup, pair, backup/'pair-before.json')
+            atomic_json(marker, {'schema_version':1, 'active':False, 'epoch':str(uuid.uuid4())})
+            try:
+                restored = run(tis, '--select-source-id', previous_source)
+                if 'selectCurrentMatchesTarget=true' not in restored:
+                    print('inputSourceRestore=false', flush=True)
+            except Exception:
+                print('inputSourceRestore=false', flush=True)
+            try:
+                start_registered_components(originals[:2])
+            except Exception:
+                print('oldComponentsRestarted=false', flush=True)
             raise
         if old_control != new_control:
             # 新路径已启动且动态身份核验通过，才清理旧 LaunchServices 登记。
