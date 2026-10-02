@@ -4,7 +4,7 @@
 //! NativeAdapter/Installer 调用 `inputia-updater` 库完成。这里不执行 shell、
 //! 不读取更新清单外的路径，也不把日志中的命令当作可执行内容。
 
-use inputia_updater::{InstallAuthorization, Phase, PreparedPlan, Updater};
+use inputia_updater::{InstallAuthorization, InstallRequest, Phase, PreparedPlan, Updater};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::{env, path::PathBuf, process::ExitCode};
@@ -23,7 +23,7 @@ struct Status {
 
 fn usage() {
     eprintln!(
-        "用法：inputia-updater --status [--home <用户目录>]\n       inputia-updater --inspect <事务 UUID> [--home <用户目录>]\n       inputia-updater --prepare <request.json> [--home <用户目录>]"
+        "用法：inputia-updater --status [--home <用户目录>]\n       inputia-updater --inspect <事务 UUID> [--home <用户目录>]\n       inputia-updater --prepare <authorized-request.json> [--home <用户目录>]\n       inputia-updater --authorization-for-request <request.json> --pair-sha <sha256> --release-envelope-sha <sha256>"
     );
 }
 
@@ -130,10 +130,35 @@ fn prepare(updater: &Updater, request_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn authorization_for_request(
+    request_path: &str,
+    pair_sha: &str,
+    release_envelope_sha: &str,
+) -> Result<(), String> {
+    let request: InstallRequest = json_file(request_path)?;
+    let authorization = InstallAuthorization::for_request(
+        &request,
+        pair_sha.to_owned(),
+        release_envelope_sha.to_owned(),
+    )
+    .map_err(|error| format!("生成安装授权候选失败：{error}"))?;
+    println!(
+        "{}",
+        serde_json::to_string(&authorization)
+            .map_err(|error| format!("编码安装授权候选失败：{error}"))?
+    );
+    Ok(())
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     let command = args
         .iter()
-        .find(|arg| matches!(arg.as_str(), "--status" | "--inspect" | "--prepare"))
+        .find(|arg| {
+            matches!(
+                arg.as_str(),
+                "--status" | "--inspect" | "--prepare" | "--authorization-for-request"
+            )
+        })
         .ok_or_else(|| "缺少 --status 或 --inspect".to_string())?;
     let updater = updater(args)?;
     match command.as_str() {
@@ -158,8 +183,30 @@ fn run(args: &[String]) -> Result<(), String> {
                 .ok_or_else(|| "--prepare 缺少 request.json".to_string())?;
             prepare(&updater, request)
         }
+        "--authorization-for-request" => {
+            let index = args
+                .iter()
+                .position(|arg| arg == "--authorization-for-request")
+                .ok_or_else(|| "缺少 request.json".to_string())?;
+            let request = args
+                .get(index + 1)
+                .ok_or_else(|| "--authorization-for-request 缺少 request.json".to_string())?;
+            let pair_sha = option_value(args, "--pair-sha")?;
+            let envelope_sha = option_value(args, "--release-envelope-sha")?;
+            authorization_for_request(request, pair_sha, envelope_sha)
+        }
         _ => Err("未知命令".into()),
     }
+}
+
+fn option_value<'a>(args: &'a [String], name: &str) -> Result<&'a str, String> {
+    let index = args
+        .iter()
+        .position(|arg| arg == name)
+        .ok_or_else(|| format!("缺少 {name}"))?;
+    args.get(index + 1)
+        .map(String::as_str)
+        .ok_or_else(|| format!("{name} 缺少值"))
 }
 
 fn main() -> ExitCode {
