@@ -4,7 +4,8 @@
 //! NativeAdapter/Installer 调用 `inputia-updater` 库完成。这里不执行 shell、
 //! 不读取更新清单外的路径，也不把日志中的命令当作可执行内容。
 
-use inputia_updater::{Phase, Updater};
+use inputia_updater::{InstallRequest, Phase, PreparedPlan, Updater};
+use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::{env, path::PathBuf, process::ExitCode};
 
@@ -22,8 +23,24 @@ struct Status {
 
 fn usage() {
     eprintln!(
-        "用法：inputia-updater --status [--home <用户目录>]\n       inputia-updater --inspect <事务 UUID> [--home <用户目录>]"
+        "用法：inputia-updater --status [--home <用户目录>]\n       inputia-updater --inspect <事务 UUID> [--home <用户目录>]\n       inputia-updater --prepare <request.json> [--home <用户目录>]"
     );
+}
+
+fn json_file<T: DeserializeOwned>(value: &str) -> Result<T, String> {
+    if !value.starts_with('/') || value.contains("//") || value.contains("..") {
+        return Err("JSON 请求路径必须是绝对且不含路径穿越的普通文件".into());
+    }
+    let path = PathBuf::from(value);
+    if path.is_symlink() || !path.is_file() {
+        return Err("JSON 请求不是普通文件".into());
+    }
+    let metadata = std::fs::metadata(&path).map_err(|error| format!("读取请求元数据失败：{error}"))?;
+    if metadata.len() > 1_048_576 {
+        return Err("JSON 请求超过 1 MiB 限制".into());
+    }
+    let raw = std::fs::read(&path).map_err(|error| format!("读取 JSON 请求失败：{error}"))?;
+    serde_json::from_slice(&raw).map_err(|error| format!("JSON 请求格式无效：{error}"))
 }
 
 fn home(args: &[String]) -> Result<PathBuf, String> {
@@ -94,10 +111,24 @@ fn inspect(updater: &Updater, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn prepare(updater: &Updater, request_path: &str) -> Result<(), String> {
+    let request: InstallRequest = json_file(request_path)?;
+    let plan: PreparedPlan = updater
+        .prepare(request)
+        .map_err(|error| format!("安装预检失败：{error}"))?;
+    println!(
+        "{}",
+        serde_json::to_string(&plan).map_err(|error| format!("编码安装预检失败：{error}"))?
+    );
+    Ok(())
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     let command = args
         .iter()
-        .find(|arg| arg.as_str() == "--status" || arg.as_str() == "--inspect")
+        .find(|arg| {
+            matches!(arg.as_str(), "--status" | "--inspect" | "--prepare")
+        })
         .ok_or_else(|| "缺少 --status 或 --inspect".to_string())?;
     let updater = updater(args)?;
     match command.as_str() {
@@ -111,6 +142,16 @@ fn run(args: &[String]) -> Result<(), String> {
                 .get(index + 1)
                 .ok_or_else(|| "--inspect 缺少事务 UUID".to_string())?;
             inspect(&updater, id)
+        }
+        "--prepare" => {
+            let index = args
+                .iter()
+                .position(|arg| arg == "--prepare")
+                .ok_or_else(|| "缺少 request.json".to_string())?;
+            let request = args
+                .get(index + 1)
+                .ok_or_else(|| "--prepare 缺少 request.json".to_string())?;
+            prepare(&updater, request)
         }
         _ => Err("未知命令".into()),
     }

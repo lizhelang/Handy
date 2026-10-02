@@ -2,7 +2,7 @@
 
 这是可执行的 Rust 文件系统事务库，负责三组件、不可变配对清单和安装收据的协调替换。它不会执行日志中的命令，不调用 shell，不录音，不改 TCC，不复制旧数据库覆盖现有数据。
 
-仓库同时提供 `inputia-updater` 二进制入口。当前入口只做 `--status` 和 `--inspect <事务 UUID>` 只读诊断，输出严格 JSON；它使用与事务库相同的路径和日志解析，不执行更新。独立签名的 Installer/bootstrap 后续应复用该库，而不能复制一套更新算法。
+仓库同时提供 `inputia-updater` 二进制入口。当前入口只做 `--status`、`--inspect <事务 UUID>` 和 `--prepare <request.json>` 只读诊断/预检，输出严格 JSON；它使用与事务库相同的路径、收据和日志解析，不创建事务、不写维护标记、不执行更新。独立签名的 Installer/bootstrap 后续应复用该库，而不能复制一套更新算法。
 
 **当前还不是可交付安装器。** 真实 Security / TIS / SQLite 适配器、已签名 bootstrap、登录恢复入口、受限 postcheck 通道、下载和归档解包器尚需原生 helper 接入。没有默认通过的生产适配器；不能把测试中的合成回执当作签名、数据库一致性或系统验收结果。
 

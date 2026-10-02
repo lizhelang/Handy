@@ -661,3 +661,5 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 新增 `crates/inputia-updater/src/bin/inputia-updater.rs`，作为后续签名 updater/bootstrap 复用的唯一事务核心入口。目前提供 `--status` 与 `--inspect <事务 UUID>` 只读 JSON 诊断，拒绝路径穿越，不执行日志命令、不写安装、不绕过 NativeAdapter。验证：`inputia-updater` 单元 36/36、归档 17/17、事务矩阵 21/21 通过；实际运行 `--status --home "$HOME"` 返回 `maintenance_present=false`，未触碰当前安装。
 
 状态命令现在在维护标记存在时强制读取同一事务日志，并返回 `phase`、`writes_released` 与 `rollback_requested`；标记/日志不一致或日志损坏会失败关闭，不猜测恢复阶段。发布版二进制构建和当前无维护状态检查通过。
+
+同一入口新增 `--prepare <request.json>`：请求文件限制为绝对普通文件、无路径穿越且不超过 1 MiB；命令调用 `Updater::prepare` 输出绑定当前用户和现有收据的 `PreparedPlan`，不会创建事务或写盘。缺少/符号链接请求文件会明确拒绝；编译和负例检查通过。
