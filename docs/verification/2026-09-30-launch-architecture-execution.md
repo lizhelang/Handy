@@ -619,3 +619,9 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 对 r13 构建目录分别执行 `verify-bundles`：`--scope local-legacy` 三组件（control、ime、settings）元数据、arm64 和 macOS 13+ 检查通过，签名/公证仍为 `NOT_RUN`。按正式 `--scope release` 核验时，工具在 `Inputia Updater.app/Contents/Info.plist` 缺失处拒绝，确认当前体验包没有正式 updater/bootstrap 组件。
 
 这项失败是 P3/P4 的真实制品缺口：不能通过修改报告范围或把三组件包改名来放行正式发布；后续必须接入并绑定 updater、bootstrap、安装器和相应签名/公证证据。
+
+### 第六十七批：候选质量回放与查询延迟基线
+
+运行 `inputia-handy-runtime` 的 `candidate_quality_replay` 集成测试：24 个固定语境案例通过，个性化池达到 top1=24/24、top3=24/24；查询耗时 P50=1.87625ms、P95=2.339917ms，72 个训练事件全部在隔离固定池中完成。负例也通过：模型/来源不可用或 schema 不可信时不会凭空生成召回词。
+
+该结果属于 `integration`/合成固定语料证据，明确不覆盖真实 IMK、真实用户数据、跨应用实体键盘或语音链路，因此只能作为 P5 的基线，不能替代完整质量和原生验收。
