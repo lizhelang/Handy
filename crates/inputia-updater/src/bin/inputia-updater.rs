@@ -120,13 +120,9 @@ fn prepare(updater: &Updater, request_path: &str) -> Result<(), String> {
         authorization: InstallAuthorization,
     }
     let envelope: AuthorizedRequest = json_file(request_path)?;
-    let plan: PreparedPlan = updater
-        .prepare(envelope.request)
+    let (plan, _evidence): (PreparedPlan, _) = updater
+        .prepare_authorized(envelope.request, envelope.authorization)
         .map_err(|error| format!("安装预检失败：{error}"))?;
-    envelope
-        .authorization
-        .validate_request(&plan)
-        .map_err(|error| format!("安装授权预检失败：{error}"))?;
     println!(
         "{}",
         serde_json::to_string(&plan).map_err(|error| format!("编码安装预检失败：{error}"))?

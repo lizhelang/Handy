@@ -252,6 +252,18 @@ impl Updater {
             required_free_bytes,
         })
     }
+
+    /// 带安装授权信封的只读预检。授权核对在返回计划前完成，调用方不能
+    /// 拿到一个已经通过制品检查但尚未绑定发布身份的计划。
+    pub fn prepare_authorized(
+        &self,
+        request: InstallRequest,
+        authorization: InstallAuthorization,
+    ) -> Result<(PreparedPlan, AuthorizationEvidence)> {
+        let plan = self.prepare(request)?;
+        let evidence = authorization.validate_request(&plan)?;
+        Ok((plan, evidence))
+    }
     /// 只读解析日志并重新校验结构、收据路径及阶段绑定。
     pub fn inspect(&self, id: &str) -> Result<Journal> {
         let journal: Journal =
