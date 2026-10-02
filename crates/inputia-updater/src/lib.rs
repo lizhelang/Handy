@@ -2,6 +2,7 @@
 //! 所有写入都由 begin/run/recover 显式触发；prepare 和 inspect 只读。
 #![cfg(unix)]
 pub mod archive;
+pub mod authorization;
 mod engine;
 mod filesystem;
 pub mod guardian;
@@ -11,6 +12,7 @@ pub mod native_code;
 pub mod native_input_source;
 pub mod native_quiescence;
 
+pub use authorization::{request_artifact_set_digest, AuthorizationEvidence, InstallAuthorization};
 pub use engine::{artifact_set_digest, Transaction, Updater};
 pub use filesystem::{fingerprint, validate_archive_entries};
 pub use model::*;

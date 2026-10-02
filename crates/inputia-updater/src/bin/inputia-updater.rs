@@ -4,7 +4,7 @@
 //! NativeAdapter/Installer 调用 `inputia-updater` 库完成。这里不执行 shell、
 //! 不读取更新清单外的路径，也不把日志中的命令当作可执行内容。
 
-use inputia_updater::{InstallRequest, Phase, PreparedPlan, Updater};
+use inputia_updater::{InstallAuthorization, Phase, PreparedPlan, Updater};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::{env, path::PathBuf, process::ExitCode};
@@ -35,7 +35,8 @@ fn json_file<T: DeserializeOwned>(value: &str) -> Result<T, String> {
     if path.is_symlink() || !path.is_file() {
         return Err("JSON 请求不是普通文件".into());
     }
-    let metadata = std::fs::metadata(&path).map_err(|error| format!("读取请求元数据失败：{error}"))?;
+    let metadata =
+        std::fs::metadata(&path).map_err(|error| format!("读取请求元数据失败：{error}"))?;
     if metadata.len() > 1_048_576 {
         return Err("JSON 请求超过 1 MiB 限制".into());
     }
@@ -79,8 +80,8 @@ fn print_status(updater: &Updater) -> Result<(), String> {
     if maintenance_present {
         let raw = std::fs::read(updater.maintenance_path())
             .map_err(|error| format!("读取维护标记失败：{error}"))?;
-        let marker: inputia_updater::MaintenanceMarker = serde_json::from_slice(&raw)
-            .map_err(|error| format!("维护标记格式无效：{error}"))?;
+        let marker: inputia_updater::MaintenanceMarker =
+            serde_json::from_slice(&raw).map_err(|error| format!("维护标记格式无效：{error}"))?;
         let transaction_id = marker.transaction_id;
         let journal = updater
             .inspect(&transaction_id)
@@ -112,10 +113,20 @@ fn inspect(updater: &Updater, id: &str) -> Result<(), String> {
 }
 
 fn prepare(updater: &Updater, request_path: &str) -> Result<(), String> {
-    let request: InstallRequest = json_file(request_path)?;
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct AuthorizedRequest {
+        request: inputia_updater::InstallRequest,
+        authorization: InstallAuthorization,
+    }
+    let envelope: AuthorizedRequest = json_file(request_path)?;
     let plan: PreparedPlan = updater
-        .prepare(request)
+        .prepare(envelope.request)
         .map_err(|error| format!("安装预检失败：{error}"))?;
+    envelope
+        .authorization
+        .validate_request(&plan)
+        .map_err(|error| format!("安装授权预检失败：{error}"))?;
     println!(
         "{}",
         serde_json::to_string(&plan).map_err(|error| format!("编码安装预检失败：{error}"))?
@@ -126,9 +137,7 @@ fn prepare(updater: &Updater, request_path: &str) -> Result<(), String> {
 fn run(args: &[String]) -> Result<(), String> {
     let command = args
         .iter()
-        .find(|arg| {
-            matches!(arg.as_str(), "--status" | "--inspect" | "--prepare")
-        })
+        .find(|arg| matches!(arg.as_str(), "--status" | "--inspect" | "--prepare"))
         .ok_or_else(|| "缺少 --status 或 --inspect".to_string())?;
     let updater = updater(args)?;
     match command.as_str() {

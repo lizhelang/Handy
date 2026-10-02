@@ -663,3 +663,9 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 状态命令现在在维护标记存在时强制读取同一事务日志，并返回 `phase`、`writes_released` 与 `rollback_requested`；标记/日志不一致或日志损坏会失败关闭，不猜测恢复阶段。发布版二进制构建和当前无维护状态检查通过。
 
 同一入口新增 `--prepare <request.json>`：请求文件限制为绝对普通文件、无路径穿越且不超过 1 MiB；命令调用 `Updater::prepare` 输出绑定当前用户和现有收据的 `PreparedPlan`，不会创建事务或写盘。缺少/符号链接请求文件会明确拒绝；编译和负例检查通过。
+
+### 第七十五批：安装授权信封绑定只读预检
+
+更新器入口不再接受可脱离发布身份的裸 `InstallRequest`。新增 `InstallAuthorization` 信封，固定绑定产品 ID、安装 ID、release ID、配对清单 SHA-256、四角色制品集合摘要和上游发布信封摘要；`--prepare` 在生成 `PreparedPlan` 后只读核对这些字段与实际计划，重复角色、`Receipt` 角色、身份不一致或摘要不匹配均失败。上游发布信封摘要必须为非空 SHA-256，但当前入口不把它自报为签名通过，仍需正式 bootstrap 使用 `inputia-release` 信任根验签。
+
+验证：`cargo test --locked --manifest-path crates/inputia-updater/Cargo.toml --quiet` 返回 37 个库测试、17 个归档测试、21 个事务故障矩阵全部通过；`cargo fmt` 通过。未创建事务、维护标记、安装收据或修改当前安装。

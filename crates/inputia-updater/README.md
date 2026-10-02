@@ -2,7 +2,7 @@
 
 这是可执行的 Rust 文件系统事务库，负责三组件、不可变配对清单和安装收据的协调替换。它不会执行日志中的命令，不调用 shell，不录音，不改 TCC，不复制旧数据库覆盖现有数据。
 
-仓库同时提供 `inputia-updater` 二进制入口。当前入口只做 `--status`、`--inspect <事务 UUID>` 和 `--prepare <request.json>` 只读诊断/预检，输出严格 JSON；它使用与事务库相同的路径、收据和日志解析，不创建事务、不写维护标记、不执行更新。独立签名的 Installer/bootstrap 后续应复用该库，而不能复制一套更新算法。
+仓库同时提供 `inputia-updater` 二进制入口。当前入口只做 `--status`、`--inspect <事务 UUID>` 和 `--prepare <request.json>` 只读诊断/预检，输出严格 JSON；它使用与事务库相同的路径、收据和日志解析，不创建事务、不写维护标记、不执行更新。`--prepare` 要求请求文件是 `{"request": InstallRequest, "authorization": InstallAuthorization}` 信封，拒绝裸请求；信封绑定产品、安装 ID、release ID、配对清单摘要、四角色制品集合摘要和上游发布信封摘要。最后一项必须是非空 SHA-256，但当前入口仍不会自行验签上游发布信封，正式 bootstrap 必须先完成该步骤。独立签名的 Installer/bootstrap 后续应复用该库，而不能复制一套更新算法。
 
 **当前还不是可交付安装器。** 真实 Security / TIS / SQLite 适配器、已签名 bootstrap、登录恢复入口、受限 postcheck 通道、下载和归档解包器尚需原生 helper 接入。没有默认通过的生产适配器；不能把测试中的合成回执当作签名、数据库一致性或系统验收结果。
 
@@ -23,7 +23,7 @@ transaction.run(RecoveryPolicy::Resume, &mut native_adapter, &mut NoFaults)?;
 updater.recover(id, RecoveryPolicy::Resume, &mut native_adapter, &mut NoFaults)?;
 ```
 
-`InstallRequest` 必须由已验证发布授权映射而来。公开字段可用于序列化和测试，**不构成安装授权**。`NativeAdapter::verify_artifacts` 在首次复制前、暂存后、替换后及恢复时验证真实证据，必须绑定 `Subject` 和 `artifact_set_digest`，并区分 `DownloadedNew`、`StagedNew`、`InstalledNew`、`RollbackOld`。未来通过 `inputia-release` 的精确制品授权接入；历史签名在数学上有效不等于可以现在安装。
+`InstallRequest` 必须由已验证发布授权映射而来。公开字段可用于序列化和测试，**不构成安装授权**。独立入口现在要求 `InstallAuthorization` 信封，并在只读预检结束后核对 `installation_id`、`release_id`、配对清单摘要和 `artifact_set_digest`；授权信封摘要本身仍需由未来 bootstrap 使用 `inputia-release` 信任根验签后才有安装意义。`NativeAdapter::verify_artifacts` 在首次复制前、暂存后、替换后及恢复时验证真实证据，必须绑定 `Subject` 和 `artifact_set_digest`，并区分 `DownloadedNew`、`StagedNew`、`InstalledNew`、`RollbackOld`。历史签名在数学上有效不等于可以现在安装。
 
 `PreparedPlan` 固定新旧收据、产品 / installation / profile / UID、三个角色目标、原配对清单和各制品摘要。角色路径由 `inputia-settings::installation` 计算，不能在请求中任意指定目标。新装拒绝覆盖没有收据的已有组件；更新保留 installation、profile、数据位置和作用域，只允许切换 release/channel。当前执行器仅支持 `User` 作用域；`LegacySingleUser` 明确返回 `PermissionRequired`，必须由后续具有独立授权和系统目录信任策略的原生 helper 迁移/接管，不能把 `/Applications` 的系统权限模型当成用户数据损坏。
 
