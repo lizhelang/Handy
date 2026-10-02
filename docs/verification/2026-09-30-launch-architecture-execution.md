@@ -583,3 +583,11 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 验证：更新器回归 22 项通过，新增目录探针无残留测试；Python 语法与 diff 检查通过。该修复尚未重新打包体验包，也没有再次触碰当前安装；下一份体验包必须包含本批更新器后才能用于安装。
 
 补充恢复证据：r11 失败后发现旧更新器确实留下 ABC 输入源且未重启旧组件。已使用现有 build84 输入法的 `.Hans` TIS 身份重新注册并选择，随后重新注册并启动旧主程序/输入法；当前运行身份回到旧版，维护标记保持 inactive。该手工恢复进一步验证了第六十批新增的失败恢复路径是必要的；尚未把未重新打包的代码当作已安装修复。
+
+### 第六十一批：失败恢复门禁版 r12 体验包
+
+在提交 `442186f5bd91efd6f0ef650f9b0011c2a0d703fe` 的干净工作区重新构建三组件 v2 体验包，包含目录权限前置探针、安装失败后的维护标记/输入源/旧组件恢复路径。构建目录为 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-5KOGVutc`，releaseId 为 `inputia-1.1.1-85-442186f5bd91-2d7f1853d4fd406d9bbba998a2db120b`。
+
+归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r12.zip`，SHA-256 为 `745c767f1e800d525da56f5a3cb00b83f9d149134aef26332588a0559a6ff232`；ZIP 完整性通过，包内只读预检返回 `installationReceiptPresent=false`、`releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`。构建仍为本地测试签名，公证未运行，`installed=false`、`publicReleaseEligible=false`。
+
+r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 组件；系统设置启动器仍由 `root:wheel` 持有，真实三组件迁移仍等待管理员授权。
