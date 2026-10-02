@@ -695,3 +695,5 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 ### 第七十九批：候选授权信封 CLI 起点
 
 独立 `inputia-updater` 新增 `--authorization-for-request <request.json> --pair-sha <sha256> --release-envelope-sha <sha256>` 只读命令。它调用 `InstallAuthorization::for_request` 输出候选信封，拒绝路径不安全、请求格式错误或缺少摘要；不创建事务、维护标记或收据。随后 `--prepare` 必须接收该信封包装的请求，并通过真实文件计划再次核对。release 二进制构建、39 项库测试和负例检查通过。
+
+入口随后收紧为分支隔离：候选授权命令不再初始化 `Updater`、不读取 HOME 或用户收据；只有 `status/inspect/prepare` 才创建更新器上下文。无 HOME 且请求文件缺失的负例仍在参数/文件边界直接返回 2，release 构建和 `cargo check` 通过。

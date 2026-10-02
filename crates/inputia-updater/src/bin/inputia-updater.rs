@@ -160,29 +160,7 @@ fn run(args: &[String]) -> Result<(), String> {
             )
         })
         .ok_or_else(|| "缺少 --status 或 --inspect".to_string())?;
-    let updater = updater(args)?;
     match command.as_str() {
-        "--status" => print_status(&updater),
-        "--inspect" => {
-            let index = args
-                .iter()
-                .position(|arg| arg == "--inspect")
-                .ok_or_else(|| "缺少事务 UUID".to_string())?;
-            let id = args
-                .get(index + 1)
-                .ok_or_else(|| "--inspect 缺少事务 UUID".to_string())?;
-            inspect(&updater, id)
-        }
-        "--prepare" => {
-            let index = args
-                .iter()
-                .position(|arg| arg == "--prepare")
-                .ok_or_else(|| "缺少 request.json".to_string())?;
-            let request = args
-                .get(index + 1)
-                .ok_or_else(|| "--prepare 缺少 request.json".to_string())?;
-            prepare(&updater, request)
-        }
         "--authorization-for-request" => {
             let index = args
                 .iter()
@@ -195,7 +173,33 @@ fn run(args: &[String]) -> Result<(), String> {
             let envelope_sha = option_value(args, "--release-envelope-sha")?;
             authorization_for_request(request, pair_sha, envelope_sha)
         }
-        _ => Err("未知命令".into()),
+        _ => {
+            let updater = updater(args)?;
+            match command.as_str() {
+                "--status" => print_status(&updater),
+                "--inspect" => {
+                    let index = args
+                        .iter()
+                        .position(|arg| arg == "--inspect")
+                        .ok_or_else(|| "缺少事务 UUID".to_string())?;
+                    let id = args
+                        .get(index + 1)
+                        .ok_or_else(|| "--inspect 缺少事务 UUID".to_string())?;
+                    inspect(&updater, id)
+                }
+                "--prepare" => {
+                    let index = args
+                        .iter()
+                        .position(|arg| arg == "--prepare")
+                        .ok_or_else(|| "缺少 request.json".to_string())?;
+                    let request = args
+                        .get(index + 1)
+                        .ok_or_else(|| "--prepare 缺少 request.json".to_string())?;
+                    prepare(&updater, request)
+                }
+                _ => Err("未知命令".into()),
+            }
+        }
     }
 }
 
