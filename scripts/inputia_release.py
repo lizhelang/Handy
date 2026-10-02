@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import copy
 import datetime as dt
 import hashlib
@@ -238,6 +240,63 @@ def unwrap_document(value, kind, product):
     return validate_document(value, kind, product)
 
 
+def _decode_b64(value, label):
+    require(isinstance(value, str), f"{label} 必须是 Base64 字符串")
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise ReleaseError(f"{label} 不是合法 Base64") from error
+    require(decoded, f"{label} 不能为空")
+    return decoded
+
+
+def _trusted_keyset(path):
+    value = read_json(path)
+    require(type(value) is dict and set(value) == {"threshold", "keys"}, "受信密钥集字段不完整")
+    require(type(value["threshold"]) is int and 1 <= value["threshold"] <= 32, "受信密钥阈值不合法")
+    require(type(value["keys"]) is list and 1 <= len(value["keys"]) <= 32, "受信密钥集为空或过大")
+    keys = {}
+    for entry in value["keys"]:
+        require(type(entry) is dict and set(entry) == {"key_id", "public_key_x963_base64"}, "受信密钥字段不完整")
+        key_id = entry["key_id"]
+        require(isinstance(key_id, str) and re.fullmatch(r"sha256-[0-9a-f]{64}", key_id) is not None, "受信密钥 ID 不合法")
+        raw = _decode_b64(entry["public_key_x963_base64"], "受信公钥")
+        require(len(raw) == 65 and raw[0] == 4, "受信公钥必须是 P-256 X9.63 未压缩格式")
+        require(hashlib.sha256(raw).hexdigest() == key_id[7:], "受信密钥 ID 与公钥不匹配")
+        require(key_id not in keys, "受信密钥 ID 重复")
+        keys[key_id] = raw
+    require(value["threshold"] <= len(keys), "受信密钥阈值超过密钥数量")
+    return value["threshold"], keys
+
+
+def verify_envelope_signature(value, kind, product, trusted_keyset_path):
+    """使用显式提供的受信根密钥验证 envelope；信封自身不能建立信任。"""
+    require(type(value) is dict and "payload" in value, "验签需要 signed envelope")
+    validate_schema(value, schema("signed-envelope.schema.json"))
+    require(value["payload_kind"] == kind, "签名信封类型不匹配")
+    payload = validate_document(value["payload"], kind, product)
+    threshold, keys = _trusted_keyset(trusted_keyset_path)
+    signing = b"Inputia.Release.v1\0" + kind.encode("utf-8") + b"\0" + canonical_bytes(payload)
+    spki_prefix = bytes.fromhex("3059301306072a8648ce3d020106082a8648ce3d030107034200")
+    valid = set()
+    with tempfile.TemporaryDirectory(prefix="inputia-verify-", dir=tempfile.gettempdir()) as directory:
+        root = Path(directory)
+        payload_path, signature_path, public_path = root / "payload", root / "signature.der", root / "public.der"
+        payload_path.write_bytes(signing)
+        for signature in value["signatures"]:
+            key_id = signature["key_id"]
+            if key_id not in keys or key_id in valid:
+                continue
+            raw_signature = _decode_b64(signature["signature_der_base64"], "签名")
+            signature_path.write_bytes(raw_signature)
+            public_path.write_bytes(spki_prefix + keys[key_id])
+            result = subprocess.run(["openssl", "dgst", "-sha256", "-verify", str(public_path), "-keyform", "DER", "-signature", str(signature_path), str(payload_path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, timeout=10)
+            if result.returncode == 0 and result.stdout.strip() == "Verified OK":
+                valid.add(key_id)
+    require(len(valid) >= threshold, f"签名阈值未满足：{len(valid)}/{threshold}")
+    return {"signature_verification": "PASS", "valid_signatures": len(valid), "threshold": threshold}
+
+
 def file_digest(path):
     digest = hashlib.sha256()
     with Path(path).open("rb") as stream:
@@ -464,6 +523,7 @@ def main(argv=None):
     val.add_argument("--kind", choices=["manifest", "attestation", "feed"], required=True)
     val.add_argument("--document", type=Path, required=True)
     val.add_argument("--artifact-dir", type=Path)
+    val.add_argument("--trusted-keys", type=Path, help="显式受信的 P-256 公钥集 JSON")
     apply = sub.add_parser("apply-plist")
     apply.add_argument("--plist", type=Path, required=True)
     apply.add_argument("--role", choices=["control", "ime", "settings", "updater", "bootstrap"], required=True)
@@ -507,7 +567,10 @@ def main(argv=None):
             if args.artifact_dir:
                 require(args.kind == "manifest", "仅 manifest 支持制品摘要检查")
                 verify_artifacts(value, args.artifact_dir)
-            result = {"structure_valid": True, "artifact_verification": "PASS" if args.artifact_dir else "NOT_RUN", "signature_verification": "NOT_IMPLEMENTED", "public_release_eligible": False, "document_sha256": file_digest(args.document)}
+            signature_result = {"signature_verification": "NOT_RUN"}
+            if args.trusted_keys:
+                signature_result = verify_envelope_signature(read_json(args.document), args.kind, product, args.trusted_keys)
+            result = {"structure_valid": True, "artifact_verification": "PASS" if args.artifact_dir else "NOT_RUN", **signature_result, "public_release_eligible": False, "document_sha256": file_digest(args.document)}
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return code
     except (ValueError, OSError, subprocess.CalledProcessError) as error:

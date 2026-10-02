@@ -561,3 +561,9 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 在提交 `f7a87283f0d7db2a0b12734f89346c8adf64e233` 的干净工作区重新构建三组件本地 v2 体验包，releaseId 为 `inputia-1.1.1-85-f7a87283f0d7-c577920f81894742ac963e4acb0c429d`，构建目录为 `/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-57ZdIlej`。构建、配对清单验签、三组件元数据/架构检查通过；`installed=false`、`publicReleaseEligible=false`，公证未运行。
 
 归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r9.zip`，SHA-256 为 `5615eabd1b1c575ba74136391bb9b64a78c57a873537294c08c6d13ffe1529ad`；ZIP 完整性通过。对当前旧安装执行只读预检仍返回 `installationReceiptPresent=false`、`releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`，未执行覆盖安装或输入源切换。
+
+### 第五十八批：发布信封显式公钥验签
+
+发布脚本的 `validate` 已接入显式受信 P-256 公钥集：公钥以未压缩 X9.63 原始字节保存，`key_id` 必须等于其 SHA-256；工具使用系统 `openssl` 校验与 Rust 相同的 `Inputia.Release.v1` 域分隔待签字节，并按阈值统计有效签名。未提供受信公钥时报告 `NOT_RUN`，不会把信封内自报的 key ID 当成信任；验签成功也不会单独放行公开发布。
+
+验证：发布脚本测试 50 项通过，新增合成 ECDSA 信封、显式公钥集、阈值与 CLI `PASS` 回归；不安装依赖、不读取真实密钥、不访问网络。该修正只改变发布工具，已冻结的 r9 体验包仍可安装但不包含本次脚本更新；正式 Developer ID、公证、渠道接线和真实安装验收仍未完成。

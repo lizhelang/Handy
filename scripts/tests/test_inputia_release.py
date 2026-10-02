@@ -1,5 +1,6 @@
 """发布合同回归：未验收数据不得升级成可信分发声明。"""
 import copy
+import base64
 import hashlib
 import importlib.util
 import json
@@ -257,8 +258,34 @@ class ReleaseContractTests(unittest.TestCase):
             path.write_text(json.dumps(self.manifest))
             result = subprocess.run([sys.executable, str(MODULE), "validate", "--kind", "manifest", "--document", str(path)], text=True, capture_output=True, check=True)
             report = json.loads(result.stdout)
-            self.assertEqual(report["signature_verification"], "NOT_IMPLEMENTED")
+            self.assertEqual(report["signature_verification"], "NOT_RUN")
             self.assertEqual(report["artifact_verification"], "NOT_RUN")
+            self.assertFalse(report["public_release_eligible"])
+
+    def test_cli_verifies_signed_envelope_with_explicit_trusted_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            private = root / "private.pem"
+            public_der = root / "public.der"
+            subprocess.run(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", str(private)], check=True, capture_output=True)
+            subprocess.run(["openssl", "ec", "-in", str(private), "-pubout", "-outform", "DER", "-out", str(public_der)], check=True, capture_output=True)
+            raw_public = public_der.read_bytes()[-65:]
+            key_id = "sha256-" + hashlib.sha256(raw_public).hexdigest()
+            payload = release.canonical_bytes(self.manifest)
+            signing = b"Inputia.Release.v1\0manifest\0" + payload
+            signing_path = root / "signing.bin"
+            signature_path = root / "signature.der"
+            signing_path.write_bytes(signing)
+            subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(private), "-out", str(signature_path), str(signing_path)], check=True, capture_output=True)
+            envelope = {"schema_version": 1, "payload_kind": "manifest", "payload": self.manifest, "signatures": [{"key_id": key_id, "algorithm": "ecdsa-p256-sha256", "signature_der_base64": base64.b64encode(signature_path.read_bytes()).decode()}]}
+            document = root / "envelope.json"
+            document.write_text(json.dumps(envelope))
+            keys = root / "keys.json"
+            keys.write_text(json.dumps({"threshold": 1, "keys": [{"key_id": key_id, "public_key_x963_base64": base64.b64encode(raw_public).decode()}]}))
+            result = subprocess.run([sys.executable, str(MODULE), "validate", "--kind", "manifest", "--document", str(document), "--trusted-keys", str(keys)], text=True, capture_output=True, check=True)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["signature_verification"], "PASS")
+            self.assertEqual(report["valid_signatures"], 1)
             self.assertFalse(report["public_release_eligible"])
 
     def test_channels_reference_same_immutable_manifest(self):

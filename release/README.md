@@ -46,6 +46,16 @@ python3 scripts/inputia_release.py validate \
   --artifact-dir /绝对路径/冻结制品目录
 ```
 
+若文档是 signed envelope，可额外提供独立保存的受信公钥集进行密码校验：
+
+```sh
+python3 scripts/inputia_release.py validate \
+  --kind manifest --document /绝对路径/signed-manifest.json \
+  --trusted-keys /绝对路径/trusted-keys.json
+```
+
+公钥集格式为 `{\"threshold\":1,\"keys\":[{\"key_id\":\"sha256-...\",\"public_key_x963_base64\":\"...\"}]}`。公钥 ID 必须是未压缩 P-256 X9.63 公钥原始字节的 SHA-256；工具通过系统 `openssl` 校验签名，信封中的 key ID 本身不会建立信任。未提供公钥集时报告 `NOT_RUN`，提供后只有达到阈值才报告 `PASS`。
+
 冻结制品后可用 `bind-manifest` 将模板绑定到本次 `build-context.json`，由工具重新计算组件、分发包和配对清单的摘要/大小：
 
 ```sh
@@ -64,7 +74,7 @@ python3 scripts/inputia_release.py bind-manifest \
 - 每个数据库必须声明可读/可写 schema、可读/写事件格式、outbox、修订和删除/遗忘能力。回滚目标必须能读写当前数据、双向理解事件并保留当前能力，不能只声明“可读取”。这些是待实测的合同，不自动构成兼容证明。
 - `components[].sha256` 覆盖冻结的普通归档文件；`.app` 目录不能被当成一个普通文件计算摘要。代码 CDHash 与 Developer ID requirement 另存。`distribution_artifacts` 覆盖最终 DMG/安装器归档。
 - `--artifact-dir` 对实际普通文件核对摘要、大小与目录边界，拒绝 symlink。它不会解包归档，也不表示已检查内部归档路径或可执行签名。
-- 当前返回 `signature_verification=NOT_IMPLEMENTED`，不会将传入 `signatures` 当作验签成功。`public_release_eligible` 始终为 false。
+- 当前签名校验只对显式提供的受信公钥集执行；未提供时返回 `signature_verification=NOT_RUN`，签名无效或阈值不足会失败。`public_release_eligible` 始终为 false。
 
 Python 调用方可使用 `load_product()`、`read_json(path)`、`validate_manifest(payload, product)`、`unwrap_document(value, kind, product)`、`verify_artifacts(payload, directory)`；合同错误抛 `ReleaseError`（`ValueError` 子类）。`validate_manifest` 默认允许重验历史版本；显式传入 `expect_current_build=True` 才要求匹配当前 `product.toml` 的版本与构建目标。
 
@@ -93,7 +103,7 @@ Python 调用方可使用 `load_product()`、`read_json(path)`、`validate_manif
 
 `crates/inputia-release` 提供签名域、根链双阈值轮换、不可变历史归档策略、feed v2、逐库升级/回滚元数据校验和每用户耐久高水位。公开元数据授权入口统一经过持久 `TrustStore`；状态缺失/损坏不重置，频道切换不清空序号，已观察过期的时间不会因系统时钟回拨而失效。
 
-产品元数据已固定 updater 和 bootstrap 的 Bundle ID。旧 feed v1 仍可被开发工具作结构检查，原生新更新入口只接受 v2；不存在验签失败回退 v1。Python `validate` 继续诚实报告未执行密码校验，正式构建、签署、下载及更新适配器的接线仍在后续实施中。
+产品元数据已固定 updater 和 bootstrap 的 Bundle ID。旧 feed v1 仍可被开发工具作结构检查，原生新更新入口只接受 v2；不存在验签失败回退 v1。Python `validate` 的显式受信公钥验签已接入，但正式构建、签署、下载及更新适配器的接线仍在后续实施中。
 
 完整格式、耐久顺序、测试范围和未完成边界见 [`inputia-release/README.md`](../crates/inputia-release/README.md)。当前新增代码不启用公共发布，也没有读取日用应用或真实密钥。
 
