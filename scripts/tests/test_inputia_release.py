@@ -198,7 +198,7 @@ class ReleaseContractTests(unittest.TestCase):
             evidence = {
                 "schema_version": 2, "product_id": product["product_id"], "source_commit": source_commit,
                 "manifest": {"path": str(manifest), "sha256": release.file_digest(manifest), "trusted_keys": str(keys), "artifact_dir": str(root)},
-                "acceptance": {"path": str(acceptance), "sha256": release.file_digest(acceptance)},
+                "acceptance": {"path": str(acceptance), "sha256": release.file_digest(acceptance), "evidence_root": str(root)},
                 "notarization": {"artifact_path": str(artifact), "sha256": release.file_digest(artifact)},
             }
             path = root / "public-evidence.json"; path.write_text(json.dumps(evidence))
@@ -228,7 +228,7 @@ class ReleaseContractTests(unittest.TestCase):
             report = Path(directory) / "acceptance.json"
             report.write_text("{}")
             with self.assertRaises(release.ReleaseError):
-                release._acceptance_pre_public_passes(report, "a" * 40, "b" * 64, self.product["product_id"])
+                release._acceptance_pre_public_passes(report, "a" * 40, "b" * 64, self.product["product_id"], Path(directory))
 
     def test_prepare_reads_real_commit_and_creates_unique_build_ids(self):
         with tempfile.TemporaryDirectory() as directory:

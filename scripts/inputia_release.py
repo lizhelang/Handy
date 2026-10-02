@@ -447,13 +447,44 @@ def _evidence_file(path):
     return candidate
 
 
-def _acceptance_pre_public_passes(path, source_commit, manifest_sha256, product_id):
+def _acceptance_evidence_root(path):
+    root = Path(path)
+    require(root.is_absolute() and not root.is_symlink() and root.is_dir(), "验收证据根目录必须是绝对路径普通目录")
+    return root
+
+
+def _validate_acceptance_execution_records(report, root):
+    result_keys = ("id", "status", "evidence_level", "procedure", "started_at", "executed_at", "machine", "metrics", "evidence")
+    for result in report["cases"]:
+        if result["status"] != "PASS":
+            continue
+        reference = result.get("execution_record")
+        require(type(reference) is dict and set(reference) == {"path", "sha256"}, f"{result['id']}: 缺少执行记录引用")
+        relative = safe_relative(reference["path"])
+        record_path = root / relative
+        require(record_path.resolve(strict=True).is_relative_to(root) and record_path.is_file() and not record_path.is_symlink(), f"{result['id']}: 执行记录路径无效")
+        require(file_digest(record_path) == reference["sha256"], f"{result['id']}: 执行记录摘要错误")
+        record = read_json(record_path)
+        require(type(record) is dict and set(record) == {"schema_version", "subject", "producer", "result"}, f"{result['id']}: 执行记录结构无效")
+        require(record["schema_version"] == 1 and record["subject"] == report["subject"], f"{result['id']}: 执行记录主体不匹配")
+        producer = record["producer"]
+        require(type(producer) is dict and set(producer) == {"kind", "identity", "reviewer"}, f"{result['id']}: 执行者信息不完整")
+        require(producer["kind"] in ("builtin", "reviewed") and isinstance(producer["identity"], str) and producer["identity"], f"{result['id']}: 执行者身份无效")
+        if producer["kind"] == "reviewed":
+            require(isinstance(producer["reviewer"], str) and producer["reviewer"] and producer["reviewer"] != producer["identity"], f"{result['id']}: 缺少独立复核者")
+        else:
+            require(producer["reviewer"] is None and result["id"] == "G1.rust" and producer["identity"] == "inputia-rust-contracts/v2", f"{result['id']}: 内置执行者无权证明该案例")
+        require(record["result"] == {key: result[key] for key in result_keys}, f"{result['id']}: 执行记录未绑定案例结果")
+
+
+def _acceptance_pre_public_passes(path, source_commit, manifest_sha256, product_id, evidence_root):
     report = read_json(_evidence_file(path))
     validate_schema(report, schema("acceptance.schema.json"))
     require(isinstance(report, dict) and isinstance(report.get("subject"), dict), "验收报告结构不完整")
     require(report["subject"].get("product_id") == product_id, "验收报告产品身份不匹配")
     require(report["subject"].get("source_commit") == source_commit, "验收报告提交身份不匹配")
     require(report["subject"].get("manifest_sha256") == manifest_sha256, "验收报告清单摘要不匹配")
+    _validate_acceptance_execution_records(report, _acceptance_evidence_root(evidence_root))
     cases = {item.get("id"): item for item in report.get("cases", []) if isinstance(item, dict)}
     catalog = read_json(ROOT / "release/acceptance-cases.json")
     required = [case["id"] for case in catalog["cases"] if case["required"] and case["stage"] == "pre-public"]
@@ -493,7 +524,7 @@ def validate_public_evidence(path, product, source_commit):
     require(type(acceptance) is dict, "公开发布证据缺少 acceptance 引用")
     acceptance_path = _evidence_file(acceptance.get("path", ""))
     require(file_digest(acceptance_path) == acceptance.get("sha256"), "验收报告摘要不匹配")
-    _acceptance_pre_public_passes(acceptance_path, source_commit, manifest.get("sha256"), product["product_id"])
+    _acceptance_pre_public_passes(acceptance_path, source_commit, manifest.get("sha256"), product["product_id"], acceptance.get("evidence_root", acceptance_path.parent))
     notarization = value.get("notarization")
     require(type(notarization) is dict, "公开发布证据缺少 notarization 引用")
     notarized = _evidence_file(notarization.get("artifact_path", ""))

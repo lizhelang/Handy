@@ -765,3 +765,7 @@ Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过
 ### 第九十二批：公开 acceptance 先过正式 schema
 
 公开证据预检在读取验收报告后先执行 `release/schema/acceptance.schema.json` 的完整结构校验，再检查 `product_id`、`source_commit`、`manifest_sha256` 和所有 pre-public 案例状态。空对象或只包含自报状态的简化 JSON 不再能进入后续绑定检查。新增空报告负例；发布/验收 Python 回归 55/55 通过，未生成任何通过型外部验收报告。
+
+### 第九十三批：公开验收重验 execution record
+
+公开证据新增 `acceptance.evidence_root`，预检会对每个状态为 `PASS` 的案例重新读取执行记录：检查受控相对路径、摘要、报告主体、执行者/独立复核者、案例结果字段和 execution record 与报告的逐字段一致性。这样验收报告中的 PASS 不能脱离实际执行记录单独取得公开资格；README 同步记录该证据根目录合同。发布脚本 29/29、全套脚本 55/55 通过，未接入真实外部验收数据。

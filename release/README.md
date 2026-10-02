@@ -22,7 +22,7 @@ python3 scripts/inputia_release.py preflight --mode public \
   --public-evidence /绝对路径/public-release-evidence.json
 ```
 
-证据文件为 schema v2，必须引用真实的 signed manifest、受信公钥集、冻结制品根目录、验收报告和待核验的公证 DMG/PKG。预检会重新计算文件摘要、调用 manifest 信封验签、逐文件核对制品，并要求所有 pre-public 案例为 `PASS`；组件签名由 manifest/组件检查负责，分发归档在 macOS 上执行 `spctl --assess --type open`。缺少文件、提交不一致或任一项失败都会阻断。
+证据文件为 schema v2，必须引用真实的 signed manifest、受信公钥集、冻结制品根目录、验收报告、验收证据根目录和待核验的公证 DMG/PKG。预检会重新计算文件摘要、调用 manifest 信封验签、逐文件核对制品，重新校验每个 `PASS` 案例的 execution record 摘要/主体/结果绑定，并要求所有 pre-public 案例为 `PASS`；组件签名由 manifest/组件检查负责，分发归档在 macOS 上执行 `spctl --assess --type open`。缺少文件、提交不一致或任一项失败都会阻断。
 
 `generate-config` 只写指定输出目录下的三个受管文件：
 
