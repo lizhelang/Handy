@@ -591,3 +591,7 @@ schema 2 的启动流程在读取旧日志、恢复或预检之前核实固定�
 归档为 `/Users/lzl/Downloads/Inputia-1.1.1-build85-v2-local-r12.zip`，SHA-256 为 `745c767f1e800d525da56f5a3cb00b83f9d149134aef26332588a0559a6ff232`；ZIP 完整性通过，包内只读预检返回 `installationReceiptPresent=false`、`releasePairVerified=true`、`updatePreflight=true permissionRecordsUnchanged=true`。构建仍为本地测试签名，公证未运行，`installed=false`、`publicReleaseEligible=false`。
 
 r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 组件；系统设置启动器仍由 `root:wheel` 持有，真实三组件迁移仍等待管理员授权。
+
+### 第六十二批：安装源所有者前置门禁
+
+实机诊断确认 `/Applications` 父目录探针可通过，但旧设置 bundle 本身由 `root:wheel` 持有，实际 rename 仍被拒绝。更新器现在额外核对每个待替换源 bundle 的所有者；外部所有者会在停进程、切换输入源和写维护标记前直接返回管理员权限错误。新增回归覆盖外部 UID 拒绝与探针无残留；更新器测试 23 项通过。该修正尚未重新打包，r12 不包含本批代码。
