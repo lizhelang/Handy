@@ -911,6 +911,8 @@ pub fn change_experimental_enabled_setting(
                 err
             );
         }
+    } else if !enabled {
+        manager.stop_monitoring();
     }
 
     Ok(())
@@ -1271,6 +1273,8 @@ pub fn change_clipboard_enabled_setting(
                 err
             );
         }
+    } else {
+        manager.stop_monitoring();
     }
 
     Ok(())

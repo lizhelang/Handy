@@ -196,9 +196,8 @@ pub async fn toggle_clipboard_monitoring(
         }
         info!("Clipboard monitoring enabled");
     } else {
-        // Note: Stopping monitoring would require a shutdown channel
-        // For now, we just update the setting
-        info!("Clipboard monitoring disabled (restart required to fully stop)");
+        manager.stop_monitoring();
+        info!("Clipboard monitoring disabled");
     }
 
     Ok(())

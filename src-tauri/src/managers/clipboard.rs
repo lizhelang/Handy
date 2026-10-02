@@ -16,7 +16,7 @@ use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
 use std::time::Duration;
@@ -119,6 +119,7 @@ pub struct ClipboardManager {
     db_path: PathBuf,
     images_dir: PathBuf,
     monitoring_started: Arc<AtomicBool>,
+    monitoring_generation: Arc<AtomicU64>,
     last_seen_hash: Arc<Mutex<Option<String>>>,
 }
 
@@ -169,6 +170,7 @@ impl ClipboardManager {
             db_path,
             images_dir,
             monitoring_started: Arc::new(AtomicBool::new(false)),
+            monitoring_generation: Arc::new(AtomicU64::new(0)),
             last_seen_hash: Arc::new(Mutex::new(None)),
         };
 
@@ -277,44 +279,76 @@ impl ClipboardManager {
             return;
         }
 
+        let generation = self.monitoring_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let manager = self.clone();
 
         std::thread::spawn(move || {
             info!("Starting clipboard monitoring thread");
 
-            loop {
-                let result = catch_unwind(AssertUnwindSafe(|| manager.run_monitoring_backend()));
+            while manager.monitoring_active(generation) {
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    manager.run_monitoring_backend(generation)
+                }));
 
                 match result {
                     Ok(()) => {
-                        error!("Clipboard monitoring backend exited unexpectedly; restarting")
+                        if manager.monitoring_active(generation) {
+                            error!("Clipboard monitoring backend exited unexpectedly; restarting")
+                        }
                     }
-                    Err(_) => error!("Clipboard monitoring backend panicked; restarting"),
+                    Err(_) => {
+                        if manager.monitoring_active(generation) {
+                            error!("Clipboard monitoring backend panicked; restarting")
+                        }
+                    }
                 }
 
-                std::thread::sleep(Duration::from_secs(1));
+                if manager.monitoring_active(generation) {
+                    std::thread::sleep(Duration::from_secs(1));
+                }
             }
+
+            info!("Clipboard monitoring thread stopped");
         });
     }
 
-    fn run_monitoring_backend(&self) {
+    /// Stop monitoring clipboard changes.
+    ///
+    /// The macOS polling loop observes this flag directly. On platforms using
+    /// the blocking clipboard watcher, the event handler also checks the flag
+    /// so a disabled monitor cannot persist new clipboard records.
+    pub fn stop_monitoring(&self) {
+        self.monitoring_generation.fetch_add(1, Ordering::SeqCst);
+        if self.monitoring_started.swap(false, Ordering::SeqCst) {
+            info!("Clipboard monitoring disabled");
+        }
+    }
+
+    fn monitoring_active(&self, generation: u64) -> bool {
+        self.monitoring_started.load(Ordering::SeqCst)
+            && self.monitoring_generation.load(Ordering::SeqCst) == generation
+    }
+
+    fn run_monitoring_backend(&self, generation: u64) {
+        if !self.monitoring_active(generation) {
+            return;
+        }
+
         self.sync_current_clipboard_for_monitor("capture initial clipboard state");
 
         #[cfg(target_os = "macos")]
-        self.run_polling_monitor();
+        self.run_polling_monitor(generation);
 
         #[cfg(not(target_os = "macos"))]
-        self.run_watcher_monitor_loop();
+        self.run_watcher_monitor_loop(generation);
     }
 
     #[cfg(target_os = "macos")]
-    fn run_polling_monitor(&self) {
+    fn run_polling_monitor(&self, generation: u64) {
         info!("Using main-thread clipboard polling monitor on macOS");
 
-        loop {
-            if self.monitoring_enabled() {
-                self.sync_current_clipboard_for_monitor("poll clipboard state");
-            }
+        while self.monitoring_active(generation) {
+            self.sync_current_clipboard_for_monitor("poll clipboard state");
 
             std::thread::sleep(Duration::from_millis(750));
         }
@@ -396,16 +430,18 @@ impl ClipboardManager {
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn run_watcher_monitor_loop(&self) {
-        loop {
-            self.run_watcher_monitor();
-            error!("Clipboard watcher stopped; restarting in 1 second");
-            std::thread::sleep(Duration::from_secs(1));
+    fn run_watcher_monitor_loop(&self, generation: u64) {
+        while self.monitoring_active(generation) {
+            self.run_watcher_monitor(generation);
+            if self.monitoring_active(generation) {
+                error!("Clipboard watcher stopped; restarting in 1 second");
+                std::thread::sleep(Duration::from_secs(1));
+            }
         }
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn run_watcher_monitor(&self) {
+    fn run_watcher_monitor(&self, generation: u64) {
         let ctx = match ClipboardContext::new() {
             Ok(ctx) => ctx,
             Err(e) => {
@@ -425,6 +461,7 @@ impl ClipboardManager {
         let handler = ClipboardChangeHandler {
             manager: self.clone(),
             clipboard: ctx,
+            generation,
         };
 
         watcher.add_handler(handler);
@@ -455,7 +492,8 @@ impl ClipboardManager {
         {
             let mut clipboard = ClipboardContext::new()
                 .map_err(|e| anyhow!("Failed to access clipboard: {}", e))?;
-            self.process_clipboard_change(&mut clipboard)
+            let generation = self.monitoring_generation.load(Ordering::SeqCst);
+            self.process_clipboard_change(&mut clipboard, generation)
         }
     }
 
@@ -560,7 +598,15 @@ impl ClipboardManager {
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn process_clipboard_change(&self, clipboard: &mut ClipboardContext) -> Result<()> {
+    fn process_clipboard_change(
+        &self,
+        clipboard: &mut ClipboardContext,
+        generation: u64,
+    ) -> Result<()> {
+        if !self.monitoring_active(generation) {
+            return Ok(());
+        }
+
         if !self.monitoring_enabled() {
             return Ok(());
         }
@@ -1406,13 +1452,15 @@ impl ClipboardManager {
 struct ClipboardChangeHandler {
     manager: ClipboardManager,
     clipboard: ClipboardContext,
+    generation: u64,
 }
 
 #[cfg(not(target_os = "macos"))]
 impl ClipboardHandler for ClipboardChangeHandler {
     fn on_clipboard_change(&mut self) {
         match catch_unwind(AssertUnwindSafe(|| {
-            self.manager.process_clipboard_change(&mut self.clipboard)
+            self.manager
+                .process_clipboard_change(&mut self.clipboard, self.generation)
         })) {
             Ok(Ok(())) => {}
             Ok(Err(e)) => error!("Failed to process clipboard change: {}", e),
