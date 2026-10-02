@@ -631,3 +631,9 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 对现有 `macos/InputiaInputMethod/build/InputiaInputMethod.app` 运行只读检查并全部返回成功：基础 InputMethod 类/连接身份、Bridge、受管 Memory Bridge、Settings Bridge、Host Shortcut 共 5 组；其中 Bridge/Settings 均提交 `中国`，Memory Bridge 提交隔离夹具词 `种过`，Host Shortcut 覆盖快捷键拒绝、候选分页、组合输入、敏感应用和 Shift 手势边界。
 
 这些检查证明当前构建产物的 Swift/CAPI 合同可运行，但该 build 目录没有 `InputiaSourceCommit`/releaseId 元数据，不能绑定到 r13 或最终发布制品；因此仅记为 `native_api` 分项证据，不提升 G0–G10a 或实体键盘 gate。
+
+### 第六十九批：原生前置长回归发现并修正安装 ABI 夹具
+
+完整 `verify-nongui` 的 Rime/CAPI 长回归首次暴露 `inputia-capi` 的安装 ABI 夹具错误：`installation_abi_loads_shared_receipt_without_rime_session` 将 `legacy_single_user` 的 settings 路径写成了用户目录，而正式 legacy 合同要求 `/Applications/Inputia 设置.app`。该失败不是运行时代码错误，而是测试收据与定位合同不一致。
+
+已修正夹具路径并验证：定向测试 1/1 通过；`inputia-capi` 全套 44/44 通过，文档测试 2/2 通过。未读取真实收据、未启动日用输入法、未切换输入源。

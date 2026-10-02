@@ -72,7 +72,7 @@ mod tests {
             "schema_version":1, "product_id":"com.inputia", "release_id":"inputia-1.1.0-84-fixture",
             "installation_id":"01020304-0506-4708-a90a-0b0c0d0e0f10", "profile_id":"unified-candidate:trial-20260905",
             "uid":uid, "scope":"legacy_single_user", "data":{"kind":"legacy_candidate", "run_id":"trial-20260905"},
-            "channel":"candidate", "components":{"control":"/Applications/Inputia.app", "ime":home.join("Library/Input Methods/InputiaUnifiedCandidate.app"), "settings":home.join("Applications/Inputia 设置.app")}
+            "channel":"candidate", "components":{"control":"/Applications/Inputia.app", "ime":home.join("Library/Input Methods/InputiaUnifiedCandidate.app"), "settings":"/Applications/Inputia 设置.app"}
         });
         std::fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
