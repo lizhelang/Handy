@@ -751,3 +751,7 @@ Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过
 公开证据校验不再对 `.dmg` 归档调用 `codesign --verify`；该命令针对应用/嵌套可执行文件，不能作为 DMG 本身的公证证明。预检现在要求公证证据是绝对路径普通 `.dmg` 或 `.pkg` 文件，并在 macOS 上执行 `spctl --assess --type open --context context:primary-signature`；组件代码签名仍由清单绑定的组件检查负责。冻结制品根目录也必须是绝对路径普通目录，不能通过符号链接替代。
 
 现有发布/验收 Python 回归继续为 54/54，diff 检查通过；没有伪造公证结果或更改公开发布开关。
+
+### 第九十批：验收报告绑定同一 manifest
+
+公开证据预检进一步要求验收报告的 `subject.product_id`、`subject.source_commit` 和 `subject.manifest_sha256` 分别与产品、当前源码提交及证据中实际重哈希的 signed manifest 一致。只报告“所有 pre-public 案例 PASS”而属于另一份清单的验收结果不能取得公开发布资格。发布/验收 Python 回归 54/54 继续通过，未生成或伪造外部验收证据。

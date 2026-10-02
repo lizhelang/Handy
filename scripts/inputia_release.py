@@ -447,10 +447,12 @@ def _evidence_file(path):
     return candidate
 
 
-def _acceptance_pre_public_passes(path, source_commit):
+def _acceptance_pre_public_passes(path, source_commit, manifest_sha256, product_id):
     report = read_json(_evidence_file(path))
     require(isinstance(report, dict) and isinstance(report.get("subject"), dict), "验收报告结构不完整")
+    require(report["subject"].get("product_id") == product_id, "验收报告产品身份不匹配")
     require(report["subject"].get("source_commit") == source_commit, "验收报告提交身份不匹配")
+    require(report["subject"].get("manifest_sha256") == manifest_sha256, "验收报告清单摘要不匹配")
     cases = {item.get("id"): item for item in report.get("cases", []) if isinstance(item, dict)}
     catalog = read_json(ROOT / "release/acceptance-cases.json")
     required = [case["id"] for case in catalog["cases"] if case["required"] and case["stage"] == "pre-public"]
@@ -490,7 +492,7 @@ def validate_public_evidence(path, product, source_commit):
     require(type(acceptance) is dict, "公开发布证据缺少 acceptance 引用")
     acceptance_path = _evidence_file(acceptance.get("path", ""))
     require(file_digest(acceptance_path) == acceptance.get("sha256"), "验收报告摘要不匹配")
-    _acceptance_pre_public_passes(acceptance_path, source_commit)
+    _acceptance_pre_public_passes(acceptance_path, source_commit, manifest.get("sha256"), product["product_id"])
     notarization = value.get("notarization")
     require(type(notarization) is dict, "公开发布证据缺少 notarization 引用")
     notarized = _evidence_file(notarization.get("artifact_path", ""))
