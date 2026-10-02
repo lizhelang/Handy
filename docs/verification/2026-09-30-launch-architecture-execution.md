@@ -733,3 +733,9 @@ Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过
 ### 第八十六批：输出期限成为实际派发门禁
 
 输出账本 `claim_dispatch` 现在在取得事务 claim 前检查 `deadline_at_ms`；已过期的 intent 返回无 claim，保持 `Prepared`，由调用方记录前置失败或由恢复审计收敛，不会自动重派。新增过期 claim 回归，输出账本专项 13/13 通过。该门禁只保护已绑定期限的目标；没有可验证 TTL 的旧/语音 intent 仍按既有原生适配器核验路径处理。
+
+### 第八十七批：公开预检改为证据驱动
+
+`inputia_release.py preflight --mode public` 新增可选 `--public-evidence`。没有证据时仍返回原有公开阻断；提供证据时必须绑定当前产品、当前 Git 提交，并同时具备 Developer ID/公证、发布签名验真和最终验收三项 `PASS` 及独立摘要，提交或字段不一致会返回 `public_release_evidence_invalid`。公开发布开关仍必须在产品元数据中显式开启，当前仓库没有开启，也没有提交真实证据。
+
+发布脚本回归由 26 项增至 28 项，完整发布/验收 Python 回归 54/54 通过。该入口只解决“未来接入真实证据后工具不会因硬编码永远阻断”的结构问题，不把可手写 JSON 当作真实签名、公证或 G10a/G10b 证据。

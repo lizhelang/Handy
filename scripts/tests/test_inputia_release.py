@@ -184,6 +184,38 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertFalse(result["public_release_eligible"])
         self.assertFalse(result["certificate_accessed"])
 
+    def test_public_preflight_accepts_only_bound_external_evidence(self):
+        product = copy.deepcopy(self.product)
+        product["pipeline"]["public_release_enabled"] = True
+        source_commit = "a" * 40
+        evidence = {
+            "schema_version": 1,
+            "product_id": product["product_id"],
+            "source_commit": source_commit,
+            "manifest_digest": "b" * 64,
+            "signature_verification": {"status": "PASS", "evidence_digest": "c" * 64},
+            "notarization": {"status": "PASS", "evidence_digest": "d" * 64},
+            "acceptance": {"status": "PASS", "evidence_digest": "e" * 64},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "public-evidence.json"
+            path.write_text(json.dumps(evidence))
+            with mock.patch.object(release, "git_state", return_value={"source_commit": source_commit, "working_tree_clean": True}):
+                result = release.preflight(product, "public", public_evidence=path)
+        self.assertEqual(result["blockers"], [])
+        self.assertTrue(result["public_release_eligible"])
+
+    def test_public_preflight_rejects_evidence_from_another_commit(self):
+        product = copy.deepcopy(self.product)
+        product["pipeline"]["public_release_enabled"] = True
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "public-evidence.json"
+            path.write_text(json.dumps({"schema_version": 1, "product_id": product["product_id"], "source_commit": "b" * 40}))
+            with mock.patch.object(release, "git_state", return_value={"source_commit": "a" * 40, "working_tree_clean": True}):
+                result = release.preflight(product, "public", public_evidence=path)
+        self.assertIn("public_release_evidence_invalid", result["blockers"])
+        self.assertFalse(result["public_release_eligible"])
+
     def test_prepare_reads_real_commit_and_creates_unique_build_ids(self):
         with tempfile.TemporaryDirectory() as directory:
             first = release.prepare(self.product, Path(directory).resolve() / "first", "local")

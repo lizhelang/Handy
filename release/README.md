@@ -15,6 +15,15 @@ scripts/build-inputia-release.sh --preflight-public
 python3 -m unittest discover -s scripts/tests -p test_inputia_release.py -v
 ```
 
+公共预检可接收受控流水线生成的绑定证据：
+
+```sh
+python3 scripts/inputia_release.py preflight --mode public \
+  --public-evidence /绝对路径/public-release-evidence.json
+```
+
+证据必须绑定当前产品和当前 Git 提交，并分别声明 Developer ID/公证、发布信封验签和最终验收为 `PASS`，每项带独立 64 位摘要。缺少文件、提交不一致或任一项不是 `PASS` 都会阻断；该 JSON 不是用户可手写的发布授权，也不能替代受控签名、公证和制品验收流水线。
+
 `generate-config` 只写指定输出目录下的三个受管文件：
 
 - `src-tauri/tauri.inputia-release.conf.json`

@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS = ROOT / "release/schema"
 PRODUCT = ROOT / "release/product.toml"
 MAX_DOCUMENT = 4 * 1024 * 1024
+HEX_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ReleaseError(ValueError):
@@ -439,7 +440,21 @@ def host_target():
     return {"platform": "macos" if sys.platform == "darwin" else sys.platform, "architecture": platform.machine()}
 
 
-def preflight(product, mode, root=ROOT):
+def validate_public_evidence(path, product, source_commit):
+    """校验外部发布证据的绑定关系；证据本身仍须来自受控签名/公证流水线。"""
+    value = read_json(path)
+    require(type(value) is dict and value.get("schema_version") == 1, "公开发布证据版本不支持")
+    require(value.get("product_id") == product["product_id"], "公开发布证据产品身份不匹配")
+    require(value.get("source_commit") == source_commit, "公开发布证据提交身份不匹配")
+    require(HEX_DIGEST.fullmatch(value.get("manifest_digest", "")) is not None, "公开发布证据 manifest 摘要不合法")
+    for name in ("signature_verification", "notarization", "acceptance"):
+        item = value.get(name)
+        require(type(item) is dict and item.get("status") == "PASS", f"公开发布证据缺少 {name} PASS")
+        require(HEX_DIGEST.fullmatch(item.get("evidence_digest", "")) is not None, f"公开发布证据 {name} 摘要不合法")
+    return value
+
+
+def preflight(product, mode, root=ROOT, public_evidence=None):
     state = git_state(root)
     blockers = []
     host = host_target()
@@ -455,9 +470,15 @@ def preflight(product, mode, root=ROOT):
             blockers.append("public_release_not_enabled")
         if product["pipeline"]["pair_trust_format"] < 2:
             blockers.append("profile_bound_pair_trust_v1")
-        # 即使有人误改 enabled，未接入真实签名与制品验收时也不会放行。
-        blockers.extend(["developer_id_and_notarization_not_verified", "release_signature_verifier_not_integrated", "final_artifact_acceptance_required"])
-    return {"schema_version": 1, "mode": mode, "product_id": product["product_id"], "version": product["version"], "build": product["build"], **state, "host": host, "configuration_drift": drift, "blockers": blockers, "can_build": not blockers, "public_release_eligible": False, "certificate_accessed": False, "installed": False}
+        if public_evidence is None:
+            blockers.extend(["developer_id_and_notarization_not_verified", "release_signature_verifier_not_integrated", "final_artifact_acceptance_required"])
+        else:
+            try:
+                validate_public_evidence(public_evidence, product, state["source_commit"])
+            except (ReleaseError, OSError, ValueError):
+                blockers.append("public_release_evidence_invalid")
+    eligible = mode == "public" and not blockers
+    return {"schema_version": 1, "mode": mode, "product_id": product["product_id"], "version": product["version"], "build": product["build"], **state, "host": host, "configuration_drift": drift, "blockers": blockers, "can_build": not blockers, "public_release_eligible": eligible, "certificate_accessed": False, "installed": False}
 
 
 def prepare(product, output, mode, root=ROOT):
@@ -545,6 +566,7 @@ def main(argv=None):
     sub.add_parser("check-config")
     pre = sub.add_parser("preflight")
     pre.add_argument("--mode", choices=["local", "public"], default="local")
+    pre.add_argument("--public-evidence", type=Path, help="受控签名/公证/最终验收流水线生成的绑定证据")
     prep = sub.add_parser("prepare")
     prep.add_argument("--mode", choices=["local", "public"], default="local")
     prep.add_argument("--output-dir", type=Path, required=True)
@@ -585,7 +607,7 @@ def main(argv=None):
             result = {"configuration_drift": config_drift(product)}
             code = 1 if result["configuration_drift"] else 0
         elif args.command == "preflight":
-            result = preflight(product, args.mode)
+            result = preflight(product, args.mode, public_evidence=args.public_evidence)
             code = 1 if result["blockers"] else 0
         elif args.command == "prepare":
             result = prepare(product, args.output_dir, args.mode)
