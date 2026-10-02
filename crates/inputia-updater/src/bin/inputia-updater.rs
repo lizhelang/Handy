@@ -174,9 +174,9 @@ fn run(args: &[String]) -> Result<(), String> {
                 .get(index + 1)
                 .ok_or_else(|| "--authorization-for-request 缺少 request.json".to_string())?;
             let pair_sha = option_value(args, "--pair-sha")?;
-            let envelope_path = option_value(args, "--release-envelope").unwrap_or("");
-            let envelope_sha = optional_value(args, "--release-envelope-sha");
-            authorization_for_request(request, pair_sha, envelope_path, envelope_sha)
+            let envelope_path = optional_value(args, "--release-envelope")?;
+            let envelope_sha = optional_value(args, "--release-envelope-sha")?;
+            authorization_for_request(request, pair_sha, envelope_path.unwrap_or(""), envelope_sha)
         }
         _ => {
             let updater = updater(args)?;
@@ -208,11 +208,14 @@ fn run(args: &[String]) -> Result<(), String> {
     }
 }
 
-fn optional_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
-    args.iter()
-        .position(|arg| arg == name)
-        .and_then(|index| args.get(index + 1))
-        .map(String::as_str)
+fn optional_value<'a>(args: &'a [String], name: &str) -> Result<Option<&'a str>, String> {
+    let Some(index) = args.iter().position(|arg| arg == name) else {
+        return Ok(None);
+    };
+    let value = args
+        .get(index + 1)
+        .ok_or_else(|| format!("{name} 缺少值"))?;
+    Ok(Some(value.as_str()))
 }
 
 fn digest_file(value: &str) -> Result<String, String> {
