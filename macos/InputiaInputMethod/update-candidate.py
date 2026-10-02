@@ -339,7 +339,14 @@ def main():
             raise ValueError('v2 更新缺少 build context')
         release_id = public['release_id']
     else:
-        release_id = None
+        release_ids = []
+        for source in (canonical(args.control_app), canonical(args.inputia_app)):
+            with (source/'Contents/Info.plist').open('rb') as stream:
+                release_ids.append(plistlib.load(stream).get('InputiaReleaseID'))
+        if (len(set(release_ids)) != 1
+                or not re.fullmatch(r'inputia-[A-Za-z0-9._-]{1,180}', str(release_ids[0] or ''))):
+            raise ValueError('v1 两组件缺少一致的 release ID；拒绝写入不可迁移收据')
+        release_id = release_ids[0]
     roles = ['control', 'ime'] + (['settings'] if args.release_v2 else [])
     for role, old, new in zip(roles, originals, sources):
         if new in originals or new in destinations: raise ValueError('构建源不能是安装路径')
@@ -435,7 +442,10 @@ def main():
                 if 'selectCurrentMatchesTarget=true' not in restored:
                     raise RuntimeError('原输入源恢复未得到确认')
                 print(restored.strip())
-                receipt_path = write_legacy_receipt(args.run_id, release_id, destinations)
+                # v1 只替换 control/IME，但收据仍要准确登记机器上既有的
+                # settings 组件，供后续 v2 三组件迁移核对同一安装。
+                receipt_components = destinations if args.release_v2 else [*destinations, settings_installation()]
+                receipt_path = write_legacy_receipt(args.run_id, release_id, receipt_components)
                 print(f'installationReceipt={receipt_path}', flush=True)
             except Exception:
                 atomic_json(marker, {'schema_version':1, 'active':True, 'epoch':str(uuid.uuid4())})
