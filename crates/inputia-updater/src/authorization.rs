@@ -137,6 +137,7 @@ impl InstallAuthorization {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Entry, Fingerprint};
     use inputia_settings::installation::{
         ComponentPaths, DataLocation, InstallationReceipt, InstallationScope, UpdateChannel,
     };
@@ -159,6 +160,65 @@ mod tests {
             release_id: "inputia-1-test".into(),
             channel: UpdateChannel::Candidate,
         }
+    }
+
+    fn plan() -> PreparedPlan {
+        let fingerprint = |sha: char| Fingerprint {
+            sha256: sha.to_string().repeat(64),
+            bytes: 1,
+            entries: 1,
+        };
+        let entries = [
+            (Role::Control, 'a'),
+            (Role::Ime, 'b'),
+            (Role::Settings, 'c'),
+            (Role::PairManifest, 'd'),
+            (Role::Receipt, 'e'),
+        ]
+        .into_iter()
+        .map(|(role, sha)| Entry {
+            role,
+            source: None,
+            destination: PathBuf::from(format!("/tmp/{}.app", role.label())),
+            stage: PathBuf::from(format!("/tmp/{}.stage", role.label())),
+            backup: PathBuf::from(format!("/tmp/{}.backup", role.label())),
+            failed: PathBuf::from(format!("/tmp/{}.failed", role.label())),
+            old: None,
+            new: fingerprint(sha),
+        })
+        .collect();
+        PreparedPlan {
+            schema_version: 1,
+            home: PathBuf::from("/tmp"),
+            uid: unsafe { libc::geteuid() },
+            request: crate::InstallRequest {
+                transaction_id: "123e4567-e89b-12d3-a456-426614174002".into(),
+                new_receipt: receipt(),
+                artifacts: vec![],
+            },
+            old_receipt: None,
+            old_pair_manifest: None,
+            entries,
+            required_free_bytes: 1,
+        }
+    }
+
+    #[test]
+    fn constructor_round_trips_plan_binding() {
+        let plan = plan();
+        let pair = "d".repeat(64);
+        let authorization = InstallAuthorization::for_plan(&plan, pair, "f".repeat(64)).unwrap();
+        let evidence = authorization.validate_request(&plan).unwrap();
+        assert_eq!(
+            evidence.installation_id,
+            plan.request.new_receipt.installation_id
+        );
+        assert_eq!(evidence.release_id, plan.request.new_receipt.release_id);
+        assert_eq!(evidence.pair_manifest_sha256, "d".repeat(64));
+        assert_eq!(
+            evidence.artifact_set_sha256,
+            authorization.artifact_set_sha256
+        );
     }
 
     #[test]

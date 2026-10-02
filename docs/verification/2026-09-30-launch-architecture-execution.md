@@ -683,3 +683,5 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 新增 `InstallAuthorization::for_plan`，从已完成的只读 `PreparedPlan` 生成未签名授权信封，自动绑定新收据身份、配对制品摘要和完整 artifact set 摘要；配对摘要或上游发布信封摘要格式错误、配对角色缺失或摘要不一致会直接失败。该构造器不执行发布签名验签，正式 bootstrap 仍须先用 `inputia-release` 信任链产生并核对 `release_envelope_sha256`。
 
 验证：更新器库 37 项测试通过，`cargo fmt` 与 diff 检查通过；没有创建事务或触碰当前安装。
+
+补充正向回归：用隔离 `PreparedPlan` 通过 `for_plan` 构造授权信封，再由同一计划重新验证，安装身份、release ID、配对摘要和制品集合摘要均一致。更新器库测试增至 38 项并全部通过。
