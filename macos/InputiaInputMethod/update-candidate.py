@@ -387,9 +387,14 @@ def main():
         for src, dst in zip(sources, staged): shutil.copytree(src, dst, symlinks=True)
         shutil.copy2(pair, backup/'pair-before.json')
         shutil.copy2(manifest, backup/'pair-new.json')
-        # v2 配对清单只包含 control/IME 两个协议 peer；设置启动器仍做独立
-        # codesign 校验，不能把它和 run_id 误传给只接受五个业务参数的验签器。
-        print(run(verifier, metadata, metadata, backup/'pair-new.json', *staged[:2]).strip())
+        if args.release_v2:
+            # v2 配对清单只包含 control/IME 两个协议 peer；设置启动器仍做独立
+            # codesign 校验，不能把它和 run_id 误传给只接受五个业务参数的验签器。
+            print(run(verifier, metadata, metadata, backup/'pair-new.json', *staged[:2]).strip())
+        else:
+            # v1 验签器仍绑定既有 trial 信任根与 run ID；复制到暂存目录后
+            # 必须再次验证，防止复制过程中组件或清单被替换。
+            print(run(verifier, metadata, pair, backup/'pair-new.json', *staged[:2], args.run_id).strip())
         marker = profile/'permission-maintenance.json'
         token = str(uuid.uuid4())
         atomic_json(marker, {'schema_version':1, 'active':True, 'epoch':token})
