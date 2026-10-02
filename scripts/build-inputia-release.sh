@@ -145,6 +145,10 @@ PY
 )"
 export CARGO_TARGET_DIR
 export CMAKE_POLICY_VERSION_MINIMUM="${CMAKE_POLICY_VERSION_MINIMUM:-3.5}"
+# macOS 27 SDK 配合 release profile 的 strip=true 会生成无法被 rustc
+# 加载的 proc-macro dylib（mis-aligned LINKEDIT string pool）。构建期保留
+# 中间产物符号；最终应用仍由各自的打包与签名步骤处理。
+export CARGO_PROFILE_RELEASE_STRIP=none
 # 保留标准 beforeBuildCommand，包括语音辅助程序准备。
 bun run tauri build --bundles app \
   --config src-tauri/tauri.unified-candidate.conf.json \
