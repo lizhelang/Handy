@@ -12,6 +12,20 @@
 
 这部分尚未组合成完整 `NativeAdapter`；它不验证 release/pair 清单、不生成整个阶段的 `VerificationReceipt`，不停止进程或写数据库。不启用特性时明确返回 `NativeUnavailable`。详见 [原生合同](../../native/inputia-install-support/README.md)。临时 ad-hoc 负例通过不代表真实 Developer ID/公证正例已验收。
 
+`artifact_verification::ArtifactVerificationPlan` 把完整发布信任链授权后冻结的
+`NativeReleasePolicy` 与事务 `Subject`、准确 `Entry` 盘面和核验用途组合起来。新版本的下载、
+暂存和已安装核验必须绑定同一 release；回滚必须绑定与新版本不同的明确旧 release。三套代码
+角色和配对清单必须各出现一次，不能夹带收据或重复角色。下载/暂存/回滚使用事务 stage 路径，
+安装后使用 destination 路径；每个代码目标保留事务树摘要，配对目标保留
+schema 2、签名 key ID、原始文件摘要和树摘要。Updater/Bootstrap 属于外置恢复环境，由
+`prepare_recovery_environment` 的独立合同核验，不混入被替换的三角色集合。
+
+该对象没有“已验证”含义，也不能生成 `VerificationReceipt`。当前事务 `Entry` 的来源是已解包
+目录树，因此这里不会把发布清单的 archive 摘要与任意树摘要并列后冒称存在来源链；受信下载
+归档与 `ExtractedArchive` 的不可伪造绑定仍须在进入事务前由 bootstrap/downloader 接入。生产适配器须对归档、解包树、
+Apple 代码身份、公证、配对签名和准确盘面分别执行真实验证。它只消除下游从待验 App、日志或
+请求 JSON 重新拼装期望身份的入口。
+
 ## 接口与授权边界
 
 ```rust,ignore

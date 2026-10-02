@@ -2,6 +2,7 @@
 //! 所有写入都由 begin/run/recover 显式触发；prepare 和 inspect 只读。
 #![cfg(unix)]
 pub mod archive;
+pub mod artifact_verification;
 pub mod authorization;
 mod engine;
 mod filesystem;

@@ -10,6 +10,7 @@ native-code-verification = []
 
 [dependencies]
 inputia-settings = { path = "../inputia-settings" }
+inputia-release = { path = "../inputia-release" }
 libc = "0.2"
 rawzip = "=0.5.1"
 flate2 = { version = "=1.1.9", default-features = false, features = ["rust_backend"] }
