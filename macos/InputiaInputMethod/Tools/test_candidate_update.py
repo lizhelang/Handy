@@ -15,8 +15,17 @@ class CandidateUpdateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory)
             target = parent / 'Inputia.app'
+            target.mkdir()
             module.assert_replacement_parents([target])
-            self.assertEqual(list(parent.iterdir()), [])
+            self.assertEqual(list(parent.iterdir()), [target])
+
+    def test_replacement_parent_probe_rejects_foreign_bundle_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'Inputia.app'
+            target.mkdir()
+            with patch.object(module.os, 'getuid', return_value=0):
+                with self.assertRaises(PermissionError):
+                    module.assert_replacement_parents([target])
 
     def test_legacy_registration_cleanup_is_bounded_and_failure_is_explicit(self):
         import subprocess

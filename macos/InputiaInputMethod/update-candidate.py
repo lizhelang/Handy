@@ -244,6 +244,12 @@ def maintenance_ready(profile, live_pids, marker_epoch=None, now=None):
 def assert_replacement_parents(paths):
     """在停止组件前验证目标父目录可执行目录替换。"""
     for path in paths:
+        try:
+            owner = path.stat().st_uid
+        except OSError as error:
+            raise PermissionError(f'无法读取 {path} 的所有者；请先授予当前用户管理员权限') from error
+        if owner != os.getuid():
+            raise PermissionError(f'{path} 由其他用户持有；请先授予当前用户管理员权限')
         parent = Path(path).parent
         probe = parent / f'.inputia-update-probe-{uuid.uuid4().hex}'
         moved = parent / f'{probe.name}-moved'
