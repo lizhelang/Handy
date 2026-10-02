@@ -2,9 +2,9 @@
 
 **Inputia 是一个以本地处理为主的桌面输入产品，将中文输入法、语音输入、剪贴板历史与知识检索放在同一套工作流中。** 它基于 [Handy](https://github.com/cjpais/Handy) 的语音能力，结合 macOS 原生输入法、Rime 和 Rust 内容服务。Handy 保留为上游名称及内部兼容标识，用户面对的产品名称统一为 Inputia。
 
-**当前状态（2026-09-30）：已有本机安装并验证的 1.1.0/build84 双组件版本，尚未完成面向公众的 Developer ID 签名、公证和独立分发验收。** 用户已批准 P0–P6 长期架构实施，源码改造正在进行；进展与实测证据见[实施记录](docs/verification/2026-09-30-launch-architecture-execution.md)。提交代码不代表发布安装包或开放更新渠道。
+**当前状态（2026-10-02）：本机已经安装并验证 1.1.1/build85 双组件体验版，源码提交为 `1a63e79f`；尚未完成面向公众的 Developer ID 签名、公证和独立分发验收。** 用户已批准 P0–P6 长期架构实施，源码改造正在进行；进展与实测证据见[实施记录](docs/verification/2026-09-30-launch-architecture-execution.md)。本机安装成功不代表已经开放公共发布渠道。
 
-**2026-10-01 体验版冻结：** 按用户要求优先交付 1.1.1/build85，本次停止新增架构工作；已完成、延期和安装参与事项统一见[体验版交付清单](docs/verification/2026-10-01-preview-build85.md)。新包安装前仍需用户确认。
+**2026-10-02 体验版交付：** 按用户要求停止新增架构工作并优先交付 1.1.1/build85；新版已完成覆盖安装、启动恢复和数据库完整性检查。已完成、延期和公开发布边界见[体验版交付清单](docs/verification/2026-10-01-preview-build85.md)。
 
 导航：[当前能力](#inputia-current) · [组件与代码职责](#inputia-components) · [长期架构](#inputia-architecture) · [实施阶段](#inputia-roadmap) · [开发与文档](#inputia-development) · [上游资料](#upstream-handy)
 

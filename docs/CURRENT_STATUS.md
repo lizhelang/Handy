@@ -1,6 +1,6 @@
 # Inputia 当前开发状态
 
-更新时间：2026-09-30
+更新时间：2026-10-02
 
 这是当前代码、安装包和本机数据的状态入口。带日期的验证记录保留当时的事实，不因为后续实现而改写；如果旧记录与本页冲突，以本页和最新安装验证为准。
 
@@ -8,12 +8,14 @@
 
 当前用户产品名称是 **Inputia**。Handy 是历史上游名称和内部兼容标识，不再作为本机用户需要管理的独立产品。
 
-2026-09-30 经用户授权覆盖并核对的已安装正式版为 Inputia 1.1.0/build84，由两个 macOS 组件组成（内部路径保留兼容）：
+2026-10-02 经用户授权覆盖并核对的已安装本机体验版为 Inputia 1.1.1/build85，源码提交为 `1a63e79f`，由两个 macOS 常驻组件组成（内部路径保留兼容）：
 
 - 控制中心：`/Applications/Inputia.app`
 - 系统输入法：`~/Library/Input Methods/InputiaUnifiedCandidate.app`
 
 两者属于同一个 Inputia 产品。输入法组件由 macOS 独立注册，控制中心负责设置、语音服务、统一历史和知识库。
+
+本次升级后，两个运行进程的签名身份和输入源恢复均通过检查，安装收据已绑定新的 release ID。此前中断的启动迁移已恢复并进入 `completed`，控制中心没有再次发生历史服务 5 秒启动超时；`history.db`、`clipboard.db` 和 `integration.db` 的 SQLite 完整性检查均为 `ok`。本机包仍使用本地测试证书，不具备公共分发资格。
 
 ## 已实现能力
 
@@ -70,7 +72,7 @@ Inputia 已支持统一检索来源：本地 Markdown、TXT、CSV、JSON、YAML�
 
 ## 本机正式版升级
 
-正式版保留已有配对身份、权限和数据目录，中文输入法、语音服务及剪切板控制中心完整配对构建。发布脚本为 `scripts/build-inputia-release.sh`；安装及验证结果见 [1.0.0 发布记录](verification/2026-09-27-inputia-release.md)。Apple 公证与对外分发未在本次完成。
+本机体验版保留已有配对身份、权限和数据目录，中文输入法、语音服务及剪切板控制中心完整配对构建。发布脚本为 `scripts/build-inputia-release.sh`；最新安装及验证结果见 [1.1.1/build85 体验版交付清单](verification/2026-10-01-preview-build85.md)。Apple Developer ID 签名、公证、独立安装器、干净机器验收与对外分发未在本次完成。
 
 ## 验证入口
 

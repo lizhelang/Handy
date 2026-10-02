@@ -1,6 +1,6 @@
 # Inputia 1.1.1 / build85 本地体验版
 
-日期：2026-10-01。用户已要求停止扩展架构，收尾当前改动并优先交付可安装体验版；已授权使用项目已有本地测试证书及配对签名材料进行本次构建。实际覆盖安装另行确认。
+日期：2026-10-01，最终安装复验更新于 2026-10-02。用户已要求停止扩展架构，收尾当前改动并优先交付可安装体验版；已授权使用项目已有本地测试证书及配对签名材料进行构建和覆盖安装。
 
 ## 本次冻结范围
 
@@ -97,3 +97,29 @@
 这证明当前 Mac 的双组件覆盖安装完成；不等同于 Developer ID 公证、干净机器安装或公开渠道资格。公开预检仍因发布配置、签名/公证验真器和最终制品验收缺失而阻断。
 
 本节是构建完成后的交付回执；App 对应的源码提交仍为上文的 `fdc90e0e`，没有因为追加文档而改变二进制来源。
+
+## 2026-10-02 启动超时修复与最终交付
+
+首次安装后的控制中心在真实数据域恢复启动迁移时崩溃。前台复现确认根因不是 macOS“重新打开窗口”弹窗，而是 `IntegrationManager` 启动后台历史服务后立即发送普通请求，以固定 5 秒超时判断初始化成功；真实数据库、附件和旧记忆初始化超过 5 秒时，Tauri setup 返回错误并触发 abort。
+
+提交 `1a63e79fdee3144a180609b518d4347711a3e8eb` 将历史服务启动改为明确的初始化就绪握手：数据库、密钥和记忆层初始化完成后 `start_with_memory` 才返回，普通业务请求仍保留原来的短超时。运行时库测试结果为 124 通过、1 个性能诊断忽略，`src-tauri` 编译检查通过。
+
+在该提交的干净隔离工作树重新构建并签名 1.1.1/build85。三个 App 的版本、arm64/macOS 13+ 元数据和代码签名通过检查；双组件配对清单签名及更新预检通过。随后执行真实覆盖安装，更新器输出：
+
+- `candidatePairUpdateVerified=true`；
+- `releaseUpdate=true`；
+- `tccChanged=false`；
+- `previousRecordingsReplayed=false`；
+- 程序备份：`~/Library/Application Support/HandyUnifiedBuilds/permission-update-ichrbgi0`。
+
+安装后两个运行组件的 `InputiaSourceCommit` 均为 `1a63e79fdee3144a180609b518d4347711a3e8eb`，输入源恢复为 `com.inputia.inputmethod.Inputia.UnifiedCandidate.Hans`。旧迁移先从 `restoring` 推进至 `recovered`，随后新的完整启动迁移进入 `completed` 并写出完整完成回执；控制中心和输入法持续运行。`history.db`、`clipboard.db`、`integration.db` 的 `PRAGMA integrity_check` 均返回 `ok`。
+
+最终交付包：
+
+- 目录：`/Users/lzl/Downloads/Inputia-1.1.1-build85-本机体验版-20261002`；
+- ZIP：`/Users/lzl/Downloads/Inputia-1.1.1-build85-本机体验版-20261002.zip`；
+- ZIP 大小：91,894,064 字节；
+- SHA-256：`70f64610d3e78682c7a1e80302c94ab10da34e22fef076d4cc44be78b39e1559`；
+- `unzip -t` 通过。
+
+该结果完成当前 Mac、当前账号的可安装体验版交付。公共发行仍缺 Developer ID、公证、无需开发工具的独立安装器、干净机器及支持系统矩阵验收、最终公共制品证据和观察期；不能把本机测试签名 ZIP 称为已公证公开版。
