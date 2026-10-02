@@ -230,6 +230,13 @@ class ReleaseContractTests(unittest.TestCase):
             with self.assertRaises(release.ReleaseError):
                 release._acceptance_pre_public_passes(report, "a" * 40, "b" * 64, self.product["product_id"], Path(directory))
 
+    def test_public_evidence_rejects_unknown_fields_before_external_checks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evidence.json"
+            path.write_text(json.dumps({"schema_version": 2, "product_id": self.product["product_id"], "source_commit": "a" * 40, "extra": True}))
+            with self.assertRaises(release.ReleaseError):
+                release.validate_public_evidence(path, self.product, "a" * 40)
+
     def test_prepare_reads_real_commit_and_creates_unique_build_ids(self):
         with tempfile.TemporaryDirectory() as directory:
             first = release.prepare(self.product, Path(directory).resolve() / "first", "local")

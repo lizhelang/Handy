@@ -504,6 +504,7 @@ def _verify_notarized_artifact(path):
 def validate_public_evidence(path, product, source_commit):
     """读取真实清单、受信密钥、最终制品和验收报告，不接受三项自报 PASS。"""
     value = read_json(path)
+    validate_schema(value, schema("public-release-evidence.schema.json"))
     require(type(value) is dict and value.get("schema_version") == 2, "公开发布证据版本不支持")
     require(value.get("product_id") == product["product_id"], "公开发布证据产品身份不匹配")
     require(value.get("source_commit") == source_commit, "公开发布证据提交身份不匹配")

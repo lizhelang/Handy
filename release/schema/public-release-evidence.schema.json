@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://inputia.invalid/schema/public-release-evidence.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 2},
+    "product_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9.-]{0,127}$"},
+    "source_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "manifest": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "trusted_keys": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "artifact_dir": {"type": "string", "minLength": 1, "maxLength": 4096}
+      },
+      "required": ["path", "sha256", "trusted_keys", "artifact_dir"],
+      "additionalProperties": false
+    },
+    "acceptance": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "evidence_root": {"type": "string", "minLength": 1, "maxLength": 4096}
+      },
+      "required": ["path", "sha256", "evidence_root"],
+      "additionalProperties": false
+    },
+    "notarization": {
+      "type": "object",
+      "properties": {
+        "artifact_path": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "required": ["artifact_path", "sha256"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["schema_version", "product_id", "source_commit", "manifest", "acceptance", "notarization"],
+  "additionalProperties": false
+}
