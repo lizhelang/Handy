@@ -63,8 +63,8 @@ impl IntegrationManager {
             },
         )
         .map_err(anyhow::Error::msg)?;
-        // start 只创建后台线程；确认实际数据库/密钥初始化成功后，外层才能提交启动迁移标记。
-        service.policy_epoch().map_err(anyhow::Error::msg)?;
+        // HistoryService::start_with_memory 返回时已经完成数据库、密钥和内存层初始化；
+        // 外层此后才能提交启动迁移标记。
         Ok(Self {
             service: Arc::new(service),
         })

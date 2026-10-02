@@ -727,6 +727,7 @@ impl HistoryService {
         legacy_context: crate::legacy_memory::LegacyMemoryContext,
     ) -> ServiceResult<Self> {
         let (sender, receiver) = mpsc::sync_channel::<Job>(32);
+        let (ready_sender, ready_receiver) = mpsc::sync_channel::<ServiceResult<()>>(1);
         let stopping = Arc::new(AtomicBool::new(false));
         let stop = stopping.clone();
         let output_generation = Arc::new(AtomicU64::new(1));
@@ -849,6 +850,11 @@ impl HistoryService {
                         changed: Box::new(changed),
                     })
                 })();
+                let readiness = worker
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(std::clone::Clone::clone);
+                let _ = ready_sender.send(readiness);
                 while !stop.load(Ordering::Acquire) {
                     if let Ok(state) = &mut worker {
                         // 先恢复删除屏障再接收下一项工作；重启不依赖 UI 重放请求。
@@ -866,6 +872,20 @@ impl HistoryService {
                 }
             })
             .map_err(|_| "unable to start history worker".to_owned())?;
+        match ready_receiver.recv_timeout(Duration::from_secs(60)) {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                stopping.store(true, Ordering::Release);
+                drop(sender);
+                let _ = thread.join();
+                return Err(error);
+            }
+            Err(_) => {
+                stopping.store(true, Ordering::Release);
+                drop(sender);
+                return Err("history service initialization timed out".to_owned());
+            }
+        }
         Ok(Self {
             output_generation,
             source_writes,
