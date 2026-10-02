@@ -117,7 +117,7 @@ import sys
 from pathlib import Path
 with Path("src-tauri/InputiaReleaseInfo.plist").open("rb") as stream:
     info = plistlib.load(stream)
-if sys.argv[5] == "1":
+if sys.argv[5] == "0":
     info["HandyProfileRunID"] = sys.argv[4]
     # 仅保留当前本机 v1 信任桥；渠道不进入不可变程序。
     info["HandyDevelopmentCandidate"] = True
