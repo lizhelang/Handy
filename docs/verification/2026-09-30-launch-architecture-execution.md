@@ -725,3 +725,7 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 ### 第八十四批：原生目标租约截止时间进入输出意图
 
 macOS `TargetRegistry` 已暴露当前不透明目标租约的绝对截止时间，集成输出在创建平台 `OutputIntent` 时写入 `deadline_at_ms`；期限取不到时保持 `None`，不伪造 TTL。派发前仍必须通过原有主线程 `validate` 重新检查焦点、进程和租约，因此该字段只作为持久合同和恢复时的过期线索。`cargo check --locked --manifest-path src-tauri/Cargo.toml --lib`、rustfmt 和 diff 检查通过；语音 Host token 尚无可验证期限，继续不填期限。
+
+### 第八十五批：候选 profile 绑定到集成输出
+
+Tauri 历史插入/复制入口在创建新 `OutputIntent` 时读取已经通过启动身份核验的候选 profile，并把稳定 `profile_id` 写入账本；重试仍复用持久 intent，不从当前 profile 重写旧身份。`cargo check --locked --manifest-path src-tauri/Cargo.toml --lib` 与格式检查通过。没有候选 profile 时保留 `None`，不从环境变量或任意路径猜测 profile。

@@ -221,6 +221,7 @@ pub async fn insert_unified_history_item(
     operation_id: String,
 ) -> Result<UnifiedOutputResult, String> {
     let service = manager.service.clone();
+    let profile_id = crate::candidate_profile::current().map(|profile| profile.profile_id.clone());
     tauri::async_runtime::spawn_blocking(move || {
         // 重试时复用已持久化 intent，不能用新焦点重新构造同一 operation。
         let existing = service.output_record(operation_id.clone())?;
@@ -241,7 +242,7 @@ pub async fn insert_unified_history_item(
                 item_id: item_id.clone(),
                 revision: expected_revision,
                 source: Some("integration".into()),
-                profile_id: None,
+                profile_id: profile_id.clone(),
                 deadline_at_ms: main_thread_call(
                     &app,
                     crate::integration_output::current_target_deadline,
@@ -440,6 +441,7 @@ async fn copy_unified_history_item_impl(
 ) -> Result<UnifiedOutputResult, String> {
     let service = manager.service.clone();
     let clipboard = Arc::clone(&clipboard);
+    let profile_id = crate::candidate_profile::current().map(|profile| profile.profile_id.clone());
     tauri::async_runtime::spawn_blocking(move || {
         let action = if as_text {
             OutputAction::CopyPlainText
@@ -463,7 +465,7 @@ async fn copy_unified_history_item_impl(
                 item_id: item_id.clone(),
                 revision: expected_revision,
                 source: Some("integration".into()),
-                profile_id: None,
+                profile_id: profile_id.clone(),
                 deadline_at_ms: None,
                 target_id: None,
                 owner: OutputOwner::Platform,
