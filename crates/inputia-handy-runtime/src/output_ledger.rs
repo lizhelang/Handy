@@ -38,6 +38,13 @@ pub struct OutputIntent {
     pub operation_id: String,
     pub item_id: String,
     pub revision: u64,
+    /// 来源和 profile 是可选的以兼容旧账本；新入口应填写稳定不透明标识。
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(default)]
+    pub deadline_at_ms: Option<u64>,
     pub target_id: Option<String>,
     pub owner: OutputOwner,
     pub policy_epoch: u64,
@@ -409,6 +416,13 @@ fn validate(intent: &OutputIntent) -> Result<()> {
         || intent.item_id.chars().any(char::is_control)
         || intent.revision == 0
         || (intent.owner == OutputOwner::Ime && intent.action != OutputAction::InsertText)
+        || intent.source.as_ref().is_some_and(|value| {
+            value.is_empty() || value.len() > 128 || value.chars().any(char::is_control)
+        })
+        || intent.profile_id.as_ref().is_some_and(|value| {
+            value.is_empty() || value.len() > 128 || value.chars().any(char::is_control)
+        })
+        || intent.deadline_at_ms == Some(0)
     {
         return Err(OutputLedgerError::InvalidIntent);
     }
@@ -442,6 +456,28 @@ fn digest(intent: &OutputIntent) -> [u8; 32] {
         OutputAction::Copy => 2,
         OutputAction::CopyPlainText => 3,
     }]);
+    // 旧账本的摘要只覆盖 v1 字段。仅当新字段实际存在时追加 v2 扩展，
+    // 这样缺失新字段的旧记录仍可按原摘要读取和完成迁移。
+    if intent.source.is_some() || intent.profile_id.is_some() || intent.deadline_at_ms.is_some() {
+        hash.update(b"\0inputia-output-contract-v2\0");
+        for value in [&intent.source, &intent.profile_id] {
+            match value {
+                Some(value) => {
+                    hash.update([1]);
+                    hash.update((value.len() as u64).to_be_bytes());
+                    hash.update(value.as_bytes());
+                }
+                None => hash.update([0]),
+            }
+        }
+        match intent.deadline_at_ms {
+            Some(value) => {
+                hash.update([1]);
+                hash.update(value.to_be_bytes());
+            }
+            None => hash.update([0]),
+        }
+    }
     hash.finalize().into()
 }
 
@@ -455,6 +491,9 @@ mod tests {
             operation_id: "ab".into(),
             item_id: "c".into(),
             revision: 1,
+            source: None,
+            profile_id: None,
+            deadline_at_ms: None,
             target_id: None,
             owner: OutputOwner::Platform,
             policy_epoch: 0,
@@ -473,8 +512,24 @@ mod tests {
         let mut changed = request.clone();
         changed.action = OutputAction::Copy;
         assert_ne!(digest(&request), digest(&changed));
+        let mut changed = request.clone();
+        changed.source = Some("voice".into());
+        assert_ne!(digest(&request), digest(&changed));
+        let mut changed = request.clone();
+        changed.profile_id = Some("default".into());
+        assert_ne!(digest(&request), digest(&changed));
+        let mut changed = request.clone();
+        changed.deadline_at_ms = Some(123);
+        assert_ne!(digest(&request), digest(&changed));
         let encoded = serde_json::to_string(&request).unwrap();
         let decoded: OutputIntent = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(digest(&request), digest(&decoded));
+
+        let legacy = r#"{"operation_id":"ab","item_id":"c","revision":1,"target_id":null,"owner":"platform","policy_epoch":0,"action":"insert_text"}"#;
+        let decoded: OutputIntent = serde_json::from_str(legacy).unwrap();
+        assert_eq!(decoded.source, None);
+        assert_eq!(decoded.profile_id, None);
+        assert_eq!(decoded.deadline_at_ms, None);
         assert_eq!(digest(&request), digest(&decoded));
     }
 }
