@@ -520,6 +520,9 @@ def verify_bundles(directory, context_path, product, scope="release"):
         if scope == "local-legacy" and component["role"] in ("updater", "bootstrap"):
             continue
         path = Path(directory) / component["app_name"] / "Contents/Info.plist"
+        require(path.is_file() and not path.is_symlink(), f"{component['role']}: 缺少正式组件 Info.plist")
+        bundle = path.parent.parent
+        require(bundle.is_dir() and not bundle.is_symlink(), f"{component['role']}: 组件目录不是受管普通目录")
         with path.open("rb") as stream:
             info = plistlib.load(stream)
         expected = {"CFBundleIdentifier": component["bundle_id"], "CFBundleShortVersionString": product["version"], "CFBundleVersion": str(product["build"]), "InputiaReleaseID": context["release_id"], "InputiaSourceCommit": context["source_commit"], "LSMinimumSystemVersion": product["target"]["min_os"]}

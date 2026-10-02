@@ -647,3 +647,7 @@ r12 尚未执行覆盖安装。当前电脑已恢复并继续运行旧 build84 �
 ### 第七十一批：发布/更新核心回归
 
 在干净工作区完成快速回归：`inputia-release` Rust 测试 24/24、`inputia-updater` library 测试 36/36、发布脚本 Python 测试 50/50 通过。测试均使用临时目录或合成输入，没有写入当前安装、停止日用组件或读取用户数据。
+
+### 第七十二批：正式组件缺失的结构化审计错误
+
+发布工具此前在 `verify-bundles --scope release` 遇到缺失 `Inputia Updater.app` 时直接抛出原始 `FileNotFoundError`。现改为按组件角色返回受控 `ReleaseError`，并拒绝以符号链接冒充正式组件目录或 `Info.plist`。发布脚本回归 26/26 通过；对当前体验包的正式范围检查现在明确返回 `updater: 缺少正式组件 Info.plist`，仍拒绝公开放行。

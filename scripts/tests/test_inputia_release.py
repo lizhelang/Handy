@@ -82,8 +82,9 @@ class ReleaseContractTests(unittest.TestCase):
                 local = release.verify_bundles(root, context_path, self.product, "local-legacy")
                 self.assertEqual(len(local["components"]), 3)
                 self.assertFalse(local["public_release_eligible"])
-                with self.assertRaises(FileNotFoundError):
+                with self.assertRaises(release.ReleaseError) as error:
                     release.verify_bundles(root, context_path, self.product)
+                self.assertIn("updater: 缺少正式组件 Info.plist", str(error.exception))
 
     def test_rejects_unknown_identity_and_hash_cycle_fields(self):
         for key in ("channel", "profile_id", "installation_id", "attestation_digest", "manifest_digest"):
