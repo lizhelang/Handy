@@ -297,6 +297,32 @@ def verify_envelope_signature(value, kind, product, trusted_keyset_path):
     return {"signature_verification": "PASS", "valid_signatures": len(valid), "threshold": threshold}
 
 
+def sign_envelope(document_path, kind, private_key_path, output_path, product):
+    """用调用方明确提供的私钥生成单签名 envelope；不生成发布授权。"""
+    payload = read_json(document_path)
+    require(type(payload) is dict and "payload" not in payload, "签名入口只接受未签名 payload")
+    payload = validate_document(payload, kind, product)
+    private_key = Path(private_key_path).resolve(strict=True)
+    require(private_key.is_file() and not Path(private_key_path).is_symlink(), "私钥必须是普通文件且不能是符号链接")
+    signing = b"Inputia.Release.v1\0" + kind.encode("utf-8") + b"\0" + canonical_bytes(payload)
+    with tempfile.TemporaryDirectory(prefix="inputia-sign-", dir=tempfile.gettempdir()) as directory:
+        root = Path(directory)
+        signing_path, signature_path, public_path = root / "payload", root / "signature.der", root / "public.der"
+        signing_path.write_bytes(signing)
+        signed = subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(private_key), "-out", str(signature_path), str(signing_path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, timeout=10)
+        require(signed.returncode == 0, "openssl 无法使用指定私钥签名")
+        derived = subprocess.run(["openssl", "ec", "-in", str(private_key), "-pubout", "-outform", "DER", "-out", str(public_path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, timeout=10)
+        require(derived.returncode == 0, "openssl 无法从私钥导出公钥")
+        public = public_path.read_bytes()
+        require(len(public) >= 65 and public[-65] == 4, "私钥不是受支持的 P-256 公钥格式")
+        raw_public = public[-65:]
+        key_id = "sha256-" + hashlib.sha256(raw_public).hexdigest()
+        envelope = {"schema_version": 1, "payload_kind": kind, "payload": payload, "signatures": [{"key_id": key_id, "algorithm": "ecdsa-p256-sha256", "signature_der_base64": base64.b64encode(signature_path.read_bytes()).decode("ascii")}]}
+    validate_schema(envelope, schema("signed-envelope.schema.json"))
+    write_file(output_path, (json.dumps(envelope, ensure_ascii=False, indent=2) + "\n").encode(), exclusive=True)
+    return {"signed": True, "key_id": key_id, "document_sha256": file_digest(output_path), "public_release_eligible": False}
+
+
 def file_digest(path):
     digest = hashlib.sha256()
     with Path(path).open("rb") as stream:
@@ -524,6 +550,11 @@ def main(argv=None):
     val.add_argument("--document", type=Path, required=True)
     val.add_argument("--artifact-dir", type=Path)
     val.add_argument("--trusted-keys", type=Path, help="显式受信的 P-256 公钥集 JSON")
+    sign = sub.add_parser("sign-envelope")
+    sign.add_argument("--kind", choices=["manifest", "attestation", "feed"], required=True)
+    sign.add_argument("--document", type=Path, required=True, help="未签名 payload JSON")
+    sign.add_argument("--private-key", type=Path, required=True)
+    sign.add_argument("--output", type=Path, required=True)
     apply = sub.add_parser("apply-plist")
     apply.add_argument("--plist", type=Path, required=True)
     apply.add_argument("--role", choices=["control", "ime", "settings", "updater", "bootstrap"], required=True)
@@ -562,6 +593,8 @@ def main(argv=None):
             result = verify_bundles(args.directory, args.context, product, args.scope)
         elif args.command == "bind-manifest":
             result = bind_manifest(args.template, args.context, args.artifact_dir, args.output, product)
+        elif args.command == "sign-envelope":
+            result = sign_envelope(args.document, args.kind, args.private_key, args.output, product)
         else:
             value = unwrap_document(read_json(args.document), args.kind, product)
             if args.artifact_dir:
