@@ -193,6 +193,11 @@ impl Owned {
     }
 
     fn attribute(&self, name: &'static [u8]) -> Result<Self, PendingReason> {
+        self.optional_attribute(name)?
+            .ok_or(PendingReason::UnknownTarget)
+    }
+
+    fn optional_attribute(&self, name: &'static [u8]) -> Result<Option<Self>, PendingReason> {
         query_budget()?;
         let key = cf_string(name)?;
         let mut value = ptr::null();
@@ -208,11 +213,12 @@ impl Owned {
             if !value.is_null() {
                 unsafe { CFRelease(value) };
             }
-            return Err(PendingReason::UnknownTarget);
+            query_budget()?;
+            return optional_attribute_absent(status).map(|_| None);
         }
         let value = Self::from_created(value)?;
         query_budget()?;
-        Ok(value)
+        Ok(Some(value))
     }
 
     fn ax_attribute(&self, name: &'static [u8]) -> Result<Self, PendingReason> {
@@ -229,6 +235,28 @@ impl Owned {
     fn equals(&self, other: &Self) -> bool {
         unsafe { CFEqual(self.0, other.0) != 0 }
     }
+}
+
+// 仅明确的属性不支持/无值属于缺省；超时、失权、失效对象仍拒绝目标。
+fn optional_attribute_absent(status: c_int) -> Result<(), PendingReason> {
+    match status {
+        -25205 | -25212 => Ok(()),
+        _ => Err(PendingReason::UnknownTarget),
+    }
+}
+
+fn check_control_metadata(role: &str, subrole: Option<&str>) -> Result<(), PendingReason> {
+    if subrole == Some("AXSecureTextField") {
+        return Err(PendingReason::SecureInput);
+    }
+    if !matches!(role, "AXTextField" | "AXTextArea" | "AXComboBox") {
+        return Err(PendingReason::UnsupportedControl);
+    }
+    // TextEdit 的 AXTextArea 没有 subrole。其他角色缺失时仍无法排除密码框。
+    if subrole.is_none() && role != "AXTextArea" {
+        return Err(PendingReason::UnknownTarget);
+    }
+    Ok(())
 }
 
 impl Drop for Owned {
@@ -364,21 +392,34 @@ fn selection(element: &Owned) -> Result<Selection, PendingReason> {
 }
 
 fn check_control(element: &Owned) -> Result<(), PendingReason> {
-    let subrole = element.attribute(b"AXSubrole\0")?;
-    if subrole.equals(&cf_string(b"AXSecureTextField\0")?) {
-        return Err(PendingReason::SecureInput);
-    }
     let role = element.attribute(b"AXRole\0")?;
-    if ![
-        b"AXTextField\0".as_slice(),
-        b"AXTextArea\0",
-        b"AXComboBox\0",
+    let role = [
+        ("AXTextField", b"AXTextField\0".as_slice()),
+        ("AXTextArea", b"AXTextArea\0".as_slice()),
+        ("AXComboBox", b"AXComboBox\0".as_slice()),
     ]
-    .iter()
-    .any(|name| cf_string(name).is_ok_and(|expected| role.equals(&expected)))
-    {
-        return Err(PendingReason::UnsupportedControl);
-    }
+    .into_iter()
+    .find_map(|(name, value)| {
+        cf_string(value)
+            .is_ok_and(|expected| role.equals(&expected))
+            .then_some(name)
+    })
+    .ok_or(PendingReason::UnsupportedControl)?;
+    let subrole = element.optional_attribute(b"AXSubrole\0")?;
+    let subrole = subrole
+        .as_ref()
+        .map(|value| {
+            if unsafe { CFGetTypeID(value.0) != CFStringGetTypeID() } {
+                return Err(PendingReason::UnknownTarget);
+            }
+            Ok(if value.equals(&cf_string(b"AXSecureTextField\0")?) {
+                "AXSecureTextField"
+            } else {
+                "normal"
+            })
+        })
+        .transpose()?;
+    check_control_metadata(role, subrole)?;
     let enabled = element.attribute(b"AXEnabled\0")?;
     if unsafe { CFEqual(enabled.0, kCFBooleanTrue) } == 0 {
         return Err(PendingReason::UnsupportedControl);
@@ -988,6 +1029,30 @@ pub fn metadata_self_check() -> Result<(), PendingReason> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_explicit_missing_optional_attributes_are_accepted() {
+        assert!(optional_attribute_absent(-25205).is_ok());
+        assert!(optional_attribute_absent(-25212).is_ok());
+        for status in [-25204, -25202, -25211, -25200, 0] {
+            assert!(optional_attribute_absent(status).is_err());
+        }
+    }
+
+    #[test]
+    fn plain_text_area_without_subrole_is_supported_but_unknown_fields_are_not() {
+        assert!(check_control_metadata("AXTextArea", None).is_ok());
+        assert!(check_control_metadata("AXTextField", Some("AXTextField")).is_ok());
+        assert!(check_control_metadata("AXTextField", None).is_err());
+        assert!(check_control_metadata("AXComboBox", None).is_err());
+        assert!(check_control_metadata("AXButton", Some("AXButton")).is_err());
+        for role in ["AXTextArea", "AXTextField", "AXComboBox"] {
+            assert_eq!(
+                check_control_metadata(role, Some("AXSecureTextField")),
+                Err(PendingReason::SecureInput)
+            );
+        }
+    }
 
     fn activation(armed: bool) -> Activation {
         Activation {

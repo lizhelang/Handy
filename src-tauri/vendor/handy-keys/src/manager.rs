@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use crate::error::{Error, Result};
-use crate::listener::{BlockingHotkeys, KeyboardListener};
+use crate::listener::{BlockingHotkeys, KeyboardListener, ListenerStop};
 use crate::types::{Hotkey, HotkeyEvent, HotkeyId, HotkeyState, KeyEvent};
 
 /// Internal state shared between the manager and the processing thread
@@ -95,6 +95,7 @@ pub struct HotkeyManager {
     _thread_handle: Option<JoinHandle<()>>,
     running: Arc<std::sync::atomic::AtomicBool>,
     native_running: Arc<std::sync::atomic::AtomicBool>,
+    listener_stop: ListenerStop,
     /// Shared set of hotkeys to block
     blocking_hotkeys: Option<BlockingHotkeys>,
 }
@@ -107,6 +108,7 @@ impl HotkeyManager {
         let listener = KeyboardListener::new()?;
 
         let native_running = listener.running_flag();
+        let listener_stop = listener.stop_handle();
         let (tx, rx) = mpsc::channel();
         let state = Arc::new(Mutex::new(ManagerState::new()));
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
@@ -124,6 +126,7 @@ impl HotkeyManager {
             _thread_handle: Some(handle),
             running,
             native_running,
+            listener_stop,
             blocking_hotkeys: None,
         })
     }
@@ -140,6 +143,7 @@ impl HotkeyManager {
         let listener = KeyboardListener::new_with_blocking(blocking_hotkeys.clone())?;
 
         let native_running = listener.running_flag();
+        let listener_stop = listener.stop_handle();
         let (tx, rx) = mpsc::channel();
         let state = Arc::new(Mutex::new(ManagerState::new()));
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
@@ -157,6 +161,7 @@ impl HotkeyManager {
             _thread_handle: Some(handle),
             running,
             native_running,
+            listener_stop,
             blocking_hotkeys: Some(blocking_hotkeys),
         })
     }
@@ -324,6 +329,7 @@ impl Drop for HotkeyManager {
     fn drop(&mut self) {
         self.running
             .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.listener_stop.request();
         // Join the thread to ensure clean shutdown
         if let Some(handle) = self._thread_handle.take() {
             if handle.is_finished() {

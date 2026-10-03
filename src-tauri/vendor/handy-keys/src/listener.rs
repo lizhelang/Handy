@@ -15,7 +15,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -36,7 +36,25 @@ pub struct KeyboardListener {
     /// Backend-specific wakeup invoked on Drop after `running` is cleared.
     /// macOS parks its listener thread in a CFRunLoop with no periodic
     /// wakeups (see run_event_tap), so Drop must stop that loop explicitly.
-    stop_wakeup: Option<Box<dyn Fn() + Send>>,
+    stop_wakeup: Option<Arc<Mutex<Box<dyn Fn() + Send>>>>,
+}
+
+/// Manager 和 listener 共用停止信号；不用等待转发线程 Drop 才唤醒原生循环。
+#[derive(Clone)]
+pub(crate) struct ListenerStop {
+    running: Arc<AtomicBool>,
+    wakeup: Option<Arc<Mutex<Box<dyn Fn() + Send>>>>,
+}
+
+impl ListenerStop {
+    pub(crate) fn request(&self) {
+        self.running.store(false, Ordering::Release);
+        if let Some(wakeup) = &self.wakeup {
+            // 只在退休路径使用，不进入按键回调；没有修改授权或工作线程计数。
+            let wakeup = wakeup.lock().unwrap_or_else(|error| error.into_inner());
+            wakeup();
+        }
+    }
 }
 
 impl KeyboardListener {
@@ -75,7 +93,7 @@ impl KeyboardListener {
                 _thread_handle: state.thread_handle,
                 running: state.running,
                 blocking_hotkeys: state.blocking_hotkeys,
-                stop_wakeup: Some(Box::new(move || run_loop.stop())),
+                stop_wakeup: Some(Arc::new(Mutex::new(Box::new(move || run_loop.stop())))),
             })
         }
 
@@ -121,10 +139,7 @@ impl KeyboardListener {
 
     /// Stop with a bounded receipt. A false result retains the native owner for retry.
     pub fn stop_and_wait(&mut self, timeout: Duration) -> bool {
-        self.running.store(false, Ordering::Release);
-        if let Some(wake) = &self.stop_wakeup {
-            wake();
-        }
+        self.stop_handle().request();
         let deadline = std::time::Instant::now() + timeout;
         while self
             ._thread_handle
@@ -140,6 +155,13 @@ impl KeyboardListener {
             let _ = handle.join();
         }
         true
+    }
+
+    pub(crate) fn stop_handle(&self) -> ListenerStop {
+        ListenerStop {
+            running: self.running.clone(),
+            wakeup: self.stop_wakeup.clone(),
+        }
     }
 
     /// Get a reference to the blocking hotkeys set (if blocking is enabled)
@@ -182,15 +204,11 @@ impl KeyboardListener {
 
 impl Drop for KeyboardListener {
     fn drop(&mut self) {
-        self.running.store(false, Ordering::SeqCst);
-
         // Wake the listener thread if the backend parks it (macOS stops the
         // tap thread's CFRunLoop). Windows/Linux event loops re-check
         // `running` at least every ~100ms on their own, so the join below is
         // short and shutdown is clean on all platforms.
-        if let Some(wake) = &self.stop_wakeup {
-            wake();
-        }
+        self.stop_handle().request();
         // Never block Drop on a native run loop. Worker accounting remains live
         // until the thread actually exits, so callers cannot mistake detach for retirement.
         if let Some(handle) = self._thread_handle.take() {
@@ -198,5 +216,40 @@ impl Drop for KeyboardListener {
                 let _ = handle.join();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod stop_tests {
+    use super::*;
+
+    #[test]
+    fn owner_can_stop_native_loop_before_forwarder_drops_listener() {
+        let running = Arc::new(AtomicBool::new(true));
+        let called = Arc::new(AtomicBool::new(false));
+        let notified = called.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let listener = KeyboardListener {
+            event_receiver: receiver,
+            _thread_handle: None,
+            running: running.clone(),
+            blocking_hotkeys: None,
+            stop_wakeup: Some(Arc::new(Mutex::new(Box::new(move || {
+                notified.store(true, Ordering::Release);
+            })))),
+        };
+        let stop = listener.stop_handle();
+        let (release, wait) = std::sync::mpsc::channel();
+        let forwarder = std::thread::spawn(move || {
+            wait.recv().unwrap();
+            drop(listener);
+        });
+        stop.request();
+        assert!(!forwarder.is_finished());
+        assert!(!running.load(Ordering::Acquire));
+        assert!(called.load(Ordering::Acquire));
+        release.send(()).unwrap();
+        forwarder.join().unwrap();
+        drop(sender);
     }
 }
