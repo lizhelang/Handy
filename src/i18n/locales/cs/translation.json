@@ -870,6 +870,7 @@
   },
   "errors": {
     "loadDirectory": "Chyba při načítání adresáře: {{error}}",
+    "directoryUnavailable": "Adresář není dostupný. Zkuste tuto stránku znovu otevřít.",
     "micPermissionDeniedTitle": "Přístup k mikrofonu byl odepřen",
     "micPermissionDenied": {
       "generic": "Přístup k mikrofonu byl odepřen operačním systémem. Povolte prosím přístup k mikrofonu v nastavení systému.",

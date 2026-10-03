@@ -870,6 +870,7 @@
   },
   "errors": {
     "loadDirectory": "Errore di caricamento cartella: {{error}}",
+    "directoryUnavailable": "Cartella non disponibile. Riapri questa pagina.",
     "micPermissionDeniedTitle": "Accesso al microfono negato",
     "micPermissionDenied": {
       "generic": "L'accesso al microfono è stato negato dal sistema operativo. Concedi l'autorizzazione al microfono nelle impostazioni di sistema.",

@@ -870,6 +870,7 @@
   },
   "errors": {
     "loadDirectory": "Lỗi khi tải thư mục: {{error}}",
+    "directoryUnavailable": "Không thể truy cập thư mục. Hãy mở lại trang này.",
     "micPermissionDeniedTitle": "Quyền truy cập micrô bị từ chối",
     "micPermissionDenied": {
       "generic": "Quyền truy cập micrô đã bị hệ điều hành từ chối. Vui lòng cấp quyền micrô trong cài đặt hệ thống.",

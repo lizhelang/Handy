@@ -870,6 +870,7 @@
   },
   "errors": {
     "loadDirectory": "Fel vid laddning av mapp: {{error}}",
+    "directoryUnavailable": "Katalogen är inte tillgänglig. Öppna sidan igen.",
     "micPermissionDeniedTitle": "Mikrofonåtkomst nekad",
     "micPermissionDenied": {
       "generic": "Mikrofonåtkomst nekades av operativsystemet. Bevilja mikrofonbehörighet i dina systeminställningar.",

@@ -870,6 +870,7 @@
   },
   "errors": {
     "loadDirectory": "Dizin yüklenirken hata oluştu: {{error}}",
+    "directoryUnavailable": "Dizin kullanılamıyor. Bu sayfayı yeniden açın.",
     "micPermissionDeniedTitle": "Mikrofon erişimi reddedildi",
     "micPermissionDenied": {
       "generic": "Mikrofon erişimi işletim sistemi tarafından reddedildi. Lütfen sistem ayarlarından mikrofon iznini verin.",

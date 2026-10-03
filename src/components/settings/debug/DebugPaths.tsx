@@ -51,7 +51,7 @@ export const DebugPaths: React.FC<DebugPathsProps> = ({
     >
       <div className="text-sm text-gray-600 space-y-2">
         {error ? (
-          <p>{t("errors.loadDirectory", { error })}</p>
+          <p>{t("errors.directoryUnavailable")}</p>
         ) : paths.length === 0 ? (
           <p>{t("common.loading")}</p>
         ) : (
@@ -61,7 +61,9 @@ export const DebugPaths: React.FC<DebugPathsProps> = ({
                 {t(`settings.debug.paths.${label}`)}
               </span>{" "}
               <span className="font-mono text-xs select-text">
-                {paths[index]}
+                {index === 0
+                  ? t("settings.about.appDataDirectory.title")
+                  : `${t("settings.about.appDataDirectory.title")} / ${index === 1 ? "models" : "settings_store.json"}`}
               </span>
             </div>
           ))

@@ -870,6 +870,7 @@
   },
   "errors": {
     "loadDirectory": "載入目錄時發生錯誤: {{error}}",
+    "directoryUnavailable": "目錄暫不可用，請重新開啟此頁面。",
     "micPermissionDeniedTitle": "麥克風存取被拒絕",
     "micPermissionDenied": {
       "generic": "作業系統拒絕了麥克風存取。請在系統設定中授予麥克風權限。",

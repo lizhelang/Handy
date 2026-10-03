@@ -870,6 +870,7 @@
   },
   "errors": {
     "loadDirectory": "Erro ao carregar diretório: {{error}}",
+    "directoryUnavailable": "Diretório indisponível. Abra esta página novamente.",
     "micPermissionDeniedTitle": "Acesso ao microfone negado",
     "micPermissionDenied": {
       "generic": "O acesso ao microfone foi negado pelo sistema operacional. Conceda a permissão do microfone nas configurações do sistema.",

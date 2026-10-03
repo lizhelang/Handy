@@ -870,6 +870,7 @@
   },
   "errors": {
     "loadDirectory": "خطأ في تحميل المجلد: {{error}}",
+    "directoryUnavailable": "المجلد غير متاح. حاول فتح هذه الصفحة مرة أخرى.",
     "micPermissionDeniedTitle": "تم رفض الوصول إلى الميكروفون",
     "micPermissionDenied": {
       "generic": "تم رفض الوصول إلى الميكروفون من قبل نظام التشغيل. يرجى منح إذن الميكروفون في إعدادات النظام.",

@@ -870,6 +870,7 @@
   },
   "errors": {
     "loadDirectory": "Fehler beim Laden des Verzeichnisses: {{error}}",
+    "directoryUnavailable": "Verzeichnis nicht verfügbar. Öffnen Sie diese Seite erneut.",
     "micPermissionDeniedTitle": "Mikrofonzugriff verweigert",
     "micPermissionDenied": {
       "generic": "Der Mikrofonzugriff wurde vom Betriebssystem verweigert. Bitte erteile die Mikrofonberechtigung in deinen Systemeinstellungen.",

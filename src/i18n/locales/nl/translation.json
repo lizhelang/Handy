@@ -873,6 +873,7 @@
   },
   "errors": {
     "loadDirectory": "Fout bij laden van map: {{error}}",
+    "directoryUnavailable": "Map niet beschikbaar. Open deze pagina opnieuw.",
     "micPermissionDeniedTitle": "Microfoontoegang geweigerd",
     "micPermissionDenied": {
       "generic": "Microfoontoegang is geweigerd door het besturingssysteem. Verleen microfoonmachtiging in je systeeminstellingen.",

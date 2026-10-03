@@ -28,6 +28,7 @@ export const LogDirectory: React.FC<LogDirectoryProps> = ({
           setError(result.error);
         }
       } catch (err) {
+        console.error("Failed to load log directory:", err);
         const errorMessage =
           err && typeof err === "object" && "message" in err
             ? String(err.message)
@@ -64,10 +65,14 @@ export const LogDirectory: React.FC<LogDirectoryProps> = ({
         </div>
       ) : error ? (
         <div className="p-3 bg-red-50 border border-red-200 rounded text-xs text-red-600">
-          {t("errors.loadDirectory", { error })}
+          {t("errors.directoryUnavailable")}
         </div>
       ) : (
-        <PathDisplay path={logDir} onOpen={handleOpen} disabled={!logDir} />
+        <PathDisplay
+          label={t("settings.debug.logDirectory.title")}
+          onOpen={handleOpen}
+          disabled={!logDir}
+        />
       )}
     </SettingContainer>
   );

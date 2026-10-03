@@ -870,6 +870,7 @@
   },
   "errors": {
     "loadDirectory": "שגיאה בטעינת תיקייה: {{error}}",
+    "directoryUnavailable": "התיקייה אינה זמינה. נסו לפתוח את הדף שוב.",
     "micPermissionDeniedTitle": "הגישה למיקרופון נדחתה",
     "micPermissionDenied": {
       "generic": "מערכת ההפעלה חסמה את הגישה למיקרופון. תן הרשאת מיקרופון בהגדרות המערכת.",

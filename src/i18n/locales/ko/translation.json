@@ -870,6 +870,7 @@
   },
   "errors": {
     "loadDirectory": "디렉토리 로딩 오류: {{error}}",
+    "directoryUnavailable": "디렉터리를 사용할 수 없습니다. 이 페이지를 다시 열어 주세요.",
     "micPermissionDeniedTitle": "마이크 접근이 거부되었습니다",
     "micPermissionDenied": {
       "generic": "운영 체제에서 마이크 접근을 거부했습니다. 시스템 설정에서 마이크 권한을 허용해 주세요.",

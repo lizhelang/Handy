@@ -873,6 +873,7 @@
   },
   "errors": {
     "loadDirectory": "Error loading directory: {{error}}",
+    "directoryUnavailable": "Directory unavailable. Try opening this page again.",
     "micPermissionDeniedTitle": "Microphone Access Denied",
     "micPermissionDenied": {
       "generic": "Microphone access was denied by the operating system. Please grant microphone permission in your system settings.",

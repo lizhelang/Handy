@@ -870,6 +870,7 @@
   },
   "errors": {
     "loadDirectory": "ディレクトリの読み込みエラー: {{error}}",
+    "directoryUnavailable": "ディレクトリを利用できません。このページを開き直してください。",
     "micPermissionDeniedTitle": "マイクへのアクセスが拒否されました",
     "micPermissionDenied": {
       "generic": "オペレーティングシステムによりマイクへのアクセスが拒否されました。システム設定でマイクの許可を付与してください。",

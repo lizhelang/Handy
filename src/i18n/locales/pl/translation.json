@@ -870,6 +870,7 @@
   },
   "errors": {
     "loadDirectory": "Błąd wczytywania katalogu: {{error}}",
+    "directoryUnavailable": "Katalog jest niedostępny. Otwórz tę stronę ponownie.",
     "micPermissionDeniedTitle": "Odmowa dostępu do mikrofonu",
     "micPermissionDenied": {
       "generic": "System operacyjny odmówił dostępu do mikrofonu. Przyznaj uprawnienia do mikrofonu w ustawieniach systemowych.",
