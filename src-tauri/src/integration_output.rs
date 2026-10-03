@@ -224,10 +224,13 @@ fn capture_voice_target(app: AppHandle) -> Option<std::sync::Arc<VoiceTargetLeas
             });
         }
         let state = slot.as_mut()?;
-        let target = state
-            .registry
-            .capture(std::time::Duration::from_secs(120))
-            .ok()?;
+        let target = match state.registry.capture(std::time::Duration::from_secs(120)) {
+            Ok(target) => target,
+            Err(reason) => {
+                log::debug!("platform_voice_target_capture_unavailable reason={reason:?}");
+                return None;
+            }
+        };
         if state.registry.arm_owner_overlay(&target.opaque_id).is_err() {
             let _ = state.registry.forget(&target.opaque_id);
             return None;

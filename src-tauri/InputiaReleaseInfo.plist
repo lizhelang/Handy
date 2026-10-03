@@ -5,7 +5,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>Inputia</string>
 	<key>CFBundleVersion</key>
-	<string>89</string>
+	<string>90</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Inputia 使用麦克风进行本地语音输入。</string>
 </dict>

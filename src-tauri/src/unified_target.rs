@@ -647,8 +647,13 @@ impl TargetRegistry {
             (state.field.0, b"AXSelectedTextChanged\0"),
             (state.field.0, b"AXUIElementDestroyed\0"),
         ] {
-            let name = cf_string(name)?;
-            if unsafe { AXObserverAddNotification(observer.0, element, name.0, context) } != 0 {
+            let key = cf_string(name)?;
+            let status = unsafe { AXObserverAddNotification(observer.0, element, key.0, context) };
+            if status != 0 {
+                log::debug!(
+                    "unified_target_observer_failed notification={} status={status}",
+                    String::from_utf8_lossy(name).trim_end_matches('\0')
+                );
                 return Err(PendingReason::UnobservableControl);
             }
         }
