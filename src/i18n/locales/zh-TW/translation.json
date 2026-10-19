@@ -482,7 +482,22 @@
         "placeholder": "輸入熱詞",
         "add": "新增",
         "remove": "刪除 {{word}}",
-        "duplicate": "「{{word}}」已存在"
+        "duplicate": "「{{word}}」已存在",
+        "statsAll": "全部 ({{count}})",
+        "statsUsed": "已使用 ({{count}})",
+        "statsUnused": "未使用 ({{count}})",
+        "sortLabel": "排序",
+        "sortAz": "A–Z 字母分組",
+        "sortFreqDesc": "頻率：高 → 低",
+        "sortFreqAsc": "頻率：低 → 高（查未用）",
+        "sortDefault": "新增順序",
+        "searchPlaceholder": "搜尋或篩選已有熱詞...",
+        "clearSearch": "清空",
+        "usageCount": "{{count}}次",
+        "exactMatchHint": "已設過該熱詞：「{{word}}」（使用 {{count}} 次）",
+        "similarMatchHint": "已設過相近熱詞：",
+        "noFilterMatch": "沒有符合目前篩選條件的熱詞",
+        "emptyHint": "暫未設定熱詞。在上方輸入常用專有名詞、人名或縮寫即可新增。"
       },
       "voiceActivityDetection": {
         "title": "語音活動偵測",

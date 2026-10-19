@@ -482,7 +482,22 @@
         "placeholder": "Lägg till ett ord",
         "add": "Lägg till",
         "remove": "Ta bort {{word}}",
-        "duplicate": "\"{{word}}\" finns redan"
+        "duplicate": "\"{{word}}\" finns redan",
+        "statsAll": "All ({{count}})",
+        "statsUsed": "Used ({{count}})",
+        "statsUnused": "Unused ({{count}})",
+        "sortLabel": "Sort",
+        "sortAz": "A–Z Grouped",
+        "sortFreqDesc": "Frequency: High → Low",
+        "sortFreqAsc": "Frequency: Low → High",
+        "sortDefault": "Added Order",
+        "searchPlaceholder": "Search existing hotwords...",
+        "clearSearch": "Clear",
+        "usageCount": "{{count}}×",
+        "exactMatchHint": "Already exists: \"{{word}}\" (used {{count}}×)",
+        "similarMatchHint": "Similar existing hotwords:",
+        "noFilterMatch": "No hotwords match the current filter",
+        "emptyHint": "No hotwords added yet. Add terms, names, or abbreviations above."
       },
       "voiceActivityDetection": {
         "title": "Röstaktivitetsdetektering",

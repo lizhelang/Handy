@@ -482,7 +482,22 @@
         "placeholder": "単語を追加",
         "add": "追加",
         "remove": "{{word}}を削除",
-        "duplicate": "「{{word}}」は既に存在します"
+        "duplicate": "「{{word}}」は既に存在します",
+        "statsAll": "All ({{count}})",
+        "statsUsed": "Used ({{count}})",
+        "statsUnused": "Unused ({{count}})",
+        "sortLabel": "Sort",
+        "sortAz": "A–Z Grouped",
+        "sortFreqDesc": "Frequency: High → Low",
+        "sortFreqAsc": "Frequency: Low → High",
+        "sortDefault": "Added Order",
+        "searchPlaceholder": "Search existing hotwords...",
+        "clearSearch": "Clear",
+        "usageCount": "{{count}}×",
+        "exactMatchHint": "Already exists: \"{{word}}\" (used {{count}}×)",
+        "similarMatchHint": "Similar existing hotwords:",
+        "noFilterMatch": "No hotwords match the current filter",
+        "emptyHint": "No hotwords added yet. Add terms, names, or abbreviations above."
       },
       "voiceActivityDetection": {
         "title": "音声区間検出 (VAD)",

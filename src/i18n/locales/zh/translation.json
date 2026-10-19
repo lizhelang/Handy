@@ -482,7 +482,22 @@
         "placeholder": "输入热词",
         "add": "添加",
         "remove": "删除 {{word}}",
-        "duplicate": "\"{{word}}\" 已存在"
+        "duplicate": "\"{{word}}\" 已存在",
+        "statsAll": "全部 ({{count}})",
+        "statsUsed": "已使用 ({{count}})",
+        "statsUnused": "未使用 ({{count}})",
+        "sortLabel": "排序",
+        "sortAz": "A–Z 字母分组",
+        "sortFreqDesc": "频率：高 → 低",
+        "sortFreqAsc": "频率：低 → 高（查未用）",
+        "sortDefault": "添加顺序",
+        "searchPlaceholder": "搜索或筛选已有热词...",
+        "clearSearch": "清空",
+        "usageCount": "{{count}}次",
+        "exactMatchHint": "已设过该热词：「{{word}}」（使用 {{count}} 次）",
+        "similarMatchHint": "已设过相近热词：",
+        "noFilterMatch": "没有匹配当前筛选条件的热词",
+        "emptyHint": "暂未设置热词。在上方输入常用专有名词、人名或缩写即可添加。"
       },
       "voiceActivityDetection": {
         "title": "语音活动检测",

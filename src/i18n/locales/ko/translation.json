@@ -482,7 +482,22 @@
         "placeholder": "단어 추가",
         "add": "추가",
         "remove": "{{word}} 제거",
-        "duplicate": "\"{{word}}\"이(가) 이미 존재합니다"
+        "duplicate": "\"{{word}}\"이(가) 이미 존재합니다",
+        "statsAll": "All ({{count}})",
+        "statsUsed": "Used ({{count}})",
+        "statsUnused": "Unused ({{count}})",
+        "sortLabel": "Sort",
+        "sortAz": "A–Z Grouped",
+        "sortFreqDesc": "Frequency: High → Low",
+        "sortFreqAsc": "Frequency: Low → High",
+        "sortDefault": "Added Order",
+        "searchPlaceholder": "Search existing hotwords...",
+        "clearSearch": "Clear",
+        "usageCount": "{{count}}×",
+        "exactMatchHint": "Already exists: \"{{word}}\" (used {{count}}×)",
+        "similarMatchHint": "Similar existing hotwords:",
+        "noFilterMatch": "No hotwords match the current filter",
+        "emptyHint": "No hotwords added yet. Add terms, names, or abbreviations above."
       },
       "voiceActivityDetection": {
         "title": "음성 활동 감지",
