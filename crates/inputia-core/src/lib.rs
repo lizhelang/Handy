@@ -921,7 +921,21 @@ impl<E: ChineseEngine> InputiaCore<E> {
                 self.refresh_candidates();
             }
             (InputMode::Chinese, Key::Char(ch)) if is_punctuation(ch) => {
-                commit = Some(self.translate_punctuation(ch));
+                let punctuation = self.translate_punctuation(ch);
+                if self.composing.is_empty() {
+                    commit = Some(punctuation);
+                } else {
+                    let mut committed = self.commit_raw_composition();
+                    committed.push_str(&punctuation);
+                    commit = Some(committed);
+                }
+            }
+            (InputMode::Chinese, Key::Char(ch))
+                if !self.composing.is_empty() && !ch.is_control() && !ch.is_ascii_digit() =>
+            {
+                let mut committed = self.commit_raw_composition();
+                committed.push(self.translate_character_width(ch));
+                commit = Some(committed);
             }
             (InputMode::Chinese, Key::Backspace) => {
                 if self.composing.pop().is_none() {
@@ -2012,6 +2026,26 @@ mod tests {
         core.handle_key(Key::Shift);
         let outcome = core.handle_key(Key::Char(','));
         assert_eq!(outcome.commit.as_deref(), Some("，"));
+    }
+
+    #[test]
+    fn punctuation_during_chinese_composition_commits_raw_english_then_punctuation() {
+        let mut core = core();
+        core.handle_key(Key::Shift);
+        feed(&mut core, "bcdm");
+
+        let dot_outcome = core.handle_key(Key::Char('.'));
+        assert!(dot_outcome.consumed);
+        assert_eq!(dot_outcome.commit.as_deref(), Some("bcdm."));
+        assert_eq!(dot_outcome.snapshot.composing, "");
+        assert!(dot_outcome.snapshot.visible_candidates.is_empty());
+
+        feed(&mut core, "ni");
+        let slash_outcome = core.handle_key(Key::Char('/'));
+        assert!(slash_outcome.consumed);
+        assert_eq!(slash_outcome.commit.as_deref(), Some("ni/"));
+        assert_eq!(slash_outcome.snapshot.composing, "");
+        assert!(slash_outcome.snapshot.visible_candidates.is_empty());
     }
 
     #[test]

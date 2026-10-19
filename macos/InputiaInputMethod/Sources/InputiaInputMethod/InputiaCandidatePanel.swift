@@ -830,15 +830,15 @@ private final class InputiaModeIndicatorView: NSView {
     super.draw(dirtyRect)
     let bounds = self.bounds
     let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
-    let path = NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9)
+    let path = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
     NSColor(calibratedWhite: 0.12, alpha: 0.94).setFill()
     path.fill()
     NSColor(calibratedWhite: 1.0, alpha: 0.14).setStroke()
     path.lineWidth = 1
     path.stroke()
 
-    let font = NSFont(name: "PingFangSC-Semibold", size: 19)
-      ?? NSFont.systemFont(ofSize: 19, weight: .semibold)
+    let font = NSFont(name: "PingFangSC-Semibold", size: 13.5)
+      ?? NSFont.systemFont(ofSize: 13.5, weight: .semibold)
     let attributes: [NSAttributedString.Key: Any] = [
       .font: font,
       .foregroundColor: NSColor(calibratedWhite: 0.98, alpha: 1.0),
@@ -854,10 +854,10 @@ private final class InputiaModeIndicatorView: NSView {
 }
 
 final class InputiaModeIndicatorPanel: NSPanel {
-  private static let indicatorSize = NSSize(width: 38, height: 38)
+  private static let indicatorSize = NSSize(width: 26, height: 26)
   private static let displayDuration: TimeInterval = 0.65
   private let indicatorView = InputiaModeIndicatorView(
-    frame: NSRect(origin: .zero, size: NSSize(width: 38, height: 38))
+    frame: NSRect(origin: .zero, size: NSSize(width: 26, height: 26))
   )
   private var hideWorkItem: DispatchWorkItem?
 

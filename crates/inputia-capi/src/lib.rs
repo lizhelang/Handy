@@ -2737,7 +2737,8 @@ mod tests {
         assert_eq!(latest["visible_candidates"].as_array().unwrap().len(), 2);
 
         let comma = handle_json(unsafe { inputia_session_handle_char(session, ',' as u32) });
-        assert_eq!(comma["commit"], "，");
+        assert_eq!(comma["commit"], "zhongguo，");
+        assert_eq!(comma["composing"], "");
 
         unsafe { inputia_session_free(session) };
     }
