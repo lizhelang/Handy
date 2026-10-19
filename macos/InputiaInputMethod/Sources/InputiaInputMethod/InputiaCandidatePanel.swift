@@ -103,6 +103,7 @@ final class InputiaCandidatePanel: NSPanel {
   private let collapsedMaxPanelHeight: CGFloat = 58
   private let expandedMaxPanelHeight: CGFloat = 220
   private let settingsCache = InputiaSettingsCache.shared(path: InputiaProfile.current.settings.path)
+  private let modeIndicatorPanel = InputiaModeIndicatorPanel()
   private var displaySettings = InputiaCandidateDisplaySettings(fontSize: 14)
   private var displaySettingsIdentity: String?
   private var displaySettingsSnapshot: InputiaSettingsStore.Snapshot?
@@ -241,6 +242,24 @@ final class InputiaCandidatePanel: NSPanel {
   func hide() {
     restorationToken = nil
     if isVisible { orderOut(nil) }
+  }
+
+  override func orderFrontRegardless() {
+    modeIndicatorPanel.hide()
+    super.orderFrontRegardless()
+  }
+
+  override func orderOut(_ sender: Any?) {
+    modeIndicatorPanel.hide()
+    super.orderOut(sender)
+  }
+
+  func showModeIndicator(mode: String, near anchorRect: NSRect) {
+    modeIndicatorPanel.show(mode: mode, near: anchorRect)
+  }
+
+  func hideModeIndicator() {
+    modeIndicatorPanel.hide()
   }
 
   private func reloadDisplaySettingsIfNeeded() {
@@ -793,5 +812,123 @@ private final class InputiaCandidateItemView: NSView {
 private extension Comparable {
   func clamped(to limits: ClosedRange<Self>) -> Self {
     min(max(self, limits.lowerBound), limits.upperBound)
+  }
+}
+
+private final class InputiaModeIndicatorView: NSView {
+  var label: String = "中" {
+    didSet {
+      if oldValue != label {
+        needsDisplay = true
+      }
+    }
+  }
+
+  override var isOpaque: Bool { false }
+
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    let bounds = self.bounds
+    let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
+    let path = NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9)
+    NSColor(calibratedWhite: 0.12, alpha: 0.94).setFill()
+    path.fill()
+    NSColor(calibratedWhite: 1.0, alpha: 0.14).setStroke()
+    path.lineWidth = 1
+    path.stroke()
+
+    let font = NSFont(name: "PingFangSC-Semibold", size: 19)
+      ?? NSFont.systemFont(ofSize: 19, weight: .semibold)
+    let attributes: [NSAttributedString.Key: Any] = [
+      .font: font,
+      .foregroundColor: NSColor(calibratedWhite: 0.98, alpha: 1.0),
+    ]
+    let attributed = NSAttributedString(string: label, attributes: attributes)
+    let textSize = attributed.size()
+    let textOrigin = NSPoint(
+      x: round((bounds.width - textSize.width) / 2),
+      y: round((bounds.height - textSize.height) / 2)
+    )
+    attributed.draw(at: textOrigin)
+  }
+}
+
+final class InputiaModeIndicatorPanel: NSPanel {
+  private static let indicatorSize = NSSize(width: 38, height: 38)
+  private static let displayDuration: TimeInterval = 0.65
+  private let indicatorView = InputiaModeIndicatorView(
+    frame: NSRect(origin: .zero, size: NSSize(width: 38, height: 38))
+  )
+  private var hideWorkItem: DispatchWorkItem?
+
+  init() {
+    super.init(
+      contentRect: NSRect(origin: .zero, size: Self.indicatorSize),
+      styleMask: [.nonactivatingPanel],
+      backing: .buffered,
+      defer: true
+    )
+
+    isReleasedWhenClosed = false
+    level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
+    collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
+    hasShadow = true
+    isOpaque = false
+    backgroundColor = .clear
+    hidesOnDeactivate = false
+    ignoresMouseEvents = true
+    contentView = indicatorView
+  }
+
+  override var canBecomeKey: Bool { false }
+  override var canBecomeMain: Bool { false }
+
+  static func badgeText(forMode mode: String) -> String {
+    mode == "English" ? "英" : "中"
+  }
+
+  func show(mode: String, near anchorRect: NSRect) {
+    hideWorkItem?.cancel()
+    hideWorkItem = nil
+
+    indicatorView.label = Self.badgeText(forMode: mode)
+    let anchor = InputiaCandidatePanelPlacement.normalizedAnchor(
+      anchorRect,
+      fallbackPoint: NSEvent.mouseLocation
+    )
+    let visibleFrame = InputiaCandidatePanelPlacement.visibleFrame(
+      for: anchor,
+      screens: NSScreen.screens.map { (frame: $0.frame, visibleFrame: $0.visibleFrame) },
+      fallback: NSScreen.main?.visibleFrame
+    )
+    let frame = InputiaCandidatePanelPlacement.frame(
+      near: anchor,
+      size: Self.indicatorSize,
+      visibleFrame: visibleFrame
+    )
+    if self.frame != frame {
+      setFrame(frame, display: false)
+    }
+    indicatorView.frame = NSRect(origin: .zero, size: Self.indicatorSize)
+    indicatorView.needsDisplay = true
+    indicatorView.displayIfNeeded()
+    alphaValue = 1.0
+    if !isVisible {
+      orderFrontRegardless()
+    }
+
+    let workItem = DispatchWorkItem { [weak self] in
+      self?.hide()
+    }
+    hideWorkItem = workItem
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.displayDuration, execute: workItem)
+  }
+
+  func hide() {
+    hideWorkItem?.cancel()
+    hideWorkItem = nil
+    if isVisible {
+      orderOut(nil)
+    }
   }
 }

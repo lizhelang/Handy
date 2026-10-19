@@ -100,11 +100,19 @@
 }
 
 .clipboard-overlay-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   color: var(--ropy-foreground);
   font-size: 18px;
   font-weight: 700;
   letter-spacing: -0.03em;
   line-height: 1;
+}
+
+.clipboard-overlay-brand [data-inputia-mark] {
+  flex: 0 0 auto;
+  display: block;
 }
 
 .clipboard-overlay-window-actions {

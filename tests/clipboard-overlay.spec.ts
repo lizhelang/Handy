@@ -625,7 +625,7 @@ for (const status of ["dispatched", "uncertain", "future_status"]) {
         name: "I checked the clipboard; allow another copy",
       })
       .click();
-    await page.getByRole("button", { name: "Copy", exact: true }).click();
+    await item.click();
     expect(
       (await invokeCommands(page)).filter(
         (cmd) => cmd === "copy_unified_history_item",

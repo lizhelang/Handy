@@ -836,6 +836,7 @@ final class InputiaInputController: IMKInputController {
     voiceActivationGeneration &+= 1
     #endif
     resetShiftInputModeSession(reason: "deactivate")
+    ownedCandidatePanel?.hideModeIndicator()
     commitComposition(sender)
     if InputiaHost.activeInputController === self {
       InputiaHost.candidatePanel?.settingsDidApply = nil
@@ -889,7 +890,11 @@ final class InputiaInputController: IMKInputController {
     clearEnglishCompletion()
     shiftDiagnostic.notice("phase=toggle source=\(source, privacy: .public)")
     inputiaDebugLog("shiftToggle source=\(source)")
-    let handled = apply(bridge.toggleInputMode(), client: client)
+    let outcome = bridge.toggleInputMode()
+    let handled = apply(outcome, client: client)
+    #if !PREDICTION_KEYS
+    showInputModeIndicator(mode: outcome.mode, client: client)
+    #endif
     #if INPUTIA_PAIRED_BUILD
     if bridge.latestOutcome.mode == "English" { prepareWordSpan(client: client) }
     #endif
@@ -919,6 +924,7 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func handleKeyDown(_ event: NSEvent, client: IMKTextInput) -> Bool {
+    ownedCandidatePanel?.hideModeIndicator()
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     let deferredShiftToggle = InputiaShortcutClassifier.shouldConsumeDeferredShiftToggle(
       armed: shiftInputModeGesture.isArmedForDebug,
@@ -963,7 +969,9 @@ final class InputiaInputController: IMKInputController {
     if isInputModeToggleShortcut(event, modifiers: modifiers) {
       cancelShiftInputModeGesture(reason: "controlSpaceToggle")
       clearEnglishCompletion()
-      let handled = apply(bridge.toggleInputMode(), client: client)
+      let outcome = bridge.toggleInputMode()
+      let handled = apply(outcome, client: client)
+      showInputModeIndicator(mode: outcome.mode, client: client)
       #if INPUTIA_PAIRED_BUILD
       if bridge.latestOutcome.mode == "English" { prepareWordSpan(client: client) }
       #endif
@@ -3768,6 +3776,31 @@ final class InputiaInputController: IMKInputController {
       primaryCandidateCount: displayedCandidates.count,
       activeRowIndex: expandedActiveRowIndex
     )
+  }
+
+  private func cursorAnchorRect(for client: IMKTextInput) -> NSRect {
+    var rect = NSRect.zero
+    let selection = client.selectedRange()
+    if selection.location != NSNotFound, selection.location > 0 {
+      client.attributes(forCharacterIndex: selection.location, lineHeightRectangle: &rect)
+    }
+    if rect.width <= 0 && rect.height <= 0 {
+      client.attributes(forCharacterIndex: 0, lineHeightRectangle: &rect)
+    }
+    if rect.width <= 0 && rect.height <= 0 {
+      if chineseCandidateRect.width > 0 || chineseCandidateRect.height > 0 {
+        return chineseCandidateRect
+      }
+      if englishCompletionRect.width > 0 || englishCompletionRect.height > 0 {
+        return englishCompletionRect
+      }
+    }
+    return rect
+  }
+
+  private func showInputModeIndicator(mode: String, client: IMKTextInput) {
+    let anchor = cursorAnchorRect(for: client)
+    ownedCandidatePanel?.showModeIndicator(mode: mode, near: anchor)
   }
 
   private func updateAppContext(client: IMKTextInput, forceRefresh: Bool = false) {

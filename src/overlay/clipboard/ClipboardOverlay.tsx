@@ -673,9 +673,9 @@ const ClipboardOverlay: React.FC = () => {
           data-tauri-drag-region
           onMouseDown={handleStartDrag}
         >
-          <div className="clipboard-overlay-brand flex items-center gap-2">
-            <InputiaMark />
-            {t("settings.clipboard.title")}
+          <div className="clipboard-overlay-brand">
+            <InputiaMark size={20} />
+            <span>{t("settings.clipboard.title")}</span>
           </div>
           <div
             className="clipboard-overlay-window-actions"
@@ -819,55 +819,51 @@ const ClipboardOverlay: React.FC = () => {
             </div>
           </div>
         )}
-        {activePanel === "list" && selectedItem && (
-          <div className="clipboard-overlay-controls">
-            {(["copy", "insert"] as const).map((action) => {
-              const attempt = Object.values(output.attempts).find(
+        {activePanel === "list" &&
+          selectedItem &&
+          (["copy", "insert"] as const).some((action) =>
+            outputNeedsAcknowledgement(
+              Object.values(output.attempts).find(
                 (value) =>
                   value.itemId === selectedItem.id && value.action === action,
-              );
-              return (
-                <React.Fragment key={action}>
-                  <button
-                    disabled={
-                      Object.values(output.attempts).some(
-                        (value) => value.status === "inflight",
-                      ) ||
-                      outputNeedsAcknowledgement(attempt) ||
-                      output.storageFailed
-                    }
-                    onClick={() => void performOutput(selectedItem, action)}
-                  >
-                    {t(`unifiedHistory.${action}`)}
-                  </button>
-                  {outputNeedsAcknowledgement(attempt) && (
-                    <>
-                      <button
-                        onClick={() =>
-                          void performOutput(selectedItem, action, false, true)
-                        }
-                      >
-                        {t("unifiedHistory.checkOutputReceipt")}
-                      </button>
-                      <button
-                        onClick={() => {
-                          output.acknowledge(selectedItem.id, action);
-                          setFeedback(null);
-                        }}
-                      >
-                        {t(
-                          action === "copy"
-                            ? "unifiedHistory.allowAnotherCopy"
-                            : "unifiedHistory.allowAnotherInsert",
-                        )}
-                      </button>
-                    </>
-                  )}
-                </React.Fragment>
-              );
-            })}
-          </div>
-        )}
+              ),
+            ),
+          ) && (
+            <div className="clipboard-overlay-controls">
+              {(["copy", "insert"] as const).map((action) => {
+                const attempt = Object.values(output.attempts).find(
+                  (value) =>
+                    value.itemId === selectedItem.id && value.action === action,
+                );
+                if (!outputNeedsAcknowledgement(attempt)) {
+                  return null;
+                }
+                return (
+                  <React.Fragment key={action}>
+                    <button
+                      onClick={() =>
+                        void performOutput(selectedItem, action, false, true)
+                      }
+                    >
+                      {t("unifiedHistory.checkOutputReceipt")}
+                    </button>
+                    <button
+                      onClick={() => {
+                        output.acknowledge(selectedItem.id, action);
+                        setFeedback(null);
+                      }}
+                    >
+                      {t(
+                        action === "copy"
+                          ? "unifiedHistory.allowAnotherCopy"
+                          : "unifiedHistory.allowAnotherInsert",
+                      )}
+                    </button>
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          )}
         {activePanel === "list" ? (
           <>
             <div className="clipboard-overlay-controls">
