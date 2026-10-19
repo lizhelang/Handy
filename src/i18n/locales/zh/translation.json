@@ -487,7 +487,7 @@
         "statsUsed": "已使用 ({{count}})",
         "statsUnused": "未使用 ({{count}})",
         "sortLabel": "排序",
-        "sortAz": "A–Z 字母分组",
+        "sortAz": "按 A–Z",
         "sortFreqDesc": "频率：高 → 低",
         "sortFreqAsc": "频率：低 → 高（查未用）",
         "sortDefault": "添加顺序",

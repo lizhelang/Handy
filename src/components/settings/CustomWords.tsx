@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowDown, ArrowUp, Search, X } from "lucide-react";
+import { ArrowDown, ArrowUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { commands } from "@/bindings";
@@ -102,14 +102,17 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
     const { t } = useTranslation();
     const { getSetting, updateSetting, isUpdating } = useSettings();
     const [newWord, setNewWord] = useState("");
-    const [searchQuery, setSearchQuery] = useState("");
     const [sortMode, setSortMode] = useState<SortMode>("freq_desc");
     const [filterMode, setFilterMode] = useState<FilterMode>("all");
     const [activeLetter, setActiveLetter] = useState<string | null>(null);
+    const [isScrubbing, setIsScrubbing] = useState(false);
     const [historyTexts, setHistoryTexts] = useState<string[]>([]);
     const [learnedScores, setLearnedScores] = useState<Record<string, number>>(
       {},
     );
+
+    const listContainerRef = useRef<HTMLDivElement | null>(null);
+    const railRef = useRef<HTMLDivElement | null>(null);
 
     const customWords = getSetting("custom_words") || [];
     const normalizedWord = normalizeCustomWord(newWord);
@@ -220,24 +223,17 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
     );
     const unusedCount = customWords.length - usedCount;
 
-    const filteredAndSortedWords = useMemo(() => {
-      const query = searchQuery.trim().toLowerCase();
-      const filtered = customWords.filter((word) => {
+    const filteredWords = useMemo(() => {
+      return customWords.filter((word) => {
         const count = usageMap[word] || 0;
         if (filterMode === "used" && count === 0) return false;
         if (filterMode === "unused" && count > 0) return false;
-        if (activeLetter && getInitialLetter(word) !== activeLetter) {
-          return false;
-        }
-        if (query) {
-          const lower = word.toLowerCase();
-          const initial = getInitialLetter(word).toLowerCase();
-          return lower.includes(query) || initial === query;
-        }
         return true;
       });
+    }, [customWords, filterMode, usageMap]);
 
-      const indexed = filtered.map((word, index) => ({
+    const filteredAndSortedWords = useMemo(() => {
+      const indexed = filteredWords.map((word, index) => ({
         word,
         index,
         count: usageMap[word] || 0,
@@ -265,18 +261,11 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
       });
 
       return indexed.map((item) => item.word);
-    }, [
-      activeLetter,
-      customWords,
-      filterMode,
-      searchQuery,
-      sortMode,
-      usageMap,
-    ]);
+    }, [filteredWords, sortMode, usageMap]);
 
     const availableLetters = useMemo(() => {
       const set = new Set<string>();
-      for (const word of customWords) {
+      for (const word of filteredWords) {
         set.add(getInitialLetter(word));
       }
       return Array.from(set).sort((a, b) => {
@@ -284,21 +273,66 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
         if (b === "#") return -1;
         return a.localeCompare(b);
       });
-    }, [customWords]);
+    }, [filteredWords]);
 
-    const groupedByLetter = useMemo(() => {
-      const groups: { letter: string; words: string[] }[] = [];
+    const firstWordByLetter = useMemo(() => {
+      const map: Record<string, string> = {};
       for (const word of filteredAndSortedWords) {
         const letter = getInitialLetter(word);
-        const last = groups[groups.length - 1];
-        if (!last || last.letter !== letter) {
-          groups.push({ letter, words: [word] });
-        } else {
-          last.words.push(word);
+        if (!map[letter]) {
+          map[letter] = word;
         }
       }
-      return groups;
+      return map;
     }, [filteredAndSortedWords]);
+
+    const [scrollSeq, setScrollSeq] = useState(0);
+
+    const scrollToLetter = (letter: string) => {
+      if (sortMode !== "az") {
+        setSortMode("az");
+      }
+      setActiveLetter(letter);
+      setScrollSeq((n) => n + 1);
+    };
+
+    useEffect(() => {
+      if (!activeLetter || scrollSeq === 0) return;
+      const container = listContainerRef.current;
+      if (!container) return;
+      const target = container.querySelector<HTMLElement>(
+        `[data-letter-anchor="${activeLetter}"]`,
+      );
+      if (target) {
+        const containerRect = container.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const offset =
+          targetRect.top -
+          containerRect.top +
+          container.scrollTop -
+          containerRect.height * 0.2;
+        container.scrollTo({
+          top: Math.max(0, offset),
+          behavior: isScrubbing ? "auto" : "smooth",
+        });
+      }
+    }, [activeLetter, isScrubbing, scrollSeq, sortMode]);
+
+    const handleRailPointer = (clientY: number) => {
+      const rail = railRef.current;
+      if (!rail || availableLetters.length === 0) return;
+      const rect = rail.getBoundingClientRect();
+      if (rect.height <= 0) return;
+      const ratio = Math.max(
+        0,
+        Math.min(0.999, (clientY - rect.top) / rect.height),
+      );
+      const index = Math.floor(ratio * availableLetters.length);
+      const letter = availableLetters[index];
+      if (letter) {
+        scrollToLetter(letter);
+      }
+    };
 
     const handleAddWord = () => {
       if (
@@ -332,57 +366,6 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
         e.preventDefault();
         handleAddWord();
       }
-    };
-
-    const renderWordPill = (word: string) => {
-      const count = usageMap[word] || 0;
-      const isExactInputMatch =
-        exactExistingWord !== null && exactExistingWord === word;
-      const isSimilarInputMatch = similarExistingWords.includes(word);
-
-      return (
-        <Button
-          key={word}
-          onClick={() => handleRemoveWord(word)}
-          disabled={isUpdating("custom_words")}
-          variant="secondary"
-          size="sm"
-          className={`inline-flex max-w-full items-center gap-1.5 cursor-pointer transition-colors ${
-            isExactInputMatch
-              ? "ring-2 ring-amber-500/70 bg-amber-500/10"
-              : isSimilarInputMatch
-                ? "ring-1 ring-logo-primary/60 bg-logo-primary/5"
-                : ""
-          }`}
-          aria-label={t("settings.advanced.customWords.remove", { word })}
-        >
-          <span className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">
-            {word}
-          </span>
-          <span
-            className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] leading-none ${
-              count > 0
-                ? "bg-logo-primary/15 text-logo-primary font-semibold"
-                : "bg-mid-gray/15 text-text/45"
-            }`}
-          >
-            {t("settings.advanced.customWords.usageCount", { count })}
-          </span>
-          <svg
-            className="w-3 h-3 shrink-0 opacity-60 hover:opacity-100"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
-        </Button>
-      );
     };
 
     return (
@@ -505,11 +488,12 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
               <div className="flex flex-wrap items-center gap-1">
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
+                    setActiveLetter(null);
                     setSortMode((prev) =>
                       prev === "freq_desc" ? "freq_asc" : "freq_desc",
-                    )
-                  }
+                    );
+                  }}
                   className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs transition-colors ${
                     sortMode === "freq_desc" || sortMode === "freq_asc"
                       ? "bg-text/15 font-semibold text-text"
@@ -536,7 +520,10 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSortMode("default")}
+                  onClick={() => {
+                    setActiveLetter(null);
+                    setSortMode("default");
+                  }}
                   className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
                     sortMode === "default"
                       ? "bg-text/15 font-semibold text-text"
@@ -548,82 +535,117 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
               </div>
             </div>
 
-            {/* 搜索过滤框 + A-Z 首字母快速导航 */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative w-48 shrink-0">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text/45" />
-                <input
-                  type="search"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={t(
-                    "settings.advanced.customWords.searchPlaceholder",
-                  )}
-                  aria-label={t(
-                    "settings.advanced.customWords.searchPlaceholder",
-                  )}
-                  className="w-full rounded-md border border-mid-gray/25 bg-transparent py-1.5 pl-8 pr-7 text-xs focus:outline-none focus:ring-1 focus:ring-logo-primary"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery("")}
-                    aria-label={t("settings.advanced.customWords.clearSearch")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-text/45 hover:text-text"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-
-              {availableLetters.length > 1 && (
-                <div className="flex flex-wrap items-center gap-1">
-                  {availableLetters.map((letter) => (
-                    <button
-                      key={letter}
-                      type="button"
-                      onClick={() =>
-                        setActiveLetter((prev) =>
-                          prev === letter ? null : letter,
-                        )
-                      }
-                      className={`h-6 min-w-6 rounded px-1.5 text-xs font-semibold transition-colors ${
-                        activeLetter === letter
-                          ? "bg-logo-primary text-white"
-                          : "bg-mid-gray/10 text-text/70 hover:bg-mid-gray/20"
-                      }`}
-                    >
-                      {letter}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* 热词列表主体 */}
+            {/* 热词紧凑堆叠区 + 右侧竖排 A–Z 滑动定位条 */}
             {filteredAndSortedWords.length === 0 ? (
               <div className="py-6 text-center text-xs text-text/50">
                 {t("settings.advanced.customWords.noFilterMatch")}
               </div>
-            ) : sortMode === "az" ? (
-              <div className="space-y-2.5">
-                {groupedByLetter.map((group) => (
-                  <div
-                    key={group.letter}
-                    className="flex items-start gap-2.5 border-b border-mid-gray/10 pb-2.5 last:border-b-0 last:pb-0"
-                  >
-                    <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded bg-logo-primary/10 text-xs font-bold text-logo-primary">
-                      {group.letter}
-                    </span>
-                    <div className="flex flex-1 flex-wrap gap-1.5">
-                      {group.words.map((word) => renderWordPill(word))}
-                    </div>
-                  </div>
-                ))}
-              </div>
             ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {filteredAndSortedWords.map((word) => renderWordPill(word))}
+              <div className="relative flex items-stretch gap-2">
+                <div
+                  ref={listContainerRef}
+                  className="max-h-[340px] flex-1 overflow-y-auto pr-1 flex flex-wrap content-start gap-1.5"
+                >
+                  {filteredAndSortedWords.map((word) => {
+                    const count = usageMap[word] || 0;
+                    const letter = getInitialLetter(word);
+                    const isFirstOfLetter = firstWordByLetter[letter] === word;
+                    const isExactInputMatch =
+                      exactExistingWord !== null && exactExistingWord === word;
+                    const isSimilarInputMatch =
+                      similarExistingWords.includes(word);
+                    const isLetterHighlighted =
+                      sortMode === "az" && activeLetter === letter;
+
+                    return (
+                      <Button
+                        key={word}
+                        data-letter-anchor={
+                          isFirstOfLetter ? letter : undefined
+                        }
+                        onClick={() => handleRemoveWord(word)}
+                        disabled={isUpdating("custom_words")}
+                        variant="secondary"
+                        size="sm"
+                        className={`inline-flex max-w-full items-center gap-1.5 cursor-pointer transition-colors ${
+                          isExactInputMatch
+                            ? "ring-2 ring-amber-500/70 bg-amber-500/10"
+                            : isLetterHighlighted
+                              ? "ring-1 ring-logo-primary bg-logo-primary/15"
+                              : isSimilarInputMatch
+                                ? "ring-1 ring-logo-primary/60 bg-logo-primary/5"
+                                : ""
+                        }`}
+                        aria-label={t("settings.advanced.customWords.remove", {
+                          word,
+                        })}
+                      >
+                        <span className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">
+                          {word}
+                        </span>
+                        <span
+                          className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] leading-none ${
+                            count > 0
+                              ? "bg-logo-primary/15 text-logo-primary font-semibold"
+                              : "bg-mid-gray/15 text-text/45"
+                          }`}
+                        >
+                          {t("settings.advanced.customWords.usageCount", {
+                            count,
+                          })}
+                        </span>
+                        <svg
+                          className="w-3 h-3 shrink-0 opacity-60 hover:opacity-100"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M6 18L18 6M6 6l12 12"
+                          />
+                        </svg>
+                      </Button>
+                    );
+                  })}
+                </div>
+
+                {availableLetters.length > 1 && (
+                  <div
+                    ref={railRef}
+                    onPointerDown={(e) => {
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                      setIsScrubbing(true);
+                      handleRailPointer(e.clientY);
+                    }}
+                    onPointerMove={(e) => {
+                      if (!isScrubbing) return;
+                      handleRailPointer(e.clientY);
+                    }}
+                    onPointerUp={() => setIsScrubbing(false)}
+                    onPointerCancel={() => setIsScrubbing(false)}
+                    className="select-none touch-none cursor-pointer flex flex-col items-center justify-between max-h-[340px] rounded-full bg-mid-gray/10 px-1 py-1.5 shrink-0"
+                  >
+                    {availableLetters.map((letter) => {
+                      const isActive =
+                        sortMode === "az" && activeLetter === letter;
+                      return (
+                        <span
+                          key={letter}
+                          className={`h-3 w-3.5 rounded-full text-[9.5px] leading-none font-semibold flex items-center justify-center transition-colors ${
+                            isActive
+                              ? "bg-logo-primary text-white scale-110"
+                              : "text-text/60 hover:text-text"
+                          }`}
+                        >
+                          {letter}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>
