@@ -385,8 +385,8 @@
         "description": "Automatically start Inputia when you log in to your computer."
       },
       "showTrayIcon": {
-        "label": "Show Tray Icon",
-        "description": "Display the legacy host icon in the system tray."
+        "label": "Show Menu Bar Icon",
+        "description": "Display a standalone Inputia icon in the menu bar (system tray) for quick access to clipboard history and settings even when using other input methods."
       },
       "overlay": {
         "style": {

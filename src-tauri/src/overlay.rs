@@ -585,6 +585,12 @@ fn show_clipboard_overlay_on_main_thread(app_handle: &AppHandle) {
                 debug!("Unable to hide control center before clipboard recall: {error}");
                 return;
             }
+            if let Err(error) = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory)
+            {
+                debug!(
+                    "Failed to restore accessory activation policy before clipboard recall: {error}"
+                );
+            }
         }
         if let Some(mtm) = objc2::MainThreadMarker::new() {
             clipboard_mouse_monitor::install(mtm, app_handle);

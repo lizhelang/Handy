@@ -294,10 +294,8 @@ fn activate_core_logic(app_handle: &AppHandle) -> anyhow::Result<()> {
 
     // macOS 已以 Accessory 启动，显示控制中心时才提升为 Regular。
 
-    // 仅保留旧菜单动作实现供兼容与统一菜单复用；Inputia产品不创建此独立图标。
-    let saved_tray_preference = settings::get_settings(app_handle).show_tray_icon;
-    if tray::independent_tray_enabled(saved_tray_preference, app_handle.state::<CliArgs>().no_tray)
-    {
+    // 当未指定 `--no-tray` 时创建托盘实例，再根据用户 `show_tray_icon` 设置决定显隐，支持运行时在设置中即时开关。
+    if !app_handle.state::<CliArgs>().no_tray {
         // Get the current theme to set the appropriate initial icon
         let initial_theme = tray::get_current_theme(app_handle);
 
@@ -344,15 +342,18 @@ fn activate_core_logic(app_handle: &AppHandle) -> anyhow::Result<()> {
         let tray = tray_builder
             .on_menu_event(|app, event| match event.id.as_ref() {
                 "settings" => {
+                    overlay::hide_clipboard_overlay(app);
                     show_main_window(app);
                 }
                 "secure_input_warning" => {
                     // Full explanation lives in the settings-window banner
+                    overlay::hide_clipboard_overlay(app);
                     show_main_window(app);
                 }
                 "check_updates" => {
                     let settings = settings::get_settings(app);
                     if settings::update_checks_effectively_enabled(&settings) {
+                        overlay::hide_clipboard_overlay(app);
                         show_main_window(app);
                         let _ = app.emit("check-for-updates", ());
                     }
@@ -413,7 +414,10 @@ fn activate_core_logic(app_handle: &AppHandle) -> anyhow::Result<()> {
 
     // Apply show_tray_icon setting
     let settings = settings::get_settings(app_handle);
-    if !settings.show_tray_icon {
+    if !tray::independent_tray_enabled(
+        settings.show_tray_icon,
+        app_handle.state::<CliArgs>().no_tray,
+    ) {
         tray::set_tray_visibility(app_handle, false);
     }
 

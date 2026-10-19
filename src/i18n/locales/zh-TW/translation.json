@@ -385,8 +385,8 @@
         "description": "登入電腦時自動啟動 Inputia"
       },
       "showTrayIcon": {
-        "label": "顯示系統匣圖示",
-        "description": "在系統匣中顯示 Inputia 圖示"
+        "label": "顯示選單列圖示",
+        "description": "在選單列（系統匣）中顯示獨立的 Inputia 圖示，切換到其他輸入法時也可直接開啟剪貼簿歷史與設定"
       },
       "overlay": {
         "style": {

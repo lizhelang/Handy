@@ -13,8 +13,8 @@
 //! recording cycle rebuilt the full menu 3-6 times from several threads, and
 //! concurrent rebuilds could interleave and leave a stale menu behind.
 //!
-//! Inputia产品不创建独立托盘，旧状态容器仍给统一系统菜单提供忙闲事实。
-//! [`set_tray_visibility`]只允许隐藏遗留对象，不支持恢复独立图标。
+//! 用户可在设置中按需开启或关闭独立菜单栏（系统托盘）图标，便于在切换到其他输入法时直接打开剪贴板历史或设置。
+//! 旧状态容器同时继续为统一系统输入法菜单提供忙闲事实。
 
 use crate::managers::history::{HistoryEntry, HistoryManager};
 use crate::managers::model::ModelManager;
@@ -41,9 +41,9 @@ pub enum TrayIconState {
     Transcribing,
 }
 
-/// Inputia只保留系统输入法菜单；旧配置和重启都不能恢复独立托盘。
-pub fn independent_tray_enabled(_saved_preference: bool, _cli_no_tray: bool) -> bool {
-    false
+/// 根据用户设置与 `--no-tray` 启动参数决定是否显示独立菜单栏（系统托盘）图标。
+pub fn independent_tray_enabled(saved_preference: bool, cli_no_tray: bool) -> bool {
+    saved_preference && !cli_no_tray
 }
 
 /// 统一菜单读取原录音状态，不再依赖是否创建独立图标。
@@ -587,7 +587,7 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
         app,
         "clipboard_history",
         &strings.clipboard_history,
-        inputs.clipboard_enabled,
+        true,
         None::<&str>,
     )?;
     let quit_i = MenuItem::with_id(app, "quit", &strings.quit, true, quit_accelerator)?;
@@ -602,8 +602,8 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
                 &separator()?,
                 &cancel_i,
                 &separator()?,
-                &copy_last_transcript_i,
                 &clipboard_history_i,
+                &copy_last_transcript_i,
                 &separator()?,
                 &settings_i,
                 &check_updates_i,
@@ -641,8 +641,8 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
             &[
                 &version_i,
                 &separator()?,
-                &copy_last_transcript_i,
                 &clipboard_history_i,
+                &copy_last_transcript_i,
                 &separator()?,
                 &model_submenu,
                 &unload_model_i,
@@ -688,11 +688,18 @@ pub fn set_tray_visibility(app: &AppHandle, visible: bool) {
     let Some(tray) = app.try_state::<TrayIcon>() else {
         return;
     };
-    let visible = visible && independent_tray_enabled(true, false);
+    let cli_no_tray = app
+        .try_state::<crate::CliArgs>()
+        .map(|args| args.no_tray)
+        .unwrap_or(false);
+    let visible = independent_tray_enabled(visible, cli_no_tray);
     if let Err(e) = tray.set_visible(visible) {
         error!("Failed to set tray visibility: {}", e);
     } else {
         info!("Tray visibility set to: {}", visible);
+        if visible {
+            sync_tray(app);
+        }
     }
 }
 
@@ -730,12 +737,11 @@ pub fn copy_last_transcript(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn independent_tray_cannot_be_enabled_by_legacy_settings_or_cli() {
-        for saved in [false, true] {
-            for no_tray in [false, true] {
-                assert!(!super::independent_tray_enabled(saved, no_tray));
-            }
-        }
+    fn independent_tray_respects_user_preference_and_cli_no_tray() {
+        assert!(!super::independent_tray_enabled(false, false));
+        assert!(!super::independent_tray_enabled(false, true));
+        assert!(super::independent_tray_enabled(true, false));
+        assert!(!super::independent_tray_enabled(true, true));
     }
     #[cfg(target_os = "macos")]
     use super::macos_bundle_resource_from_executable;

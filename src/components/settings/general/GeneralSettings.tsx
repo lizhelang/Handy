@@ -11,6 +11,7 @@ import { AudioFeedback } from "../AudioFeedback";
 import { useSettings } from "../../../hooks/useSettings";
 import { VolumeSlider } from "../VolumeSlider";
 import { MuteWhileRecording } from "../MuteWhileRecording";
+import { ShowTrayIcon } from "../ShowTrayIcon";
 import { ModelSettingsCard } from "./ModelSettingsCard";
 import { InputiaPermissionHelp } from "./InputiaPermissionHelp";
 import { InputSettingsPanel } from "./InputSettingsPanel";
@@ -27,6 +28,7 @@ export const GeneralSettings: React.FC = () => {
         <ShortcutActivationSetting descriptionMode="tooltip" grouped={true} />
         {/* Cancel shortcut remains hidden on Linux because of dynamic shortcut instability. */}
         {!isLinux && <ShortcutInput shortcutId="cancel" grouped={true} />}
+        <ShowTrayIcon descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
       {type() === "macos" && <InputSettingsPanel />}
       <ModelSettingsCard />
