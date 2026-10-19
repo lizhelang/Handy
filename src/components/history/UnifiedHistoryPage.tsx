@@ -1,10 +1,13 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { commands } from "@/bindings";
 import { UnifiedHistory } from "./UnifiedHistory";
 import { UnresolvedOutputNotices } from "./UnresolvedOutputNotices";
 import { requireActiveOutputAttempt } from "@/stores/unifiedOutputStore";
-import type { UnifiedHistoryActionResult } from "@/lib/types/unifiedHistory";
+import type {
+  UnifiedHistoryActionResult,
+  UnifiedHistoryItem,
+} from "@/lib/types/unifiedHistory";
 
 function actionResult(status: string): UnifiedHistoryActionResult {
   switch (status) {
@@ -23,10 +26,18 @@ function actionResult(status: string): UnifiedHistoryActionResult {
 export function UnifiedHistoryPage() {
   const updates = useRef(new Map<string, string>());
   useEffect(() => () => updates.current.clear(), []);
+  const resolveAsset = useCallback(async (item: UnifiedHistoryItem) => {
+    const result = await commands.getUnifiedHistoryAsset(
+      item.item_id,
+      item.revision,
+    );
+    if (result.status === "error") throw new Error(result.error);
+    return result.data ? convertFileSrc(result.data) : null;
+  }, []);
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full w-full min-h-0 flex-col">
       <UnresolvedOutputNotices />
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 min-w-0 w-full flex-1">
         <UnifiedHistory
           onCheckOutputReceipt={async (operationId) => {
             const result = await commands.getUnifiedOutputReceipt(operationId);
@@ -89,14 +100,7 @@ export function UnifiedHistoryPage() {
             );
             if (result.status === "error") throw new Error(result.error);
           }}
-          resolveAsset={async (item) => {
-            const result = await commands.getUnifiedHistoryAsset(
-              item.item_id,
-              item.revision,
-            );
-            if (result.status === "error") throw new Error(result.error);
-            return result.data ? convertFileSrc(result.data) : null;
-          }}
+          resolveAsset={resolveAsset}
         />
       </div>
     </div>

@@ -173,7 +173,10 @@ async function mountHistory(page: Page) {
     const render = () =>
       root.render(
         React.createElement(UnifiedHistory, {
-          resolveAsset: async () => null,
+          resolveAsset: async (item: typeof fixture) =>
+            item.asset_ref
+              ? `data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=`
+              : null,
           onCheckOutputReceipt: async (operationId: string) => {
             harness.calls.push({
               command: "get_unified_output_receipt",
@@ -261,6 +264,55 @@ test("single click previews; explicit copy preserves the file item and does not 
       ]),
     ),
   ).toEqual([["copy", "files"]]);
+});
+
+test("switching voice previews keeps a single recording player", async ({
+  page,
+}) => {
+  await mountHistory(page);
+  await page.evaluate(() => {
+    const harness = window.__HISTORY_TEST__;
+    harness.items = [1, 2, 3, 4, 5, 6].map((n) => ({
+      item_id: `voice-${n}`,
+      store_id: "voice-store",
+      record_id: String(n),
+      revision: 1,
+      source_kind: "voice",
+      content_type: "text",
+      text: `Voice recording ${n}`,
+      title: null,
+      starred: false,
+      pinned: false,
+      created_at_ms: 1000000 + n,
+      asset_ref: `asset://${n}.wav`,
+      source_app: null,
+    }));
+  });
+  await page.getByRole("button", { name: "Refresh" }).click();
+  for (const n of [1, 2, 3, 4, 5, 6]) {
+    await page
+      .getByRole("list", { name: "History" })
+      .getByText(`Voice recording ${n}`, { exact: true })
+      .click();
+    const preview = page.getByRole("complementary", { name: "Preview" });
+    await expect(preview).toBeVisible();
+    await expect(
+      preview.getByText(`Voice recording ${n}`, { exact: true }),
+    ).toBeVisible();
+    await expect
+      .poll(async () =>
+        page.evaluate(
+          () => document.querySelectorAll("[data-history-recording]").length,
+        ),
+      )
+      .toBe(1);
+    await expect
+      .poll(async () =>
+        page.evaluate(() => document.querySelectorAll("audio").length),
+      )
+      .toBe(1);
+    await expect(page.locator("audio[controls]")).toHaveCount(0);
+  }
 });
 
 test("composition and search letters are not intercepted; Enter inserts and Escape closes preview", async ({

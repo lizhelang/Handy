@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ConfirmHistoryTerm } from "./ConfirmHistoryTerm";
+import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { useUnifiedHistoryStore } from "@/stores/unifiedHistoryStore";
 import {
   getOutputAttempt,
@@ -68,15 +69,15 @@ function Attachment({
   const { t } = useTranslation();
   const [url, setUrl] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const canPreview =
+    Boolean(item.asset_ref) &&
+    (item.source_kind === "voice" || item.content_type === "image");
   useEffect(() => {
     let disposed = false;
     let resolved: string | null = null;
     setUrl(null);
     setUnavailable(false);
-    if (
-      item.asset_ref &&
-      (item.source_kind === "voice" || item.content_type === "image")
-    ) {
+    if (canPreview) {
       void resolveAsset(item)
         .then((value) => {
           resolved = value;
@@ -95,7 +96,16 @@ function Attachment({
       disposed = true;
       if (resolved?.startsWith("blob:")) URL.revokeObjectURL(resolved);
     };
-  }, [item, resolveAsset]);
+  }, [
+    canPreview,
+    item,
+    item.asset_ref,
+    item.content_type,
+    item.item_id,
+    item.revision,
+    item.source_kind,
+    resolveAsset,
+  ]);
   if (!item.asset_ref) return null;
   if (unavailable)
     return (
@@ -112,13 +122,17 @@ function Attachment({
       className="max-h-64 max-w-full rounded-md object-contain"
     />
   ) : (
-    <audio
-      controls
-      src={url}
+    // 原生 controls 在 WKWebView 切换条目时会残留多条控件；只用无 chrome 的播放器。
+    <div
+      data-history-recording={item.item_id}
       aria-label={t("unifiedHistory.recording")}
-      onError={() => setUnavailable(true)}
-      className="w-full"
-    />
+    >
+      <AudioPlayer
+        key={`${item.item_id}:${item.revision}:${url}`}
+        src={url}
+        className="w-full"
+      />
+    </div>
   );
 }
 
@@ -406,9 +420,9 @@ export function UnifiedHistory({
           {t(`unifiedHistory.feedback.${feedbackMessage}`)}
         </p>
       )}
-      <div className="flex min-h-0 flex-1 flex-wrap gap-4">
+      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-4 md:grid-cols-2">
         <div
-          className="min-w-0 basis-72 flex-1 overflow-y-auto"
+          className="min-h-0 min-w-0 overflow-y-auto"
           aria-busy={state.loading}
         >
           <ul
@@ -501,14 +515,14 @@ export function UnifiedHistory({
           )}
         </div>
         {(!selected || !state.previewOpen) && (
-          <div className="min-w-0 basis-72 flex-1 rounded-md border border-text/10 p-8 text-center text-sm text-text/45">
+          <div className="flex min-h-0 min-w-0 items-center justify-center rounded-md border border-text/10 p-8 text-center text-sm text-text/45">
             {t("unifiedHistory.previewHint")}
           </div>
         )}
         {selected && state.previewOpen && (
           <aside
             aria-label={t("unifiedHistory.preview")}
-            className="min-w-0 basis-72 flex-1 space-y-4 overflow-y-auto rounded-md border border-text/10 p-4"
+            className="min-h-0 min-w-0 space-y-4 overflow-y-auto rounded-md border border-text/10 p-4"
           >
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold">
@@ -521,11 +535,7 @@ export function UnifiedHistory({
                 <X size={16} />
               </button>
             </div>
-            <Attachment
-              key={`${selected.item_id}:${selected.revision}`}
-              item={selected}
-              resolveAsset={resolveAsset}
-            />
+            <Attachment item={selected} resolveAsset={resolveAsset} />
             {editing ? (
               <div data-history-editor className="space-y-2">
                 <label className="block text-sm">
