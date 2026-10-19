@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Search, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { commands } from "@/bindings";
@@ -103,7 +103,7 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
     const { getSetting, updateSetting, isUpdating } = useSettings();
     const [newWord, setNewWord] = useState("");
     const [searchQuery, setSearchQuery] = useState("");
-    const [sortMode, setSortMode] = useState<SortMode>("az");
+    const [sortMode, setSortMode] = useState<SortMode>("freq_desc");
     const [filterMode, setFilterMode] = useState<FilterMode>("all");
     const [activeLetter, setActiveLetter] = useState<string | null>(null);
     const [historyTexts, setHistoryTexts] = useState<string[]>([]);
@@ -503,39 +503,54 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
               </div>
 
               <div className="flex flex-wrap items-center gap-1">
-                {(
-                  [
-                    ["az", t("settings.advanced.customWords.sortAz")],
-                    [
-                      "freq_desc",
-                      t("settings.advanced.customWords.sortFreqDesc"),
-                    ],
-                    [
-                      "freq_asc",
-                      t("settings.advanced.customWords.sortFreqAsc"),
-                    ],
-                    ["default", t("settings.advanced.customWords.sortDefault")],
-                  ] as [SortMode, string][]
-                ).map(([mode, label]) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => setSortMode(mode)}
-                    className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
-                      sortMode === mode
-                        ? "bg-text/15 font-semibold text-text"
-                        : "text-text/65 hover:bg-text/5"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSortMode((prev) =>
+                      prev === "freq_desc" ? "freq_asc" : "freq_desc",
+                    )
+                  }
+                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs transition-colors ${
+                    sortMode === "freq_desc" || sortMode === "freq_asc"
+                      ? "bg-text/15 font-semibold text-text"
+                      : "text-text/65 hover:bg-text/5"
+                  }`}
+                >
+                  <span>{t("settings.advanced.customWords.sortFreq")}</span>
+                  {sortMode === "freq_asc" ? (
+                    <ArrowUp className="h-3.5 w-3.5" />
+                  ) : (
+                    <ArrowDown className="h-3.5 w-3.5" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSortMode("az")}
+                  className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                    sortMode === "az"
+                      ? "bg-text/15 font-semibold text-text"
+                      : "text-text/65 hover:bg-text/5"
+                  }`}
+                >
+                  {t("settings.advanced.customWords.sortAz")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSortMode("default")}
+                  className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                    sortMode === "default"
+                      ? "bg-text/15 font-semibold text-text"
+                      : "text-text/65 hover:bg-text/5"
+                  }`}
+                >
+                  {t("settings.advanced.customWords.sortDefault")}
+                </button>
               </div>
             </div>
 
             {/* 搜索过滤框 + A-Z 首字母快速导航 */}
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="relative flex-1 max-w-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative w-48 shrink-0">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text/45" />
                 <input
                   type="search"

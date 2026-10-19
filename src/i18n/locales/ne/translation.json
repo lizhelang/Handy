@@ -497,7 +497,8 @@
         "exactMatchHint": "Already exists: \"{{word}}\" (used {{count}}×)",
         "similarMatchHint": "Similar existing hotwords:",
         "noFilterMatch": "No hotwords match the current filter",
-        "emptyHint": "No hotwords added yet. Add terms, names, or abbreviations above."
+        "emptyHint": "No hotwords added yet. Add terms, names, or abbreviations above.",
+        "sortFreq": "Frequency"
       },
       "voiceActivityDetection": {
         "title": "भ्वाइस एक्टिभिटी डिटेक्सन",

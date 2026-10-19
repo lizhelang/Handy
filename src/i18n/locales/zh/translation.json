@@ -497,7 +497,8 @@
         "exactMatchHint": "已设过该热词：「{{word}}」（使用 {{count}} 次）",
         "similarMatchHint": "已设过相近热词：",
         "noFilterMatch": "没有匹配当前筛选条件的热词",
-        "emptyHint": "暂未设置热词。在上方输入常用专有名词、人名或缩写即可添加。"
+        "emptyHint": "暂未设置热词。在上方输入常用专有名词、人名或缩写即可添加。",
+        "sortFreq": "按频率"
       },
       "voiceActivityDetection": {
         "title": "语音活动检测",
