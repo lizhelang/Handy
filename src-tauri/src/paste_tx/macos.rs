@@ -12,6 +12,7 @@
 //! run loop. The (potentially seconds-long) wait runs on a worker thread; the
 //! guarded restore is dispatched back to the main thread.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -98,7 +99,7 @@ impl HandyPasteProvider {
 
 struct MacPending {
     permission_epoch: u64,
-    completion_guard: Option<Box<dyn Fn() -> Result<(), String> + Send>>,
+    completion_guards: Option<super::VoiceCompletionGuards>,
     state: Arc<Mutex<TxState>>,
     snapshot: ClipboardSnapshot,
     change_count: NSInteger,
@@ -117,6 +118,138 @@ struct MacPending {
 /// The transaction currently holding the clipboard, if any. A new paste
 /// settles it before snapshotting (see `flush_pending`).
 static PENDING: Mutex<Option<Arc<Mutex<MacPending>>>> = Mutex::new(None);
+static STANDARD_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+struct StandardReservation;
+impl StandardReservation {
+    fn claim() -> Result<Self, String> {
+        STANDARD_ACTIVE
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| Self)
+            .map_err(|_| "standard clipboard transaction pending".into())
+    }
+}
+impl Drop for StandardReservation {
+    fn drop(&mut self) {
+        STANDARD_ACTIVE.store(false, Ordering::Release);
+    }
+}
+
+/// 只持纯 Rust 快照/回调；后台等待后回主线程完成，不阻塞应用切换通知。
+pub(crate) struct DictationCompletion {
+    previous: ClipboardSnapshot,
+    published: NSInteger,
+    delay: Duration,
+    before_delay: Duration,
+    after_delay_ms: u64,
+    paste_method: PasteMethod,
+    attempted: bool,
+    preserve_transcript: bool,
+    requested_auto_submit: bool,
+    restore: bool,
+    auto_submit: bool,
+    auto_submit_key: AutoSubmitKey,
+    guards: super::VoiceCompletionGuards,
+    _reservation: StandardReservation,
+}
+impl DictationCompletion {
+    pub(crate) fn delay(&self) -> Duration {
+        self.delay
+    }
+
+    pub(crate) fn before_delay(&self) -> Duration {
+        self.before_delay
+    }
+
+    pub(crate) fn inject(&mut self, app: &AppHandle) -> HistoryPasteOutcome {
+        let Some(state) = app.try_state::<EnigoState>() else {
+            return HistoryPasteOutcome::NotDispatched("input device unavailable".into());
+        };
+        let Ok(mut enigo) = state.0.try_lock() else {
+            return HistoryPasteOutcome::NotDispatched("input device busy".into());
+        };
+        let Some(enigo) = enigo.as_mut() else {
+            return HistoryPasteOutcome::NotDispatched("input device retired".into());
+        };
+        self.inject_with(
+            || NSPasteboard::generalPasteboard().changeCount(),
+            |method| send_chord(enigo, &method),
+        )
+    }
+
+    fn inject_with(
+        &mut self,
+        current_count: impl Fn() -> NSInteger,
+        send: impl FnOnce(PasteMethod) -> Result<(), String>,
+    ) -> HistoryPasteOutcome {
+        if self.attempted {
+            return HistoryPasteOutcome::PossiblyDispatched(
+                "dictation_injection_already_attempted".into(),
+            );
+        }
+        self.attempted = true;
+        guarded_dispatch(
+            &mut || {
+                (self.guards.clipboard)()?;
+                if current_count() != self.published {
+                    return Err("dictation_clipboard_changed_before_paste".into());
+                }
+                Ok(())
+            },
+            || send(self.paste_method),
+        )
+    }
+
+    pub(crate) fn record_outcome(&mut self, outcome: &HistoryPasteOutcome) {
+        let dispatched = *outcome == HistoryPasteOutcome::Dispatched;
+        self.delay = standard_cleanup_delay(outcome, self.after_delay_ms);
+        self.restore = !self.preserve_transcript || !dispatched;
+        self.auto_submit = self.requested_auto_submit && dispatched;
+    }
+
+    pub(crate) fn finish(self, app: &AppHandle) -> Result<(), String> {
+        if self.auto_submit {
+            let submit = || {
+                (self.guards.auto_submit)()?;
+                let state = app
+                    .try_state::<EnigoState>()
+                    .ok_or("input device unavailable")?;
+                let mut enigo = state.0.try_lock().map_err(|_| "input device busy")?;
+                (self.guards.auto_submit)()?;
+                send_return_key(
+                    enigo.as_mut().ok_or("input device retired")?,
+                    self.auto_submit_key,
+                )
+            };
+            if let Err(error) = submit() {
+                log::info!("dictation_auto_submit_withheld reason={error}");
+            }
+        }
+        self.restore_on(&NSPasteboard::generalPasteboard())
+    }
+
+    fn restore_on(&self, board: &NSPasteboard) -> Result<(), String> {
+        if self.restore {
+            restore_snapshot(board, &self.previous, self.published)?;
+        }
+        Ok(())
+    }
+}
+
+fn require_settled_transaction(
+    pending: &Mutex<Option<Arc<Mutex<MacPending>>>>,
+) -> Result<(), String> {
+    let slot = pending
+        .try_lock()
+        .map_err(|_| "clipboard transaction busy")?;
+    if slot
+        .as_ref()
+        .is_some_and(|pending| !pending.try_lock().is_ok_and(|pending| pending.settled))
+    {
+        return Err("clipboard transaction pending".into());
+    }
+    Ok(())
+}
 
 fn snapshot(pasteboard: &NSPasteboard) -> Result<ClipboardSnapshot, String> {
     capture_snapshot(
@@ -203,34 +336,156 @@ fn publish_snapshot_on(
     snapshot: ClipboardSnapshot,
     validate: impl FnOnce() -> Result<(), String>,
 ) -> HistoryPasteOutcome {
+    publish_snapshot_with_count(pasteboard, snapshot, validate)
+        .map(|_| HistoryPasteOutcome::Dispatched)
+        .unwrap_or_else(|outcome| outcome)
+}
+
+fn publish_snapshot_with_count(
+    pasteboard: &NSPasteboard,
+    snapshot: ClipboardSnapshot,
+    validate: impl FnOnce() -> Result<(), String>,
+) -> Result<NSInteger, HistoryPasteOutcome> {
     let prepared = match prepare_items(&snapshot) {
         Ok(items) => items
             .into_iter()
             .map(ProtocolObject::from_retained)
             .collect::<Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>>>(),
-        Err(error) => return HistoryPasteOutcome::NotDispatched(error),
+        Err(error) => return Err(HistoryPasteOutcome::NotDispatched(error)),
     };
     let objects = NSArray::from_retained_slice(&prepared);
     if pasteboard.changeCount() != snapshot.change_count {
-        return HistoryPasteOutcome::NotDispatched(
+        return Err(HistoryPasteOutcome::NotDispatched(
             "clipboard changed during copy preparation".into(),
-        );
+        ));
     }
     if let Err(error) = validate() {
-        return HistoryPasteOutcome::NotDispatched(error);
+        return Err(HistoryPasteOutcome::NotDispatched(error));
     }
     if pasteboard.changeCount() != snapshot.change_count {
-        return HistoryPasteOutcome::NotDispatched(
+        return Err(HistoryPasteOutcome::NotDispatched(
             "clipboard changed during permission check".into(),
-        );
+        ));
     }
     let cleared = pasteboard.clearContents();
     if pasteboard.changeCount() != cleared || !pasteboard.writeObjects(&objects) {
-        return HistoryPasteOutcome::PossiblyDispatched(
+        return Err(HistoryPasteOutcome::PossiblyDispatched(
             "clipboard publication outcome unknown".into(),
-        );
+        ));
     }
-    HistoryPasteOutcome::Dispatched
+    Ok(cleared)
+}
+
+fn dictation_snapshot(pasteboard: &NSPasteboard) -> Result<ClipboardSnapshot, String> {
+    capture_snapshot(
+        || pasteboard.changeCount(),
+        || {
+            let Some(items) = pasteboard.pasteboardItems() else {
+                if pasteboard.types().is_some_and(|types| !types.is_empty()) {
+                    return Err("dictation_clipboard_items_unavailable".into());
+                }
+                return Ok(Vec::new());
+            };
+            let representations = items
+                .iter()
+                .map(|item| {
+                    item.types()
+                        .iter()
+                        .map(|kind| {
+                            (
+                                kind.to_string(),
+                                item.dataForType(&kind).map(|data| data.to_vec()),
+                            )
+                        })
+                        .collect()
+                })
+                .collect();
+            let (items, missing) = super::recoverable_clipboard_items(representations)?;
+            if missing > 0 {
+                log::warn!("dictation_clipboard_restore_limited missing_representations={missing}");
+            }
+            Ok(items)
+        },
+    )
+}
+
+fn standard_cleanup_delay(outcome: &HistoryPasteOutcome, configured_ms: u64) -> Duration {
+    if matches!(outcome, HistoryPasteOutcome::NotDispatched(_)) {
+        Duration::ZERO
+    } else {
+        Duration::from_millis(configured_ms)
+    }
+}
+
+/// 标准系统粘贴：普通文本直接可读；用户的新复制始终优先于旧剪贴板恢复。
+pub(crate) fn prepare_dictation_standard(
+    text: &str,
+    settings: &crate::settings::AppSettings,
+    validate: &mut dyn FnMut() -> Result<(), String>,
+    guards: super::VoiceCompletionGuards,
+    completion: &mut Option<DictationCompletion>,
+) -> Result<(), HistoryPasteOutcome> {
+    prepare_dictation_on(
+        &NSPasteboard::generalPasteboard(),
+        text,
+        settings,
+        validate,
+        guards,
+        completion,
+    )
+}
+
+fn prepare_dictation_on(
+    board: &NSPasteboard,
+    text: &str,
+    settings: &crate::settings::AppSettings,
+    validate: &mut dyn FnMut() -> Result<(), String>,
+    guards: super::VoiceCompletionGuards,
+    completion: &mut Option<DictationCompletion>,
+) -> Result<(), HistoryPasteOutcome> {
+    // 切换 reliable 配置不能把上条尚未结算的临时 promise 误当用户原剪贴板。
+    if let Err(error) = require_settled_transaction(&PENDING) {
+        return Err(HistoryPasteOutcome::NotDispatched(error));
+    }
+    let reservation = match StandardReservation::claim() {
+        Ok(reservation) => reservation,
+        Err(error) => return Err(HistoryPasteOutcome::NotDispatched(error)),
+    };
+    if let Err(error) = validate() {
+        return Err(HistoryPasteOutcome::NotDispatched(error));
+    }
+    let previous = match dictation_snapshot(board) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return Err(HistoryPasteOutcome::NotDispatched(error)),
+    };
+    let replacement = ClipboardSnapshot {
+        change_count: previous.change_count,
+        items: vec![vec![(
+            "public.utf8-plain-text".into(),
+            text.as_bytes().to_vec(),
+        )]],
+    };
+    let published = match publish_snapshot_with_count(board, replacement, &mut *validate) {
+        Ok(count) => count,
+        Err(outcome) => return Err(outcome),
+    };
+    *completion = Some(DictationCompletion {
+        previous,
+        published,
+        delay: Duration::ZERO,
+        before_delay: Duration::from_millis(settings.paste_delay_ms),
+        after_delay_ms: settings.paste_delay_after_ms,
+        paste_method: settings.paste_method,
+        attempted: false,
+        preserve_transcript: settings.clipboard_handling == ClipboardHandling::CopyToClipboard,
+        requested_auto_submit: settings.auto_submit,
+        restore: true,
+        auto_submit: false,
+        auto_submit_key: settings.auto_submit_key,
+        guards,
+        _reservation: reservation,
+    });
+    Ok(())
 }
 
 /// Settles a transaction exactly once: sends the owed auto-submit Enter and
@@ -260,8 +515,8 @@ fn settle(
     if p.auto_submit && receipt_seen {
         let validate_completion = || {
             crate::input_permission::check_epoch(p.permission_epoch)?;
-            if let Some(guard) = &p.completion_guard {
-                guard()?;
+            if let Some(guards) = &p.completion_guards {
+                (guards.auto_submit)()?;
             }
             Ok::<_, String>(())
         };
@@ -283,8 +538,12 @@ fn settle(
                 }),
         };
         if let Err(error) = result {
-            error!("[reliable-paste] automatic submit withheld: {error}");
-            let _ = app_handle.emit("paste-error", ());
+            if p.completion_guards.is_some() {
+                log::info!("dictation_auto_submit_withheld reason={error}");
+            } else {
+                error!("[reliable-paste] automatic submit withheld: {error}");
+                let _ = app_handle.emit("paste-error", ());
+            }
         }
     }
 
@@ -308,8 +567,8 @@ fn settle(
                     },
                     || {
                         crate::input_permission::check_epoch(p.permission_epoch)?;
-                        if let Some(guard) = &p.completion_guard {
-                            guard()?;
+                        if let Some(guards) = &p.completion_guards {
+                            (guards.clipboard)()?;
                         }
                         Ok(())
                     },
@@ -353,7 +612,7 @@ fn settle(
     // Release the owner; any outstanding promise dies with the pasteboard
     // contents we just replaced (or with the external change).
     p.provider = None;
-    p.completion_guard = None;
+    p.completion_guards = None;
 }
 
 /// If a previous transaction is still holding the clipboard, settle it now so
@@ -506,7 +765,7 @@ pub(super) fn run_voice(
     enigo: &mut enigo::Enigo,
     completion: PasteCompletion,
     validate: &mut dyn FnMut() -> Result<(), String>,
-    completion_guard: Box<dyn Fn() -> Result<(), String> + Send>,
+    completion_guards: super::VoiceCompletionGuards,
 ) -> HistoryPasteOutcome {
     // 未完成事务必须先自然结束，不把上次文本/自动发送带入本次字段。
     match PENDING.try_lock() {
@@ -528,7 +787,7 @@ pub(super) fn run_voice(
         enigo,
         completion,
         validate,
-        Some(completion_guard),
+        Some(completion_guards),
     )
 }
 
@@ -539,8 +798,11 @@ fn run_inner(
     enigo: &mut enigo::Enigo,
     completion: PasteCompletion,
     validate: &mut dyn FnMut() -> Result<(), String>,
-    completion_guard: Option<Box<dyn Fn() -> Result<(), String> + Send>>,
+    completion_guards: Option<super::VoiceCompletionGuards>,
 ) -> HistoryPasteOutcome {
+    if STANDARD_ACTIVE.load(Ordering::Acquire) {
+        return HistoryPasteOutcome::NotDispatched("standard clipboard transaction pending".into());
+    }
     let permission_epoch = match crate::input_permission::capture_epoch() {
         Ok(epoch) => epoch,
         Err(error) => return HistoryPasteOutcome::NotDispatched(error),
@@ -621,7 +883,7 @@ fn run_inner(
 
     let pending = Arc::new(Mutex::new(MacPending {
         permission_epoch,
-        completion_guard,
+        completion_guards,
         state,
         snapshot,
         change_count,
@@ -738,6 +1000,219 @@ pub(crate) fn private_pasteboard_self_check() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standard_paste_publishes_before_delay_and_recovers_cancelled_or_unstarted_injection() {
+        use std::cell::{Cell, RefCell};
+        for case in ["success", "cancel", "queue_expired", "unknown", "new_copy"] {
+            // 独立命名板只含合成数据，绝不读取或覆盖 generalPasteboard。
+            let board = NSPasteboard::pasteboardWithUniqueName();
+            let set_text = |text: &str| {
+                assert_eq!(
+                    publish_snapshot_on(
+                        &board,
+                        ClipboardSnapshot {
+                            change_count: board.changeCount(),
+                            items: vec![vec![(
+                                "public.utf8-plain-text".into(),
+                                text.as_bytes().to_vec()
+                            )]],
+                        },
+                        || Ok(())
+                    ),
+                    HistoryPasteOutcome::Dispatched
+                );
+            };
+            set_text("previous");
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let guard_cancelled = cancelled.clone();
+            let settings = crate::settings::AppSettings {
+                paste_delay_ms: 60,
+                paste_delay_after_ms: 75,
+                reliable_paste: false,
+                auto_submit: false,
+                clipboard_handling: ClipboardHandling::DontModify,
+                ..Default::default()
+            };
+            let mut pending = None;
+            prepare_dictation_on(
+                &board,
+                "dictation",
+                &settings,
+                &mut || Ok(()),
+                super::super::VoiceCompletionGuards {
+                    auto_submit: Box::new(|| panic!("test must not submit")),
+                    clipboard: Box::new(move || {
+                        if guard_cancelled.load(Ordering::Acquire) {
+                            Err("cancelled".into())
+                        } else {
+                            Ok(())
+                        }
+                    }),
+                },
+                &mut pending,
+            )
+            .unwrap();
+            assert_eq!(
+                board
+                    .stringForType(unsafe { NSPasteboardTypeString })
+                    .unwrap()
+                    .to_string(),
+                "dictation"
+            );
+            let shared = Arc::new(Mutex::new(pending));
+            let delay = shared.lock().unwrap().as_ref().unwrap().before_delay();
+            let elapsed = Cell::new(Duration::ZERO);
+            let events = RefCell::new(vec!["publish"]);
+            let ready = crate::dictation::wait_for_delay(
+                delay,
+                || {
+                    if cancelled.load(Ordering::Acquire) {
+                        Err("cancelled".into())
+                    } else {
+                        Ok(())
+                    }
+                },
+                |interval| {
+                    if elapsed.get().is_zero() {
+                        events.borrow_mut().push("pre-delay");
+                    }
+                    elapsed.set(elapsed.get() + interval);
+                    if case == "cancel" {
+                        cancelled.store(true, Ordering::Release);
+                    }
+                    if case == "new_copy" && elapsed.get() == Duration::from_millis(25) {
+                        set_text("user copy");
+                    }
+                },
+            );
+            let outcome = if let Err(reason) = ready {
+                HistoryPasteOutcome::NotDispatched(reason)
+            } else if case == "queue_expired" {
+                let gate = crate::dispatch_gate::DispatchGate::new(Duration::ZERO);
+                let queued = shared.clone();
+                let (sender, receiver) = std::sync::mpsc::channel::<HistoryPasteOutcome>();
+                if gate.start() {
+                    let _ = sender.send(queued.lock().unwrap().as_mut().unwrap().inject_with(
+                        || board.changeCount(),
+                        |_| panic!("expired queue cannot inject"),
+                    ));
+                }
+                drop(sender);
+                assert!(
+                    shared.lock().unwrap().is_some(),
+                    "未开始的闭包不能丢掉清理上下文"
+                );
+                crate::dictation::await_dispatch(receiver, &gate, Duration::ZERO).unwrap_err()
+            } else {
+                shared.lock().unwrap().as_mut().unwrap().inject_with(
+                    || board.changeCount(),
+                    |_| {
+                        assert_eq!(elapsed.get(), Duration::from_millis(60));
+                        events.borrow_mut().push("chord");
+                        if case == "unknown" {
+                            Err("partial injection".into())
+                        } else {
+                            Ok(())
+                        }
+                    },
+                )
+            };
+            let mut pending = shared.lock().unwrap().take().unwrap();
+            if case == "unknown" {
+                assert!(matches!(
+                    pending.inject_with(
+                        || board.changeCount(),
+                        |_| panic!("unknown must not replay")
+                    ),
+                    HistoryPasteOutcome::PossiblyDispatched(_)
+                ));
+            }
+            pending.record_outcome(&outcome);
+            cancelled.store(true, Ordering::Release);
+            let has_chord = matches!(case, "success" | "unknown");
+            assert_eq!(
+                pending.delay(),
+                if has_chord {
+                    Duration::from_millis(75)
+                } else {
+                    Duration::ZERO
+                }
+            );
+            if !pending.delay().is_zero() {
+                events.borrow_mut().push("post-delay");
+                crate::dictation::wait_for_delay(pending.delay(), || Ok(()), |_| {}).unwrap();
+            }
+            pending.restore_on(&board).unwrap();
+            events.borrow_mut().push("restore");
+            assert_eq!(
+                board
+                    .stringForType(unsafe { NSPasteboardTypeString })
+                    .unwrap()
+                    .to_string(),
+                if case == "new_copy" {
+                    "user copy"
+                } else {
+                    "previous"
+                }
+            );
+            assert_eq!(
+                *events.borrow(),
+                if has_chord {
+                    vec!["publish", "pre-delay", "chord", "post-delay", "restore"]
+                } else {
+                    vec!["publish", "pre-delay", "restore"]
+                }
+            );
+            board.clearContents();
+        }
+    }
+
+    #[test]
+    fn queued_or_unknown_paste_keeps_the_configured_restore_delay() {
+        for outcome in [
+            HistoryPasteOutcome::Dispatched,
+            HistoryPasteOutcome::PossiblyDispatched("injection interrupted".into()),
+        ] {
+            assert_eq!(
+                standard_cleanup_delay(&outcome, 2500),
+                Duration::from_millis(2500)
+            );
+        }
+        assert_eq!(
+            standard_cleanup_delay(
+                &HistoryPasteOutcome::NotDispatched("cancelled before keys".into()),
+                2500
+            ),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn switching_to_standard_paste_cannot_snapshot_an_unsettled_reliable_transaction() {
+        let pending = Arc::new(Mutex::new(MacPending {
+            permission_epoch: 0,
+            completion_guards: None,
+            state: Arc::new(Mutex::new(TxState::new())),
+            snapshot: ClipboardSnapshot {
+                change_count: 0,
+                items: Vec::new(),
+            },
+            change_count: 1,
+            provider: None,
+            auto_submit: false,
+            auto_submit_key: AutoSubmitKey::Enter,
+            preserve_transcript: false,
+            transcript: String::new(),
+            settled: false,
+        }));
+        let slot = Mutex::new(Some(pending.clone()));
+        assert!(require_settled_transaction(&slot).is_err());
+        pending.lock().unwrap().settled = true;
+        assert!(require_settled_transaction(&slot).is_ok());
+        let _held = pending.lock().unwrap();
+        assert!(require_settled_transaction(&slot).is_err());
+    }
 
     #[test]
     fn native_in_memory_items_preserve_raw_representations_without_touching_pasteboard() {

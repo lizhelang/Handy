@@ -1,0 +1,46 @@
+{
+  "host": "127.0.0.1",
+  "server_args": [
+    "--no-webui",
+    "--offline",
+    "-c",
+    "2048",
+    "-np",
+    "1",
+    "-t",
+    "8",
+    "-ngl",
+    "all",
+    "-fa",
+    "on",
+    "--no-warmup",
+    "--reasoning",
+    "off"
+  ],
+  "sampling": {
+    "temperature": 0.2,
+    "top_k": 20,
+    "top_p": 0.8,
+    "min_p": 0.0,
+    "seed": 42,
+    "n_predict": 12,
+    "repeat_penalty": 1.0,
+    "stop": [
+      "\n",
+      "，",
+      "。",
+      "！",
+      "？",
+      "；"
+    ]
+  },
+  "grammar": "root ::= [一-鿿]{0,8} [，。！？；]?\n",
+  "profiles": [
+    "raw_free_dev_only",
+    "raw_bounded",
+    "assistant_prefill_bounded"
+  ],
+  "assistant_template": "<|im_start|>system\n继续用户给出的中文，保持原来的语气。只补完当前句子，不回答问题，不解释。<|im_end|>\n<|im_start|>user\n{context}\n/no_think<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n{context}",
+  "evaluation": "20条heldout各跑raw_bounded和assistant_prefill_bounded。dev只展示差异，不使用heldout调参。主延迟为完整候选完成时间，且只把自然且可直接拼接的候选计为有用。",
+  "abstention": "允许0字弃权；覆盖率与有用率分开，格式不计作智能。"
+}

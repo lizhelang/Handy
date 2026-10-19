@@ -1,0 +1,98 @@
+{
+  "review_mode": "independent root AI-agent reviewer, shuffled blind IDs; one pass plus one documented language-judgment typo correction; no rule changes",
+  "useful_score": 3,
+  "heldout_sha256": "5e3ab63940c886379acd1b523e99e09d243293d5bfcda7a31abf0a51be3d9047",
+  "protocol_sha256": "f77baaf27495f27e9038b0e319f33cb7acad0eb93dfe277b12a68a7e10b3d9e7",
+  "ratings_sha256": "8e321aede1af570d95feb3b619df93f0c9fc093ad66e8e30b4d721d14368551c",
+  "profiles": {
+    "A": {
+      "heldout": {
+        "n": 20,
+        "useful": 10,
+        "score_at_least_2_diagnostic_only": 17,
+        "nonempty": 20,
+        "score_distribution": {
+          "0": 2,
+          "1": 1,
+          "2": 7,
+          "3": 10
+        },
+        "timing": {
+          "n": 20,
+          "p50_ms": 30.829916591756046,
+          "p95_ms": 53.778290981426835,
+          "max_ms": 57.31145804747939
+        }
+      },
+      "challenge": {
+        "n": 4,
+        "useful": 2,
+        "score_at_least_2_diagnostic_only": 2,
+        "nonempty": 4,
+        "score_distribution": {
+          "0": 1,
+          "1": 1,
+          "2": 0,
+          "3": 2
+        },
+        "timing": {
+          "n": 4,
+          "p50_ms": 68.48745804745704,
+          "p95_ms": 107.20904101617634,
+          "max_ms": 107.20904101617634
+        }
+      },
+      "quantity_gate_passed": false,
+      "language_error_examples_from_unchanged_rating_reasons": [
+        "c19"
+      ],
+      "gate_passed": false
+    },
+    "B": {
+      "heldout": {
+        "n": 20,
+        "useful": 6,
+        "score_at_least_2_diagnostic_only": 11,
+        "nonempty": 20,
+        "score_distribution": {
+          "0": 6,
+          "1": 3,
+          "2": 5,
+          "3": 6
+        },
+        "timing": {
+          "n": 20,
+          "p50_ms": 92.66902145463973,
+          "p95_ms": 100.57479189708829,
+          "max_ms": 107.91820799931884
+        }
+      },
+      "challenge": {
+        "n": 4,
+        "useful": 2,
+        "score_at_least_2_diagnostic_only": 3,
+        "nonempty": 4,
+        "score_distribution": {
+          "0": 0,
+          "1": 1,
+          "2": 1,
+          "3": 2
+        },
+        "timing": {
+          "n": 4,
+          "p50_ms": 120.25479134172201,
+          "p95_ms": 135.3283750358969,
+          "max_ms": 135.3283750358969
+        }
+      },
+      "quantity_gate_passed": false,
+      "language_error_examples_from_unchanged_rating_reasons": [
+        "c06",
+        "c16",
+        "c17",
+        "c19"
+      ],
+      "gate_passed": false
+    }
+  }
+}

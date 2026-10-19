@@ -39,11 +39,14 @@ struct InputiaPersonalCommand {
   var prediction_id: String? = nil
 }
 enum InputiaVoiceInputLauncher {
-  struct Pending { let command: InputiaPersonalCommand; let completion: (InputiaPersonalReply?) -> Void }
+  struct Pending {
+    let command: InputiaPersonalCommand; let deadline: TimeInterval; let expectedServer: String?
+    let completion: (InputiaPersonalReply?) -> Void
+  }
   static var pending: [Pending] = []
   static func personalization(_ command: InputiaPersonalCommand, deadline: TimeInterval,
     expectedServer: String? = nil, completion: @escaping (InputiaPersonalReply?) -> Void) {
-    pending.append(Pending(command: command, completion: completion))
+    pending.append(Pending(command: command, deadline: deadline, expectedServer: expectedServer, completion: completion))
   }
 }
 @main
@@ -134,6 +137,285 @@ struct PersonalizationFlowSelfCheck {
   static func reply(_ target: String = "origin-A", epoch: UInt64 = 1, enabled: Bool = true) -> InputiaPersonalReply {
     InputiaPersonalReply(server_instance: "service", enabled: enabled, epoch: epoch,
       result: InputiaPersonalResult(ordered_ids: ["candidate"], predictions: [], context_id: target), code: nil)
+  }
+  // 使用生产query/context/admit状态机；替身仅保存和交付传输回执。
+  static func predictionRetryChecks() {
+    let target = InputiaVoiceTarget(target_id: "origin-A")
+    let nextTarget = InputiaVoiceTarget(target_id: "origin-B")
+    let prediction = InputiaPersonalPrediction(id: "next", text: "大学")
+    let busy = InputiaPersonalReply(server_instance: "service", enabled: true, epoch: 1,
+      result: nil, code: "target_query_busy")
+    func ready() -> InputiaPersonalization {
+      precondition(InputiaVoiceInputLauncher.pending.isEmpty)
+      let subject = InputiaPersonalization(); subject.start()
+      InputiaVoiceInputLauncher.pending.removeFirst().completion(reply())
+      return subject
+    }
+    func success(_ id: String = "origin-A") -> InputiaPersonalReply {
+      InputiaPersonalReply(server_instance: "service", enabled: true, epoch: 1,
+        result: InputiaPersonalResult(ordered_ids: [], predictions: [prediction], context_id: id), code: nil)
+    }
+    func seed(_ subject: InputiaPersonalization) {
+      precondition(subject.accepted(target: target, code: "beijing", text: "北京", explicit: false,
+        rank: 0, completion: {}) != nil)
+      InputiaVoiceInputLauncher.pending.removeFirst().completion(reply())
+    }
+    let contextSubject = ready(); seed(contextSubject)
+    var views: [InputiaPersonalization.View] = []
+    contextSubject.query(target: nextTarget, code: "", candidates: [], predictionContext: "上海", isCurrent: { true }) { views.append($0) }
+    drain()
+    let initial = InputiaVoiceInputLauncher.pending.removeFirst()
+    precondition(initial.command.context == "上海" && initial.command.target == nextTarget)
+    precondition(contextSubject.context.text.isEmpty, "独立已上屏文字不能回写学习上下文")
+    initial.completion(busy)
+    precondition(contextSubject.allowed && !contextSubject.explicitlyDisabled && contextSubject.view == nil)
+    drain(0.07)
+    let retry = InputiaVoiceInputLauncher.pending.removeFirst()
+    precondition(retry.command.kind == "query" && retry.command.context == "上海" && retry.command.target == nextTarget)
+    precondition(retry.deadline == initial.deadline && retry.expectedServer == initial.expectedServer,
+      "重试必须保留原租约期限和服务身份")
+    retry.completion(success("origin-B"))
+    precondition(views.count == 1 && views[0].queryContext == "上海")
+    contextSubject.invalidateView()
+    contextSubject.query(target: nextTarget, code: "", candidates: [], predictionContext: "上海") { views.append($0) }
+    precondition(views.count == 2 && views[1].queryContext == "上海" && InputiaVoiceInputLauncher.pending.isEmpty)
+    var admission: InputiaPersonalization.Admission?
+    contextSubject.admit(prediction, from: views[1]) { admission = $0 }
+    let admit = InputiaVoiceInputLauncher.pending.removeFirst()
+    precondition(admit.command.context == "上海", "准入必须复核生成所选联想时的同一上下文")
+    admit.completion(InputiaPersonalReply(server_instance: "service", enabled: true, epoch: 1,
+      result: InputiaPersonalResult(ordered_ids: nil, predictions: nil, context_id: "origin-B",
+        admitted: true, prediction_id: prediction.id), code: nil))
+    precondition(admission != nil)
+    contextSubject.invalidateView()
+    contextSubject.query(target: nextTarget, code: "", candidates: [], predictionContext: "南京") { views.append($0) }
+    drain()
+    precondition(InputiaVoiceInputLauncher.pending.count == 1, "不同显式上下文不能命中旧缓存")
+    InputiaVoiceInputLauncher.pending.removeFirst().completion(success("origin-B"))
+    contextSubject.query(target: nextTarget, code: "ni", candidates: [], predictionContext: "上海") { _ in preconditionFailure() }
+    contextSubject.query(target: nextTarget, code: "", candidates: [], predictionContext: String(repeating: "字", count: 513)) { _ in preconditionFailure() }
+    drain(); precondition(InputiaVoiceInputLauncher.pending.isEmpty)
+    for longContext in [String(repeating: "字", count: 65), String(repeating: "字", count: 512), String(repeating: "🀄", count: 512)] {
+      contextSubject.query(target: nextTarget, code: "", candidates: [], predictionContext: longContext) { views.append($0) }
+      drain()
+      let longQuery = InputiaVoiceInputLauncher.pending.removeFirst()
+      precondition(longQuery.command.context == longContext)
+      longQuery.completion(success("origin-B"))
+      precondition(views.last?.queryContext == longContext)
+      var longAdmission: InputiaPersonalization.Admission?
+      contextSubject.admit(prediction, from: views.last!) { longAdmission = $0 }
+      let longAdmit = InputiaVoiceInputLauncher.pending.removeFirst()
+      precondition(longAdmit.command.context == longContext, "长前文准入不得截短或换上下文")
+      longAdmit.completion(InputiaPersonalReply(server_instance: "service", enabled: true, epoch: 1,
+        result: InputiaPersonalResult(ordered_ids: nil, predictions: nil, context_id: "origin-B",
+          admitted: true, prediction_id: prediction.id), code: nil))
+      precondition(longAdmission != nil)
+    }
+    contextSubject.stop()
+
+    let staleSubject = ready(); seed(staleSubject)
+    var staleInstalled = 0
+    staleSubject.query(target: target, code: "n", candidates: []) { _ in staleInstalled += 1 }
+    drain(); let old = InputiaVoiceInputLauncher.pending.removeFirst()
+    staleSubject.query(target: target, code: "ni", candidates: []) { _ in staleInstalled += 1 }
+    drain(); old.completion(busy); drain()
+    precondition(staleSubject.allowed && staleSubject.context.text == "北京")
+    let newer = InputiaVoiceInputLauncher.pending.removeFirst()
+    precondition(newer.command.input_code == "ni")
+    newer.completion(success()); precondition(staleInstalled == 1)
+    staleSubject.stop()
+
+    let exhausted = ready(); seed(exhausted)
+    exhausted.query(target: target, code: "", candidates: []) { _ in preconditionFailure("忙碌不能伪造结果") }
+    drain()
+    let first = InputiaVoiceInputLauncher.pending.removeFirst(); first.completion(busy); drain(0.07)
+    let second = InputiaVoiceInputLauncher.pending.removeFirst(); second.completion(busy); drain(0.12)
+    let third = InputiaVoiceInputLauncher.pending.removeFirst()
+    precondition([second, third].allSatisfy { $0.deadline == first.deadline && $0.command.context == "北京" })
+    third.completion(busy); drain(0.12)
+    precondition(InputiaVoiceInputLauncher.pending.isEmpty && exhausted.allowed && exhausted.context.text == "北京" && exhausted.view == nil,
+      "最多两次重试，耗尽后不能保留可选择旧结果或清已确认文字")
+    exhausted.stop()
+
+    let cancelled = ready()
+    var current = true
+    cancelled.query(target: target, code: "", candidates: [], predictionContext: "北京", isCurrent: { current }) { _ in preconditionFailure() }
+    drain(); InputiaVoiceInputLauncher.pending.removeFirst().completion(busy)
+    current = false; drain(0.07)
+    precondition(InputiaVoiceInputLauncher.pending.isEmpty, "Esc或五秒会话失效必须终止退避重试")
+    current = true
+    cancelled.query(target: target, code: "", candidates: [], predictionContext: "北京", isCurrent: { current }) { _ in preconditionFailure() }
+    drain(); let cancelledReply = InputiaVoiceInputLauncher.pending.removeFirst()
+    current = false; cancelledReply.completion(success())
+    precondition(cancelled.view == nil, "失效后迟到结果不得复活显示")
+    cancelled.stop()
+
+    let feedbackSubject = ready()
+    var feedbackCallbacks = 0
+    _ = feedbackSubject.accepted(target: target, code: "beijing", text: "北京", explicit: false, rank: 0) {
+      feedbackCallbacks += 1
+      feedbackSubject.query(target: target, code: "", candidates: []) { _ in }
+    }
+    let feedback = InputiaVoiceInputLauncher.pending.removeFirst()
+    precondition(feedback.command.kind == "feedback")
+    feedback.completion(busy); drain()
+    precondition(feedbackCallbacks == 1 && feedbackSubject.context.text == "北京")
+    precondition(InputiaVoiceInputLauncher.pending.count == 1 && InputiaVoiceInputLauncher.pending[0].command.kind == "query",
+      "反馈忙碌只能触发新的只读查询，不能重放可能已经落盘的反馈")
+    InputiaVoiceInputLauncher.pending.removeFirst().completion(success())
+    _ = feedbackSubject.accepted(target: target, code: "daxue", text: "大学", explicit: false, rank: 0) { feedbackCallbacks += 1 }
+    let staleFeedback = InputiaVoiceInputLauncher.pending.removeFirst()
+    feedbackSubject.query(target: target, code: "", candidates: []) { _ in }
+    drain(); InputiaVoiceInputLauncher.pending.removeFirst().completion(success())
+    let installedGeneration = feedbackSubject.view?.generation
+    staleFeedback.completion(busy)
+    precondition(feedbackSubject.view?.generation == installedGeneration && feedbackSubject.context.text == "北京大学" && feedbackCallbacks == 1)
+    feedbackSubject.stop()
+
+    for reason in ["target_query_timeout", "target_source_changed", "unknown_code", "no_reply", "disabled", "foreign_server", "changed_epoch"] {
+      let rejected = ready(); seed(rejected)
+      rejected.query(target: target, code: "", candidates: []) { _ in preconditionFailure() }
+      drain(); let query = InputiaVoiceInputLauncher.pending.removeFirst()
+      query.completion(reason == "no_reply" ? nil : InputiaPersonalReply(
+        server_instance: reason == "foreign_server" ? "other" : "service", enabled: reason != "disabled",
+        epoch: reason == "changed_epoch" ? 2 : 1, result: nil, code: reason == "disabled" ? "policy_changed" : reason))
+      precondition(!rejected.allowed && rejected.context.text.isEmpty && rejected.view == nil)
+      precondition(rejected.explicitlyDisabled == (reason == "disabled"))
+      drain(0.07); precondition(InputiaVoiceInputLauncher.pending.isEmpty)
+      rejected.stop()
+    }
+    // 延迟首次policy回复，保留真实的两秒起点，避免测试钩子改写生产时钟或状态。
+    let expiring = InputiaPersonalization(); expiring.start()
+    let policy = InputiaVoiceInputLauncher.pending.removeFirst()
+    drain(1.88); policy.completion(reply())
+    expiring.query(target: target, code: "", candidates: [], predictionContext: "北京") { _ in preconditionFailure() }
+    drain(); let nearExpiry = InputiaVoiceInputLauncher.pending.removeFirst()
+    nearExpiry.completion(busy); drain(0.06)
+    precondition(InputiaVoiceInputLauncher.pending.count == 1)
+    let lastRetry = InputiaVoiceInputLauncher.pending.removeFirst()
+    precondition(lastRetry.deadline == policy.deadline && lastRetry.deadline == nearExpiry.deadline)
+    lastRetry.completion(busy); drain(0.12)
+    precondition(!expiring.allowed && InputiaVoiceInputLauncher.pending.allSatisfy { $0.command.kind == "policy" } && expiring.view == nil,
+      "重试不能续租，也不能在原租约结束后发请求")
+    expiring.stop(); InputiaVoiceInputLauncher.pending.removeAll()
+    print("predictionRetryFlow=true busyRecovery=true staleBusyIsolated=true retryLimitTwo=true immutableQueryDeadline=true explicitContextAfterBind=true cacheContextIdentity=true admitContextIdentity=true escapeCancellation=true feedbackReplayZero=true feedbackStaleIsolation=true revocationClosed=true unknownUnavailable=true nativeInput=false")
+  }
+  static func identicalQueryChecks() {
+    let target = InputiaVoiceTarget(target_id: "origin-A")
+    func ready() -> InputiaPersonalization {
+      precondition(InputiaVoiceInputLauncher.pending.isEmpty)
+      let subject = InputiaPersonalization(); subject.start()
+      InputiaVoiceInputLauncher.pending.removeFirst().completion(reply())
+      return subject
+    }
+    func success(_ targetID: String = "origin-A") -> InputiaPersonalReply {
+      InputiaPersonalReply(server_instance: "service", enabled: true, epoch: 1,
+        result: InputiaPersonalResult(ordered_ids: [], predictions: [], context_id: targetID), code: nil)
+    }
+    for alreadySent in [false, true] {
+      let subject = ready()
+      var delivered: [String] = []
+      subject.query(target: target, code: "", candidates: [], predictionContext: "你好", isCurrent: { true }) { _ in delivered.append("old") }
+      if alreadySent { drain() }
+      subject.query(target: target, code: "", candidates: [], predictionContext: "你好", isCurrent: { true }) { _ in delivered.append("latest") }
+      drain(); precondition(InputiaVoiceInputLauncher.pending.count == 1)
+      let first = InputiaVoiceInputLauncher.pending.removeFirst()
+      first.completion(success()); drain()
+      precondition(delivered == ["latest"] && InputiaVoiceInputLauncher.pending.isEmpty,
+        "完全相同的有效读取必须交付原wire回复，不得自废后再发一条")
+      subject.stop()
+    }
+    for boundary in ["context", "target", "schema", "candidate", "ticket"] {
+      let subject = ready()
+      var delivered: [String] = []
+      subject.query(target: target, code: "", candidates: [], predictionContext: "你好") { _ in delivered.append("old") }
+      drain(); let old = InputiaVoiceInputLauncher.pending.removeFirst()
+      if boundary == "ticket" { subject.invalidateView() }
+      let nextTarget = boundary == "target" ? InputiaVoiceTarget(target_id: "origin-B") : target
+      let pool = boundary == "candidate" ? [InputiaPersonalCandidate(id: "candidate", text: "你好", base_rank: 0, consumed_len: 2)] : []
+      subject.query(target: nextTarget, code: "", schemaID: boundary == "schema" ? "other" : "", candidates: pool,
+        predictionContext: boundary == "context" ? "世界" : "你好") { _ in delivered.append("latest") }
+      drain(); old.completion(success()); drain()
+      precondition(delivered.isEmpty && InputiaVoiceInputLauncher.pending.count == 1,
+        "目标、上下文、方案、候选或票据变化不能合并旧读取")
+      let fresh = InputiaVoiceInputLauncher.pending.removeFirst()
+      fresh.completion(success(nextTarget.target_id))
+      precondition(delivered == ["latest"])
+      subject.stop()
+    }
+    for invalidateOriginal in [false, true] {
+      let subject = ready()
+      var original = true, latest = true
+      subject.query(target: target, code: "", candidates: [], predictionContext: "你好", isCurrent: { original }) { _ in preconditionFailure() }
+      drain(); let first = InputiaVoiceInputLauncher.pending.removeFirst()
+      subject.query(target: target, code: "", candidates: [], predictionContext: "你好", isCurrent: { latest }) { _ in preconditionFailure() }
+      if invalidateOriginal { original = false } else { latest = false }
+      first.completion(success()); drain()
+      precondition(subject.view == nil && InputiaVoiceInputLauncher.pending.isEmpty,
+        "新接收者不能续活原会话；最新接收者失效也不能交付")
+      subject.stop()
+    }
+    // 真正的定时policy成功续租，不能改变已经发出的读取期限或增加它的重试次数。
+    let renewed = ready()
+    renewed.query(target: target, code: "", candidates: [], predictionContext: "你好") { _ in preconditionFailure() }
+    drain(); let original = InputiaVoiceInputLauncher.pending.removeFirst()
+    drain(1.02)
+    let policy = InputiaVoiceInputLauncher.pending.removeFirst()
+    precondition(policy.command.kind == "policy" && policy.deadline > original.deadline)
+    policy.completion(reply())
+    let busy = InputiaPersonalReply(server_instance: "service", enabled: true, epoch: 1, result: nil, code: "target_query_busy")
+    renewed.query(target: target, code: "", candidates: [], predictionContext: "你好") { _ in preconditionFailure() }
+    original.completion(busy); drain(0.07)
+    let second = InputiaVoiceInputLauncher.pending.removeFirst()
+    precondition(second.deadline == original.deadline)
+    renewed.query(target: target, code: "", candidates: [], predictionContext: "你好") { _ in preconditionFailure() }
+    second.completion(busy); drain(0.12)
+    let third = InputiaVoiceInputLauncher.pending.removeFirst()
+    precondition(third.deadline == original.deadline)
+    renewed.query(target: target, code: "", candidates: [], predictionContext: "你好") { _ in preconditionFailure() }
+    third.completion(busy); drain(0.12)
+    precondition(InputiaVoiceInputLauncher.pending.isEmpty, "合并不能重新取得两次重试预算")
+    renewed.stop()
+    print("identicalQueryCoalesced=true queuedQueryCoalesced=true firstWireDelivered=true latestCompletionOnly=true changedIdentitySeparate=true originalAndLatestScopeRequired=true originalDeadlineAfterRenewal=true joinedRetryBudgetPreserved=true")
+  }
+  static func predictionPolicyRefreshChecks() {
+    let subject = InputiaPersonalization()
+    subject.policyChanged = { [weak subject] in subject?.refreshPolicyForPrediction() }
+    subject.start()
+    let oldPolicy = InputiaVoiceInputLauncher.pending.removeFirst()
+    subject.refreshPolicyForPrediction(); subject.refreshPolicyForPrediction()
+    precondition(InputiaVoiceInputLauncher.pending.isEmpty, "已有policy时只能挂一笔刷新，不能并发请求")
+    NotificationCenter.default.post(name: Notification.Name("InputiaPrivacyRevoked"), object: nil)
+    oldPolicy.completion(reply())
+    precondition(!subject.allowed && InputiaVoiceInputLauncher.pending.count == 1,
+      "旧policy被屏障作废后必须接续唯一一次主动读取")
+    let freshPolicy = InputiaVoiceInputLauncher.pending.removeFirst()
+    precondition(freshPolicy.command.kind == "policy")
+    freshPolicy.completion(reply()); precondition(subject.allowed)
+    NotificationCenter.default.post(name: Notification.Name("InputiaPrivacyRevoked"), object: nil)
+    precondition(InputiaVoiceInputLauncher.pending.count == 1,
+      "有效会话遇到屏障应即时请求policy，不等下一秒timer")
+    subject.refreshPolicyForPrediction(); subject.refreshPolicyForPrediction()
+    precondition(InputiaVoiceInputLauncher.pending.count == 1)
+    InputiaVoiceInputLauncher.pending.removeFirst().completion(nil)
+    drain(0.02)
+    precondition(!subject.allowed && InputiaVoiceInputLauncher.pending.isEmpty,
+      "失败触发policyChanged不得变成快速重试循环")
+    NotificationCenter.default.post(name: Notification.Name("InputiaPrivacyRevoked"), object: nil)
+    subject.refreshPolicyForPrediction(); drain(0.02)
+    precondition(InputiaVoiceInputLauncher.pending.isEmpty, "同一持续不可用期的再握手不能重置主动刷新预算")
+    subject.stop()
+    let disabled = InputiaPersonalization(); disabled.start()
+    InputiaVoiceInputLauncher.pending.removeFirst().completion(reply(enabled: false))
+    disabled.refreshPolicyForPrediction()
+    precondition(disabled.explicitlyDisabled && InputiaVoiceInputLauncher.pending.isEmpty)
+    disabled.stop()
+    let stopped = InputiaPersonalization(); stopped.start()
+    let pending = InputiaVoiceInputLauncher.pending.removeFirst()
+    stopped.refreshPolicyForPrediction(); stopped.stop(); pending.completion(reply())
+    precondition(!stopped.allowed && InputiaVoiceInputLauncher.pending.isEmpty,
+      "会话停止后不得发送挂起policy或恢复租约")
+    print("predictionPolicyRefreshImmediate=true policySingleflight=true pendingRefreshSurvivesStalePolicy=true unavailableRefreshOnce=true failedRefreshNoLoop=true repeatedBarrierNoLoop=true disabledNoRefresh=true stoppedNoRefresh=true")
   }
   static func main() {
     let subject = InputiaPersonalization()
@@ -351,6 +633,9 @@ struct PersonalizationFlowSelfCheck {
     precondition(!expirySubject.allowed, "没有新回执时租约必须在两秒内到期")
     expirySubject.stop()
     InputiaVoiceInputLauncher.pending.removeAll()
+    identicalQueryChecks()
+    predictionPolicyRefreshChecks()
+    predictionRetryChecks()
     boundaryWaitChecks()
     print("personalizationFlowSelfCheck=true coalescesLatest=true staleDiscard=true targetReset=true admitRevocation=true zeroDebounce=true scopedCache=true frozenOrder=true recallAdmission=true phraseUndo=true explicitReject=true delayedAdmitFastTyping=true delayedAdmissionTimeout=true admissionReentry=true unknownTargetNoReplay=true nativeInput=false")
   }

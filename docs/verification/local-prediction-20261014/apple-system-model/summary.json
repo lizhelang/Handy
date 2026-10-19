@@ -1,0 +1,118 @@
+{
+  "date": "2026-10-14",
+  "model": "SystemLanguageModel.default",
+  "route": "on_device",
+  "machine": "M2 Max,32GB,macOS27.2(root verified)",
+  "sdk": "macOS27.2/Swift6.4",
+  "heldout_contexts": 12,
+  "previous_benchmark_context_overlap": 0,
+  "runs": 36,
+  "normal_total_deadline_ms": 5000,
+  "prewarm_window_ms": 1000,
+  "configurations": {
+    "three": {
+      "maximumResponseTokens": 72,
+      "first_complete_candidate_from_generation": {
+        "n": 12,
+        "p50_ms": 691.92,
+        "p95_nearest_rank_ms": 828.34,
+        "max_ms": 828.34,
+        "min_ms": 599.65
+      },
+      "final_from_generation": {
+        "n": 12,
+        "p50_ms": 705.57,
+        "p95_nearest_rank_ms": 891.51,
+        "max_ms": 891.51,
+        "min_ms": 599.73
+      },
+      "total_including_session_and_prewarm_window": {
+        "n": 12,
+        "p50_ms": 1771.21,
+        "p95_nearest_rank_ms": 1964.79,
+        "max_ms": 1964.79,
+        "min_ms": 1664.0
+      },
+      "shape_valid": 12,
+      "empty_results": 0,
+      "timeouts_or_errors": 0
+    },
+    "single": {
+      "maximumResponseTokens": 32,
+      "first_complete_candidate_from_generation": {
+        "n": 12,
+        "p50_ms": 520.81,
+        "p95_nearest_rank_ms": 619.97,
+        "max_ms": 619.97,
+        "min_ms": 498.6
+      },
+      "final_from_generation": {
+        "n": 12,
+        "p50_ms": 520.81,
+        "p95_nearest_rank_ms": 619.97,
+        "max_ms": 619.97,
+        "min_ms": 498.6
+      },
+      "total_including_session_and_prewarm_window": {
+        "n": 12,
+        "p50_ms": 1577.71,
+        "p95_nearest_rank_ms": 1685.28,
+        "max_ms": 1685.28,
+        "min_ms": 1533.13
+      },
+      "shape_valid": 12,
+      "empty_results": 0,
+      "timeouts_or_errors": 0
+    },
+    "prefix": {
+      "maximumResponseTokens": 72,
+      "first_complete_candidate_from_generation": {
+        "n": 12,
+        "p50_ms": 697.93,
+        "p95_nearest_rank_ms": 741.94,
+        "max_ms": 741.94,
+        "min_ms": 604.44
+      },
+      "final_from_generation": {
+        "n": 12,
+        "p50_ms": 706.27,
+        "p95_nearest_rank_ms": 807.66,
+        "max_ms": 807.66,
+        "min_ms": 604.51
+      },
+      "total_including_session_and_prewarm_window": {
+        "n": 12,
+        "p50_ms": 1769.08,
+        "p95_nearest_rank_ms": 1871.49,
+        "max_ms": 1871.49,
+        "min_ms": 1666.04
+      },
+      "shape_valid": 12,
+      "empty_results": 0,
+      "timeouts_or_errors": 0
+    }
+  },
+  "prefix_vs_three_same_outputs": 12,
+  "prefix_first_candidate_minus_three_ms": {
+    "paired_median": 3.24,
+    "min": -86.4,
+    "max": 71.22,
+    "note": "negative means prefix faster; one observation per case, not a significance test"
+  },
+  "cancel": {
+    "candidates": [],
+    "chars": 19,
+    "config": "single",
+    "context": "快递放在楼下门卫那里了，我下班后顺路去",
+    "error": "CancellationError()",
+    "finalGenerationMS": 101.611833,
+    "finalTotalMS": 106.223,
+    "id": "parcel",
+    "maxTokens": 32,
+    "prewarmCallMS": 4.1525,
+    "prewarmWindowMS": 0,
+    "rawOutput": "",
+    "status": "cancelled_at_deadline",
+    "totalDeadlineMS": 100
+  }
+}

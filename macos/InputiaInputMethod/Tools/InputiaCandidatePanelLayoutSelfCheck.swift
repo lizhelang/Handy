@@ -1,5 +1,55 @@
 import AppKit
 
+// 与无窗口检查入口共用同一组生产定位边界用例。
+enum InputiaCandidatePanelPlacementChecks {
+  static func run(_ check: (String, Bool) -> Void) {
+    let primary = NSRect(x: 0, y: 40, width: 1440, height: 860)
+    let secondary = NSRect(x: -1920, y: -1040, width: 1920, height: 1040)
+    let screens: [InputiaCandidatePanelPlacement.ScreenFrame] = [
+      (frame: NSRect(x: 0, y: 0, width: 1440, height: 900), visibleFrame: primary),
+      (frame: NSRect(x: -1920, y: -1080, width: 1920, height: 1080), visibleFrame: secondary),
+    ]
+    let size = NSSize(width: 180, height: 23)
+    func placed(_ anchor: NSRect, size: NSSize = NSSize(width: 180, height: 23),
+      visible: NSRect = NSRect(x: 0, y: 40, width: 1440, height: 860)) -> NSRect {
+      InputiaCandidatePanelPlacement.frame(near: anchor, size: size, visibleFrame: visible)
+    }
+    func inside(_ frame: NSRect, _ visible: NSRect) -> Bool {
+      [frame.minX, frame.minY, frame.maxX, frame.maxY].allSatisfy(\.isFinite)
+        && frame.width > 0 && frame.height > 0
+        && frame.minX >= visible.minX && frame.maxX <= visible.maxX
+        && frame.minY >= visible.minY && frame.maxY <= visible.maxY
+    }
+    let normal = NSRect(x: 100, y: 400, width: 1, height: 18)
+    check("placementPreservesNormalBelowCursor", placed(normal) == NSRect(x: 100, y: 373, width: 180, height: 23))
+    let low = NSRect(x: 100, y: 45, width: 1, height: 18)
+    check("placementPreservesAboveCursorFallback", placed(low) == NSRect(x: 100, y: 67, width: 180, height: 23))
+    check("placementClampsStaleAnchorBelowAllScreens", inside(placed(NSRect(x: 100, y: -1000, width: 1, height: 18)), primary))
+    check("placementClampsStaleAnchorAboveScreen", inside(placed(NSRect(x: 100, y: 1200, width: 1, height: 18)), primary))
+    check("placementClampsLeftBoundary", placed(NSRect(x: -3000, y: 400, width: 1, height: 18)).minX == primary.minX)
+    check("placementClampsRightBoundary", placed(NSRect(x: 3000, y: 400, width: 1, height: 18)).maxX == primary.maxX)
+    check("placementFitsOversizedPanel", inside(placed(normal, size: NSSize(width: 2000, height: 2000)), primary))
+    check("placementFitsNarrowScreen", inside(placed(normal, size: size, visible: NSRect(x: 0, y: 0, width: 100, height: 20)), NSRect(x: 0, y: 0, width: 100, height: 20)))
+
+    let negative = NSRect(x: -1800, y: -900, width: 0, height: 18)
+    let selected = InputiaCandidatePanelPlacement.visibleFrame(for: negative, screens: screens, fallback: primary)
+    check("placementSelectsNegativeCoordinateScreen", selected == secondary)
+    check("placementKeepsNegativeCoordinateCaret", InputiaCandidatePanelPlacement.normalizedAnchor(negative, fallbackPoint: .zero) == negative)
+    check("placementFitsNegativeCoordinateScreen", placed(negative, visible: selected) == NSRect(x: -1800, y: -927, width: 180, height: 23))
+    let fallbackPoint = NSPoint(x: -1800, y: -900)
+    let fallbackAnchor = NSRect(origin: fallbackPoint, size: NSSize(width: 1, height: 18))
+    check("placementUsesMouseForZeroAnchor", InputiaCandidatePanelPlacement.normalizedAnchor(.zero, fallbackPoint: fallbackPoint) == fallbackAnchor)
+    check("placementRejectsNaNAnchor", InputiaCandidatePanelPlacement.normalizedAnchor(NSRect(x: CGFloat.nan, y: 400, width: 1, height: 18), fallbackPoint: fallbackPoint) == fallbackAnchor)
+    check("placementRejectsInfiniteAnchor", InputiaCandidatePanelPlacement.normalizedAnchor(NSRect(x: 100, y: CGFloat.infinity, width: 1, height: 18), fallbackPoint: fallbackPoint) == fallbackAnchor)
+    check("placementRejectsInfiniteSize", InputiaCandidatePanelPlacement.normalizedAnchor(NSRect(x: 100, y: 400, width: CGFloat.infinity, height: 18), fallbackPoint: fallbackPoint) == fallbackAnchor)
+    let safeFallback = InputiaCandidatePanelPlacement.normalizedAnchor(.zero, fallbackPoint: NSPoint(x: CGFloat.nan, y: CGFloat.infinity))
+    check("placementRejectsInvalidFallbackPoint", [safeFallback.minX, safeFallback.minY, safeFallback.maxX, safeFallback.maxY].allSatisfy(\.isFinite))
+    let invalidScreens: [InputiaCandidatePanelPlacement.ScreenFrame] = [(frame: screens[0].frame, visibleFrame: .zero)]
+    check("placementRejectsEmptyScreen", InputiaCandidatePanelPlacement.visibleFrame(for: normal, screens: invalidScreens, fallback: primary) == primary)
+    check("placementFallsBackForMissingScreens", InputiaCandidatePanelPlacement.visibleFrame(for: normal, screens: [], fallback: nil) == NSRect(x: 0, y: 0, width: 1440, height: 900))
+  }
+}
+
 @main
 enum InputiaCandidatePanelLayoutSelfCheck {
   static func main() {
@@ -13,6 +63,8 @@ enum InputiaCandidatePanelLayoutSelfCheck {
         failures.append(name)
       }
     }
+
+    InputiaCandidatePanelPlacementChecks.run(check)
 
     let gap: CGFloat = 2
     let compactPanel: CGFloat = 620
@@ -172,6 +224,19 @@ enum InputiaCandidatePanelLayoutSelfCheck {
     let collapsed = snapshot(content, candidates: Array(screenshotCandidates.prefix(7)),
       fontSize: 14, maxWidth: 1600, activeRow: 0, expanded: false)
     check("collapsedPanelRemainsSingleRow", collapsed.0.height == 23 && collapsed.1.count == 7)
+
+    content.configureStatus("", fontSize: 14)
+    let pendingSize = content.preferredSize(maxWidth: 1600)
+    content.frame = NSRect(origin: .zero, size: pendingSize)
+    content.layoutSubtreeIfNeeded()
+    check("predictionPendingReplacesOldCandidateViews", content.subviews.count == 1
+      && content.debugSummary(maxWidth: 1600).contains("texts=;"))
+    check("predictionPendingHasNoCandidateHighlight", content.subviews.first?.layer?.backgroundColor?.alpha == 0)
+    check("predictionPendingKeepsSingleRow", pendingSize.height == 23)
+    content.configureStatus("暂无后续联想", fontSize: 14)
+    check("predictionEmptyRemainsNeutralStatus", content.subviews.count == 1
+      && content.debugSummary(maxWidth: 1600).contains("texts=暂无后续联想")
+      && content.subviews.first?.layer?.backgroundColor?.alpha == 0)
 
     if failures.isEmpty {
       print("candidatePanelLayoutSelfCheckPassed=true")

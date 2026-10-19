@@ -807,22 +807,50 @@ pub(crate) fn copy_voice_text(
 
 /// 已取得唯一输出权的语音适配器；任何错误都不切换第二路线。
 #[cfg(target_os = "macos")]
-pub(crate) fn paste_voice_text(
+pub(crate) fn paste_dictation_text(
     text: &str,
     app: &AppHandle,
     settings: &crate::settings::AppSettings,
     validate: &mut dyn FnMut() -> Result<(), String>,
-    completion_guard: Box<dyn Fn() -> Result<(), String> + Send>,
+    completion_guards: crate::paste_tx::VoiceCompletionGuards,
+    completion: &mut Option<crate::paste_tx::DictationCompletion>,
+) -> crate::paste_tx::DictationPastePhase {
+    use crate::paste_tx::DictationPastePhase;
+    if !settings.reliable_paste
+        && matches!(
+            settings.paste_method,
+            PasteMethod::CtrlV | PasteMethod::CtrlShiftV | PasteMethod::ShiftInsert
+        )
+    {
+        return match crate::paste_tx::prepare_dictation_standard(
+            text,
+            settings,
+            validate,
+            completion_guards,
+            completion,
+        ) {
+            Ok(()) => DictationPastePhase::Prepared,
+            Err(outcome) => DictationPastePhase::Finished(outcome),
+        };
+    }
+    DictationPastePhase::Finished(paste_dictation_immediate(
+        text,
+        app,
+        settings,
+        validate,
+        completion_guards,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn paste_dictation_immediate(
+    text: &str,
+    app: &AppHandle,
+    settings: &crate::settings::AppSettings,
+    validate: &mut dyn FnMut() -> Result<(), String>,
+    completion_guards: crate::paste_tx::VoiceCompletionGuards,
 ) -> crate::paste_tx::HistoryPasteOutcome {
     use crate::paste_tx::HistoryPasteOutcome;
-    if let Err(error) = validate() {
-        return HistoryPasteOutcome::NotDispatched(error);
-    }
-    // 不截短用户设定的延时；超过短期许可的请求保留待插入，不迟到补发。
-    if settings.paste_delay_ms >= 2_000 {
-        return HistoryPasteOutcome::NotDispatched("paste delay exceeds output permit".into());
-    }
-    std::thread::sleep(Duration::from_millis(settings.paste_delay_ms));
     if let Err(error) = validate() {
         return HistoryPasteOutcome::NotDispatched(error);
     }
@@ -848,7 +876,7 @@ pub(crate) fn paste_voice_text(
                     clipboard_handling: settings.clipboard_handling,
                 },
                 validate,
-                completion_guard,
+                completion_guards,
             );
         }
         PasteMethod::Direct => {
@@ -875,18 +903,16 @@ pub(crate) fn paste_voice_text(
     }
     if settings.auto_submit {
         std::thread::sleep(Duration::from_millis(50));
-        if let Err(error) =
-            completion_guard().and_then(|_| send_return_key(enigo, settings.auto_submit_key))
+        if let Err(error) = (completion_guards.auto_submit)()
+            .and_then(|_| send_return_key(enigo, settings.auto_submit_key))
         {
-            return HistoryPasteOutcome::PossiblyDispatched(error);
+            log::info!("dictation_auto_submit_withheld reason={error}");
         }
     }
     if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
-        let copy = copy_voice_text(text, app, &mut || completion_guard());
+        let copy = copy_voice_text(text, app, &mut || (completion_guards.clipboard)());
         if copy != HistoryPasteOutcome::Dispatched {
-            return HistoryPasteOutcome::PossiblyDispatched(
-                "text dispatched but clipboard copy failed".into(),
-            );
+            log::warn!("dictation_text_dispatched_but_clipboard_copy_unavailable");
         }
     }
     HistoryPasteOutcome::Dispatched

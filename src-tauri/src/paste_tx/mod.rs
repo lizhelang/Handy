@@ -52,6 +52,19 @@ pub(crate) struct PasteCompletion {
     pub clipboard_handling: crate::settings::ClipboardHandling,
 }
 
+/// 自动发送按键与持久剪贴板发布分开核验，允许粘贴不代表允许提交输入法组合。
+#[cfg(target_os = "macos")]
+pub(crate) struct VoiceCompletionGuards {
+    pub auto_submit: Box<dyn Fn() -> Result<(), String> + Send>,
+    pub clipboard: Box<dyn Fn() -> Result<(), String> + Send>,
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) enum DictationPastePhase {
+    Prepared,
+    Finished(HistoryPasteOutcome),
+}
+
 /// 在最后副作用边界检查目标/组合状态/策略。发键错误可能发生在部分发键后。
 pub(crate) fn guarded_dispatch(
     validate: &mut dyn FnMut() -> Result<(), String>,
@@ -90,6 +103,33 @@ pub(crate) fn settle_preserved_text(
 pub(crate) struct ClipboardSnapshot {
     pub change_count: isize,
     pub items: Vec<Vec<(String, Vec<u8>)>>,
+}
+
+/// 普通听写保存可兑现的表示；缺一个私有格式不抹掉同 item 的文本/图片/文件。
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn recoverable_clipboard_items(
+    items: Vec<Vec<(String, Option<Vec<u8>>)>>,
+) -> Result<(Vec<Vec<(String, Vec<u8>)>>, usize), String> {
+    let mut restored = Vec::new();
+    let mut missing = 0;
+    for item in items {
+        if item.is_empty() {
+            continue;
+        }
+        let mut formats = Vec::new();
+        for (kind, data) in item {
+            if let Some(data) = data {
+                formats.push((kind, data));
+            } else {
+                missing += 1;
+            }
+        }
+        if formats.is_empty() {
+            return Err("dictation_clipboard_item_not_recoverable".into());
+        }
+        restored.push(formats);
+    }
+    Ok((restored, missing))
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -141,7 +181,7 @@ pub(crate) fn paste_voice(
     enigo: &mut enigo::Enigo,
     completion: PasteCompletion,
     validate: &mut dyn FnMut() -> Result<(), String>,
-    completion_guard: Box<dyn Fn() -> Result<(), String> + Send>,
+    completion_guards: VoiceCompletionGuards,
 ) -> HistoryPasteOutcome {
     platform::run_voice(
         text,
@@ -150,7 +190,7 @@ pub(crate) fn paste_voice(
         enigo,
         completion,
         validate,
-        completion_guard,
+        completion_guards,
     )
 }
 
@@ -161,6 +201,8 @@ mod macos;
 pub(crate) use macos::private_pasteboard_self_check;
 #[cfg(target_os = "macos")]
 pub(crate) use macos::publish_snapshot;
+#[cfg(target_os = "macos")]
+pub(crate) use macos::{prepare_dictation_standard, DictationCompletion};
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -336,6 +378,52 @@ pub(crate) fn try_reliable_paste(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dictation_snapshot_preserves_text_image_files_and_multiple_items_despite_optional_failure() {
+        let source = vec![
+            vec![
+                ("public.utf8-plain-text".into(), Some(b"text".to_vec())),
+                ("private.optional".into(), None),
+                ("public.html".into(), Some(b"<b>text</b>".to_vec())),
+            ],
+            vec![
+                ("public.png".into(), Some(vec![0, 255, 3])),
+                (
+                    "public.file-url".into(),
+                    Some(b"file:///tmp/fixture.png".to_vec()),
+                ),
+            ],
+            vec![("custom.empty".into(), Some(Vec::new()))],
+        ];
+        let (saved, skipped) = recoverable_clipboard_items(source).unwrap();
+        assert_eq!(skipped, 1);
+        assert_eq!(saved.len(), 3);
+        assert_eq!(
+            saved[0],
+            vec![
+                ("public.utf8-plain-text".into(), b"text".to_vec()),
+                ("public.html".into(), b"<b>text</b>".to_vec())
+            ]
+        );
+        assert_eq!(saved[1][0], ("public.png".into(), vec![0, 255, 3]));
+        assert_eq!(saved[1][1].0, "public.file-url");
+        assert_eq!(saved[2], vec![("custom.empty".into(), Vec::new())]);
+    }
+
+    #[test]
+    fn dictation_never_overwrites_an_entirely_unrecoverable_nonempty_item() {
+        assert!(recoverable_clipboard_items(vec![vec![("private.only".into(), None)]]).is_err());
+        assert!(recoverable_clipboard_items(vec![
+            vec![("public.utf8-plain-text".into(), Some(b"first".to_vec()))],
+            vec![("private.only".into(), None)],
+        ])
+        .is_err());
+        assert_eq!(
+            recoverable_clipboard_items(Vec::new()).unwrap(),
+            (Vec::new(), 0)
+        );
+    }
 
     #[test]
     fn revoked_persistent_copy_restores_original_without_publishing_transcript() {

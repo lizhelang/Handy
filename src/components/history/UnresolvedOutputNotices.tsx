@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { listen } from "@tauri-apps/api/event";
 import {
   acknowledgeOutputNotice,
   listUnresolvedOutputs,
+  listenForOutputResults,
   type UnresolvedOutputNotice,
 } from "@/lib/unresolvedOutputs";
 
@@ -44,18 +44,19 @@ export function UnresolvedOutputNotices() {
 
   useEffect(() => {
     let active = true;
-    const unlisten = listen("voice-output-result", () => {
-      if (active) void load();
-    });
-    void unlisten
-      .then(() => {
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = () => {
+      if (!active || refreshTimer !== undefined) return;
+      refreshTimer = setTimeout(() => {
+        refreshTimer = undefined;
         if (active) void load();
-      })
-      .catch(() => {
-        if (active) void load();
-      });
+      }, 100);
+    };
+    const unlisten = listenForOutputResults(refresh);
+    void unlisten.then(refresh).catch(refresh);
     return () => {
       active = false;
+      clearTimeout(refreshTimer);
       ++request.current;
       void unlisten.then((stop) => stop()).catch(() => {});
     };
@@ -80,32 +81,35 @@ export function UnresolvedOutputNotices() {
       className="mb-3 max-h-52 shrink-0 overflow-y-auto rounded-lg border border-mid-gray/30 p-3"
       aria-label={t("unifiedHistory.outputNotices.heading")}
     >
-      <h2 className="font-medium">
-        {t("unifiedHistory.outputNotices.heading")}
-      </h2>
-      <p className="mb-2 text-xs text-text/60">
-        {t("unifiedHistory.outputNotices.historyHelp")}
-      </p>
-      <p className="mb-2 text-xs text-text/60">
-        {t("unifiedHistory.outputNotices.acknowledgeHelp")}
-      </p>
-      {error && <p role="alert">{t("unifiedHistory.errors.load")}</p>}
-      {items.map((item) => (
-        <div
-          key={item.operation_id}
-          className="my-2 flex items-center justify-between gap-3 text-sm"
-        >
-          <span>{t(`unifiedHistory.feedback.${item.state}`)}</span>
-          <button
-            type="button"
-            className="shrink-0 underline"
-            disabled={busy}
-            onClick={() => void dismiss(item)}
+      <details>
+        <summary className="cursor-pointer font-medium">
+          {t("unifiedHistory.outputNotices.heading")} ({items.length}
+          {cursor ? "+" : ""})
+        </summary>
+        <p className="mb-2 text-xs text-text/60">
+          {t("unifiedHistory.outputNotices.historyHelp")}
+        </p>
+        <p className="mb-2 text-xs text-text/60">
+          {t("unifiedHistory.outputNotices.acknowledgeHelp")}
+        </p>
+        {items.map((item) => (
+          <div
+            key={item.operation_id}
+            className="my-2 flex items-center justify-between gap-3 text-sm"
           >
-            {t("unifiedHistory.outputNotices.acknowledge")}
-          </button>
-        </div>
-      ))}
+            <span>{t(`unifiedHistory.feedback.${item.state}`)}</span>
+            <button
+              type="button"
+              className="shrink-0 underline"
+              disabled={busy}
+              onClick={() => void dismiss(item)}
+            >
+              {t("unifiedHistory.outputNotices.acknowledge")}
+            </button>
+          </div>
+        ))}
+      </details>
+      {error && <p role="alert">{t("unifiedHistory.errors.load")}</p>}
       <div className="flex gap-3 text-sm">
         <button type="button" disabled={busy} onClick={() => void load()}>
           {t("unifiedHistory.refresh")}

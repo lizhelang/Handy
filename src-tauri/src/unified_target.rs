@@ -47,6 +47,7 @@ unsafe extern "C" {
     fn AXValueGetTypeID() -> usize;
     fn AXValueGetType(value: Ref) -> u32;
     fn AXValueGetValue(value: Ref, kind: u32, result: *mut c_void) -> u8;
+    fn AXTextMarkerRangeGetTypeID() -> usize;
     fn AXObserverCreate(pid: c_int, callback: AxCallback, result: *mut Ref) -> c_int;
     fn AXObserverAddNotification(
         observer: Ref,
@@ -146,6 +147,100 @@ pub enum PendingReason {
     SuspendedByOwner,
     RegistryFull,
     EntropyUnavailable,
+}
+
+/// AX 只报告当前字段可见的组合元数据；无值/不支持均不是输入法全局无组合证明。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MarkedTextStatus {
+    Present,
+    NoValue,
+    Unsupported,
+}
+
+fn marked_text_status(
+    status: c_int,
+    is_marker_range: Option<bool>,
+) -> Result<MarkedTextStatus, PendingReason> {
+    match (status, is_marker_range) {
+        (0, Some(true)) => Ok(MarkedTextStatus::Present),
+        (0 | -25212, None) => Ok(MarkedTextStatus::NoValue),
+        (-25205, None) => Ok(MarkedTextStatus::Unsupported),
+        _ => Err(PendingReason::UnknownTarget),
+    }
+}
+
+fn marked_range_status(range: Selection) -> Result<MarkedTextStatus, PendingReason> {
+    if range.length == 0 && range.location >= -1 {
+        // NSNotFound、kCFNotFound 与空范围都只说明此属性未给出 marked text。
+        return Ok(MarkedTextStatus::NoValue);
+    }
+    if range.length > 0 && range.location >= 0 && range.location.checked_add(range.length).is_some()
+    {
+        return Ok(MarkedTextStatus::Present);
+    }
+    Err(PendingReason::UnknownTarget)
+}
+
+fn query_marked_attribute(
+    field: &Owned,
+    name: &'static [u8],
+) -> Result<(c_int, Option<Owned>), PendingReason> {
+    query_budget()?;
+    let key = cf_string(name)?;
+    let mut value = ptr::null();
+    let status = unsafe { AXUIElementCopyAttributeValue(field.0, key.0, &mut value) };
+    let value = (!value.is_null()).then(|| Owned(value));
+    if !matches!(status, 0 | -25205 | -25212) {
+        log::info!(
+            "platform_voice_marked_text_unavailable attribute={} status={status}",
+            String::from_utf8_lossy(name).trim_end_matches('\0')
+        );
+    }
+    query_budget()?;
+    Ok((status, value))
+}
+
+fn field_marked_text(field: &Owned) -> Result<MarkedTextStatus, PendingReason> {
+    // SDK AXWebConstants.h：只读 AXTextMarkerRangeRef，无 marked text 时返回 NULL。
+    // 不读取 marker 对应正文，也不把 AX 错误当成组合已经结束。
+    let (status, value) = query_marked_attribute(field, b"AXTextInputMarkedTextMarkerRange\0")?;
+    let is_marker_range = value
+        .as_ref()
+        .map(|value| unsafe { CFGetTypeID(value.0) == AXTextMarkerRangeGetTypeID() });
+    let marker = marked_text_status(status, is_marker_range)?;
+    if marker == MarkedTextStatus::Present {
+        return Ok(marker);
+    }
+    // AppKit 的公开 NSAccessibilityTextInputMarkedRangeAttribute 使用 CFRange；
+    // 原生控件可能只支持此属性，而 Web/Electron 控件支持上面的 marker 属性。
+    let (status, value) = query_marked_attribute(field, b"AXTextInputMarkedRange\0")?;
+    let native = if status == 0 {
+        if let Some(value) = value.as_ref() {
+            let mut range = Selection {
+                location: 0,
+                length: 0,
+            };
+            if unsafe {
+                CFGetTypeID(value.0) != AXValueGetTypeID()
+                    || AXValueGetType(value.0) != 4
+                    || AXValueGetValue(value.0, 4, (&mut range as *mut Selection).cast()) == 0
+            } {
+                return Err(PendingReason::UnknownTarget);
+            }
+            marked_range_status(range)?
+        } else {
+            MarkedTextStatus::NoValue
+        }
+    } else {
+        marked_text_status(status, value.as_ref().map(|_| false))?
+    };
+    Ok(match (marker, native) {
+        (_, MarkedTextStatus::Present) => MarkedTextStatus::Present,
+        (MarkedTextStatus::NoValue, _) | (_, MarkedTextStatus::NoValue) => {
+            MarkedTextStatus::NoValue
+        }
+        _ => MarkedTextStatus::Unsupported,
+    })
 }
 
 /// 不含 AX 指针或正文；只有本注册表持有的 ID 才能再次验证。
@@ -710,7 +805,7 @@ impl TargetRegistry {
         result
     }
 
-    /// 仅在 Handy 即将展示自己的面板时调用；其他 App 激活不能被此声明豁免。
+    /// 仅在 Inputia 即将展示自己的面板时调用；其他 App 激活不能被此声明豁免。
     pub fn arm_owner_overlay(&self, id: &str) -> Result<(), PendingReason> {
         self.validate(id)?;
         self.leases
@@ -748,6 +843,19 @@ impl TargetRegistry {
     /// 键入后的来源证明允许正文/选区变化，但必须仍是原字段、窗口和进程。
     pub fn validate_typed_field(&self, id: &str) -> Result<TargetSnapshot, PendingReason> {
         self.validate_identity(id, true)
+    }
+
+    /// 语音派发的组合探测仍绑定原租约；AX 查询期间发生焦点/选区/权限变化必须拒绝。
+    pub(crate) fn validate_voice_field(
+        &self,
+        id: &str,
+        allow_output_edits: bool,
+    ) -> Result<MarkedTextStatus, PendingReason> {
+        self.validate_identity(id, allow_output_edits)?;
+        let lease = self.leases.get(id).ok_or(PendingReason::UnknownTarget)?;
+        let marked = field_marked_text(&lease.state.field)?;
+        self.validate_identity(id, allow_output_edits)?;
+        Ok(marked)
     }
 
     fn validate_identity(
@@ -1034,6 +1142,69 @@ pub fn metadata_self_check() -> Result<(), PendingReason> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn marked_text_queries_distinguish_present_no_value_and_unsupported() {
+        assert_eq!(
+            marked_text_status(0, Some(true)),
+            Ok(MarkedTextStatus::Present)
+        );
+        assert_eq!(marked_text_status(0, None), Ok(MarkedTextStatus::NoValue));
+        assert_eq!(
+            marked_text_status(-25212, None),
+            Ok(MarkedTextStatus::NoValue)
+        );
+        assert_eq!(
+            marked_text_status(-25205, None),
+            Ok(MarkedTextStatus::Unsupported)
+        );
+        for status in [-25204, -25202, -25211, -25200, -25208] {
+            assert!(marked_text_status(status, None).is_err());
+        }
+        assert!(marked_text_status(0, Some(false)).is_err());
+        assert!(marked_text_status(-25212, Some(true)).is_err());
+        assert!(marked_text_status(-25205, Some(true)).is_err());
+    }
+
+    #[test]
+    fn native_marked_range_detects_composition_without_reading_text() {
+        assert_eq!(
+            marked_range_status(Selection {
+                location: 2,
+                length: 3
+            }),
+            Ok(MarkedTextStatus::Present)
+        );
+        for location in [-1, 0, 5, isize::MAX] {
+            assert_eq!(
+                marked_range_status(Selection {
+                    location,
+                    length: 0
+                }),
+                Ok(MarkedTextStatus::NoValue)
+            );
+        }
+        for range in [
+            Selection {
+                location: -1,
+                length: 2,
+            },
+            Selection {
+                location: 0,
+                length: -1,
+            },
+            Selection {
+                location: -2,
+                length: 0,
+            },
+            Selection {
+                location: isize::MAX,
+                length: 1,
+            },
+        ] {
+            assert!(marked_range_status(range).is_err());
+        }
+    }
 
     #[test]
     fn only_explicit_missing_optional_attributes_are_accepted() {

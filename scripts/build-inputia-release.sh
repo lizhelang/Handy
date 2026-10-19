@@ -36,6 +36,8 @@ case "${1:---preflight}" in
 esac
 # 元数据与工具链检查发生在读取签名输入及创建输出之前。
 "$RELEASE_PYTHON" "$REPO_ROOT/scripts/inputia_release.py" preflight --mode local
+# 先验证真实恢复流程；替身原生边界不读取用户数据或申请系统权限。
+"$RELEASE_PYTHON" "$REPO_ROOT/scripts/inputia-permission-recovery-self-check.py"
 : "${INPUTIA_PAIR_PRIVATE_KEY:?必须提供配对签名私钥路径}"
 : "${INPUTIA_CODESIGN_IDENTITY:?必须提供已有稳定签名证书身份}"
 if [[ "$INPUTIA_CODESIGN_IDENTITY" == "-" ]]; then

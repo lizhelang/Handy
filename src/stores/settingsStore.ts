@@ -7,6 +7,7 @@ import type {
   TranscribeAcceleratorSetting,
   OrtAcceleratorSetting,
   ShortcutActivation,
+  DictationTargetMode,
   VadBackend,
   LogLevel,
   Result as CommandResult,
@@ -177,6 +178,8 @@ const settingUpdaters: {
   reliable_paste: (value) =>
     commands.changeReliablePasteSetting(value as boolean),
   paste_method: (value) => commands.changePasteMethodSetting(value as string),
+  dictation_target_mode: (value) =>
+    commands.changeDictationTargetModeSetting(value as DictationTargetMode),
   typing_tool: (value) => commands.changeTypingToolSetting(value as string),
   external_script_path: (value) =>
     commands.changeExternalScriptPathSetting(value as string | null),

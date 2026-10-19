@@ -83,7 +83,24 @@ fn opaque() -> Result<String, String> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 fn reason(error: PendingReason) -> String {
-    format!("target_{error:?}").to_lowercase()
+    // 固定协议码与宿主诊断白名单保持一致，不依赖 Debug 的 CamelCase 拼写。
+    match error {
+        PendingReason::NotMainThread => "target_not_main_thread",
+        PendingReason::AccessibilityUnavailable => "target_accessibility_unavailable",
+        PendingReason::SecureInput => "target_secure_input",
+        PendingReason::UnknownTarget => "target_unknown",
+        PendingReason::UnsupportedControl => "target_unsupported_control",
+        PendingReason::UnobservableControl => "target_unobservable_control",
+        PendingReason::ProcessChanged => "target_process_changed",
+        PendingReason::FocusChanged => "target_focus_changed",
+        PendingReason::Edited => "target_edited",
+        PendingReason::Destroyed => "target_destroyed",
+        PendingReason::Expired => "target_expired",
+        PendingReason::SuspendedByOwner => "target_suspended_by_owner",
+        PendingReason::RegistryFull => "target_registry_full",
+        PendingReason::EntropyUnavailable => "target_entropy_unavailable",
+    }
+    .into()
 }
 fn checked_source(source: &str) -> Result<ProcessInstance, String> {
     let (process, title) = unified_target::foreground_source(source).map_err(reason)?;
@@ -676,6 +693,40 @@ pub fn disconnected(app: &tauri::AppHandle, owner: &str, server: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_target_rejections_have_stable_diagnostic_codes() {
+        let cases = [
+            (PendingReason::NotMainThread, "target_not_main_thread"),
+            (
+                PendingReason::AccessibilityUnavailable,
+                "target_accessibility_unavailable",
+            ),
+            (PendingReason::SecureInput, "target_secure_input"),
+            (PendingReason::UnknownTarget, "target_unknown"),
+            (
+                PendingReason::UnsupportedControl,
+                "target_unsupported_control",
+            ),
+            (
+                PendingReason::UnobservableControl,
+                "target_unobservable_control",
+            ),
+            (PendingReason::ProcessChanged, "target_process_changed"),
+            (PendingReason::FocusChanged, "target_focus_changed"),
+            (PendingReason::Edited, "target_edited"),
+            (PendingReason::Destroyed, "target_destroyed"),
+            (PendingReason::Expired, "target_expired"),
+            (PendingReason::SuspendedByOwner, "target_suspended_by_owner"),
+            (PendingReason::RegistryFull, "target_registry_full"),
+            (
+                PendingReason::EntropyUnavailable,
+                "target_entropy_unavailable",
+            ),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(reason(value), expected);
+        }
+    }
     fn grant() -> Grant {
         Grant {
             owner: "ime".into(),

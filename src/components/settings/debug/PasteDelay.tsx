@@ -25,8 +25,13 @@ export const PasteDelay: React.FC<PasteDelayProps> = ({
   const { settings, updateSetting, resetSetting, isUpdating } = useSettings();
   const osType = useOsType();
 
-  // macOS clipboard restoration is governed by the transaction receipt.
-  if (osType === "macos" && settingKey === "paste_delay_after_ms") return null;
+  // 仅事务粘贴按回执恢复剪贴板；标准粘贴仍使用用户设置的延迟。
+  if (
+    osType === "macos" &&
+    settingKey === "paste_delay_after_ms" &&
+    settings?.reliable_paste === true
+  )
+    return null;
 
   const handleDelayChange = (value: number) => {
     updateSetting(settingKey, value);

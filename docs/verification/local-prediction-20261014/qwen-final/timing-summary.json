@@ -1,0 +1,101 @@
+{
+  "quantile_method": "p50 median; p95 nearest rank ceil(0.95*n)",
+  "by_phase": {
+    "heldout": {
+      "A": {
+        "complete_candidate": {
+          "n": 20,
+          "p50_ms": 30.829916591756046,
+          "p95_ms": 53.778290981426835,
+          "max_ms": 57.31145804747939
+        },
+        "first_content": {
+          "n": 20,
+          "p50_ms": 13.956416514702141,
+          "p95_ms": 25.04566707648337,
+          "max_ms": 37.17529191635549
+        },
+        "nonempty": 20,
+        "format_valid": 20
+      },
+      "B": {
+        "complete_candidate": {
+          "n": 20,
+          "p50_ms": 92.66902145463973,
+          "p95_ms": 100.57479189708829,
+          "max_ms": 107.91820799931884
+        },
+        "first_content": {
+          "n": 20,
+          "p50_ms": 77.68654148094356,
+          "p95_ms": 78.77637492492795,
+          "max_ms": 81.08862489461899
+        },
+        "nonempty": 20,
+        "format_valid": 20
+      }
+    },
+    "challenge": {
+      "A": {
+        "complete_candidate": {
+          "n": 4,
+          "p50_ms": 68.48745804745704,
+          "p95_ms": 107.20904101617634,
+          "max_ms": 107.20904101617634
+        },
+        "first_content": {
+          "n": 4,
+          "p50_ms": 48.51116694044322,
+          "p95_ms": 54.59124990738928,
+          "max_ms": 54.59124990738928
+        },
+        "nonempty": 4,
+        "format_valid": 4
+      },
+      "B": {
+        "complete_candidate": {
+          "n": 4,
+          "p50_ms": 120.25479134172201,
+          "p95_ms": 135.3283750358969,
+          "max_ms": 135.3283750358969
+        },
+        "first_content": {
+          "n": 4,
+          "p50_ms": 105.5715624243021,
+          "p95_ms": 108.87608304619789,
+          "max_ms": 108.87608304619789
+        },
+        "nonempty": 4,
+        "format_valid": 4
+      }
+    }
+  },
+  "readiness_ms": 1424.6903751045465,
+  "warmup": [
+    {
+      "profile": "A",
+      "output": "发个消息",
+      "first_content_ms": 17.8875420242548,
+      "complete_candidate_ms": 42.15024993754923,
+      "error": null
+    },
+    {
+      "profile": "B",
+      "output": "带好书包",
+      "first_content_ms": 80.50925005227327,
+      "complete_candidate_ms": 109.92208309471607,
+      "error": null
+    }
+  ],
+  "peak_rss_gib": 2.2108917236328125,
+  "rss_at_finish_gib": 2.210845947265625,
+  "runtime_exit_code": 0,
+  "errors": 0,
+  "invalid_format": 0,
+  "max_generated_tokens": 7,
+  "stop_types": {
+    "word": 48
+  },
+  "owned_port_closed": true,
+  "owned_pid_absent": true
+}

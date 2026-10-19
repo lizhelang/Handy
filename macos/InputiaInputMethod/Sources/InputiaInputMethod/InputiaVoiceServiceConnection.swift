@@ -578,6 +578,13 @@ private struct InputiaVoiceOutputReply: Decodable {
 /// 单一后台队列拥有此客户端。构建公钥作为信任根，manifest只提供被签名的两端身份。
 final class InputiaVoiceServiceConnection {
   static let processInstance = UUID().uuidString
+  private struct OwnedContextScope: Equatable {
+    let server: String
+    let profile: String
+    let version: InputiaVoiceTermsVersion
+  }
+  // 只在主线程、完整清理成功后访问；不缓存任何共享候选或目标许可。
+  private static var appliedOwnedContextScope: OwnedContextScope?
   private let connection: InputiaFramedConnection
   private var privacyState: InputiaSharedStateBarrierApplying?
   let server: InputiaVoiceHello
@@ -662,7 +669,7 @@ final class InputiaVoiceServiceConnection {
     locallyAppliedVersion = nil
     do {
       let barrier = try connection.read(InputiaVoicePolicyBarrier.self)
-      try Self.applyAndAcknowledge(barrier, minimumEpoch: server.policy_epoch, state: state, privacyServer: server.instance_id, privacyProfile: server.profile_id) { ack in
+      try Self.applyAndAcknowledge(barrier, minimumEpoch: server.policy_epoch, state: state, privacyServer: server.instance_id, privacyProfile: server.profile_id, isHandshake: true) { ack in
         try connection.write(ack)
       }
       // 仅说明本地应用并发送了ACK，不冒称服务已接纳Start或麦克风正在录音。
@@ -672,6 +679,7 @@ final class InputiaVoiceServiceConnection {
 
   private static func applyAndAcknowledge(_ barrier: InputiaVoicePolicyBarrier, minimumEpoch: UInt64,
                                           state: InputiaSharedStateBarrierApplying, privacyServer: String? = nil, privacyProfile: String? = nil,
+                                          isHandshake: Bool = false,
                                           send: (InputiaVoicePolicyAck) throws -> Void) throws {
     guard barrier.clear_shared_personalization, barrier.version.policy_epoch >= minimumEpoch,
           barrier.barrier_id.utf8.count == 64,
@@ -685,8 +693,19 @@ final class InputiaVoiceServiceConnection {
       guard let privacyServer, let privacyProfile else { throw InputiaVoiceServiceError.policy }
       try InputiaMemoryBarrier.apply(.init(server_instance: privacyServer, profile_id: privacyProfile,
         policy_epoch: barrier.version.policy_epoch))
-      // 同epoch的真实屏障同样清理其他共享域，不能用旧ACK抵消这次撤销。
-      NotificationCenter.default.post(name: Notification.Name("InputiaPrivacyRevoked"), object: nil)
+      let scope = OwnedContextScope(server: privacyServer, profile: privacyProfile, version: barrier.version)
+      let ownedContextAction: String
+      if !isHandshake {
+        ownedContextAction = "clear_all"
+      } else if appliedOwnedContextScope == scope {
+        ownedContextAction = "preserve"
+      } else {
+        ownedContextAction = appliedOwnedContextScope == nil ? "clear_prefix" : "clear_all"
+      }
+      appliedOwnedContextScope = scope
+      // 此信号只区分本地已上屏前文；同版本握手仍已清理全部共享候选、目标和票据。
+      NotificationCenter.default.post(name: Notification.Name("InputiaPrivacyRevoked"), object: nil,
+        userInfo: ["owned_context_action": ownedContextAction])
     }
     if Thread.isMainThread { try clear() } else { try DispatchQueue.main.sync(execute: clear) }
     try send(InputiaVoicePolicyAck(barrier_id: barrier.barrier_id, version: barrier.version,
@@ -811,11 +830,13 @@ final class InputiaVoiceServiceConnection {
     } catch { close(); throw error }
   }
 
-  func registerShortcutLease(_ lease: InputiaHostShortcutLease) throws {
+  func registerShortcutLease(_ lease: InputiaHostShortcutLease) throws -> Bool {
     guard lease.target.host_instance == Self.processInstance else { throw InputiaVoiceServiceError.handshake }
     let reply = try shortcutRequest(InputiaHostShortcutCommand(kind: "register", lease: lease))
+    if reply.status == "rejected", reply.code == "unauthorized" { return false }
     guard reply.status == "registered", reply.lease_id == lease.lease_id,
-      reply.lease_epoch == lease.lease_epoch else { close(); throw InputiaVoiceServiceError.handshake }
+      reply.lease_epoch == lease.lease_epoch, reply.trigger == nil else { close(); throw InputiaVoiceServiceError.handshake }
+    return true
   }
 
   func pollShortcut(maxWaitMs: UInt64 = 250) throws -> InputiaHostShortcutTrigger? {
@@ -856,6 +877,9 @@ final class InputiaVoiceServiceConnection {
         policy_epoch: version.policy_epoch, shortcut: command))
       let reply = try connection.read(InputiaHostShortcutReply.self)
       guard reply.request_id == requestID else { throw InputiaVoiceServiceError.handshake }
+      // 原目标不再获准是完整业务回执；不把它伪装成损坏帧后反复重连同一目标。
+      if command.kind == "register", reply.status == "rejected", reply.code == "unauthorized",
+        reply.lease_id == nil, reply.lease_epoch == nil, reply.trigger == nil { return reply }
       if command.kind == "reject", reply.status == "rejected",
         let code = reply.code, ["unauthorized", "unknown", "coordinator_rejected"].contains(code) {
         return reply

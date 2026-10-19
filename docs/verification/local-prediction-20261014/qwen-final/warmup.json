@@ -1,0 +1,88 @@
+[
+  {
+    "context": "明天记得给我",
+    "profile": "A",
+    "output": "发个消息",
+    "events": [
+      {
+        "at_ms": 17.8875420242548,
+        "content": "发"
+      },
+      {
+        "at_ms": 26.756792096421123,
+        "content": "个"
+      },
+      {
+        "at_ms": 35.040332935750484,
+        "content": "消息"
+      }
+    ],
+    "first_content_ms": 17.8875420242548,
+    "error": null,
+    "stop_type": "word",
+    "tokens_predicted": 4,
+    "tokens_evaluated": 3,
+    "truncated": false,
+    "stopping_word": "，",
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 3,
+      "prompt_ms": 16.614,
+      "prompt_per_token_ms": 5.538,
+      "prompt_per_second": 180.57060310581437,
+      "predicted_n": 4,
+      "predicted_ms": 24.127,
+      "predicted_per_token_ms": 8.042333333333334,
+      "predicted_per_second": 124.3420234591951
+    },
+    "complete_candidate_ms": 42.15024993754923,
+    "format_valid": true,
+    "nonempty": true,
+    "phase": "warmup"
+  },
+  {
+    "context": "明天记得给我",
+    "profile": "B",
+    "output": "带好书包",
+    "events": [
+      {
+        "at_ms": 80.50925005227327,
+        "content": "带"
+      },
+      {
+        "at_ms": 88.82554108276963,
+        "content": "好"
+      },
+      {
+        "at_ms": 95.67670803517103,
+        "content": "书"
+      },
+      {
+        "at_ms": 102.67575015313923,
+        "content": "包"
+      }
+    ],
+    "first_content_ms": 80.50925005227327,
+    "error": null,
+    "stop_type": "word",
+    "tokens_predicted": 5,
+    "tokens_evaluated": 212,
+    "truncated": false,
+    "stopping_word": "\"",
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 212,
+      "prompt_ms": 77.612,
+      "prompt_per_token_ms": 0.3660943396226415,
+      "prompt_per_second": 2731.536360356646,
+      "predicted_n": 5,
+      "predicted_ms": 28.939,
+      "predicted_per_token_ms": 7.23475,
+      "predicted_per_second": 138.2217768409413
+    },
+    "complete_candidate_ms": 109.92208309471607,
+    "format_valid": true,
+    "nonempty": true,
+    "phase": "warmup"
+  }
+]

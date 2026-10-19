@@ -93,10 +93,49 @@ enum InputiaHost {
 
 @objc(InputiaInputController)
 final class InputiaInputController: IMKInputController {
+  private struct PredictionCommitTrigger {
+    let generation: UInt64
+    let client: ObjectIdentifier
+    var contextPrefix = ""
+    var continuesSelection = false
+  }
+  private var candidateDisplayCleanupDepth = 0
+  private var ownedCandidatePanel: InputiaCandidatePanel? {
+    guard InputiaHost.activeInputController === self, candidateDisplayCleanupDepth == 0 else { return nil }
+    return InputiaHost.candidatePanel
+  }
   #if INPUTIA_PAIRED_BUILD
   private let personalization = InputiaPersonalization()
+  private let targetCaptureScope = InputiaTargetCaptureScope()
   private var personalCandidates: [InputiaPersonalCandidate] = []
   private var personalPredictions: [InputiaPersonalPrediction] = []
+  private var predictionPresentation = InputiaPredictionPresentation()
+  private var predictionInputGeneration: UInt64 = 0
+  private var predictionHandoffDepth = 0
+  private var predictionSelectionHandoff: UInt64?
+  private var personalInputReplayDepth = 0
+  private var predictionExpiry: DispatchWorkItem?
+  private var predictionClient: ObjectIdentifier?
+  private var predictionSelection: NSRange?
+  private var predictionDisplayedAt: TimeInterval?
+  private var confirmedFieldContext = InputiaConfirmedFieldContext()
+  private var confirmedFieldAnchor: InputiaVoiceTargetSnapshot.Snapshot?
+  private var confirmedFieldAnchorExpiry: DispatchWorkItem?
+  private struct PredictionQueryContext {
+    let token: UInt64
+    let text: String
+    let client: ObjectIdentifier
+    let selection: NSRange
+    let inputGeneration: UInt64
+    let activation: UInt64
+    var confirmedSegment: UInt64? = nil
+  }
+  private var predictionQueryContext: PredictionQueryContext?
+  private var predictionTarget: InputiaVoiceTargetSnapshot.Snapshot?
+  private var predictionTargetCapture: UUID?
+  private var predictionQueryGeneration: UInt64 = 0
+  // 真实 IMK 会话与后台权限代数分开；服务重连不能结束用户的本轮五秒展示。
+  private var predictionActivationGeneration: UInt64 = 0
   private var personalCode = ""
   private var personalRefreshGeneration: UInt64 = 0
   private var personalExpectedSelection: NSRange?
@@ -130,6 +169,7 @@ final class InputiaInputController: IMKInputController {
     let schemaID: String
     let candidate: InputiaPersonalCandidate
     let explicit: Bool
+    var previous: String? = nil
   }
   private struct PersonalUndo {
     let receipts: [InputiaPersonalization.Receipt]
@@ -149,6 +189,13 @@ final class InputiaInputController: IMKInputController {
   private var typedRetainedOrigins: [String: TimeInterval] = [:]
   private var voicePermissionEpochs: [String: UInt64] = [:]
   func removeRetiredVoiceTarget(_ id: String) {
+    if confirmedFieldAnchor?.targetID == id {
+      confirmedFieldAnchor = nil; confirmedFieldAnchorExpiry?.cancel(); confirmedFieldAnchorExpiry = nil
+    }
+    if predictionTarget?.targetID == id {
+      predictionTarget = nil
+      predictionQueryGeneration &+= 1
+    }
     memoryTargetFields.removeValue(forKey: id)
     voiceTargetSnapshots.removeValue(forKey: id)
     voicePermissionEpochs.removeValue(forKey: id)
@@ -165,28 +212,39 @@ final class InputiaInputController: IMKInputController {
       InputiaVoiceInputLauncher.releaseTarget(old.targetID)
     }
   }
+
+  /// Start 目标被拒绝不等于其它用途的目标都失效；只撤下同一预捕获归属。
+  func rejectShortcutRegistrationTarget(_ id: String) {
+    guard shortcutPreparedSnapshot?.targetID == id else { return }
+    discardPreparedVoiceTarget()
+  }
   func synchronizePermissionEpoch() {
+    if InputiaPermissionLifecycle.shared.snapshot.status == .maintenance || IsSecureEventInputEnabled() {
+      clearConfirmedFieldContext()
+    }
     let current = InputiaPermissionLifecycle.shared.epoch
     guard permissionEpoch != current else { return }
     permissionEpoch = current
-    _ = bridge.clearManagedMemory()
-    clearManagedMemoryDisplay()
-    discardTypedCompositionOrigin()
-    voiceActivationGeneration &+= 1
-    for snapshot in voiceTargetSnapshots.values { InputiaVoiceInputLauncher.releaseTarget(snapshot.targetID) }
-    if let snapshot = shortcutPreparedSnapshot { InputiaVoiceInputLauncher.releaseTarget(snapshot.targetID) }
-    voiceTargetSnapshots.removeAll()
-    voicePermissionEpochs.removeAll()
-    attemptedVoiceOutputOperations.removeAll()
-    shortcutPreparedSnapshot = nil
-    voicePreCaptureRetryDeadline = nil
-    sharedTargetReady = false
-    sharedPreparedClientIdentity = nil
-    sharedEnglishSelection.cancel(); sharedChineseSelection.cancel()
-    clearSharedChineseCandidates()
-    sharedEnglishRefreshQueued = false
-    InputiaSharedTermsMemory.shared.clear()
-    cachedAppContext = nil; pushedAppContext = nil
+    targetCaptureScope.invalidate()
+    releaseConfirmedFieldAnchor()
+    clearManagedMemoryDisplay(restoringBasicCandidates: true, preservingPredictionPresentation: true) {
+      discardTypedCompositionOrigin()
+      voiceActivationGeneration &+= 1
+      for snapshot in voiceTargetSnapshots.values { InputiaVoiceInputLauncher.releaseTarget(snapshot.targetID) }
+      if let snapshot = shortcutPreparedSnapshot { InputiaVoiceInputLauncher.releaseTarget(snapshot.targetID) }
+      voiceTargetSnapshots.removeAll()
+      voicePermissionEpochs.removeAll()
+      attemptedVoiceOutputOperations.removeAll()
+      shortcutPreparedSnapshot = nil
+      voicePreCaptureRetryDeadline = nil
+      sharedTargetReady = false
+      sharedPreparedClientIdentity = nil
+      sharedEnglishSelection.cancel(); sharedChineseSelection.cancel()
+      clearSharedChineseCandidates()
+      sharedEnglishRefreshQueued = false
+      InputiaSharedTermsMemory.shared.clear()
+      cachedAppContext = nil; pushedAppContext = nil
+    }
 
   }
   private let voiceControllerID = UUID().uuidString
@@ -283,6 +341,7 @@ final class InputiaInputController: IMKInputController {
     }
 
     #if INPUTIA_PAIRED_BUILD
+    var predictionTransitionKeptWindow = false
     let selectionKey = event.type == .keyDown && (event.keyCode == keyCodeSpace || event.keyCode == keyCodeReturn
       || event.keyCode == keyCodeKeypadEnter || event.keyCode == keyCodeTab
       || event.charactersIgnoringModifiers.flatMap(Int.init).map { (1...9).contains($0) } == true)
@@ -290,9 +349,31 @@ final class InputiaInputController: IMKInputController {
     let changesInput = InputiaMemoryInputTransition.retiresPending(keyDown: event.type == .keyDown,
       modeBoundary: event.type == .flagsChanged && [56, 60].contains(event.keyCode))
     synchronizePermissionEpoch()
+    if changesInput { targetCaptureScope.invalidate() }
+    observeConfirmedFieldInput(event, client: client)
+    if event.type == .keyDown || (event.type == .flagsChanged && changesInput) {
+      let acceptsPrediction = predictionSelectionIndex(event) != nil
+      let handoffToCancel = event.keyCode == keyCodeEscape ? predictionSelectionHandoff : nil
+      let dismissesPrediction = event.keyCode == keyCodeEscape
+        && (predictionPresentation.currentToken != nil || handoffToCancel != nil)
+      if !acceptsPrediction {
+        predictionInputGeneration &+= 1
+        predictionTransitionKeptWindow = predictionPresentation.currentToken != nil
+          && event.type == .keyDown && event.keyCode != keyCodeEscape
+          && event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+          && event.characters?.isEmpty == false
+        if predictionTransitionKeptWindow { retainConfirmedFieldAnchor() }
+        closePredictionPresentation(preservingWindow: predictionTransitionKeptWindow)
+      }
+      if dismissesPrediction {
+        if let handoffToCancel { finishDeferredPersonalInput(handoffToCancel) }
+        return true
+      }
+    }
     #endif
     if shouldUseSecureDirectMode(client) {
       #if INPUTIA_PAIRED_BUILD
+      clearConfirmedFieldContext()
       retireWordSpan(reason: "secure_input")
       discardTypedCompositionOrigin()
       #endif
@@ -322,6 +403,10 @@ final class InputiaInputController: IMKInputController {
     #endif
     defer {
       #if INPUTIA_PAIRED_BUILD
+      if predictionTransitionKeptWindow, predictionPresentation.currentToken == nil,
+        latestComposing.isEmpty, recallCandidates.isEmpty, englishCompletionCandidates.isEmpty {
+        ownedCandidatePanel?.hide()
+      }
       if let origin = typedEventOrigin {
         typedEventOrigin = nil
         releaseTypedOriginIfUnowned(origin.targetID)
@@ -574,13 +659,14 @@ final class InputiaInputController: IMKInputController {
       return
     }
     #if INPUTIA_PAIRED_BUILD
-    if hotwordOverlay != nil, !candidatePanelExpanded,
-      let index = latestCandidates.firstIndex(of: selected), let client = client() {
-      _ = selectHotwordOverlay(displayed: index, client: client); return
-    }
     if let prediction = personalPredictions.first(where: { $0.text == selected }), let client = client() {
       _ = acceptPersonalPrediction(prediction, client: client)
       return
+    }
+    retirePredictionPresentation()
+    if hotwordOverlay != nil, !candidatePanelExpanded,
+      let index = latestCandidates.firstIndex(of: selected), let client = client() {
+      _ = selectHotwordOverlay(displayed: index, client: client); return
     }
     if let candidate = personalCandidates.first(where: { $0.text == selected }), let client = client() {
       _ = choosePersonal(candidate, explicit: true, client: client)
@@ -622,6 +708,7 @@ final class InputiaInputController: IMKInputController {
 
   override func commitComposition(_ sender: Any!) {
     #if INPUTIA_PAIRED_BUILD
+    retirePredictionPresentation()
     retireWordSpan(reason: "external_commit_boundary")
     synchronizePermissionEpoch()
     #endif
@@ -661,26 +748,38 @@ final class InputiaInputController: IMKInputController {
     expandedCandidateEntries = []
     expandedActiveRowIndex = 0
     candidatePanelExpanded = false
-    InputiaHost.candidatePanel?.hide()
+    ownedCandidatePanel?.hide()
   }
 
   override func hidePalettes() {
-    InputiaHost.candidatePanel?.hide()
+    #if INPUTIA_PAIRED_BUILD
+    retirePredictionPresentation()
+    #endif
+    ownedCandidatePanel?.hide()
     super.hidePalettes()
   }
 
   override func activateServer(_ sender: Any!) {
     InputiaHost.inputControllers.add(self)
     #if INPUTIA_PAIRED_BUILD
-    bridge.memoryDidExpire = { [weak self] in self?.clearManagedMemoryDisplay() }
+    predictionActivationGeneration &+= 1
+    clearConfirmedFieldContext()
+    targetCaptureScope.invalidate()
+    bridge.memoryDidExpire = { [weak self] in self?.managedMemoryWasCleared()?() }
     _ = bridge.clearManagedMemory()
     clearManagedMemoryDisplay()
     #endif
     #if INPUTIA_PAIRED_BUILD
     discardTypedCompositionOrigin()
     personalization.changed = { [weak self] in self?.clearPersonalDisplay() }
+    personalization.ownContextInvalidated = { [weak self] action in self?.invalidateOwnedContext(action) }
     personalization.policyChanged = { [weak self] in
-      guard let self, InputiaHost.activeInputController === self, let client = self.client() else { return }
+      guard let self else { return }
+      if self.personalization.explicitlyDisabled {
+        self.clearConfirmedFieldContext(); self.retirePredictionPresentation(); return
+      }
+      if !self.personalization.allowed { self.invalidatePredictionTarget(cancelCapture: false) }
+      guard InputiaHost.activeInputController === self, let client = self.client() else { return }
       self.schedulePersonalization(client: client)
     }
     personalization.start()
@@ -720,6 +819,9 @@ final class InputiaInputController: IMKInputController {
 
   override func deactivateServer(_ sender: Any!) {
     #if INPUTIA_PAIRED_BUILD
+    predictionActivationGeneration &+= 1
+    clearConfirmedFieldContext()
+    targetCaptureScope.invalidate()
     _ = bridge.clearManagedMemory()
     clearManagedMemoryDisplay()
     clearHotwordOverlay()
@@ -775,6 +877,11 @@ final class InputiaInputController: IMKInputController {
       inputiaDebugLog("shiftToggleRejected source=\(source) reason=missing-client")
       return true
     }
+    #if INPUTIA_PAIRED_BUILD
+    if let pending = personalDeferredOrigin {
+      finishDeferredPersonalInput(pending.token, resetShiftGesture: false)
+    }
+    #endif
     // 只有确认是独立 Shift 手势时，才提交未完成的拼音；组合键保持原模式。
     if bridge.latestOutcome.mode == "Chinese", !bridge.latestOutcome.composing.isEmpty {
       commitPendingChineseAsEnglish(client: client)
@@ -900,6 +1007,9 @@ final class InputiaInputController: IMKInputController {
     if modifiers.contains(.shift) {
       cancelShiftInputModeGesture(reason: "shiftModifiedKeyDown")
     }
+    #if INPUTIA_PAIRED_BUILD
+    if let handled = handlePersonalCandidateKey(event, client: client) { return handled }
+    #endif
 
     switch event.keyCode {
     case keyCodeDelete:
@@ -911,7 +1021,7 @@ final class InputiaInputController: IMKInputController {
           : [shiftEnglishComposition, String(shiftEnglishComposition.last!), shiftEnglishComposition.lowercased()]
         if shiftEnglishComposition.isEmpty {
           clearMarkedText(client)
-          InputiaHost.candidatePanel?.hide()
+          ownedCandidatePanel?.hide()
         } else {
           setMarkedComposition(shiftEnglishComposition, client: client)
           updateCandidateWindow(client: client)
@@ -963,32 +1073,34 @@ final class InputiaInputController: IMKInputController {
       }
       return shouldPassThroughNewline ? false : handled
     case keyCodeSpace:
+      #if INPUTIA_PAIRED_BUILD
+      let predictionTrigger = predictionTriggerForSpace(event, client: client)
+      #else
+      let predictionTrigger: PredictionCommitTrigger? = nil
+      #endif
       if !shiftEnglishComposition.isEmpty {
         commitShiftEnglishComposition(client: client)
         return true
       }
       #if INPUTIA_PAIRED_BUILD
-      if hotwordOverlay != nil { return selectHotwordOverlay(displayed: 0, client: client) }
-      if latestComposing.isEmpty && !personalPredictions.isEmpty {
-        personalization.reset(); return false
-      }
+      if hotwordOverlay != nil { return selectHotwordOverlay(displayed: 0, client: client, predictionTrigger: predictionTrigger) }
       if !personalCandidates.isEmpty, !candidatePanelExpanded, let first = personalCandidates.first {
-        return choosePersonal(first, explicit: false, client: client)
+        return choosePersonal(first, explicit: false, client: client, predictionTrigger: predictionTrigger)
       }
       #endif
       if candidatePanelExpanded, expandedActiveRowIndex > 0 {
-        return commitExpandedCandidate(columnIndex: 0, client: client)
+        return commitExpandedCandidate(columnIndex: 0, client: client, predictionTrigger: predictionTrigger)
       }
       #if INPUTIA_PAIRED_BUILD
       if sharedChineseOrder != nil, !candidatePanelExpanded {
-        return enqueueSharedChineseSelection(displayed: 0, client: client)
+        return enqueueSharedChineseSelection(displayed: 0, client: client, predictionTrigger: predictionTrigger)
       }
       #endif
       if !latestComposing.isEmpty && !latestCandidates.isEmpty {
-        return chooseNativeWithLearning(index: 0, explicit: false, client: client)
+        return chooseNativeWithLearning(index: 0, explicit: false, client: client, predictionTrigger: predictionTrigger)
       }
       let outcome = bridge.space()
-      let handled = apply(outcome, client: client)
+      let handled = apply(outcome, client: client, predictionTrigger: predictionTrigger)
       if outcome.mode == "English" && !outcome.consumed {
         learnAndClearEnglishCompletion(client: client)
       }
@@ -1000,9 +1112,6 @@ final class InputiaInputController: IMKInputController {
       }
       #if INPUTIA_PAIRED_BUILD
       if hotwordOverlay != nil { return selectHotwordOverlay(displayed: 0, client: client) }
-      if latestComposing.isEmpty, let first = personalPredictions.first {
-        return acceptPersonalPrediction(first, client: client)
-      }
       #endif
       return commitFirstEnglishCompletion(client: client)
     default:
@@ -1059,8 +1168,10 @@ final class InputiaInputController: IMKInputController {
     return handled
   }
 
-  private func apply(_ outcome: InputiaBridgeOutcome, client: IMKTextInput?) -> Bool {
+  private func apply(_ outcome: InputiaBridgeOutcome, client: IMKTextInput?, predictionTrigger: PredictionCommitTrigger? = nil) -> Bool {
     #if INPUTIA_PAIRED_BUILD
+    if predictionTrigger != nil { predictionHandoffDepth += 1 }
+    defer { if predictionTrigger != nil { predictionHandoffDepth -= 1 } }
     if outcome.mode != "English" || !outcome.composing.isEmpty { retireWordSpan(reason: "mode_or_composition") }
     #endif
     clearClipboardRecall()
@@ -1086,7 +1197,8 @@ final class InputiaInputController: IMKInputController {
         replacementRange: InputiaHostTextPolicy.commitReplacementRange(
           previousComposing: previousComposing,
           markedRange: client.markedRange()
-        )
+        ),
+        predictionTrigger: predictionTrigger
       )
       if InputiaHostTextPolicy.shouldContinueMarkedTextAfterCommit(
         committedText: outcome.commit,
@@ -1095,7 +1207,11 @@ final class InputiaInputController: IMKInputController {
         setMarkedComposition(outcome.composing, client: client)
         updateCandidateWindow(client: client)
       } else {
-        InputiaHost.candidatePanel?.hide()
+        #if INPUTIA_PAIRED_BUILD
+        if currentPredictionToken(client: client) == nil { ownedCandidatePanel?.hide() }
+        #else
+        ownedCandidatePanel?.hide()
+        #endif
       }
       return outcome.consumed
     }
@@ -1117,7 +1233,7 @@ final class InputiaInputController: IMKInputController {
       if !previousComposing.isEmpty { MainActor.assumeIsolated { InputiaTypedCapture.shared.resetSegment() } }
       #endif
       candidatePanelExpanded = false
-      InputiaHost.candidatePanel?.hide()
+      ownedCandidatePanel?.hide()
     } else {
       if outcome.composing != previousComposing {
         setMarkedComposition(outcome.composing, client: client)
@@ -1162,29 +1278,30 @@ final class InputiaInputController: IMKInputController {
     }
   }
 
-  private func chooseNativeWithLearning(index: Int, explicit: Bool, client: IMKTextInput, memoryValidated: Bool = false) -> Bool {
+  private func chooseNativeWithLearning(index: Int, explicit: Bool, client: IMKTextInput, memoryValidated: Bool = false, predictionTrigger: PredictionCommitTrigger? = nil) -> Bool {
     #if INPUTIA_PAIRED_BUILD
     if !memoryValidated, memoryDisplayedTargets["rank"] != nil,
       memoryDisplayedComposing["rank"] == bridge.latestOutcome.composing {
       let before = bridge.latestOutcome
       return admitManagedSelection("rank", client: client, stillValid: { [weak self] in
         self?.bridge.latestOutcome.candidateIDs == before.candidateIDs && self?.bridge.latestOutcome.composing == before.composing
-      }) { [weak self] in _ = self?.chooseNativeWithLearning(index: index, explicit: explicit, client: client, memoryValidated: true) }
+      }) { [weak self] in _ = self?.chooseNativeWithLearning(index: index, explicit: explicit, client: client, memoryValidated: true, predictionTrigger: predictionTrigger) }
     }
     let before = bridge.latestOutcome
     if before.candidates.indices.contains(index), before.candidateIDs.indices.contains(index),
       !before.candidateIDs[index].isEmpty, let pool = bridge.personalCandidatePool(),
       let candidate = pool.candidates.first(where: { $0.id == before.candidateIDs[index] && $0.text == before.candidates[index] }) {
-      return choosePersonal(candidate, explicit: explicit, client: client)
+      return choosePersonal(candidate, explicit: explicit, client: client, predictionTrigger: predictionTrigger)
     }
     #endif
-    return apply(bridge.chooseCandidate(atZeroBasedIndex: index), client: client)
+    return apply(bridge.chooseCandidate(atZeroBasedIndex: index), client: client, predictionTrigger: predictionTrigger)
   }
 
   private func insertCommittedText(
     _ text: String,
     client: IMKTextInput,
-    replacementRange: NSRange = emptyReplacementRange
+    replacementRange: NSRange = emptyReplacementRange,
+    predictionTrigger: PredictionCommitTrigger? = nil
   ) {
     #if INPUTIA_PAIRED_BUILD
     let memoryConfirmation = takeMemoryConfirmation(text: text, replacement: replacementRange, client: client)
@@ -1199,7 +1316,10 @@ final class InputiaInputController: IMKInputController {
     #if INPUTIA_PAIRED_BUILD
     memoryConfirmation?()
     recordTypedCommit(text, client: client, start: start, origin: origin)
+    recordConfirmedFieldCommit(text, start: start, client: client)
+    beginPredictionAfterCommit(predictionTrigger, text: text, start: start, client: client)
     recordPersonalCommit(text, client: client, start: start, origin: origin)
+    if predictionTrigger != nil { schedulePersonalization(client: client) }
     #endif
   }
 
@@ -1209,11 +1329,12 @@ final class InputiaInputController: IMKInputController {
     let rankedExpansion = expandedCandidateEntries.contains { $0.candidateID != nil }
     let visible = !personalCandidates.isEmpty || !personalPredictions.isEmpty || rankedExpansion
     personalCandidates = []; personalPredictions = []; personalCode = ""
+    predictionDisplayedAt = nil
     if rankedExpansion {
       expandedCandidateEntries = []; expandedCandidates = []; expandedActiveRowIndex = 0
       candidatePanelExpanded = false
     }
-    guard visible else { return }
+    guard visible, ownedCandidatePanel != nil, predictionHandoffDepth == 0 else { return }
     if !latestComposing.isEmpty {
       let base = bridge.latestOutcome.candidates
       if let overlay = hotwordOverlay {
@@ -1221,19 +1342,47 @@ final class InputiaInputController: IMKInputController {
         latestCandidates = Array((overlay.words + base).prefix(9))
       } else { latestCandidates = base }
       if let client = client() { updateCandidateWindow(client: client) }
-    } else { InputiaHost.candidatePanel?.hide() }
+    } else if let client = client(), currentPredictionToken(client: client) != nil {
+      ownedCandidatePanel?.showPredictionPending(near: chineseCandidateRect)
+    } else { ownedCandidatePanel?.hide() }
   }
 
   /// 屏障不把旧排序换成新排序后继续接受同一数字；CAPI保留撤销选择闩锁。
-  func clearManagedMemoryDisplay(restoringBasicCandidates: Bool = false) {
-    let originalClient = restoringBasicCandidates ? client() : nil
+  @discardableResult
+  private func clearManagedMemoryDisplay(
+    restoringBasicCandidates: Bool = false,
+    clearedOutcome: InputiaBridgeOutcome? = nil,
+    deferRestoration: Bool = false,
+    preservingPredictionPresentation: Bool = false,
+    additionalCleanup: () -> Void = {}
+  ) -> (() -> Void)? {
+    let wasActive = InputiaHost.activeInputController === self
+    // 先清旧正文；宿主同步查询或全局延迟恢复期间只保留不可选空框。
+    let restorationPanel = ownedCandidatePanel
+    let restorationToken = restorationPanel?.clearForRestoration()
+    let discardRestoration: () -> Void = {
+      guard let restorationPanel, let restorationToken,
+        InputiaHost.candidatePanel === restorationPanel,
+        restorationPanel.isRestorationCurrent(restorationToken) else { return }
+      restorationPanel.hide()
+    }
+    let originalSourceSelected = isCurrentInputiaSourceSelected()
+    let originalComposing = latestComposing
+    let originalClient = restoringBasicCandidates || preservingPredictionPresentation ? client() : nil
     let originalSelection = originalClient?.selectedRange()
     let originalMarked = originalClient?.markedRange()
     // 只接受本次成功撤销后重建的Rime结果；失败时不能复用旧的latestOutcome。
-    let baseline = restoringBasicCandidates && bridge.clearManagedMemory() ? bridge.latestOutcome : nil
+    candidateDisplayCleanupDepth += 1
+    let preservedPrediction = preservingPredictionPresentation
+      ? originalClient.flatMap { currentPredictionToken(client: $0) } : nil
+    if preservedPrediction != nil { invalidatePredictionTarget(cancelCapture: false) }
+    else { retirePredictionPresentation() }
+    let baseline = restoringBasicCandidates
+      ? (clearedOutcome ?? (bridge.clearManagedMemory() ? bridge.latestOutcome : nil)) : nil
     retireWordSpan(reason: "cache_barrier")
     retireMemoryCommit()
     memoryViewGeneration &+= 1
+    let cleanupGeneration = memoryViewGeneration
     memoryFieldID = nil
     memorySelectionIntent = nil
     let displayed = Array(memoryDisplayedTargets.values)
@@ -1255,17 +1404,71 @@ final class InputiaInputController: IMKInputController {
     latestCandidates = []; expandedCandidates = []; expandedCandidateEntries = []; expandedActiveRowIndex = 0
     recallCandidates = []; englishCompletionCandidates = []; englishCompletionPrefix = ""
     candidatePanelExpanded = false; cachedAppContext = nil; pushedAppContext = nil
-    if InputiaHost.activeInputController === self { InputiaHost.candidatePanel?.hide() }
-    // 增强内容及旧选择映射已撤销；学习域离线时仍允许当前字段显示基础候选。
-    guard let baseline, baseline.ok, baseline.mode == "Chinese", !baseline.composing.isEmpty,
-      !baseline.candidates.isEmpty, InputiaHost.activeInputController === self,
-      isCurrentInputiaSourceSelected(), !IsSecureEventInputEnabled(), InputiaPermissionLifecycle.shared.isReady,
-      let originalClient, let live = client(),
-      ObjectIdentifier(originalClient as AnyObject) == ObjectIdentifier(live as AnyObject),
-      live.selectedRange() == originalSelection, live.markedRange() == originalMarked else { return }
-    latestComposing = baseline.composing
-    latestCandidates = baseline.candidates
-    updateCandidateWindow(client: live)
+    additionalCleanup()
+    candidateDisplayCleanupDepth -= 1
+    let canRestoreBasic = baseline.map {
+      $0.ok && $0.mode == "Chinese" && !$0.composing.isEmpty && !$0.candidates.isEmpty
+        && $0.composing == originalComposing
+    } == true && originalClient != nil && wasActive && originalSourceSelected
+      && !IsSecureEventInputEnabled() && InputiaPermissionLifecycle.shared.snapshot.status != .maintenance
+    if let preservedPrediction, let live = client(), currentPredictionToken(client: live) == preservedPrediction {
+      if let restorationPanel, let restorationToken, ownedCandidatePanel === restorationPanel,
+        restorationPanel.isRestorationCurrent(restorationToken) {
+        restorationPanel.showPredictionPending(near: chineseCandidateRect)
+      }
+    } else if !canRestoreBasic || ownedCandidatePanel !== restorationPanel {
+      discardRestoration()
+    }
+    // 增强缓存撤销与所有同步回调完成后，只恢复本次得到的基础 Rime 快照。
+    let restore: () -> Void = { [weak self] in
+      if let self, let preservedPrediction, let live = self.client(),
+        self.currentPredictionToken(client: live) == preservedPrediction {
+        DispatchQueue.main.async { [weak self] in
+          guard let self, self.currentPredictionToken(client: live) == preservedPrediction else { return }
+          self.schedulePersonalization(client: live)
+        }
+      }
+      defer { discardRestoration() }
+      guard let self, let restorationPanel, let restorationToken,
+        self.ownedCandidatePanel === restorationPanel,
+        restorationPanel.isRestorationCurrent(restorationToken),
+        let baseline, baseline.ok, baseline.mode == "Chinese",
+        !baseline.composing.isEmpty, !baseline.candidates.isEmpty,
+        let originalClient, let live = self.client() else { return }
+      // IMK 查询可能同步进入其他生命周期回调；查询结束后再核验内存中的归属和代数。
+      let sensitive = InputiaSecureDirectPolicy.shouldUseSecureDirectMode(context: self.appContext(for: live))
+      let selection = live.selectedRange(), marked = live.markedRange()
+      let sourceSelected = isCurrentInputiaSourceSelected()
+      let secure = IsSecureEventInputEnabled()
+      let maintenance = InputiaPermissionLifecycle.shared.snapshot.status == .maintenance
+      guard let currentClient = self.client(),
+        wasActive, originalSourceSelected, self.ownedCandidatePanel === restorationPanel,
+        restorationPanel.isRestorationCurrent(restorationToken),
+        self.memoryViewGeneration == cleanupGeneration,
+        sourceSelected, !secure, !maintenance, !sensitive,
+        ObjectIdentifier(originalClient as AnyObject) == ObjectIdentifier(live as AnyObject),
+        ObjectIdentifier(currentClient as AnyObject) == ObjectIdentifier(live as AnyObject),
+        selection == originalSelection, marked == originalMarked,
+        baseline.composing == originalComposing,
+        self.latestComposing == baseline.composing,
+        self.bridge.latestOutcome.ok,
+        self.bridge.latestOutcome.mode == baseline.mode,
+        self.bridge.latestOutcome.composing == baseline.composing,
+        self.bridge.latestOutcome.candidates == baseline.candidates,
+        self.bridge.latestOutcome.candidateIDs == baseline.candidateIDs
+      else { return }
+      self.latestCandidates = baseline.candidates
+      self.updateCandidateWindow(client: live, restorationToken: restorationToken)
+    }
+    if deferRestoration { return restore }
+    restore()
+    return nil
+  }
+
+  /// 仅由刚完成同步 CAPI 清理的到期通知或全局屏障调用，不再次清理或重放选择键。
+  func managedMemoryWasCleared() -> (() -> Void)? {
+    clearManagedMemoryDisplay(restoringBasicCandidates: true,
+      clearedOutcome: bridge.latestOutcome, deferRestoration: true, preservingPredictionPresentation: true)
   }
 
   private func observePersonalKey(_ event: NSEvent, client: IMKTextInput) {
@@ -1307,7 +1510,7 @@ final class InputiaInputController: IMKInputController {
       if isPersonalCompositionBackspace(event) { personalization.invalidateView() }
       else if !undo { personalization.reset(); personalExpectedSelection = nil }
     }
-    if !personalPredictions.isEmpty && event.keyCode != keyCodeTab {
+    if !personalPredictions.isEmpty && predictionSelectionIndex(event) == nil {
       personalization.invalidateView()
       if event.keyCode == keyCodeSpace || event.keyCode == keyCodeReturn || event.keyCode == keyCodeKeypadEnter {
         personalization.reset()
@@ -1315,7 +1518,238 @@ final class InputiaInputController: IMKInputController {
     }
   }
 
+  private func predictionSelectionIndex(_ event: NSEvent) -> Int? {
+    guard event.type == .keyDown, !event.isARepeat, personalInputReplayDepth == 0,
+      latestComposing.isEmpty, !personalPredictions.isEmpty,
+      let displayedAt = predictionDisplayedAt, event.timestamp >= displayedAt,
+      event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else { return nil }
+    let index: Int
+    if event.keyCode == keyCodeSpace || event.keyCode == keyCodeTab { index = 0 }
+    else if let text = event.charactersIgnoringModifiers, text.count == 1,
+      let digit = Int(text), (1...9).contains(digit) { index = digit - 1 }
+    else { return nil }
+    return personalPredictions.indices.contains(index) ? index : nil
+  }
+
+  private func handlePersonalCandidateKey(_ event: NSEvent, client: IMKTextInput) -> Bool? {
+    guard let index = predictionSelectionIndex(event) else { return nil }
+    return acceptPersonalPrediction(personalPredictions[index], client: client)
+  }
+
+  private func predictionTriggerForSpace(_ event: NSEvent, client: IMKTextInput) -> PredictionCommitTrigger? {
+    guard event.type == .keyDown, event.keyCode == keyCodeSpace,
+      event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+      !latestComposing.isEmpty, bridge.latestOutcome.mode == "Chinese" else { return nil }
+    return PredictionCommitTrigger(generation: predictionInputGeneration, client: ObjectIdentifier(client as AnyObject))
+  }
+
+  private func invalidatePredictionTarget(cancelCapture: Bool = true) {
+    predictionQueryGeneration &+= 1
+    if cancelCapture { predictionTargetCapture = nil }
+    let old = predictionTarget
+    predictionTarget = nil
+    if let old { InputiaVoiceInputLauncher.releaseTarget(old.targetID) }
+  }
+
+  private func releaseConfirmedFieldAnchor(matching expected: String? = nil) {
+    guard let old = confirmedFieldAnchor, expected == nil || old.targetID == expected else { return }
+    confirmedFieldAnchor = nil
+    confirmedFieldAnchorExpiry?.cancel(); confirmedFieldAnchorExpiry = nil
+    InputiaVoiceInputLauncher.releaseTarget(old.targetID)
+  }
+
+  private func retainConfirmedFieldAnchor() {
+    guard confirmedFieldContext.hasContext, let target = predictionTarget, target.reusableForShortcut else { return }
+    releaseConfirmedFieldAnchor()
+    predictionTarget = nil
+    confirmedFieldAnchor = target
+    let expiry = DispatchWorkItem { [weak self] in self?.releaseConfirmedFieldAnchor(matching: target.targetID) }
+    confirmedFieldAnchorExpiry = expiry
+    // 只交接已持有的租约，不重新授权、续期，也不供插入使用。
+    DispatchQueue.main.asyncAfter(deadline: .now() + max(0, target.expiresAt - ProcessInfo.processInfo.systemUptime), execute: expiry)
+  }
+
+  private func clearConfirmedFieldContext() {
+    confirmedFieldContext.reset()
+    releaseConfirmedFieldAnchor()
+  }
+
+  private func invalidateOwnedContext(_ action: String) {
+    guard action != "preserve" else { return }
+    clearConfirmedFieldContext()
+    if action != "clear_prefix" { retirePredictionPresentation() }
+  }
+
+  private func confirmedFieldScope(_ client: IMKTextInput) -> InputiaConfirmedFieldContext.Scope {
+    .init(client: ObjectIdentifier(client as AnyObject), activation: predictionActivationGeneration)
+  }
+
+  private func observeConfirmedFieldInput(_ event: NSEvent, client: IMKTextInput) {
+    guard confirmedFieldContext.hasContext,
+      event.type == .keyDown || (event.type == .flagsChanged && [56, 60].contains(event.keyCode)) else { return }
+    let command = !event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+    let editsDocument = [UInt16(53), 115, 116, 117, 119, 121, 123, 124, 125, 126].contains(event.keyCode)
+      || (event.keyCode == 51 && latestComposing.isEmpty)
+    if (event.type == .keyDown && (command || editsDocument))
+      || (event.type == .flagsChanged && [56, 60].contains(event.keyCode)) {
+      clearConfirmedFieldContext(); return
+    }
+    let generation = confirmedFieldContext.generation
+    let scope = confirmedFieldScope(client)
+    let selection = client.selectedRange(), marked = client.markedRange()
+    let source = isCurrentInputiaSourceSelected(), secure = IsSecureEventInputEnabled()
+    let maintenance = InputiaPermissionLifecycle.shared.snapshot.status == .maintenance
+    guard generation == confirmedFieldContext.generation, let current = self.client(),
+      InputiaHost.activeInputController === self,
+      confirmedFieldScope(current) == scope else { return }
+    guard source, !secure, !maintenance, !personalization.explicitlyDisabled else {
+      clearConfirmedFieldContext(); return
+    }
+    confirmedFieldContext.observe(scope: confirmedFieldScope(client), selection: selection, marked: marked)
+    if !confirmedFieldContext.hasContext { releaseConfirmedFieldAnchor() }
+  }
+
+  private func recordConfirmedFieldCommit(_ text: String, start: Int, client: IMKTextInput) {
+    let generation = confirmedFieldContext.generation
+    let scope = confirmedFieldScope(client)
+    let selection = client.selectedRange()
+    let source = isCurrentInputiaSourceSelected(), secure = IsSecureEventInputEnabled()
+    let maintenance = InputiaPermissionLifecycle.shared.snapshot.status == .maintenance
+    guard generation == confirmedFieldContext.generation, let current = self.client(),
+      InputiaHost.activeInputController === self,
+      confirmedFieldScope(current) == scope else { return }
+    guard source, !secure, !maintenance, !personalization.explicitlyDisabled else {
+      clearConfirmedFieldContext(); return
+    }
+    confirmedFieldContext.committed(text, start: start, selection: selection, scope: confirmedFieldScope(client))
+    if !confirmedFieldContext.hasContext { releaseConfirmedFieldAnchor() }
+  }
+
+  private func closePredictionPresentation(preservingWindow: Bool = false) {
+    let hadPresentation = predictionPresentation.currentToken != nil || predictionExpiry != nil
+      || predictionSelectionHandoff != nil
+    predictionSelectionHandoff = nil
+    predictionPresentation.invalidate()
+    predictionExpiry?.cancel(); predictionExpiry = nil
+    predictionClient = nil; predictionSelection = nil; predictionDisplayedAt = nil
+    predictionQueryContext = nil
+    invalidatePredictionTarget()
+    let wasVisible = !personalPredictions.isEmpty
+    personalPredictions = []
+    if !preservingWindow && latestComposing.isEmpty && (wasVisible || hadPresentation) { ownedCandidatePanel?.hide() }
+  }
+
+  private func retirePredictionPresentation() {
+    predictionInputGeneration &+= 1
+    closePredictionPresentation()
+  }
+
+  private func currentPredictionToken(client: IMKTextInput) -> UInt64? {
+    guard let token = predictionPresentation.currentToken else { return nil }
+    let generation = confirmedFieldContext.generation
+    let scope = confirmedFieldScope(client)
+    let selection = client.selectedRange()
+    let sourceSelected = isCurrentInputiaSourceSelected(), secure = IsSecureEventInputEnabled()
+    let maintenance = InputiaPermissionLifecycle.shared.snapshot.status == .maintenance
+    guard predictionPresentation.currentToken == token, generation == confirmedFieldContext.generation,
+      InputiaHost.activeInputController === self, let current = self.client(),
+      confirmedFieldScope(current) == scope else { return nil }
+    if !sourceSelected || secure || maintenance || personalization.explicitlyDisabled {
+      clearConfirmedFieldContext()
+    } else if predictionSelection != selection {
+      clearConfirmedFieldContext()
+    }
+    guard let current = self.client(), !personalization.explicitlyDisabled,
+      let context = predictionQueryContext,
+      context.token == token, context.inputGeneration == predictionInputGeneration,
+      context.activation == predictionActivationGeneration,
+      predictionPresentation.currentToken == token,
+      predictionPresentation.isCurrent(token, now: ProcessInfo.processInfo.systemUptime),
+      InputiaHost.activeInputController === self, latestComposing.isEmpty,
+      ObjectIdentifier(current as AnyObject) == ObjectIdentifier(client as AnyObject),
+      predictionClient == ObjectIdentifier(client as AnyObject), predictionSelection == selection,
+      sourceSelected, !secure, !maintenance else {
+      if predictionPresentation.currentToken == token { closePredictionPresentation() }
+      return nil
+    }
+    return token
+  }
+
+  private func beginPredictionAfterCommit(_ trigger: PredictionCommitTrigger?, text: String,
+    start: Int, client: IMKTextInput) {
+    guard let trigger else { return }
+    let selection = client.selectedRange()
+    let sourceSelected = isCurrentInputiaSourceSelected(), secure = IsSecureEventInputEnabled()
+    let maintenance = InputiaPermissionLifecycle.shared.snapshot.status == .maintenance
+    guard let current = self.client(), !personalization.explicitlyDisabled,
+      trigger.generation == predictionInputGeneration,
+      trigger.client == ObjectIdentifier(client as AnyObject),
+      ObjectIdentifier(current as AnyObject) == ObjectIdentifier(client as AnyObject),
+      InputiaHost.activeInputController === self,
+      !text.isEmpty, start != NSNotFound, start >= 0, latestComposing.isEmpty,
+      bridge.latestOutcome.mode == "Chinese", bridge.latestOutcome.composing.isEmpty,
+      selection == NSRange(location: start + text.utf16.count, length: 0),
+      sourceSelected, !secure, !maintenance else { return }
+    closePredictionPresentation(preservingWindow: true)
+    let now = ProcessInfo.processInfo.systemUptime
+    guard let token = predictionPresentation.begin(now: now), let deadline = predictionPresentation.deadline else { return }
+    predictionClient = ObjectIdentifier(client as AnyObject)
+    predictionSelection = selection
+    // 前文只在新的字段证明完成后拼接；此处只暂存本次真实上屏内容。
+    predictionQueryContext = PredictionQueryContext(token: token, text: InputiaConfirmedFieldContext.bounded(text),
+      client: ObjectIdentifier(client as AnyObject), selection: selection,
+      inputGeneration: predictionInputGeneration, activation: predictionActivationGeneration,
+      confirmedSegment: confirmedFieldContext.pendingToken)
+    ownedCandidatePanel?.showPredictionPending(near: chineseCandidateRect)
+    let expiry = DispatchWorkItem { [weak self] in
+      guard let self, self.predictionPresentation.expire(token, now: ProcessInfo.processInfo.systemUptime) else { return }
+      self.closePredictionPresentation()
+    }
+    predictionExpiry = expiry
+    DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline - now), execute: expiry)
+  }
+
+  private func resumePredictionAfterPreCapture() {
+    guard let live = client(), let token = currentPredictionToken(client: live) else { return }
+    DispatchQueue.main.async { [weak self] in
+      guard let self, let current = self.client(), self.currentPredictionToken(client: current) == token else { return }
+      self.schedulePersonalization(client: current)
+    }
+  }
+
+  private func schedulePredictionTarget(client: IMKTextInput, token: UInt64) {
+    guard predictionTargetCapture == nil, !targetCapturePending, currentPredictionToken(client: client) == token,
+      personalization.allowed, InputiaPermissionLifecycle.shared.isReady else { return }
+    let capture = UUID()
+    predictionTargetCapture = capture
+    prepareUnifiedVoiceTarget(client: client, forPrediction: true) { [weak self] target in
+      guard let self else {
+        if let target { InputiaVoiceInputLauncher.releaseTarget(target.target_id) }
+        return
+      }
+      let snapshot = target.flatMap { self.voiceTargetSnapshots.removeValue(forKey: $0.target_id) }
+      if let target { self.voicePermissionEpochs.removeValue(forKey: target.target_id) }
+      guard self.predictionTargetCapture == capture else {
+        if let target { InputiaVoiceInputLauncher.releaseTarget(target.target_id) }
+        return
+      }
+      self.predictionTargetCapture = nil
+      guard let snapshot, self.currentPredictionToken(client: client) == token,
+        snapshot.isCurrentForTypedOrigin(client: client, controllerID: self.voiceControllerID,
+          activationGeneration: self.voiceActivationGeneration) else {
+        if let target { InputiaVoiceInputLauncher.releaseTarget(target.target_id) }
+        return
+      }
+      self.invalidatePredictionTarget(cancelCapture: false)
+      self.predictionTarget = snapshot
+      self.schedulePersonalization(client: client)
+    }
+  }
+
   private func schedulePersonalization(client: IMKTextInput) {
+    if !personalization.allowed, currentPredictionToken(client: client) != nil {
+      personalization.refreshPolicyForPrediction()
+    }
     let scheduleReason: String
     if !personalization.allowed { scheduleReason = "disabled" }
     else if InputiaHost.activeInputController !== self { scheduleReason = "not_active" }
@@ -1332,6 +1766,8 @@ final class InputiaInputController: IMKInputController {
       recallCandidates.isEmpty, !personalPredictionPending, personalOrderLockedCode != latestComposing else { return }
     let version = personalRefreshGeneration
     let code = latestComposing
+    let predictionToken = code.isEmpty ? currentPredictionToken(client: client) : nil
+    guard !code.isEmpty || predictionToken != nil else { return }
     let page = bridge.latestOutcome.page
     let candidateIDs = bridge.latestOutcome.candidateIDs
     let candidateTexts = bridge.latestOutcome.candidates
@@ -1341,14 +1777,42 @@ final class InputiaInputController: IMKInputController {
         ids: self.bridge.latestOutcome.candidateIDs, expectedIDs: candidateIDs),
       InputiaHost.activeInputController === self, let current = self.client(),
       ObjectIdentifier(current as AnyObject) == ObjectIdentifier(client as AnyObject),
-      let target = self.typedOriginBeforeInsertion(client), self.personalization.allowed,
-      !self.candidatePanelExpanded else { return }
-    self.personalization.bind(target)
-    if code.isEmpty && self.personalization.context.text.isEmpty { return }
+      self.personalization.allowed, !self.candidatePanelExpanded else { return }
+    let target: InputiaVoiceTarget
+    let predictionContext: String?
+    if let predictionToken {
+      guard let context = predictionQueryContext, context.token == predictionToken else { return }
+      guard let snapshot = predictionTarget,
+        snapshot.isCurrentForTypedOrigin(client: client, controllerID: voiceControllerID,
+          activationGeneration: voiceActivationGeneration) else {
+        invalidatePredictionTarget(cancelCapture: false)
+        schedulePredictionTarget(client: client, token: predictionToken)
+        return
+      }
+      target = snapshot.inputiaTarget
+      predictionContext = context.confirmedSegment.flatMap {
+        confirmedFieldContext.resolve(token: $0, field: snapshot.confirmedField,
+          scope: confirmedFieldScope(client), selection: context.selection)
+      } ?? context.text
+    } else {
+      guard let origin = self.typedOriginBeforeInsertion(client) else { return }
+      target = origin
+      predictionContext = nil
+    }
+    let queryGeneration = predictionQueryGeneration
+    let predictionIsCurrent: () -> Bool = { [weak self] in
+      guard let self else { return false }
+      guard let predictionToken else { return true }
+      return self.predictionQueryGeneration == queryGeneration
+        && self.currentPredictionToken(client: client) == predictionToken
+        && self.predictionTarget?.inputiaTarget == target
+    }
     let pool = code.isEmpty ? [] : (self.bridge.personalCandidatePool(limit: 32)?.candidates ?? [])
     let selection = client.selectedRange()
-    self.personalization.query(target: target, code: code, schemaID: schemaID, candidates: pool) { [weak self] view in
+    self.personalization.query(target: target, code: code, schemaID: schemaID, candidates: pool,
+      predictionContext: predictionContext, isCurrent: predictionIsCurrent) { [weak self] view in
       guard let self, version == self.personalRefreshGeneration, self.latestComposing == code,
+        !code.isEmpty || (predictionToken != nil && self.currentPredictionToken(client: client) == predictionToken),
         self.bridge.schemaID == schemaID, self.personalOrderLockedCode != code,
         self.bridge.latestOutcome.candidates == candidateTexts,
         InputiaPersonalContext.matchesFirstPage(page: self.bridge.latestOutcome.page, expectedPage: page,
@@ -1356,20 +1820,29 @@ final class InputiaInputController: IMKInputController {
         self.bridge.latestOutcome.mode == "Chinese", !self.candidatePanelExpanded,
         InputiaHost.activeInputController === self, let live = self.client(),
         ObjectIdentifier(live as AnyObject) == ObjectIdentifier(client as AnyObject),
-        live.selectedRange() == selection, self.typedCompositionOrigin?.inputiaTarget == target,
-        self.typedCompositionOrigin?.isCurrentForTypedOrigin(client: live,
-          controllerID: self.voiceControllerID, activationGeneration: self.voiceActivationGeneration) == true else { return }
+        live.selectedRange() == selection else { return }
+      let queryOrigin = code.isEmpty ? self.predictionTarget : self.typedCompositionOrigin
+      guard queryOrigin?.inputiaTarget == target,
+        queryOrigin?.isCurrentForTypedOrigin(client: live, controllerID: self.voiceControllerID,
+          activationGeneration: self.voiceActivationGeneration) == true,
+        predictionIsCurrent() else { return }
+      guard !code.isEmpty || self.currentPredictionToken(client: live) == predictionToken else { return }
       self.clearHotwordOverlay()
       self.sharedChineseOrder = nil
       if code.isEmpty {
+        let sameDisplayed = self.personalPredictions == view.predictions && self.predictionDisplayedAt != nil
+        if !sameDisplayed { self.predictionDisplayedAt = nil }
         self.personalPredictions = view.predictions
         self.personalCandidates = []
         self.personalExpectedSelection = selection
-        if view.predictions.isEmpty { InputiaHost.candidatePanel?.hide() }
+        if view.predictions.isEmpty { ownedCandidatePanel?.showPredictionEmpty(near: chineseCandidateRect) }
         else {
           var rect = NSRect.zero
           live.attributes(forCharacterIndex: selection.location, lineHeightRectangle: &rect)
-          InputiaHost.candidatePanel?.show(candidates: view.predictions.map(\.text), near: rect)
+          guard self.currentPredictionToken(client: live) == predictionToken,
+            let panel = self.ownedCandidatePanel else { return }
+          panel.show(candidates: view.predictions.map(\.text), near: rect)
+          if !sameDisplayed { self.predictionDisplayedAt = ProcessInfo.processInfo.systemUptime }
         }
       } else {
         var seen = Set<String>()
@@ -1382,11 +1855,11 @@ final class InputiaInputController: IMKInputController {
     }
   }
 
-  private func choosePersonal(_ candidate: InputiaPersonalCandidate, explicit: Bool, client: IMKTextInput) -> Bool {
+  private func choosePersonal(_ candidate: InputiaPersonalCandidate, explicit: Bool, client: IMKTextInput, predictionTrigger: PredictionCommitTrigger? = nil) -> Bool {
     let code = latestComposing
     guard !code.isEmpty, bridge.latestOutcome.composing == code else { return false }
     if candidate.id.hasPrefix("learned:") {
-      return acceptAdmittedPersonalCandidate(candidate, code: code, explicit: explicit, client: client)
+      return acceptAdmittedPersonalCandidate(candidate, code: code, explicit: explicit, client: client, predictionTrigger: predictionTrigger)
     }
     let origin = typedOriginBeforeInsertion(client)
     personalRefreshGeneration &+= 1
@@ -1398,7 +1871,7 @@ final class InputiaInputController: IMKInputController {
     defer { pendingPersonalSelection = nil }
     let outcome = bridge.choosePersonalCandidate(id: candidate.id, text: candidate.text, composing: code)
     guard outcome.ok else { personalization.invalidateView(); return true }
-    return apply(outcome, client: client)
+    return apply(outcome, client: client, predictionTrigger: predictionTrigger)
   }
 
   private func recordPersonalCommit(_ text: String, client: IMKTextInput, start: Int, origin: InputiaVoiceTarget?) {
@@ -1420,7 +1893,7 @@ final class InputiaInputController: IMKInputController {
       composing: selection.composing, consumed: selection.code, remaining: latestComposing, text: text,
       previous: personalization.context.text, start: start, explicit: selection.explicit, rank: selection.candidate.base_rank)
     let receipt = personalization.accepted(target: origin, code: selection.code, schemaID: selection.schemaID, text: text,
-      explicit: selection.explicit, rank: selection.candidate.base_rank) { [weak self] in
+      explicit: selection.explicit, rank: selection.candidate.base_rank, previous: selection.previous) { [weak self] in
       guard let self, let live = self.client() else { return }
       self.schedulePersonalization(client: live)
     }
@@ -1438,13 +1911,29 @@ final class InputiaInputController: IMKInputController {
   }
 
   private func acceptPersonalPrediction(_ prediction: InputiaPersonalPrediction, client: IMKTextInput) -> Bool {
-    guard personalPredictions.contains(prediction) else { return false }
-    return acceptAdmittedPersonalCandidate(InputiaPersonalCandidate(id: prediction.id, text: prediction.text,
-      base_rank: 0, consumed_len: 0), code: "", explicit: true, client: client)
+    guard let index = personalPredictions.firstIndex(of: prediction), currentPredictionToken(client: client) != nil,
+      let origin = predictionTarget, let view = personalization.view, view.target == origin.inputiaTarget,
+      origin.isCurrentForTypedOrigin(client: client, controllerID: voiceControllerID,
+        activationGeneration: voiceActivationGeneration) else { return false }
+    guard personalPredictions.indices.contains(index), personalPredictions[index] == prediction,
+      personalization.view?.generation == view.generation else { return false }
+    predictionInputGeneration &+= 1
+    predictionTarget = nil
+    let old = typedCompositionOrigin
+    typedCompositionOrigin = origin
+    if let old, old.targetID != origin.targetID { releaseTypedOriginIfUnowned(old.targetID) }
+    let continuation = PredictionCommitTrigger(generation: predictionInputGeneration,
+      client: ObjectIdentifier(client as AnyObject), contextPrefix: view.queryContext, continuesSelection: true)
+    closePredictionPresentation(preservingWindow: true)
+    ownedCandidatePanel?.showPredictionPending(near: chineseCandidateRect)
+    let accepted = acceptAdmittedPersonalCandidate(InputiaPersonalCandidate(id: prediction.id, text: prediction.text,
+      base_rank: index, consumed_len: 0), code: "", explicit: true, client: client, predictionTrigger: continuation)
+    if !accepted { ownedCandidatePanel?.hide() }
+    return accepted
   }
 
   private func acceptAdmittedPersonalCandidate(_ candidate: InputiaPersonalCandidate, code: String,
-    explicit: Bool, client: IMKTextInput) -> Bool {
+    explicit: Bool, client: IMKTextInput, predictionTrigger: PredictionCommitTrigger? = nil) -> Bool {
     if personalPredictionPending { return true }
     guard latestComposing == code, bridge.latestOutcome.composing == code, personalization.allowed,
       let view = personalization.view, view.code == code, view.schemaID == bridge.schemaID,
@@ -1458,6 +1947,7 @@ final class InputiaInputController: IMKInputController {
       activation: voiceActivationGeneration, generation: localSelectionGeneration, epoch: personalization.epoch,
       schemaID: bridge.schemaID, code: code, selection: selection, marked: client.markedRange(), managedField: nil)
     personalDeferredOrigin = pending
+    if predictionTrigger?.continuesSelection == true { predictionSelectionHandoff = token }
     let candidateIDs = bridge.latestOutcome.candidateIDs
     DispatchQueue.main.asyncAfter(deadline: .now() + InputiaPersonalInputDeferral<NSEvent>.timeout) { [weak self] in
       guard let self, self.personalInputDeferral.expired(token, now: ProcessInfo.processInfo.systemUptime) else { return }
@@ -1481,6 +1971,8 @@ final class InputiaInputController: IMKInputController {
           self.bridge.latestOutcome.candidateIDs == candidateIDs else {
           self.finishDeferredPersonalInput(token); return
         }
+        if predictionTrigger != nil { self.predictionHandoffDepth += 1 }
+        defer { if predictionTrigger != nil { self.predictionHandoffDepth -= 1 } }
         if !code.isEmpty {
           let cleared = self.bridge.escape()
           guard cleared.ok, cleared.composing.isEmpty, cleared.commit == nil else {
@@ -1491,13 +1983,18 @@ final class InputiaInputController: IMKInputController {
         guard let queued = self.personalInputDeferral.finish(token) else { return }
         self.personalDeferredOrigin = nil; self.personalRecoveryToken = nil
         self.pendingPersonalSelection = PersonalSelection(target: origin.inputiaTarget, code: code,
-          composing: code, schemaID: pending.schemaID, candidate: candidate, explicit: explicit)
+          composing: code, schemaID: pending.schemaID, candidate: candidate, explicit: explicit,
+          previous: code.isEmpty ? InputiaConfirmedFieldContext.bounded(view.queryContext, limit: 64) : nil)
         self.insertCommittedText(candidate.text, client: client,
-          replacementRange: InputiaHostTextPolicy.commitReplacementRange(previousComposing: code, markedRange: pending.marked))
+          replacementRange: InputiaHostTextPolicy.commitReplacementRange(previousComposing: code, markedRange: pending.marked),
+          predictionTrigger: predictionTrigger)
         self.pendingPersonalSelection = nil
-        InputiaHost.candidatePanel?.hide()
+        if self.predictionSelectionHandoff == token { self.predictionSelectionHandoff = nil }
         if self.personalBoundaryWait.isWaiting { self.personalBoundaryProof = reply }
         self.replayDeferredPersonalInput(queued, pending: pending, proof: reply)
+        if self.latestComposing.isEmpty, self.currentPredictionToken(client: client) == nil {
+          self.ownedCandidatePanel?.hide()
+        }
       }
     }
     return true
@@ -1515,39 +2012,12 @@ final class InputiaInputController: IMKInputController {
       && current.markedRange() == pending.marked)
   }
 
-  /// 可确认由IMK消费的composition编辑排队；宿主控制键留在当前物理事件栈上。
+  /// 后续真实按键优先于尚未执行的增强选择；不暂存按键，也不等待后台准入。
   private func deferPersonalInput(_ event: NSEvent, client: IMKTextInput) -> Bool? {
-    guard let pending = personalDeferredOrigin else { return nil }
-    let shouldQueue = InputiaPersonalDeferredEventPolicy.shouldQueue(event,
-      candidateNavigation: isPersonalCandidateNavigation(event))
-      || InputiaPersonalDeferredEventPolicy.canQueueEditing(event, after: personalInputDeferral.events,
-        chineseMode: bridge.latestOutcome.mode == "Chinese")
-    let sameClient = ObjectIdentifier(client as AnyObject) == ObjectIdentifier(pending.client as AnyObject)
-    switch personalInputDeferral.offer(event, now: ProcessInfo.processInfo.systemUptime,
-      scopeMatches: sameClient && deferredPersonalScopeMatches(pending, composition: true),
-      boundary: !shouldQueue) {
-    case .queued:
-      // Shift/keyup仅延后本地手势观察；物理修饰键状态继续交给宿主，不注入系统事件。
-      return event.type == .keyDown
-    case .flush:
-      // IMKTextInput没有公开的宿主命令派发API。保持当前Return/Tab/快捷键为原事件，
-      // 只泵个人RPC专用mode；后来的物理键仍留在系统队列，不会越过本事件。
-      guard !personalBoundaryWait.isWaiting else {
-        finishDeferredPersonalInput(pending.token); return false
-      }
-      personalBoundaryProof = nil
-      let result = personalBoundaryWait.wait(deadline: personalInputDeferral.deadline,
-        pending: { self.personalPredictionPending },
-        valid: { self.deferredPersonalScopeMatches(pending, composition: false) })
-      if let remaining = personalDeferredOrigin { finishDeferredPersonalInput(remaining.token) }
-      let mayProcess = result == .completed
-        && personalReplayProofIsCurrent(personalBoundaryProof, pending: pending, composition: false)
-      personalBoundaryProof = nil
-      return mayProcess ? nil : false
-    case .discard:
-      finishDeferredPersonalInput(pending.token)
-      return nil
-    }
+    // 选择键的松开和普通修饰变化不撤销已选项；真正的 Shift 模式切换在切换入口取消。
+    guard event.type == .keyDown, let pending = personalDeferredOrigin else { return nil }
+    finishDeferredPersonalInput(pending.token, resetShiftGesture: false)
+    return nil
   }
 
   /// 准入失败后的恢复也必须重新核验原字段；沿用原750ms预算，失败或超时不重放。
@@ -1567,18 +2037,25 @@ final class InputiaInputController: IMKInputController {
     }
   }
 
-  private func finishDeferredPersonalInput(_ token: UInt64, proof: InputiaTargetBridgeReply? = nil) {
+  private func finishDeferredPersonalInput(_ token: UInt64, proof: InputiaTargetBridgeReply? = nil,
+    resetShiftGesture: Bool = true) {
     guard let pending = personalDeferredOrigin, pending.token == token else { return }
     let withinBudget = !personalInputDeferral.expired(token, now: ProcessInfo.processInfo.systemUptime)
     guard let queued = personalInputDeferral.finish(token) else { return }
     personalDeferredOrigin = nil; personalRecoveryToken = nil
-    let canReplay = withinBudget && personalReplayProofIsCurrent(proof, pending: pending, composition: true)
+    let hadPredictionHandoff = predictionSelectionHandoff == token
+    if hadPredictionHandoff { predictionSelectionHandoff = nil; predictionInputGeneration &+= 1 }
+    let canReplay = proof != nil && withinBudget
+      && personalReplayProofIsCurrent(proof, pending: pending, composition: true)
     personalization.invalidateView()
     if canReplay, let proof {
       if personalBoundaryWait.isWaiting { personalBoundaryProof = proof }
       replayDeferredPersonalInput(queued, pending: pending, proof: proof)
     }
-    else { resetShiftInputModeSession(reason: "personal-deferral-cancelled") }
+    else if resetShiftGesture { resetShiftInputModeSession(reason: "personal-deferral-cancelled") }
+    if hadPredictionHandoff, latestComposing.isEmpty, predictionPresentation.currentToken == nil {
+      ownedCandidatePanel?.hide()
+    }
   }
 
   private func personalReplayProofIsCurrent(_ proof: InputiaTargetBridgeReply?,
@@ -1606,7 +2083,12 @@ final class InputiaInputController: IMKInputController {
       // 已验证字段中的Escape只取消composition/context；仍需按序处理同字段后续键。
       personalReplayKeepsTypedOrigin = event.type == .keyDown && event.keyCode == keyCodeEscape
         && !latestComposing.isEmpty
-      let handled = handle(event, client: pending.client)
+      // 这些按键发生时下一轮推荐尚未显示，不能在重放时改成对新列表的选择。
+      let handled: Bool = {
+        personalInputReplayDepth += 1
+        defer { personalInputReplayDepth -= 1 }
+        return handle(event, client: pending.client)
+      }()
       personalReplayKeepsTypedOrigin = false
       if !handled, InputiaPersonalDeferredEventPolicy.isPrintable(event), let text = event.characters,
         personalReplayProofIsCurrent(proof, pending: pending, composition: false) {
@@ -1755,11 +2237,12 @@ final class InputiaInputController: IMKInputController {
     guard InputiaVoiceTargetSnapshot.shouldAttemptPreCapture(
       now: ProcessInfo.processInfo.systemUptime, retryDeadline: voicePreCaptureRetryDeadline
     ) else { return nil }
-    guard !targetCapturePending else { return nil }
+    guard !targetCapturePending, predictionTargetCapture == nil else { return nil }
     targetCapturePending = true
     prepareUnifiedVoiceTarget(client: client) { [weak self] target in
       guard let self else { return }
       self.targetCapturePending = false
+      defer { self.resumePredictionAfterPreCapture() }
       guard let target, let snapshot = self.voiceTargetSnapshots.removeValue(forKey: target.target_id) else {
         if let target { InputiaVoiceInputLauncher.releaseTarget(target.target_id) }
         self.voicePreCaptureRetryDeadline = InputiaVoiceTargetSnapshot.preCaptureRetryDeadline(after: ProcessInfo.processInfo.systemUptime)
@@ -1876,8 +2359,8 @@ final class InputiaInputController: IMKInputController {
     if latestComposing == overlay.code {
       latestCandidates = overlay.base
       if !candidatePanelExpanded {
-        if latestCandidates.isEmpty { InputiaHost.candidatePanel?.hide() }
-        else { InputiaHost.candidatePanel?.show(candidates: latestCandidates, near: chineseCandidateRect) }
+        if latestCandidates.isEmpty { ownedCandidatePanel?.hide() }
+        else { ownedCandidatePanel?.show(candidates: latestCandidates, near: chineseCandidateRect) }
       }
     }
   }
@@ -1918,17 +2401,17 @@ final class InputiaInputController: IMKInputController {
     return true
   }
 
-  private func selectHotwordOverlay(displayed: Int, client: IMKTextInput) -> Bool {
+  private func selectHotwordOverlay(displayed: Int, client: IMKTextInput, predictionTrigger: PredictionCommitTrigger? = nil) -> Bool {
     guard let overlay = hotwordOverlay, latestComposing == overlay.code,
       displayed >= 0, displayed < latestCandidates.count else { return true }
     if displayed >= overlay.words.count {
       let index = displayed - overlay.words.count
       clearHotwordOverlay()
       if personalCandidates.indices.contains(index) {
-        return choosePersonal(personalCandidates[index], explicit: true, client: client)
+        return choosePersonal(personalCandidates[index], explicit: true, client: client, predictionTrigger: predictionTrigger)
       }
-      if sharedChineseOrder != nil { return enqueueSharedChineseSelection(displayed: index, client: client) }
-      return chooseNativeWithLearning(index: index, explicit: true, client: client)
+      if sharedChineseOrder != nil { return enqueueSharedChineseSelection(displayed: index, client: client, predictionTrigger: predictionTrigger) }
+      return chooseNativeWithLearning(index: index, explicit: true, client: client, predictionTrigger: predictionTrigger)
     }
     let word = overlay.words[displayed]
     let expected = overlay.context
@@ -1938,13 +2421,19 @@ final class InputiaInputController: IMKInputController {
       bridge.latestOutcome.mode == "Chinese", bridge.latestOutcome.composing == overlay.code,
       InputiaHotwordPrefix.candidates(current.words, code: overlay.code, naturalDoublePinyin: bridge.usesNaturalDoublePinyin).contains(word)
     else { clearHotwordOverlay(); return true }
+    if predictionTrigger != nil { predictionHandoffDepth += 1 }
+    defer { if predictionTrigger != nil { predictionHandoffDepth -= 1 } }
     let replacement = InputiaHostTextPolicy.commitReplacementRange(previousComposing: overlay.code, markedRange: client.markedRange())
     let cancelled = bridge.escape()
     guard cancelled.ok, cancelled.composing.isEmpty, cancelled.commit == nil else { return true }
     syncHostState(with: cancelled)
     // 用户手动选择的基础词汇由当前IMK客户端提交，不进入语音/学习/外传链路。
+    let start = replacement.location == NSNotFound ? client.selectedRange().location : replacement.location
     client.insertText(word, replacementRange: replacement)
-    InputiaHost.candidatePanel?.hide()
+    recordConfirmedFieldCommit(word, start: start, client: client)
+    beginPredictionAfterCommit(predictionTrigger, text: word, start: start, client: client)
+    if predictionTrigger != nil { schedulePersonalization(client: client) }
+    if currentPredictionToken(client: client) == nil { ownedCandidatePanel?.hide() }
     return true
   }
 
@@ -1972,7 +2461,7 @@ final class InputiaInputController: IMKInputController {
     guard current.mode == "Chinese", !current.composing.isEmpty else { return }
     latestCandidates = current.candidates
     if !candidatePanelExpanded {
-      InputiaHost.candidatePanel?.show(candidates: current.candidates, near: chineseCandidateRect)
+      ownedCandidatePanel?.show(candidates: current.candidates, near: chineseCandidateRect)
     }
   }
 
@@ -1997,7 +2486,7 @@ final class InputiaInputController: IMKInputController {
     updateCandidateWindow(client: client)
   }
 
-  private func enqueueSharedChineseSelection(displayed: Int, client: IMKTextInput) -> Bool {
+  private func enqueueSharedChineseSelection(displayed: Int, client: IMKTextInput, predictionTrigger: PredictionCommitTrigger? = nil) -> Bool {
     guard !sharedChineseSelection.hasPending else { return true }
     guard let mapping = sharedChineseOrder, sharedChineseCoreMatches(mapping),
       let originalIndex = mapping.order.originalIndex(displayed: displayed),
@@ -2022,7 +2511,7 @@ final class InputiaInputController: IMKInputController {
           clientIdentity: ObjectIdentifier(client as AnyObject), activation: self.voiceActivationGeneration), gateAllowed: true)
       else { self.sharedChineseSelection.cancel(); InputiaSharedTermsMemory.shared.clear(); return }
       // 原索引交回 Rime，自身不插字符串；保留部分消费、剩余组合及既有用户选择学习。
-      _ = self.chooseNativeWithLearning(index: originalIndex, explicit: true, client: client)
+      _ = self.chooseNativeWithLearning(index: originalIndex, explicit: true, client: client, predictionTrigger: predictionTrigger)
     }
     return true
   }
@@ -2061,8 +2550,8 @@ final class InputiaInputController: IMKInputController {
     englishCompletionCandidates.removeAll { removed.contains($0) }
     guard latestComposing.isEmpty, recallCandidates.isEmpty else { return }
     latestCandidates = englishCompletionCandidates
-    if englishCompletionCandidates.isEmpty { InputiaHost.candidatePanel?.hide() }
-    else { InputiaHost.candidatePanel?.show(candidates: englishCompletionCandidates, near: englishCompletionRect) }
+    if englishCompletionCandidates.isEmpty { ownedCandidatePanel?.hide() }
+    else { ownedCandidatePanel?.show(candidates: englishCompletionCandidates, near: englishCompletionRect) }
   }
 
   private func retireMemoryCommit() {
@@ -2336,7 +2825,8 @@ final class InputiaInputController: IMKInputController {
 
   /// 基础按键始终先走原路径。系统透传编辑在下一主线程轮次核对光标，无法确证即停止学习。
   private func handleWordSpanKeyDown(_ event: NSEvent, client: IMKTextInput) -> Bool {
-    let edit = wordSpanEdit(event, client: client), before = wordSpanCaret(client)
+    let edit = wordSpanEdit(event, client: client)
+    let before = edit.flatMap { _ in wordSpanCaret(client) }
     let hadPermit = wordSpan.hasPermit
     if !hadPermit { retireWordSpan(reason: "input_before_permit") }
     let observation = UUID(); wordSpanObservation = observation
@@ -2356,7 +2846,7 @@ final class InputiaInputController: IMKInputController {
     return handled
   }
 
-  private func prepareUnifiedVoiceTarget(client: IMKTextInput?, completion: @escaping (InputiaVoiceTarget?) -> Void) {
+  private func prepareUnifiedVoiceTarget(client: IMKTextInput?, forPrediction: Bool = false, completion: @escaping (InputiaVoiceTarget?) -> Void) {
     pruneVoiceTargetSnapshots()
     synchronizePermissionEpoch()
     let initialReason: String
@@ -2373,11 +2863,14 @@ final class InputiaInputController: IMKInputController {
     let activation = voiceActivationGeneration
     let composition = localCompositionGeneration
     let localSelection = localSelectionGeneration
+    let anchorAtCapture = confirmedFieldAnchor?.targetID
     let draft = InputiaVoiceTarget(target_id: UUID().uuidString, host_instance: InputiaVoiceServiceConnection.processInstance,
       controller_id: voiceControllerID, activation_generation: activation, field_id: nil,
       selection_generation: localSelection, composition_generation: composition, source_app: bundle)
-    InputiaVoiceInputLauncher.targetBridge(.init(kind: "capture", draft: draft)) { [weak self] reply in
+    InputiaVoiceInputLauncher.targetBridge(.init(kind: "capture", draft: draft),
+      captureTicket: targetCaptureScope.ticket()) { [weak self] reply in
       guard let self else { completion(nil); return }
+      defer { if let anchorAtCapture { self.releaseConfirmedFieldAnchor(matching: anchorAtCapture) } }
       let current = self.client()
       let captureReason: String
       if reply == nil { captureReason = "no_reply" }
@@ -2411,8 +2904,13 @@ final class InputiaInputController: IMKInputController {
       }
       InputiaPersonalizationDiagnostics.record("capture_reply", "ok")
       let snapshot = InputiaVoiceTargetSnapshot.Snapshot(target: target, client: current, selection: selection,
-        compositionGeneration: composition, localSelectionGeneration: localSelection, deadline: reply.deadline, permissionEpoch: epoch)
-      if let field = reply.field_instance {
+        compositionGeneration: composition, localSelectionGeneration: localSelection, deadline: reply.deadline, permissionEpoch: epoch,
+        confirmedField: reply.field_instance.map { .init(server: reply.server_instance, instance: $0) })
+      if let segment = self.confirmedFieldContext.pendingToken {
+        _ = self.confirmedFieldContext.resolve(token: segment, field: snapshot.confirmedField,
+          scope: self.confirmedFieldScope(current), selection: selection)
+      }
+      if !forPrediction, let field = reply.field_instance {
         let identity = reply.server_instance + ":" + field
         if let previous = self.memoryFieldID, previous != identity {
           _ = self.bridge.clearManagedMemory()
@@ -2740,28 +3238,28 @@ final class InputiaInputController: IMKInputController {
     return digit - 1
   }
 
-  private func commitExpandedCandidate(columnIndex: Int, client: IMKTextInput?) -> Bool {
+  private func commitExpandedCandidate(columnIndex: Int, client: IMKTextInput?, predictionTrigger: PredictionCommitTrigger? = nil) -> Bool {
     let index = expandedActiveRowIndex * expandedColumnCount() + columnIndex
     guard expandedCandidateEntries.indices.contains(index) else {
       return false
     }
-    return commitExpandedCandidate(expandedCandidateEntries[index], client: client)
+    return commitExpandedCandidate(expandedCandidateEntries[index], client: client, predictionTrigger: predictionTrigger)
   }
 
-  private func commitExpandedCandidate(_ entry: InputiaExpandedCandidateEntry, client: IMKTextInput?) -> Bool {
+  private func commitExpandedCandidate(_ entry: InputiaExpandedCandidateEntry, client: IMKTextInput?, predictionTrigger: PredictionCommitTrigger? = nil) -> Bool {
     #if INPUTIA_PAIRED_BUILD
     if let id = entry.candidateID {
       guard InputiaPersonalContext.retainsPersonalIdentity(id, available: personalCandidates.map(\.id)),
         let client, let candidate = personalCandidates.first(where: { $0.id == id && $0.text == entry.text }),
         personalCode == latestComposing else { return true }
-      return choosePersonal(candidate, explicit: true, client: client)
+      return choosePersonal(candidate, explicit: true, client: client, predictionTrigger: predictionTrigger)
     }
     #endif
     guard moveBridgeToPage(entry.page) else {
       return false
     }
     guard let client else { return false }
-    return chooseNativeWithLearning(index: entry.pageIndex, explicit: true, client: client)
+    return chooseNativeWithLearning(index: entry.pageIndex, explicit: true, client: client, predictionTrigger: predictionTrigger)
   }
 
   private func moveBridgeToPage(_ targetPage: Int) -> Bool {
@@ -2916,7 +3414,7 @@ final class InputiaInputController: IMKInputController {
 
     var inputRect = NSRect.zero
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
-    InputiaHost.candidatePanel?.show(candidates: candidates, near: inputRect)
+    ownedCandidatePanel?.show(candidates: candidates, near: inputRect)
     inputiaDebugLog("clipboardRecallShown count=\(candidates.count)")
     return true
   }
@@ -2978,7 +3476,7 @@ final class InputiaInputController: IMKInputController {
     expandedCandidates = []
     expandedCandidateEntries = []
     expandedActiveRowIndex = 0
-    InputiaHost.candidatePanel?.hide()
+    ownedCandidatePanel?.hide()
   }
 
   private func updateEnglishCompletionAfterCharacter(
@@ -3069,7 +3567,7 @@ final class InputiaInputController: IMKInputController {
     var inputRect = NSRect.zero
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
     englishCompletionRect = inputRect
-    InputiaHost.candidatePanel?.show(candidates: candidates, near: inputRect)
+    ownedCandidatePanel?.show(candidates: candidates, near: inputRect)
     #if INPUTIA_PAIRED_BUILD
     prepareMemoryCommit(candidates: candidates, prefix: englishCompletionPrefix, client: client)
     #endif
@@ -3172,7 +3670,7 @@ final class InputiaInputController: IMKInputController {
       expandedCandidateEntries = []
       expandedActiveRowIndex = 0
       candidatePanelExpanded = false
-      InputiaHost.candidatePanel?.hide()
+      ownedCandidatePanel?.hide()
     }
   }
 
@@ -3189,7 +3687,7 @@ final class InputiaInputController: IMKInputController {
     if let client { clearMarkedText(client) }
     latestComposing = ""
     latestCandidates = []
-    InputiaHost.candidatePanel?.hide()
+    ownedCandidatePanel?.hide()
   }
 
   private func commitShiftEnglishComposition(client: IMKTextInput) {
@@ -3218,6 +3716,8 @@ final class InputiaInputController: IMKInputController {
 
   private func clearInputState(client: IMKTextInput? = nil) {
     #if INPUTIA_PAIRED_BUILD
+    clearConfirmedFieldContext()
+    retirePredictionPresentation()
     clearHotwordOverlay()
     explicitEnglishCandidates = [:]
     discardTypedCompositionOrigin()
@@ -3236,11 +3736,12 @@ final class InputiaInputController: IMKInputController {
     expandedActiveRowIndex = 0
     candidatePanelExpanded = false
     _ = bridge.escape()
-    InputiaHost.candidatePanel?.hide()
+    ownedCandidatePanel?.hide()
   }
 
-  private func updateCandidateWindow(client: IMKTextInput) {
-    guard let panel = InputiaHost.candidatePanel else {
+  private func updateCandidateWindow(client: IMKTextInput, restorationToken: UInt64? = nil) {
+    guard let panel = ownedCandidatePanel,
+      restorationToken.map({ panel.isRestorationCurrent($0) }) ?? true else {
       return
     }
     let displayedCandidates = InputiaHostTextPolicy.candidatesForPanel(
@@ -3257,6 +3758,8 @@ final class InputiaInputController: IMKInputController {
 
     var inputRect = NSRect.zero
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
+    guard ownedCandidatePanel === panel,
+      restorationToken.map({ panel.isRestorationCurrent($0) }) ?? true else { return }
     chineseCandidateRect = inputRect
     panel.show(
       candidates: panelCandidates,
@@ -3381,12 +3884,14 @@ struct InputiaInputMethodApp {
       InputiaMemoryBarrier.invalidate = {
         InputiaVoiceBridge.shared.retirePending()
         InputiaRustBridge.invalidateManagedMemory()
-        for controller in InputiaHost.inputControllers.allObjects { controller.clearManagedMemoryDisplay(restoringBasicCandidates: true) }
+        let restorations = InputiaHost.inputControllers.allObjects.compactMap { $0.managedMemoryWasCleared() }
+        restorations.forEach { $0() }
       }
       InputiaMemoryBarrier.clear = { policy in
         InputiaVoiceBridge.shared.retirePending()
         try InputiaRustBridge.applyManagedMemoryPolicy(policy)
-        for controller in InputiaHost.inputControllers.allObjects { controller.clearManagedMemoryDisplay(restoringBasicCandidates: true) }
+        let restorations = InputiaHost.inputControllers.allObjects.compactMap { $0.managedMemoryWasCleared() }
+        restorations.forEach { $0() }
       }
       #endif
       if CommandLine.arguments.contains("--open-settings") {
@@ -3422,6 +3927,10 @@ struct InputiaInputMethodApp {
           InputiaVoiceInputLauncher.ensureUnifiedServiceReady()
           InputiaVoiceInputLauncher.startShortcutListening(targetProvider: {
             InputiaHost.activeInputController?.shortcutRegistrationTarget()
+          }, targetRejected: { id in
+            for controller in InputiaHost.inputControllers.allObjects {
+              controller.rejectShortcutRegistrationTarget(id)
+            }
           }, sharedTermsReceiver: { terms, ticket in
             InputiaHost.activeInputController?.acceptSharedTerms(terms, ticket: ticket)
           }, acceptStart: { trigger, completion in

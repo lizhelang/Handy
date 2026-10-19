@@ -90,10 +90,12 @@ pub fn current(app: &AppHandle) -> Result<Arc<HandyKeysState>, String> {
 }
 
 pub fn retire_current(app: &AppHandle) -> Result<(), String> {
-    if app.try_state::<HandyKeysSlot>().is_none() {
+    let Some(slot) = app.try_state::<HandyKeysSlot>() else {
         return Ok(());
-    }
-    current(app)?.retire()
+    };
+    let owner = slot.0.try_lock().map_err(|_| "快捷键生命周期忙碌")?.clone();
+    // 创建失败可能只留下空 slot；没有旧 owner 即已退休，不能把恢复锁死在“未初始化”。
+    owner.map_or(Ok(()), |owner| owner.retire())
 }
 
 /// Key event sent to frontend during recording mode
@@ -124,9 +126,11 @@ impl HandyKeysState {
         let app_clone = app.clone();
         let thread_handle = thread::spawn(move || {
             Self::manager_thread(cmd_rx, app_clone, epoch, &worker_healthy, ready_tx);
-            if worker_healthy.swap(false, Ordering::AcqRel) {
-                crate::input_permission::mark_shortcuts_failed(epoch, "快捷键原生监听器意外退出");
-            }
+            crate::input_permission::mark_shortcut_owner_failed(
+                epoch,
+                "快捷键原生监听器意外退出",
+                &worker_healthy,
+            );
         });
 
         Ok(Self {
@@ -314,9 +318,7 @@ impl HandyKeysState {
     }
 
     fn fault(&self, reason: &str) -> String {
-        self.healthy.store(false, Ordering::Release);
-        handy_keys::set_blocking_enabled(false);
-        crate::input_permission::mark_shortcuts_failed(self.epoch, reason);
+        crate::input_permission::mark_shortcut_owner_failed(self.epoch, reason, &self.healthy);
         reason.to_owned()
     }
 
@@ -342,8 +344,7 @@ impl HandyKeysState {
     }
 
     pub fn retire(&self) -> Result<(), String> {
-        handy_keys::set_blocking_enabled(false);
-        self.healthy.store(false, Ordering::Release);
+        crate::input_permission::retire_shortcut_owner(self.epoch, &self.healthy);
         self.stop_recording()?;
         if let Ok(sender) = self.command_sender.try_lock() {
             let _ = sender.send(ManagerCommand::Shutdown);
@@ -611,6 +612,7 @@ pub fn validate_shortcut(raw: &str) -> Result<(), String> {
 
 /// Initialize handy-keys shortcuts
 pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
+    let epoch = crate::input_permission::initializing_epoch()?;
     app.manage(HandyKeysSlot::default());
     let slot = app.state::<HandyKeysSlot>();
     let mut owned = slot.0.try_lock().map_err(|_| "快捷键生命周期忙碌")?;
@@ -620,7 +622,7 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
     if handy_keys::active_listener_count() != 0 {
         return Err("旧原生键盘线程尚未退出".into());
     }
-    handy_keys::set_blocking_enabled(false);
+    crate::input_permission::set_shortcut_blocking(epoch, false);
     let state = Arc::new(HandyKeysState::new(app.clone())?);
     *owned = Some(state.clone());
     state.await_ready()?;
@@ -640,7 +642,7 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
         return Err(state.fault("快捷键初始化已过期"));
     }
     state.health_ready(state.epoch)?;
-    handy_keys::set_blocking_enabled(true);
+    crate::input_permission::set_shortcut_blocking(epoch, true);
     info!("handy-keys shortcuts initialized");
     Ok(())
 }

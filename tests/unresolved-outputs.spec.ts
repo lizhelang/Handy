@@ -7,12 +7,15 @@ declare global {
       rejectAck: boolean;
       malformed: boolean;
       remount: () => void;
+      queryCalls: number;
+      releaseInitial: () => void;
+      send: (state: string, operationId?: string) => void;
     };
   }
 }
 
 // 仅验证 UI 与命令合同；不证明原生输入或真正的数据库持久化。
-async function mountNotices(page: Page) {
+async function mountNotices(page: Page, holdInitial = false) {
   await page.route("**/__output-notice-test", (route) =>
     route.fulfill({
       contentType: "text/html",
@@ -20,7 +23,7 @@ async function mountNotices(page: Page) {
     }),
   );
   await page.goto("/__output-notice-test");
-  await page.evaluate(async () => {
+  await page.evaluate(async (holdInitial) => {
     let sequence = 0;
     const callbacks = new Map<number, (value: unknown) => void>();
     const persisted = [
@@ -32,6 +35,26 @@ async function mountNotices(page: Page) {
       rejectAck: false,
       malformed: false,
       remount: () => {},
+      queryCalls: 0,
+      releaseInitial: () => {},
+      send: (state: string, operationId = "new-output") => {
+        const at = persisted.findIndex(
+          (item) => item.operation_id === operationId,
+        );
+        if (at >= 0) persisted.splice(at, 1);
+        persisted.unshift({
+          operation_id: operationId,
+          item_id: "new-voice",
+          state,
+        });
+        for (const [id, callback] of callbacks) {
+          callback({
+            event: "voice-output-result",
+            id,
+            payload: { operation_id: operationId, state },
+          });
+        }
+      },
     };
     Object.assign(window, {
       __OUTPUT_NOTICE_TEST__: harness,
@@ -48,6 +71,7 @@ async function mountNotices(page: Page) {
           if (command === "plugin:event|unlisten") return;
           if (command === "get_app_settings") return { app_language: "en" };
           if (command === "list_unresolved_unified_outputs") {
+            harness.queryCalls += 1;
             if (harness.malformed)
               return { items: [{ state: "confirmed" }], next_cursor: null };
             const start = args?.cursor
@@ -56,11 +80,17 @@ async function mountNotices(page: Page) {
                 ) + 1
               : 0;
             const items = persisted.slice(start, start + 1);
-            return {
+            const result = {
               items,
               next_cursor:
                 start + 1 < persisted.length ? items[0].operation_id : null,
             };
+            if (holdInitial && harness.queryCalls === 1) {
+              await new Promise<void>((resolve) => {
+                harness.releaseInitial = resolve;
+              });
+            }
+            return result;
           }
           if (command === "acknowledge_unified_output_notice") {
             if (harness.rejectAck) throw new Error("state changed");
@@ -104,7 +134,15 @@ async function mountNotices(page: Page) {
       render();
     };
     render();
-  });
+  }, holdInitial);
+  if (!holdInitial) await expandNotices(page);
+}
+
+async function expandNotices(page: Page) {
+  await expect(page.locator("summary")).toBeVisible();
+  if ((await page.locator("details").getAttribute("open")) === null) {
+    await page.locator("summary").click();
+  }
 }
 
 test("重建界面仍查询持久结果，分页后确认只标已读", async ({ page }) => {
@@ -113,6 +151,7 @@ test("重建界面仍查询持久结果，分页后确认只标已读", async ({
     page.getByText(/Insertion could not be confirmed/),
   ).toBeVisible();
   await page.evaluate(() => window.__OUTPUT_NOTICE_TEST__.remount());
+  await expandNotices(page);
   await expect(
     page.getByText(/Insertion could not be confirmed/),
   ).toBeVisible();
@@ -179,6 +218,55 @@ test("损坏响应显示重试错误，不能当作没有待处理结果", async
     window.__OUTPUT_NOTICE_TEST__.malformed = false;
   });
   await page.getByRole("button", { name: "Refresh" }).click();
+  await expandNotices(page);
+  await expect(
+    page.getByText(/Insertion could not be confirmed/),
+  ).toBeVisible();
+});
+
+test("事件突发只合并刷新一次，不创建或确认通知", async ({ page }) => {
+  await mountNotices(page);
+  await page.evaluate(() => {
+    for (let index = 0; index < 20; index += 1) {
+      window.__OUTPUT_NOTICE_TEST__.send("uncertain", "same-output");
+    }
+  });
+  await expect
+    .poll(() => page.evaluate(() => window.__OUTPUT_NOTICE_TEST__.queryCalls))
+    .toBe(2);
+  await expect(
+    page.getByText(/Insertion could not be confirmed/),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.__OUTPUT_NOTICE_TEST__.calls.filter(
+        (call) => call.command === "acknowledge_unified_output_notice",
+      ),
+    ),
+  ).toEqual([]);
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+});
+
+test("启动与事件刷新竞争时旧查询不能覆盖最新结果", async ({ page }) => {
+  await mountNotices(page, true);
+  await expect
+    .poll(() => page.evaluate(() => window.__OUTPUT_NOTICE_TEST__.queryCalls))
+    .toBe(1);
+  await page.evaluate(() =>
+    window.__OUTPUT_NOTICE_TEST__.send("pending_target"),
+  );
+  await expect
+    .poll(() => page.evaluate(() => window.__OUTPUT_NOTICE_TEST__.queryCalls))
+    .toBe(2);
+  await expandNotices(page);
+  await expect(
+    page.getByText(/Waiting for a valid input target/),
+  ).toBeVisible();
+  await page.evaluate(() => window.__OUTPUT_NOTICE_TEST__.releaseInitial());
+  await expect(
+    page.getByText(/Waiting for a valid input target/),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Load more" }).click();
   await expect(
     page.getByText(/Insertion could not be confirmed/),
   ).toBeVisible();

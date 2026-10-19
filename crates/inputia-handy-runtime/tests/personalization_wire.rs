@@ -132,3 +132,73 @@ fn recall_admission_requires_schema_and_ascii_code_while_legacy_query_defaults_w
     }
     assert!(r.validate_for(&peer()).is_err());
 }
+
+#[test]
+fn longer_read_context_does_not_expand_learning_feedback() {
+    for text in ["中".repeat(512), "🀄".repeat(512)] {
+        let mut r = request();
+        let PersonalizationCommand::Query { context, .. } = &mut r.personalization else {
+            unreachable!()
+        };
+        *context = text.clone();
+        assert!(r.validate_for(&peer()).is_ok());
+        let PersonalizationCommand::Query {
+            target, context_id, ..
+        } = r.personalization
+        else {
+            unreachable!()
+        };
+        r.personalization = PersonalizationCommand::Admit {
+            target,
+            learning_epoch: 1,
+            context_id,
+            context: text,
+            input_code: String::new(),
+            schema_id: String::new(),
+            text: "继续".into(),
+            prediction_id: "base:test".into(),
+        };
+        assert!(r.validate_for(&peer()).is_ok());
+        if let PersonalizationCommand::Admit { context, .. } = &mut r.personalization {
+            context.push('中');
+        }
+        assert!(r.validate_for(&peer()).is_err());
+    }
+    for text in [
+        "中".repeat(513),
+        "前文\n换行".into(),
+        "前文\0尾部".into(),
+        "a\u{301}".repeat(257),
+    ] {
+        let mut r = request();
+        if let PersonalizationCommand::Query { context, .. } = &mut r.personalization {
+            *context = text;
+        }
+        assert!(r.validate_for(&peer()).is_err());
+    }
+    let mut r = request();
+    let PersonalizationCommand::Query {
+        target, context_id, ..
+    } = r.personalization
+    else {
+        unreachable!()
+    };
+    r.personalization = PersonalizationCommand::Feedback {
+        target,
+        context_id,
+        learning_epoch: 1,
+        event_id: "feedback".into(),
+        input_code: String::new(),
+        schema_id: String::new(),
+        text: "继续".into(),
+        previous: "中".repeat(64),
+        explicit_selection: true,
+        original_rank: 0,
+        operation: "accept".into(),
+    };
+    assert!(r.validate_for(&peer()).is_ok());
+    if let PersonalizationCommand::Feedback { previous, .. } = &mut r.personalization {
+        previous.push('中');
+    }
+    assert!(r.validate_for(&peer()).is_err());
+}

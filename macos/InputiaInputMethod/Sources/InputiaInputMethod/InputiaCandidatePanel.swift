@@ -42,6 +42,58 @@ private enum InputiaCandidatePalette {
   }
 }
 
+// 候选窗定位只接收几何快照，便于在不创建窗口时验证屏幕边界。
+enum InputiaCandidatePanelPlacement {
+  typealias ScreenFrame = (frame: NSRect, visibleFrame: NSRect)
+  private static let defaultVisibleFrame = NSRect(x: 0, y: 0, width: 1440, height: 900)
+
+  private static func hasFiniteBounds(_ rect: NSRect) -> Bool {
+    [rect.origin.x, rect.origin.y, rect.size.width, rect.size.height,
+      rect.minX, rect.minY, rect.maxX, rect.maxY].allSatisfy(\.isFinite)
+  }
+
+  private static func isVisibleFrame(_ rect: NSRect) -> Bool {
+    hasFiniteBounds(rect) && rect.size.width > 0 && rect.size.height > 0
+  }
+
+  static func normalizedAnchor(_ rect: NSRect, fallbackPoint: NSPoint) -> NSRect {
+    if hasFiniteBounds(rect), rect.size.width >= 0, rect.size.height >= 0,
+      rect.width > 0 || rect.height > 0 {
+      return rect
+    }
+    let point = fallbackPoint.x.isFinite && fallbackPoint.y.isFinite ? fallbackPoint : .zero
+    return NSRect(origin: point, size: NSSize(width: 1, height: 18))
+  }
+
+  static func visibleFrame(for anchor: NSRect, screens: [ScreenFrame], fallback: NSRect?) -> NSRect {
+    let validScreens = screens.filter { isVisibleFrame($0.frame) && isVisibleFrame($0.visibleFrame) }
+    if let screen = validScreens.first(where: { $0.frame.contains(anchor.origin) }) {
+      return screen.visibleFrame
+    }
+    if let fallback, isVisibleFrame(fallback) { return fallback }
+    return validScreens.first?.visibleFrame ?? defaultVisibleFrame
+  }
+
+  static func frame(near anchor: NSRect, size: NSSize, visibleFrame: NSRect) -> NSRect {
+    let visibleFrame = isVisibleFrame(visibleFrame) ? visibleFrame : defaultVisibleFrame
+    let anchor = normalizedAnchor(anchor, fallbackPoint: visibleFrame.origin)
+    let width = min(visibleFrame.width, max(1, size.width.isFinite ? size.width : 180))
+    let height = min(visibleFrame.height, max(1, size.height.isFinite ? size.height : 24))
+    let cursorOffset: CGFloat = 4
+    var frame = NSRect(
+      x: anchor.minX, y: anchor.minY - height - cursorOffset,
+      width: width, height: height
+    )
+    if frame.minY < visibleFrame.minY {
+      frame.origin.y = anchor.maxY + cursorOffset
+    }
+    // 锚点可能来自已滚出屏幕的字符；翻到其上方后仍须钳制两个轴。
+    frame.origin.x = min(max(frame.minX, visibleFrame.minX), visibleFrame.maxX - width)
+    frame.origin.y = min(max(frame.minY, visibleFrame.minY), visibleFrame.maxY - height)
+    return frame
+  }
+}
+
 final class InputiaCandidatePanel: NSPanel {
   private let backgroundView = NSVisualEffectView()
   private let candidateView = InputiaCandidateContentView()
@@ -50,11 +102,12 @@ final class InputiaCandidatePanel: NSPanel {
   private let maxPanelWidth: CGFloat = 1600
   private let collapsedMaxPanelHeight: CGFloat = 58
   private let expandedMaxPanelHeight: CGFloat = 220
-  private let cursorOffset: CGFloat = 4
   private let settingsCache = InputiaSettingsCache.shared(path: InputiaProfile.current.settings.path)
   private var displaySettings = InputiaCandidateDisplaySettings(fontSize: 14)
   private var displaySettingsIdentity: String?
   private var displaySettingsSnapshot: InputiaSettingsStore.Snapshot?
+  private var restorationSequence: UInt64 = 0
+  private var restorationToken: UInt64?
   var settingsDidApply: ((InputiaSettingsStore.Snapshot) -> Void)?
   private static let collapsedCandidateLimit = 9
   private static let expandedCandidateLimit = 40
@@ -101,15 +154,13 @@ final class InputiaCandidatePanel: NSPanel {
     primaryCandidateCount: Int? = nil,
     activeRowIndex: Int = 0
   ) {
+    restorationToken = nil
     guard !candidates.isEmpty else {
       hide()
       return
     }
 
     reloadDisplaySettingsIfNeeded()
-    let anchor = Self.normalizedAnchor(anchorRect)
-    let visibleFrame = Self.visibleFrame(for: anchor)
-    let availablePanelWidth = max(minPanelWidth, min(maxPanelWidth, visibleFrame.width - 16))
     let visibleLimit = expanded ? Self.expandedCandidateLimit : Self.collapsedCandidateLimit
     candidateView.configure(
       candidates: Array(candidates.prefix(visibleLimit)),
@@ -118,6 +169,52 @@ final class InputiaCandidatePanel: NSPanel {
       primaryCandidateCount: primaryCandidateCount,
       activeRowIndex: activeRowIndex
     )
+    presentConfiguredContent(near: anchorRect, expanded: expanded,
+      debugCandidates: Array(candidates.prefix(visibleLimit)))
+  }
+
+  func showPredictionPending(near anchorRect: NSRect) {
+    showPredictionStatus("", near: anchorRect)
+  }
+
+  func showPredictionEmpty(near anchorRect: NSRect) {
+    showPredictionStatus("暂无后续联想", near: anchorRect)
+  }
+
+  private func showPredictionStatus(_ text: String, near anchorRect: NSRect) {
+    restorationToken = nil
+    reloadDisplaySettingsIfNeeded()
+    candidateView.configureStatus(text, fontSize: displaySettings.fontSize)
+    // 原窗可见时只换内容，保留位置、大小和窗口身份，不制造隐藏/重开过渡。
+    if isVisible {
+      candidateView.layoutSubtreeIfNeeded()
+      return
+    }
+    presentConfiguredContent(near: anchorRect, expanded: false, debugCandidates: [])
+  }
+
+  /// 清掉旧正文和选择外观，不关闭原窗；迟到的恢复不能覆盖后来的显示。
+  func clearForRestoration() -> UInt64 {
+    restorationSequence &+= 1
+    restorationToken = restorationSequence
+    reloadDisplaySettingsIfNeeded()
+    candidateView.configureStatus("", fontSize: displaySettings.fontSize)
+    candidateView.layoutSubtreeIfNeeded()
+    candidateView.displayIfNeeded()
+    return restorationSequence
+  }
+
+  func isRestorationCurrent(_ token: UInt64) -> Bool { restorationToken == token }
+
+  private func presentConfiguredContent(near anchorRect: NSRect, expanded: Bool,
+    debugCandidates: [String]) {
+    let anchor = InputiaCandidatePanelPlacement.normalizedAnchor(anchorRect, fallbackPoint: NSEvent.mouseLocation)
+    let visibleFrame = InputiaCandidatePanelPlacement.visibleFrame(
+      for: anchor,
+      screens: NSScreen.screens.map { (frame: $0.frame, visibleFrame: $0.visibleFrame) },
+      fallback: NSScreen.main?.visibleFrame
+    )
+    let availablePanelWidth = max(minPanelWidth, min(maxPanelWidth, visibleFrame.width - 16))
     if let snapshot = displaySettingsSnapshot { settingsDidApply?(snapshot) }
     let preferredSize = candidateView.preferredSize(maxWidth: availablePanelWidth)
     let contentWidth = preferredSize.width
@@ -125,37 +222,25 @@ final class InputiaCandidatePanel: NSPanel {
     let width = min(availablePanelWidth, max(minPanelWidth, contentWidth))
     let maxHeight = expanded ? expandedMaxPanelHeight : collapsedMaxPanelHeight
     let height = min(maxHeight, max(1, contentHeight))
-    var frame = NSRect(
-      x: anchor.minX,
-      y: anchor.minY - height - cursorOffset,
-      width: width,
-      height: height
+    let frame = InputiaCandidatePanelPlacement.frame(
+      near: anchor, size: NSSize(width: width, height: height), visibleFrame: visibleFrame
     )
 
-    if frame.minY < visibleFrame.minY {
-      frame.origin.y = anchor.maxY + cursorOffset
-    }
-    if frame.maxY > visibleFrame.maxY {
-      frame.origin.y = visibleFrame.maxY - frame.height
-    }
-    if frame.maxX > visibleFrame.maxX {
-      frame.origin.x = visibleFrame.maxX - frame.width
-    }
-    if frame.minX < visibleFrame.minX {
-      frame.origin.x = visibleFrame.minX
-    }
-
-    setFrame(frame, display: true)
-    backgroundView.frame = NSRect(origin: .zero, size: frame.size)
-    candidateView.frame = NSRect(origin: .zero, size: frame.size)
+    if self.frame != frame { setFrame(frame, display: false) }
+    let contentFrame = NSRect(origin: .zero, size: frame.size)
+    if backgroundView.frame != contentFrame { backgroundView.frame = contentFrame }
+    if candidateView.frame != contentFrame { candidateView.frame = contentFrame }
+    candidateView.layoutSubtreeIfNeeded()
+    backgroundView.displayIfNeeded()
     InputiaCandidatePanelDebug.log(
-      "show expanded=\(expanded) font=\(displaySettings.fontSize) available=\(Int(availablePanelWidth)) preferred=\(Int(preferredSize.width))x\(Int(preferredSize.height)) frame=\(Int(frame.width))x\(Int(frame.height)) candidates=\(Array(candidates.prefix(visibleLimit))) layout=\(candidateView.debugSummary(maxWidth: availablePanelWidth))"
+      "show expanded=\(expanded) font=\(displaySettings.fontSize) available=\(Int(availablePanelWidth)) preferred=\(Int(preferredSize.width))x\(Int(preferredSize.height)) frame=\(Int(frame.width))x\(Int(frame.height)) candidates=\(debugCandidates) layout=\(candidateView.debugSummary(maxWidth: availablePanelWidth))"
     )
-    orderFrontRegardless()
+    if !isVisible { orderFrontRegardless() }
   }
 
   func hide() {
-    orderOut(nil)
+    restorationToken = nil
+    if isVisible { orderOut(nil) }
   }
 
   private func reloadDisplaySettingsIfNeeded() {
@@ -165,17 +250,6 @@ final class InputiaCandidatePanel: NSPanel {
     displaySettingsSnapshot = snapshot
   }
 
-  private static func normalizedAnchor(_ rect: NSRect) -> NSRect {
-    if rect.width > 0 || rect.height > 0 {
-      return rect
-    }
-    return NSRect(origin: NSEvent.mouseLocation, size: NSSize(width: 1, height: 18))
-  }
-
-  private static func visibleFrame(for anchor: NSRect) -> NSRect {
-    let screen = NSScreen.screens.first { $0.frame.contains(anchor.origin) } ?? NSScreen.main
-    return screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-  }
 }
 
 enum InputiaCandidateTextSupport {
@@ -379,14 +453,16 @@ enum InputiaCandidateRowLayout {
   }
 }
 
-private struct InputiaCandidateDisplayItem {
+private struct InputiaCandidateDisplayItem: Equatable {
   let number: Int?
   let text: String
   let isHighlighted: Bool
 }
 
 final class InputiaCandidateContentView: NSView {
-  var padding = NSEdgeInsets(top: 2, left: 6, bottom: 2, right: 6)
+  var padding = NSEdgeInsets(top: 2, left: 6, bottom: 2, right: 6) {
+    didSet { needsLayout = true }
+  }
 
   private var rows: [[InputiaCandidateDisplayItem]] = []
   private var expanded = false
@@ -410,6 +486,8 @@ final class InputiaCandidateContentView: NSView {
     primaryCandidateCount: Int?,
     activeRowIndex: Int
   ) {
+    let previousRows = rows, previousExpanded = self.expanded, previousFontSize = self.fontSize
+    let previousPrimaryCount = self.primaryCandidateCount, previousActiveRow = self.activeRowIndex
     self.expanded = expanded
     self.fontSize = fontSize.clamped(to: 12...22)
     self.primaryCandidateCount = min(max(1, primaryCandidateCount ?? candidates.count), candidates.count)
@@ -433,6 +511,23 @@ final class InputiaCandidateContentView: NSView {
         )
       }
     )
+    guard rows != previousRows || self.expanded != previousExpanded || self.fontSize != previousFontSize
+      || self.primaryCandidateCount != previousPrimaryCount || self.activeRowIndex != previousActiveRow else { return }
+    rebuildItemViews()
+    needsLayout = true
+  }
+
+  /// 过渡内容没有编号和高亮，旧候选视图立即移除；键盘选择身份由控制器清理。
+  func configureStatus(_ text: String, fontSize: CGFloat) {
+    let nextFontSize = fontSize.clamped(to: 12...22)
+    let nextRows = [[InputiaCandidateDisplayItem(number: nil, text: text, isHighlighted: false)]]
+    guard expanded || self.fontSize != nextFontSize || primaryCandidateCount != 0
+      || activeRowIndex != 0 || rows != nextRows else { return }
+    self.expanded = false
+    self.fontSize = nextFontSize
+    self.primaryCandidateCount = 0
+    self.activeRowIndex = 0
+    self.rows = nextRows
     rebuildItemViews()
     needsLayout = true
   }

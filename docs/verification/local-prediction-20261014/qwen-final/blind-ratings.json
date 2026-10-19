@@ -1,0 +1,254 @@
+{
+  "rater": "root",
+  "mode": "one_pass_before_unblinding",
+  "ratings": [
+    {
+      "blind_id": "blind-01",
+      "score": 3,
+      "reason": "直接接成去海边玩，日常语法和主题自然"
+    },
+    {
+      "blind_id": "blind-02",
+      "score": 2,
+      "reason": "可以衔接，但标准单位未提供具体单位或类别，较笼统"
+    },
+    {
+      "blind_id": "blind-03",
+      "score": 3,
+      "reason": "路堵且要赶飞机，提前出发自然具体"
+    },
+    {
+      "blind_id": "blind-04",
+      "score": 2,
+      "reason": "语法成立，但东西未利用加班场景"
+    },
+    {
+      "blind_id": "blind-05",
+      "score": 3,
+      "reason": "餐具冷却后取出来，动作和时序正确"
+    },
+    {
+      "blind_id": "blind-06",
+      "score": 3,
+      "reason": "条款确认后剩签字环节，自然合理"
+    },
+    {
+      "blind_id": "blind-07",
+      "score": 2,
+      "reason": "好习惯自然但笼统，没有具体指出记录习惯"
+    },
+    {
+      "blind_id": "blind-08",
+      "score": 1,
+      "reason": "只给做，无法体现基准和图纸一致性的前文"
+    },
+    {
+      "blind_id": "blind-09",
+      "score": 3,
+      "reason": "日志分析对应重复请求及耗时定位"
+    },
+    {
+      "blind_id": "blind-10",
+      "score": 3,
+      "reason": "去海边度假自然贴合周末场景"
+    },
+    {
+      "blind_id": "blind-11",
+      "score": 3,
+      "reason": "未干先别去拿，语法成立且动作相关"
+    },
+    {
+      "blind_id": "blind-12",
+      "score": 2,
+      "reason": "核对确认可读，但轻微同义冗余且没有核对对象"
+    },
+    {
+      "blind_id": "blind-13",
+      "score": 0,
+      "reason": "把安排好日程缺少把字宾语，拼接不成立"
+    },
+    {
+      "blind_id": "blind-14",
+      "score": 3,
+      "reason": "先分类与收纳问题直接相关"
+    },
+    {
+      "blind_id": "blind-15",
+      "score": 0,
+      "reason": "降低生产批次搭配不成立，也没有解释变形处理"
+    },
+    {
+      "blind_id": "blind-16",
+      "score": 3,
+      "reason": "给新接手同事整理工作手册自然"
+    },
+    {
+      "blind_id": "blind-17",
+      "score": 2,
+      "reason": "东西语法成立但没有加班场景信息"
+    },
+    {
+      "blind_id": "blind-18",
+      "score": 2,
+      "reason": "语法成立，但拿回后又放在门口快递柜，地点指代和信息较机械，未形成清楚的具体续写"
+    },
+    {
+      "blind_id": "blind-19",
+      "score": 2,
+      "reason": "豆腐蛋可理解为菜，但名称生硬，基本对应现有食材"
+    },
+    {
+      "blind_id": "blind-20",
+      "score": 3,
+      "reason": "实地考察可以核对酒店无障碍入口，未与已知条件冲突"
+    },
+    {
+      "blind_id": "blind-21",
+      "score": 1,
+      "reason": "浏览器在使用中语法可成句，但没有贴合保存后未刷新的问题"
+    },
+    {
+      "blind_id": "blind-22",
+      "score": 3,
+      "reason": "可以做蛋炒饭吗是自然的晚饭提议，不要求一定用完所有食材"
+    },
+    {
+      "blind_id": "blind-23",
+      "score": 2,
+      "reason": "法定单位可接，但未给具体统一单位，信息笼统"
+    },
+    {
+      "blind_id": "blind-24",
+      "score": 0,
+      "reason": "已经洗完却再洗，违背等餐具凉后处理的场景"
+    },
+    {
+      "blind_id": "blind-25",
+      "score": 1,
+      "reason": "可以寄存的铺垫下先去取行李偏离主要语境"
+    },
+    {
+      "blind_id": "blind-26",
+      "score": 0,
+      "reason": "使用中缓存的拼接语法不成立"
+    },
+    {
+      "blind_id": "blind-27",
+      "score": 0,
+      "reason": "重复前文重新，形成不需要重新重新测试"
+    },
+    {
+      "blind_id": "blind-28",
+      "score": 3,
+      "reason": "漏看消息后的抱歉语用自然"
+    },
+    {
+      "blind_id": "blind-29",
+      "score": 2,
+      "reason": "核对一下自然，但只是通用功能词续接"
+    },
+    {
+      "blind_id": "blind-30",
+      "score": 3,
+      "reason": "性能分析工具对应定位耗时的需求，动作具体"
+    },
+    {
+      "blind_id": "blind-31",
+      "score": 2,
+      "reason": "语法成立，但重复前文会议已提前到周四的信息"
+    },
+    {
+      "blind_id": "blind-32",
+      "score": 1,
+      "reason": "未及时回消息表达遗憾语用偏离通常的歉意"
+    },
+    {
+      "blind_id": "blind-33",
+      "score": 2,
+      "reason": "好习惯自然但笼统，没有具体指出记录习惯"
+    },
+    {
+      "blind_id": "blind-34",
+      "score": 0,
+      "reason": "聚会晚到却建议大家提前离开，明显偏离当前场景"
+    },
+    {
+      "blind_id": "blind-35",
+      "score": 0,
+      "reason": "降低折痕搭配不成立，不能表达修正变形"
+    },
+    {
+      "blind_id": "blind-36",
+      "score": 2,
+      "reason": "提前准备基本相关，但没有直接解决堵车和出发时间"
+    },
+    {
+      "blind_id": "blind-37",
+      "score": 3,
+      "reason": "不需要重新编译语法自然，是该软件改动场景的合理可能续写"
+    },
+    {
+      "blind_id": "blind-38",
+      "score": 3,
+      "reason": "少走多少路程是自然的换乘路线询问，不是无针对性泛问"
+    },
+    {
+      "blind_id": "blind-39",
+      "score": 0,
+      "reason": "做什么属于规则明确排除的泛问，未续写具体行动"
+    },
+    {
+      "blind_id": "blind-40",
+      "score": 2,
+      "reason": "酒店看房勉强贴合查房，但未用到无障碍入口的信息"
+    },
+    {
+      "blind_id": "blind-41",
+      "score": 1,
+      "reason": "拿回门口快递又放门口，地点指代不清且机械重复"
+    },
+    {
+      "blind_id": "blind-42",
+      "score": 3,
+      "reason": "项目文档直接对应新同事接手项目"
+    },
+    {
+      "blind_id": "blind-43",
+      "score": 3,
+      "reason": "晚到时请求等我，语法和意图自然"
+    },
+    {
+      "blind_id": "blind-44",
+      "score": 3,
+      "reason": "条款已确认后只剩签署，动作合理"
+    },
+    {
+      "blind_id": "blind-45",
+      "score": 0,
+      "reason": "衣服未干却别急着晾干，语义矛盾"
+    },
+    {
+      "blind_id": "blind-46",
+      "score": 1,
+      "reason": "做好只是泛化补词，未利用基准与图纸的具体问题"
+    },
+    {
+      "blind_id": "blind-47",
+      "score": 3,
+      "reason": "退房后先前台寄存行李，贴合前文服务信息"
+    },
+    {
+      "blind_id": "blind-48",
+      "score": 3,
+      "reason": "换乘少走几步，日常表达自然"
+    }
+  ],
+  "corrections": [
+    {
+      "blind_id": "blind-18",
+      "old_score": 0,
+      "new_score": 2,
+      "reason": "reviewer 在未读取映射或任何非 blind 输出前发现语言判断笔误：放在了…本身语法合法。按 reviewer 明确指示纠正；不改变评分规则，score 3 总数不变。"
+    }
+  ]
+}

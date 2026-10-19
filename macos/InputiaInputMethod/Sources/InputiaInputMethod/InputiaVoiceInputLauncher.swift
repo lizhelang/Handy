@@ -10,6 +10,7 @@ enum InputiaPersonalizationDiagnostics {
   private static let log = Logger(subsystem: "com.inputia.personalization", category: "pipeline")
   private static let lock = NSLock()
   private static var previous: [String: String] = [:]
+  private static var nextTargetTrace: UInt64 = 0
   private static let phases: Set<String> = ["policy", "query", "schedule", "capture_guard", "capture_reply",
     "target_capture", "target_validate", "target_transport", "personal_transport", "commit", "typed_result"]
   private static let reasons: Set<String> = ["ok", "no_reply", "expired", "disabled", "not_active", "mode", "page", "expanded", "recall", "prediction_pending",
@@ -17,7 +18,30 @@ enum InputiaPersonalizationDiagnostics {
     "missing_selection", "missing_origin", "origin_mismatch", "text_mismatch", "invalid_start", "selection_not_committed", "profile", "handshake", "io", "timeout", "invalid_frame", "main_thread", "decode", "other_error", "unknown_code",
     "accessibility_permission_required", "field_unobservable", "secure_input_enabled", "focused_application_mismatch", "secure_text_field", "field_focus_changed",
     "target_dispatch_replayed", "target_entropy_unavailable", "target_expired", "target_history_only", "target_main_unavailable", "target_operation_missing", "target_owner_mismatch", "target_process_changed", "target_query_busy", "target_query_timeout", "target_registry_full", "target_retirement_pending", "target_retirement_timeout_restart_required", "target_retirement_unavailable", "target_sensitive_source", "target_source_changed", "target_source_missing", "target_unknown",
+    "target_not_main_thread", "target_accessibility_unavailable", "target_secure_input", "target_unsupported_control", "target_unobservable_control", "target_focus_changed", "target_edited", "target_destroyed", "target_suspended_by_owner",
+    "capture_cancelled", "capture_queue_full",
     "personalization_disabled_or_changed", "personalization_policy_changed", "personalization_secure_input", "personalization_source_missing", "prediction_no_longer_available"]
+  struct TargetTrace {
+    let id: UInt64
+    let operation: String
+    let queuedAt: TimeInterval
+  }
+  static func targetTrace(operation: String) -> TargetTrace {
+    lock.lock(); nextTargetTrace &+= 1; let id = nextTargetTrace; lock.unlock()
+    return TargetTrace(id: id, operation: ["capture", "validate", "release", "status"].contains(operation) ? operation : "other",
+      queuedAt: ProcessInfo.processInfo.systemUptime)
+  }
+  static func targetFinished(_ trace: TargetTrace, startedAt: TimeInterval?, reason: String) {
+    let now = ProcessInfo.processInfo.systemUptime
+    let started = startedAt ?? now
+    let queued = milliseconds(started - trace.queuedAt), elapsed = milliseconds(now - started)
+    let reason = reasons.contains(reason) ? reason : "unknown_code"
+    log.notice("phase=target_request trace=\(trace.id, privacy: .public) operation=\(trace.operation, privacy: .public) reason=\(reason, privacy: .public) queued_ms=\(queued, privacy: .public) execution_ms=\(elapsed, privacy: .public)")
+  }
+  private static func milliseconds(_ seconds: TimeInterval) -> Int {
+    guard seconds.isFinite, seconds > 0 else { return 0 }
+    return Int(min(seconds * 1000, 3_600_000))
+  }
   static func record(_ phase: String, _ reason: String, flags: Int = 0, count: Int = 0) {
     let phase = phases.contains(phase) ? phase : "unavailable"
     let reason = reasons.contains(reason) ? reason : "unknown_code"
@@ -45,6 +69,78 @@ enum InputiaPersonalizationDiagnostics {
     }
   }
   #endif
+}
+
+/// 每个输入控制器只在输入/会话边界递增代数；不撤销已开始的原生工作。
+final class InputiaTargetCaptureScope {
+  private let lock = NSLock()
+  private var generation: UInt64 = 0
+  func invalidate() { lock.lock(); generation &+= 1; lock.unlock() }
+  func ticket() -> InputiaTargetCaptureTicket {
+    lock.lock(); let value = generation; lock.unlock()
+    return InputiaTargetCaptureTicket(scope: self, generation: value)
+  }
+  fileprivate func isCurrent(_ value: UInt64) -> Bool {
+    lock.lock(); defer { lock.unlock() }; return generation == value
+  }
+}
+
+final class InputiaTargetCaptureTicket {
+  private let scope: InputiaTargetCaptureScope
+  private let generation: UInt64
+  private let lock = NSLock()
+  private var started = false
+  fileprivate init(scope: InputiaTargetCaptureScope, generation: UInt64) {
+    self.scope = scope; self.generation = generation
+  }
+  var isCurrent: Bool { scope.isCurrent(generation) }
+  fileprivate func claim() -> Bool {
+    lock.lock(); defer { lock.unlock() }
+    guard !started, isCurrent else { return false }
+    started = true
+    return true
+  }
+}
+
+/// 最多保留固定数量的捕获及一个排空任务；过时代数不打开连接、不占用 AX。
+/// 其他目标操作仍在原串行队列执行，排空任务每次让出队列供释放/核验先行。
+final class InputiaTargetCaptureQueue {
+  private struct Work {
+    let ticket: InputiaTargetCaptureTicket
+    let cancelled: (String) -> Void
+    let run: () -> Void
+  }
+  private let lock = NSLock()
+  private let capacity: Int
+  private var pending: [Work] = []
+  private var draining = false
+  init(capacity: Int = 16) { self.capacity = max(1, capacity) }
+  func enqueue(on queue: DispatchQueue, ticket: InputiaTargetCaptureTicket,
+    cancelled: @escaping (String) -> Void, run: @escaping () -> Void) {
+    lock.lock()
+    var stale: [Work] = [], retained: [Work] = []
+    for work in pending {
+      if work.ticket.isCurrent { retained.append(work) } else { stale.append(work) }
+    }
+    pending = retained
+    let rejected = !ticket.isCurrent ? "capture_cancelled" : (pending.count >= capacity ? "capture_queue_full" : nil)
+    if rejected == nil { pending.append(Work(ticket: ticket, cancelled: cancelled, run: run)) }
+    let start = !draining && !pending.isEmpty
+    if start { draining = true }
+    lock.unlock()
+    stale.forEach { $0.cancelled("capture_cancelled") }
+    if let rejected { cancelled(rejected) }
+    if start { queue.async { self.drain(on: queue) } }
+  }
+  private func drain(on queue: DispatchQueue) {
+    lock.lock()
+    guard !pending.isEmpty else { draining = false; lock.unlock(); return }
+    let work = pending.removeFirst()
+    lock.unlock()
+    if work.ticket.claim() { work.run() }
+    else { work.cancelled("capture_cancelled") }
+    queue.async { self.drain(on: queue) }
+  }
 }
 
 /// 自动准备只允许启动一次；明确退出或观察到进程结束后，不循环拉起服务。
@@ -276,6 +372,7 @@ enum InputiaVoiceInputLauncher {
   }
 
   private static let targetQueue = DispatchQueue(label: "Inputia.target-broker")
+  private static let targetCaptures = InputiaTargetCaptureQueue()
   private static var permissionConnection: InputiaVoiceServiceConnection?
   private static var targetConnection: InputiaVoiceServiceConnection?
   static func probeServicePermission() -> Bool {
@@ -302,16 +399,35 @@ enum InputiaVoiceInputLauncher {
     targetBridge(.init(kind: "release", target_id: id)) { _ in }
   }
   static func targetBridge(_ command: InputiaTargetBridgeCommand,
+    captureTicket: InputiaTargetCaptureTicket? = nil,
     personalAdmissionDelivery: Bool = false,
     completion: @escaping (InputiaTargetBridgeReply?) -> Void) {
     let epoch = InputiaPermissionLifecycle.shared.epoch
-    targetQueue.async {
+    let trace = InputiaPersonalizationDiagnostics.targetTrace(operation: command.kind)
+    let ticket = command.kind == "capture" ? (captureTicket ?? InputiaTargetCaptureScope().ticket()) : nil
+    let deliver: (InputiaTargetBridgeReply?) -> Void = { value in
+      let send = {
+        let allowed = InputiaPermissionLifecycle.shared.permits(epoch)
+        if !allowed, command.kind == "capture", let abandoned = value?.target { releaseTarget(abandoned.target_id) }
+        completion(allowed ? value : nil)
+      }
+      if personalAdmissionDelivery { InputiaPersonalMainDelivery.deliver(send) }
+      else { DispatchQueue.main.async(execute: send) }
+    }
+    let work = {
+      let started = ProcessInfo.processInfo.systemUptime
+      var reason = "unavailable"
+      defer { InputiaPersonalizationDiagnostics.targetFinished(trace, startedAt: started, reason: reason) }
+      if let ticket, !ticket.isCurrent { reason = "capture_cancelled"; deliver(nil); return }
       var result: InputiaTargetBridgeReply?
       do {
         guard command.kind == "release" ? InputiaPermissionLifecycle.shared.allowsServiceConnection : InputiaPermissionLifecycle.shared.permits(epoch) else { throw InputiaVoiceServiceError.policy }
         if targetConnection == nil { targetConnection = try openAuthenticatedConnection() }
         guard let connection = targetConnection else { throw InputiaVoiceServiceError.policy }
+        // 握手可能引发真实会话边界；此时尚未发送capture，无目标需要释放。
+        if let ticket, !ticket.isCurrent { reason = "capture_cancelled"; deliver(nil); return }
         let reply = try connection.targetBridge(command)
+        reason = reply.code ?? (reply.ready ? "ok" : "unavailable")
         if command.kind == "capture" || command.kind == "validate" {
           // flags: bit0 ready, bit1同服务租约, bit2权限epoch有效, bit3未过期。
           let flags = (reply.ready ? 1 : 0)
@@ -325,18 +441,18 @@ enum InputiaVoiceInputLauncher {
           _ = try? connection.targetBridge(.init(kind: "release", target_id: abandoned.target_id))
         }
       } catch {
+        reason = InputiaPersonalizationDiagnostics.errorReason(error)
         InputiaPersonalizationDiagnostics.record("target_transport", InputiaPersonalizationDiagnostics.errorReason(error))
         targetConnection?.close(); targetConnection = nil
       }
-      let value = result
-      let deliver = {
-        let allowed = InputiaPermissionLifecycle.shared.permits(epoch)
-        if !allowed, command.kind == "capture", let abandoned = value?.target { releaseTarget(abandoned.target_id) }
-        completion(allowed ? value : nil)
-      }
-      if personalAdmissionDelivery { InputiaPersonalMainDelivery.deliver(deliver) }
-      else { DispatchQueue.main.async(execute: deliver) }
+      deliver(result)
     }
+    if let ticket {
+      targetCaptures.enqueue(on: targetQueue, ticket: ticket, cancelled: { reason in
+        InputiaPersonalizationDiagnostics.targetFinished(trace, startedAt: nil, reason: reason)
+        deliver(nil)
+      }, run: work)
+    } else { targetQueue.async(execute: work) }
   }
 
   /// 输入法启用时异步准备同一签名配对服务，仅隐藏启动，不发送任何录音命令。
@@ -495,6 +611,7 @@ enum InputiaVoiceInputLauncher {
   private static let shortcutQueue = DispatchQueue(label: "Inputia.shortcut-control")
   private static var shortcutConnection: InputiaVoiceServiceConnection?
   private static var shortcutLease: InputiaHostShortcutLease?
+  private static var shortcutRejectedTargetID: String?
   private static var shortcutLeaseEpoch: UInt64 = 0
   private static var shortcutTimer: DispatchSourceTimer?
   private static var shortcutCycleBusy = false
@@ -541,7 +658,7 @@ enum InputiaVoiceInputLauncher {
       defer { retired.leave() }
       shortcutTimer?.cancel(); shortcutTimer = nil
       shortcutConnection?.close(); shortcutConnection = nil
-      shortcutLease = nil; shortcutLeaseEpoch &+= 1
+      shortcutLease = nil; shortcutRejectedTargetID = nil; shortcutLeaseEpoch &+= 1
       shortcutHasActiveOwner = false; shortcutProviderHadTarget = nil
       shortcutCycleBusy = false
     }
@@ -574,6 +691,7 @@ enum InputiaVoiceInputLauncher {
   /// provider 和新会话复核在主线程；定时器、认证、数据库和 socket 均在后台。
   static func startShortcutListening(
     targetProvider: @escaping () -> InputiaVoiceTarget?,
+    targetRejected: @escaping (String) -> Void,
     sharedTermsReceiver: @escaping (InputiaSharedTermsSnapshot, UInt64) -> Void,
     acceptStart: @escaping (InputiaHostShortcutTrigger, @escaping (Bool) -> Void) -> Void
   ) {
@@ -600,9 +718,10 @@ enum InputiaVoiceInputLauncher {
                 shortcutDiagnostic.notice("provider has_target=\(target != nil)")
               }
               if target == nil && !shortcutHasActiveOwner {
-                shortcutConnection?.close()
-                shortcutConnection = nil
-                shortcutLease = nil
+                if let registered = shortcutLease, let connection = shortcutConnection {
+                  try connection.retireShortcutLease(registered)
+                  shortcutLease = nil
+                }
                 shortcutCycleBusy = false
                 return
               }
@@ -612,64 +731,83 @@ enum InputiaVoiceInputLauncher {
                 shortcutConnection = try openAuthenticatedConnection()
               }
               guard let connection = shortcutConnection else { throw InputiaVoiceServiceError.handshake }
-              if let target {
+              if let target, target.target_id != shortcutRejectedTargetID {
                 let newTarget = shortcutLease?.target != target
-                if shortcutLease?.target != target {
+                let candidate: InputiaHostShortcutLease
+                if let registered = shortcutLease, registered.target == target {
+                  candidate = registered
+                } else {
                   InputiaSharedTermsMemory.shared.clear()
                   guard shortcutLeaseEpoch < UInt64.max else { throw InputiaVoiceServiceError.policy }
                   shortcutLeaseEpoch += 1
                   let now = UInt64(max(0, Date().timeIntervalSince1970 * 1000))
-                  shortcutLease = InputiaHostShortcutLease(lease_id: UUID().uuidString,
+                  candidate = InputiaHostShortcutLease(lease_id: UUID().uuidString,
                     lease_epoch: shortcutLeaseEpoch, target: target,
                     issued_at_unix_ms: now, expires_at_unix_ms: now + 1000)
                 }
-                if let previous = shortcutLease {
+                do {
                   let leaseStartedAt = ProcessInfo.processInfo.systemUptime
                   let now = UInt64(max(0, Date().timeIntervalSince1970 * 1000))
-                  let renewed = InputiaHostShortcutLease(lease_id: previous.lease_id,
-                    lease_epoch: previous.lease_epoch, target: previous.target,
+                  let renewed = InputiaHostShortcutLease(lease_id: candidate.lease_id,
+                    lease_epoch: candidate.lease_epoch, target: candidate.target,
                     issued_at_unix_ms: now, expires_at_unix_ms: now + 1000)
                   let leaseDeadline = leaseStartedAt + 1
                   guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { throw InputiaVoiceServiceError.policy }
-                  try connection.registerShortcutLease(renewed)
-                  if newTarget { shortcutDiagnostic.notice("target_registered field_observable=\(target.field_id != nil)") }
-                  shortcutLease = renewed
-                  let clock = ProcessInfo.processInfo.systemUptime
-                  if !sharedTermsBusy, clock - sharedTermsRequestedAt >= 0.5,
-                    connection.server.capabilities.contains("shared_terms_v1") {
-                    sharedTermsRequestedAt = clock
-                    sharedTermsBusy = true
-                    let server = connection.server.instance_id
-                    let version = connection.locallyAppliedVersion
-                    let ticket = InputiaSharedTermsMemory.shared.ticket()
-                    sharedTermsQueue.async {
-                      defer { shortcutQueue.async { sharedTermsBusy = false } }
-                      do {
-                        if sharedTermsConnection == nil {
-                          // 新连接先执行真实 barrier；下轮从屏障后的 generation 发起请求。
-                          sharedTermsConnection = try openAuthenticatedConnection()
-                          return
-                        }
-                        guard InputiaPermissionLifecycle.shared.permits(permissionEpoch), InputiaSharedTermsMemory.shared.ticket() == ticket else { return }
-                        guard let termsConnection = sharedTermsConnection,
-                          InputiaVoiceServiceConnection.sharedTermsConnectionMatches(
-                            server: termsConnection.server.instance_id, primaryServer: server,
-                            version: termsConnection.locallyAppliedVersion, primaryVersion: version)
-                        else { throw InputiaVoiceServiceError.policy }
-                        let validation = try termsConnection.targetBridge(.init(kind: "validate", target: renewed.target, purpose: "shared_terms"))
-                        guard validation.ready, InputiaPermissionLifecycle.shared.matchesService(server: validation.server_instance, epoch: validation.permission_epoch),
-                          ProcessInfo.processInfo.systemUptime < validation.deadline else { return }
-                        if let snapshot = try termsConnection.fetchSharedTerms(lease: renewed, leaseDeadline: min(leaseDeadline, validation.deadline)) {
-                          DispatchQueue.main.async {
-                            guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { return }
-                            sharedTermsReceiver(snapshot, ticket)
+                  if try connection.registerShortcutLease(renewed) {
+                    if newTarget { shortcutDiagnostic.notice("target_registered field_observable=\(target.field_id != nil)") }
+                    // 只有服务明确接纳的租约才拥有后续 retire 身份。
+                    shortcutLease = renewed
+                    shortcutRejectedTargetID = nil
+                    let clock = ProcessInfo.processInfo.systemUptime
+                    if !sharedTermsBusy, clock - sharedTermsRequestedAt >= 0.5,
+                      connection.server.capabilities.contains("shared_terms_v1") {
+                      sharedTermsRequestedAt = clock
+                      sharedTermsBusy = true
+                      let server = connection.server.instance_id
+                      let version = connection.locallyAppliedVersion
+                      let ticket = InputiaSharedTermsMemory.shared.ticket()
+                      sharedTermsQueue.async {
+                        defer { shortcutQueue.async { sharedTermsBusy = false } }
+                        do {
+                          if sharedTermsConnection == nil {
+                            // 新连接先执行真实 barrier；下轮从屏障后的 generation 发起请求。
+                            sharedTermsConnection = try openAuthenticatedConnection()
+                            return
                           }
+                          guard InputiaPermissionLifecycle.shared.permits(permissionEpoch), InputiaSharedTermsMemory.shared.ticket() == ticket else { return }
+                          guard let termsConnection = sharedTermsConnection,
+                            InputiaVoiceServiceConnection.sharedTermsConnectionMatches(
+                              server: termsConnection.server.instance_id, primaryServer: server,
+                              version: termsConnection.locallyAppliedVersion, primaryVersion: version)
+                          else { throw InputiaVoiceServiceError.policy }
+                          let validation = try termsConnection.targetBridge(.init(kind: "validate", target: renewed.target, purpose: "shared_terms"))
+                          guard validation.ready, InputiaPermissionLifecycle.shared.matchesService(server: validation.server_instance, epoch: validation.permission_epoch),
+                            ProcessInfo.processInfo.systemUptime < validation.deadline else { return }
+                          if let snapshot = try termsConnection.fetchSharedTerms(lease: renewed, leaseDeadline: min(leaseDeadline, validation.deadline)) {
+                            DispatchQueue.main.async {
+                              guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { return }
+                              sharedTermsReceiver(snapshot, ticket)
+                            }
+                          }
+                        } catch {
+                          sharedTermsConnection?.close()
+                          sharedTermsConnection = nil
                         }
-                      } catch {
-                        sharedTermsConnection?.close()
-                        sharedTermsConnection = nil
                       }
                     }
+                  } else {
+                    shortcutRejectedTargetID = target.target_id
+                    InputiaSharedTermsMemory.shared.clear()
+                    DispatchQueue.main.async {
+                      guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { return }
+                      targetRejected(target.target_id)
+                    }
+                    // retire 会移除服务端 active；已有录音必须继续保留原停止通道。
+                    if !shortcutHasActiveOwner, let registered = shortcutLease {
+                      try connection.retireShortcutLease(registered)
+                      shortcutLease = nil
+                    }
+                    shortcutDiagnostic.notice("target_registration_rejected fresh_capture_required=true")
                   }
                 }
               }
@@ -700,6 +838,7 @@ enum InputiaVoiceInputLauncher {
               if trigger.starts_session {
                 guard let lease = shortcutLease, trigger.lease_id == lease.lease_id,
                   trigger.lease_epoch == lease.lease_epoch, trigger.target == lease.target,
+                  trigger.target.target_id != shortcutRejectedTargetID,
                   target == lease.target else { finished(false); return }
                 DispatchQueue.main.async {
                   guard InputiaPermissionLifecycle.shared.permits(permissionEpoch) else { finished(false); return }

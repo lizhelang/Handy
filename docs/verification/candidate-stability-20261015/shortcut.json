@@ -1,0 +1,326 @@
+[
+  {
+    "time": "2026-10-15 08:41:00.745445+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:41:01.005237+1100",
+    "message": "target_registered field_observable=true"
+  },
+  {
+    "time": "2026-10-15 08:41:03.193600+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:41:05.545276+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:41:05.817598+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:06.923254+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:41:07.118408+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:41:07.367040+1100",
+    "message": "target_registered field_observable=true"
+  },
+  {
+    "time": "2026-10-15 08:41:07.545350+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:41:07.745584+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:41:07.990158+1100",
+    "message": "target_registered field_observable=true"
+  },
+  {
+    "time": "2026-10-15 08:41:08.745736+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:41:09.145753+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:41:09.381740+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:10.547393+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:41:10.945248+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:41:11.197787+1100",
+    "message": "target_registered field_observable=true"
+  },
+  {
+    "time": "2026-10-15 08:41:11.252570+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:41:11.320279+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:41:11.552693+1100",
+    "message": "target_registered field_observable=true"
+  },
+  {
+    "time": "2026-10-15 08:41:12.151416+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:41:12.322937+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:41:12.550179+1100",
+    "message": "target_registered field_observable=true"
+  },
+  {
+    "time": "2026-10-15 08:41:13.616258+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:41:13.731963+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:41:13.972301+1100",
+    "message": "target_registered field_observable=true"
+  },
+  {
+    "time": "2026-10-15 08:41:14.118980+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:41:16.320683+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:41:16.556269+1100",
+    "message": "target_registered field_observable=true"
+  },
+  {
+    "time": "2026-10-15 08:41:18.134277+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:41:18.546868+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:41:18.790117+1100",
+    "message": "target_registered field_observable=true"
+  },
+  {
+    "time": "2026-10-15 08:41:19.534383+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:41:19.945647+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:41:20.181876+1100",
+    "message": "target_registered field_observable=true"
+  },
+  {
+    "time": "2026-10-15 08:41:20.241881+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:41:24.947053+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:41:25.203452+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:26.320508+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:41:26.547139+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:41:26.775331+1100",
+    "message": "target_registered field_observable=true"
+  },
+  {
+    "time": "2026-10-15 08:41:32.555411+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:33.975124+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:35.402405+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:36.801258+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:38.187740+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:39.572646+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:40.980633+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:42.392550+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:43.796148+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:45.190748+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:46.559128+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:48.002313+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:49.415108+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:41:50.657102+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:42:41.319883+1100",
+    "message": "provider has_target=true"
+  },
+  {
+    "time": "2026-10-15 08:42:41.566547+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:42:43.041481+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:42:44.357646+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:42:45.748222+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:42:47.156990+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:42:48.553481+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:42:49.940345+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:42:51.218528+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:42:52.557938+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:42:53.969202+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:42:57.313016+1100",
+    "message": "listener_unavailable automatic_trigger_replay=false"
+  },
+  {
+    "time": "2026-10-15 08:42:59.323974+1100",
+    "message": "listener_started"
+  },
+  {
+    "time": "2026-10-15 08:42:59.325000+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:43:00.240248+1100",
+    "message": "listener_started"
+  },
+  {
+    "time": "2026-10-15 08:43:00.240656+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:43:02.538337+1100",
+    "message": "listener_started"
+  },
+  {
+    "time": "2026-10-15 08:43:02.538659+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:43:03.033183+1100",
+    "message": "listener_started"
+  },
+  {
+    "time": "2026-10-15 08:43:03.033442+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:43:03.525596+1100",
+    "message": "listener_started"
+  },
+  {
+    "time": "2026-10-15 08:43:03.525834+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:43:04.005743+1100",
+    "message": "listener_started"
+  },
+  {
+    "time": "2026-10-15 08:43:04.005764+1100",
+    "message": "provider has_target=false"
+  },
+  {
+    "time": "2026-10-15 08:43:04.538242+1100",
+    "message": "listener_started"
+  },
+  {
+    "time": "2026-10-15 08:43:04.538465+1100",
+    "message": "provider has_target=false"
+  }
+]

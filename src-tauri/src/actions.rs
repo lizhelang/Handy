@@ -873,9 +873,9 @@ impl ShortcutAction for TranscribeAction {
             .try_state::<TranscriptionCoordinator>()
             .and_then(|coordinator| coordinator.voice_output_context());
         #[cfg(target_os = "macos")]
-        let platform_voice = app
+        let dictation_context = app
             .try_state::<TranscriptionCoordinator>()
-            .and_then(|coordinator| coordinator.take_platform_output_context());
+            .and_then(|coordinator| coordinator.take_dictation_context());
 
         set_tray_state(app, TrayIconState::Transcribing);
         // Stop should give immediate visual feedback. Live streaming can keep
@@ -1089,46 +1089,30 @@ impl ShortcutAction for TranscribeAction {
                             #[cfg(target_os = "macos")]
                             {
                                 if !processed.final_text.is_empty() {
-                                    let result = match saved_entry {
-                                        Ok(entry) => {
-                                            let output_app = ah.clone();
-                                            let cancelled_audio = Arc::clone(&rm);
-                                            let cancelled = Arc::new(move || {
-                                                cancelled_audio
-                                                    .was_cancelled_since(cancel_generation)
-                                            });
-                                            tauri::async_runtime::spawn_blocking(move || {
-                                                crate::integration_output::dispatch_saved_platform_result(
-                                                    output_app, platform_voice, entry.id, processed.final_text, cancelled,
-                                                )
-                                            }).await.map_err(|_| "platform output worker interrupted".to_owned())
-                                                .and_then(|result| result)
-                                        }
-                                        Err(_) => Err("语音历史保存失败，未派发平台输出".into()),
-                                    };
-                                    match result {
-                                        Ok(output) => {
-                                            use inputia_handy_runtime::output_ledger::OutputState;
-                                            let state = match output.state {
-                                                OutputState::Confirmed => "confirmed",
-                                                OutputState::DispatchedOnly => "dispatched",
-                                                OutputState::PendingTarget
-                                                | OutputState::Prepared => "pending_target",
-                                                OutputState::Dispatched
-                                                | OutputState::Uncertain => "uncertain",
-                                                OutputState::Rejected => "rejected",
-                                            };
-                                            let _ = ah.emit(
-                                                "voice-output-result",
-                                                serde_json::json!({
-                                                    "operation_id": output.intent.operation_id,
-                                                    "item_id": output.intent.item_id,
-                                                    "state": state,
-                                                }),
-                                            );
+                                    let history_id =
+                                        saved_entry.as_ref().ok().map(|entry| entry.id);
+                                    let output_app = ah.clone();
+                                    let cancelled_audio = Arc::clone(&rm);
+                                    let cancelled = Arc::new(move || {
+                                        cancelled_audio.was_cancelled_since(cancel_generation)
+                                    });
+                                    // 本次口述输入不以历史落盘/投影成功为前提；保存结果单独报告。
+                                    match tauri::async_runtime::spawn_blocking(move || {
+                                        crate::dictation::dispatch_result(
+                                            output_app,
+                                            dictation_context,
+                                            history_id,
+                                            processed.final_text,
+                                            cancelled,
+                                        )
+                                    })
+                                    .await
+                                    {
+                                        Ok(receipt) => {
+                                            let _ = ah.emit("voice-output-result", receipt);
                                         }
                                         Err(error) => {
-                                            error!("Platform voice output failed: {error}");
+                                            error!("Dictation output worker interrupted: {error}");
                                             let _ = ah.emit("paste-error", ());
                                         }
                                     }

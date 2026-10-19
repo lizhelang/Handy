@@ -1,0 +1,290 @@
+[
+  {
+    "blind_id": "blind-01",
+    "phase": "heldout",
+    "id": "c05",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-02",
+    "phase": "heldout",
+    "id": "c07",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-03",
+    "phase": "heldout",
+    "id": "c10",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-04",
+    "phase": "heldout",
+    "id": "c01",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-05",
+    "phase": "heldout",
+    "id": "c15",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-06",
+    "phase": "heldout",
+    "id": "c08",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-07",
+    "phase": "heldout",
+    "id": "c20",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-08",
+    "phase": "challenge",
+    "id": "h03",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-09",
+    "phase": "challenge",
+    "id": "h02",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-10",
+    "phase": "heldout",
+    "id": "c05",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-11",
+    "phase": "heldout",
+    "id": "c14",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-12",
+    "phase": "heldout",
+    "id": "c18",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-13",
+    "phase": "heldout",
+    "id": "c06",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-14",
+    "phase": "challenge",
+    "id": "h04",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-15",
+    "phase": "heldout",
+    "id": "c19",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-16",
+    "phase": "heldout",
+    "id": "c09",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-17",
+    "phase": "heldout",
+    "id": "c01",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-18",
+    "phase": "heldout",
+    "id": "c04",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-19",
+    "phase": "heldout",
+    "id": "c13",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-20",
+    "phase": "challenge",
+    "id": "h01",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-21",
+    "phase": "heldout",
+    "id": "c16",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-22",
+    "phase": "heldout",
+    "id": "c13",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-23",
+    "phase": "heldout",
+    "id": "c07",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-24",
+    "phase": "heldout",
+    "id": "c15",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-25",
+    "phase": "heldout",
+    "id": "c12",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-26",
+    "phase": "heldout",
+    "id": "c16",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-27",
+    "phase": "heldout",
+    "id": "c17",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-28",
+    "phase": "heldout",
+    "id": "c02",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-29",
+    "phase": "heldout",
+    "id": "c18",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-30",
+    "phase": "challenge",
+    "id": "h02",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-31",
+    "phase": "heldout",
+    "id": "c06",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-32",
+    "phase": "heldout",
+    "id": "c02",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-33",
+    "phase": "heldout",
+    "id": "c20",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-34",
+    "phase": "heldout",
+    "id": "c03",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-35",
+    "phase": "heldout",
+    "id": "c19",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-36",
+    "phase": "heldout",
+    "id": "c10",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-37",
+    "phase": "heldout",
+    "id": "c17",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-38",
+    "phase": "heldout",
+    "id": "c11",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-39",
+    "phase": "challenge",
+    "id": "h04",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-40",
+    "phase": "challenge",
+    "id": "h01",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-41",
+    "phase": "heldout",
+    "id": "c04",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-42",
+    "phase": "heldout",
+    "id": "c09",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-43",
+    "phase": "heldout",
+    "id": "c03",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-44",
+    "phase": "heldout",
+    "id": "c08",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-45",
+    "phase": "heldout",
+    "id": "c14",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-46",
+    "phase": "challenge",
+    "id": "h03",
+    "profile": "B"
+  },
+  {
+    "blind_id": "blind-47",
+    "phase": "heldout",
+    "id": "c12",
+    "profile": "A"
+  },
+  {
+    "blind_id": "blind-48",
+    "phase": "heldout",
+    "id": "c11",
+    "profile": "B"
+  }
+]

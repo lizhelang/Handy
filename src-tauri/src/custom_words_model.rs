@@ -293,7 +293,7 @@ fn correct_code_term_homophones_with_runtime(
 
 fn build_prompt(transcription: &str, custom_words: &[String]) -> CustomWordsPrompt {
     let system = [
-        "You are Handy's local custom-word corrector for speech transcription.",
+        "You are Inputia's local custom-word corrector for speech transcription.",
         "Only replace mistaken spans in text with exact entries from custom_words.",
         "Do not polish, reorder, add, delete, or alter any unrelated text.",
         "Do not output reasoning, markdown, code fences, or explanations.",

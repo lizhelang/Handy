@@ -1,0 +1,100 @@
+{
+  "purpose": "公开合成上下文最终冻结验证的最小可审计归档；不含模型权重",
+  "files": [
+    {
+      "path": "report.md",
+      "bytes": 12514,
+      "sha256": "53e9c13aec44a5a91aabd8e393e9871e6798dac0250ea64633b0d807a716e6a4"
+    },
+    {
+      "path": "protocol.json",
+      "bytes": 3213,
+      "sha256": "f77baaf27495f27e9038b0e319f33cb7acad0eb93dfe277b12a68a7e10b3d9e7"
+    },
+    {
+      "path": "protocol.sha256",
+      "bytes": 65,
+      "sha256": "989fb3d91683d16123bb5658135e72119f139f0e2ac3c1766be7015657a39607"
+    },
+    {
+      "path": "heldout.json",
+      "bytes": 5456,
+      "sha256": "5e3ab63940c886379acd1b523e99e09d243293d5bfcda7a31abf0a51be3d9047"
+    },
+    {
+      "path": "heldout.sha256",
+      "bytes": 65,
+      "sha256": "845a6e23cce5b427adb5f85caac33769fc33f5822b9e88d85db46f72e9abd681"
+    },
+    {
+      "path": "scoring-rules.txt",
+      "bytes": 972,
+      "sha256": "c7e15afb7e2962949df3cfe17d372c23793af6e8251afee9b99b7dbdc73926ca"
+    },
+    {
+      "path": "results.jsonl",
+      "bytes": 42982,
+      "sha256": "afe79fc55e727f5b414d317366051044c0c04ccedd30bcf3458f83e1a7ae5dbb"
+    },
+    {
+      "path": "warmup.json",
+      "bytes": 2073,
+      "sha256": "2944399f834fdec648d4f6bdd9a55f4ece7267e864d90f73a98548cb4d34bb36"
+    },
+    {
+      "path": "blind-review.json",
+      "bytes": 11711,
+      "sha256": "0a8495ad26fd3e0b306371b5b25909612b5ba370c085a9dda468e26c216313b0"
+    },
+    {
+      "path": "blind-ratings.json",
+      "bytes": 7012,
+      "sha256": "8e321aede1af570d95feb3b619df93f0c9fc093ad66e8e30b4d721d14368551c"
+    },
+    {
+      "path": "blind-mapping.json",
+      "bytes": 4675,
+      "sha256": "99b7049232aaa61cb047b8a2dfed0b029030b056fad1b70b7657bf9260936905"
+    },
+    {
+      "path": "summary.json",
+      "bytes": 2523,
+      "sha256": "51bed880cffe9acb87f86f7c2b9848542394275feec031d20b0c0314feff3a47"
+    },
+    {
+      "path": "timing-summary.json",
+      "bytes": 2523,
+      "sha256": "877ce3805bcd3183ec90bebfa832af003702883387c640cf821e42f47c8ead86"
+    },
+    {
+      "path": "runtime-results.json",
+      "bytes": 833,
+      "sha256": "a127d188b54d68a04cb648d96e1d2a8d23ce927e05e8499ab0516fc86ff6a76d"
+    },
+    {
+      "path": "model-runtime-provenance.json",
+      "bytes": 837,
+      "sha256": "4a00625d93683f083790b51443d41661fdf6f546be79a37c5fea98ccaa45fe04"
+    },
+    {
+      "path": "run.py",
+      "bytes": 6327,
+      "sha256": "c91210a445671dfb3e19d41a7b49e768668cb20ad25b00c7a42d105add975b99"
+    },
+    {
+      "path": "reproduce.py",
+      "bytes": 5965,
+      "sha256": "e0e539c7f7547d28e2a7590e85094d7c250f7e25c6abf5d66796dd88940500bd"
+    },
+    {
+      "path": "build-report.py",
+      "bytes": 8839,
+      "sha256": "f2adf213e19c3db5877e11a6a825afb880fb86f2617e4d4678218593d7613f8b"
+    },
+    {
+      "path": "README.md",
+      "bytes": 1760,
+      "sha256": "e7de974f7e655d41fa3471c7fe9a8cf6e6b99468a116a2bf0f688c75a9180ff4"
+    }
+  ]
+}

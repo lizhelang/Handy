@@ -21,15 +21,17 @@ enum InputiaVoiceTargetSnapshot {
     let createdAt = ProcessInfo.processInfo.systemUptime
     let expiresAt: TimeInterval
     let permissionEpoch: UInt64
+    let confirmedField: InputiaConfirmedFieldContext.Field?
     private weak var clientObject: AnyObject?
     private let identity: ObjectIdentifier
     private let selectedRange: NSRange
     init(target: InputiaVoiceTarget, client: IMKTextInput, selection: NSRange,
-      compositionGeneration: UInt64, localSelectionGeneration: UInt64, deadline: TimeInterval, permissionEpoch: UInt64) {
+      compositionGeneration: UInt64, localSelectionGeneration: UInt64, deadline: TimeInterval, permissionEpoch: UInt64,
+      confirmedField: InputiaConfirmedFieldContext.Field? = nil) {
       inputiaTarget = target; clientObject = client as AnyObject; identity = ObjectIdentifier(client as AnyObject)
       selectedRange = selection; self.compositionGeneration = compositionGeneration
       self.localSelectionGeneration = localSelectionGeneration
-      expiresAt = deadline; self.permissionEpoch = permissionEpoch
+      expiresAt = deadline; self.permissionEpoch = permissionEpoch; self.confirmedField = confirmedField
     }
     var reusableForShortcut: Bool {
       ProcessInfo.processInfo.systemUptime < expiresAt && InputiaPermissionLifecycle.shared.permits(permissionEpoch)

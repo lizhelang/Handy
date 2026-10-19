@@ -1,0 +1,22 @@
+{
+  "model_revision": "90862c4b9d2787eaed51d12237eafdfe7c5f6077",
+  "model_license": "Apache-2.0",
+  "runtime_release": "b11429",
+  "runtime_commit": "d81235049384534c167caea52b85a694f6103d14",
+  "files": [
+    {
+      "kind": "model",
+      "name": "Qwen3-1.7B-Q8_0.gguf",
+      "size": 1834426016,
+      "sha256": "061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a",
+      "url": "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/90862c4b9d2787eaed51d12237eafdfe7c5f6077/Qwen3-1.7B-Q8_0.gguf"
+    },
+    {
+      "kind": "runtime",
+      "name": "llama-b11429-bin-macos-arm64.tar.gz",
+      "size": 11971406,
+      "sha256": "740288ec6887be94280a5dfa25b5e23a78285cab104519e6c7e218904ee82459",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11429/llama-b11429-bin-macos-arm64.tar.gz"
+    }
+  ]
+}

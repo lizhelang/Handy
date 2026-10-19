@@ -1,0 +1,1334 @@
+[
+  {
+    "time": "2026-10-15 08:40:58.148041+1100",
+    "message": "phase=capture_guard reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:40:58.150603+1100",
+    "message": "phase=target_transport reason=policy flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:40:58.150627+1100",
+    "message": "phase=target_request trace=1 operation=capture reason=policy queued_ms=0 execution_ms=1"
+  },
+  {
+    "time": "2026-10-15 08:40:58.150627+1100",
+    "message": "phase=capture_reply reason=no_reply flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:40:58.409622+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:40:59.107978+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:00.578643+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:00.600952+1100",
+    "message": "phase=target_capture reason=ok flags=15 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:00.600965+1100",
+    "message": "phase=target_request trace=2 operation=capture reason=ok queued_ms=0 execution_ms=280"
+  },
+  {
+    "time": "2026-10-15 08:41:00.601202+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:01.103168+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:01.213924+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:02.107245+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.242633+1100",
+    "message": "phase=target_capture reason=target_unknown flags=6 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.242686+1100",
+    "message": "phase=target_request trace=3 operation=capture reason=target_unknown queued_ms=0 execution_ms=63"
+  },
+  {
+    "time": "2026-10-15 08:41:03.242717+1100",
+    "message": "phase=target_request trace=4 operation=capture reason=capture_cancelled queued_ms=49 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.262183+1100",
+    "message": "phase=query reason=target_query_busy flags=1 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.287076+1100",
+    "message": "phase=capture_reply reason=no_reply flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.317624+1100",
+    "message": "phase=target_request trace=5 operation=capture reason=target_unknown queued_ms=0 execution_ms=56"
+  },
+  {
+    "time": "2026-10-15 08:41:03.317652+1100",
+    "message": "phase=target_request trace=6 operation=capture reason=capture_cancelled queued_ms=31 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.352549+1100",
+    "message": "phase=query reason=target_query_busy flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.357650+1100",
+    "message": "phase=target_capture reason=target_edited flags=6 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.357673+1100",
+    "message": "phase=target_request trace=7 operation=capture reason=target_edited queued_ms=0 execution_ms=34"
+  },
+  {
+    "time": "2026-10-15 08:41:03.366526+1100",
+    "message": "phase=target_capture reason=ok flags=15 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.366586+1100",
+    "message": "phase=target_request trace=8 operation=capture reason=ok queued_ms=16 execution_ms=8"
+  },
+  {
+    "time": "2026-10-15 08:41:03.366785+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.421422+1100",
+    "message": "phase=target_capture reason=target_query_busy flags=6 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.421431+1100",
+    "message": "phase=target_request trace=9 operation=capture reason=target_query_busy queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.424722+1100",
+    "message": "phase=capture_reply reason=no_reply flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.440542+1100",
+    "message": "phase=query reason=ok flags=1 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.451016+1100",
+    "message": "phase=query reason=ok flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.634045+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:03.636161+1100",
+    "message": "phase=target_request trace=10 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:04.042920+1100",
+    "message": "phase=target_capture reason=ok flags=15 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:04.042936+1100",
+    "message": "phase=target_request trace=11 operation=capture reason=ok queued_ms=0 execution_ms=17"
+  },
+  {
+    "time": "2026-10-15 08:41:04.043139+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:04.047818+1100",
+    "message": "phase=target_request trace=12 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:04.110772+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:04.191075+1100",
+    "message": "phase=target_request trace=13 operation=capture reason=ok queued_ms=0 execution_ms=7"
+  },
+  {
+    "time": "2026-10-15 08:41:04.191264+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:04.191631+1100",
+    "message": "phase=target_request trace=14 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:04.369326+1100",
+    "message": "phase=query reason=target_query_busy flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:04.370881+1100",
+    "message": "phase=target_request trace=15 operation=capture reason=ok queued_ms=0 execution_ms=8"
+  },
+  {
+    "time": "2026-10-15 08:41:04.372434+1100",
+    "message": "phase=target_request trace=16 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:04.441381+1100",
+    "message": "phase=query reason=ok flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:04.534651+1100",
+    "message": "phase=target_request trace=17 operation=capture reason=ok queued_ms=0 execution_ms=10"
+  },
+  {
+    "time": "2026-10-15 08:41:04.535204+1100",
+    "message": "phase=target_request trace=18 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:04.864638+1100",
+    "message": "phase=query reason=target_query_busy flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:04.866509+1100",
+    "message": "phase=target_capture reason=target_edited flags=6 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:04.866521+1100",
+    "message": "phase=target_request trace=19 operation=capture reason=target_edited queued_ms=0 execution_ms=12"
+  },
+  {
+    "time": "2026-10-15 08:41:04.866542+1100",
+    "message": "phase=capture_reply reason=no_reply flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:04.937707+1100",
+    "message": "phase=query reason=ok flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:05.324071+1100",
+    "message": "phase=target_capture reason=ok flags=15 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:05.324096+1100",
+    "message": "phase=target_request trace=20 operation=capture reason=ok queued_ms=0 execution_ms=3"
+  },
+  {
+    "time": "2026-10-15 08:41:05.324306+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:05.739458+1100",
+    "message": "phase=target_request trace=21 operation=capture reason=ok queued_ms=0 execution_ms=6"
+  },
+  {
+    "time": "2026-10-15 08:41:05.739625+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:05.739896+1100",
+    "message": "phase=target_request trace=22 operation=release reason=ok queued_ms=6 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:05.740428+1100",
+    "message": "phase=target_request trace=23 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:05.794606+1100",
+    "message": "phase=target_capture reason=target_edited flags=6 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:05.794641+1100",
+    "message": "phase=target_request trace=24 operation=capture reason=target_edited queued_ms=0 execution_ms=8"
+  },
+  {
+    "time": "2026-10-15 08:41:05.794662+1100",
+    "message": "phase=capture_reply reason=no_reply flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:05.816177+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:06.107227+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:06.325708+1100",
+    "message": "phase=target_capture reason=ok flags=15 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:06.325729+1100",
+    "message": "phase=target_request trace=25 operation=capture reason=ok queued_ms=0 execution_ms=9"
+  },
+  {
+    "time": "2026-10-15 08:41:06.325998+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:06.328702+1100",
+    "message": "phase=target_request trace=26 operation=release reason=ok queued_ms=0 execution_ms=2"
+  },
+  {
+    "time": "2026-10-15 08:41:06.740871+1100",
+    "message": "phase=commit reason=ok flags=1 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:06.782580+1100",
+    "message": "phase=target_request trace=27 operation=capture reason=ok queued_ms=0 execution_ms=39"
+  },
+  {
+    "time": "2026-10-15 08:41:06.782921+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:06.802633+1100",
+    "message": "phase=query reason=ok flags=3 count=3"
+  },
+  {
+    "time": "2026-10-15 08:41:06.927193+1100",
+    "message": "phase=target_request trace=28 operation=capture reason=ok queued_ms=0 execution_ms=3"
+  },
+  {
+    "time": "2026-10-15 08:41:07.364061+1100",
+    "message": "phase=target_request trace=29 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:07.364629+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:07.367400+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:07.368055+1100",
+    "message": "phase=target_capture reason=target_query_busy flags=6 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:07.368063+1100",
+    "message": "phase=target_request trace=30 operation=capture reason=target_query_busy queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:07.368068+1100",
+    "message": "phase=capture_reply reason=no_reply flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:07.441858+1100",
+    "message": "phase=target_request trace=31 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:07.553069+1100",
+    "message": "phase=target_capture reason=ok flags=15 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:07.553097+1100",
+    "message": "phase=target_request trace=32 operation=capture reason=ok queued_ms=0 execution_ms=7"
+  },
+  {
+    "time": "2026-10-15 08:41:07.553346+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:07.988878+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:08.103007+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:08.644332+1100",
+    "message": "phase=target_request trace=33 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:08.754494+1100",
+    "message": "phase=target_request trace=34 operation=capture reason=ok queued_ms=0 execution_ms=8"
+  },
+  {
+    "time": "2026-10-15 08:41:08.813639+1100",
+    "message": "phase=target_request trace=35 operation=release reason=ok queued_ms=0 execution_ms=2"
+  },
+  {
+    "time": "2026-10-15 08:41:08.951019+1100",
+    "message": "phase=target_request trace=36 operation=capture reason=ok queued_ms=0 execution_ms=5"
+  },
+  {
+    "time": "2026-10-15 08:41:09.186713+1100",
+    "message": "phase=target_request trace=37 operation=release reason=ok queued_ms=0 execution_ms=8"
+  },
+  {
+    "time": "2026-10-15 08:41:09.381289+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:09.663108+1100",
+    "message": "phase=target_request trace=39 operation=capture reason=capture_cancelled queued_ms=32 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:09.663716+1100",
+    "message": "phase=capture_reply reason=no_reply flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:09.672423+1100",
+    "message": "phase=target_capture reason=target_edited flags=6 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:09.672433+1100",
+    "message": "phase=target_request trace=38 operation=capture reason=target_edited queued_ms=0 execution_ms=43"
+  },
+  {
+    "time": "2026-10-15 08:41:09.677124+1100",
+    "message": "phase=target_capture reason=ok flags=15 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:09.677137+1100",
+    "message": "phase=target_request trace=40 operation=capture reason=ok queued_ms=9 execution_ms=4"
+  },
+  {
+    "time": "2026-10-15 08:41:09.677349+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:09.677683+1100",
+    "message": "phase=target_request trace=41 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:09.745923+1100",
+    "message": "phase=target_request trace=42 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:09.874761+1100",
+    "message": "phase=target_request trace=43 operation=capture reason=ok queued_ms=0 execution_ms=8"
+  },
+  {
+    "time": "2026-10-15 08:41:09.876276+1100",
+    "message": "phase=target_request trace=44 operation=release reason=ok queued_ms=0 execution_ms=1"
+  },
+  {
+    "time": "2026-10-15 08:41:10.107962+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:10.113042+1100",
+    "message": "phase=target_request trace=45 operation=capture reason=ok queued_ms=0 execution_ms=4"
+  },
+  {
+    "time": "2026-10-15 08:41:10.113260+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:10.220085+1100",
+    "message": "phase=target_request trace=46 operation=capture reason=ok queued_ms=0 execution_ms=12"
+  },
+  {
+    "time": "2026-10-15 08:41:10.220358+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:10.221124+1100",
+    "message": "phase=target_request trace=47 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:10.242984+1100",
+    "message": "phase=target_request trace=48 operation=capture reason=ok queued_ms=0 execution_ms=3"
+  },
+  {
+    "time": "2026-10-15 08:41:10.243199+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:10.549743+1100",
+    "message": "phase=target_request trace=49 operation=capture reason=ok queued_ms=0 execution_ms=2"
+  },
+  {
+    "time": "2026-10-15 08:41:10.599871+1100",
+    "message": "phase=target_request trace=50 operation=release reason=ok queued_ms=0 execution_ms=9"
+  },
+  {
+    "time": "2026-10-15 08:41:10.612490+1100",
+    "message": "phase=target_validate reason=ok flags=15 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:10.612532+1100",
+    "message": "phase=target_request trace=51 operation=validate reason=ok queued_ms=0 execution_ms=2"
+  },
+  {
+    "time": "2026-10-15 08:41:10.625350+1100",
+    "message": "phase=target_request trace=52 operation=capture reason=ok queued_ms=0 execution_ms=6"
+  },
+  {
+    "time": "2026-10-15 08:41:10.752989+1100",
+    "message": "phase=target_request trace=53 operation=capture reason=ok queued_ms=0 execution_ms=5"
+  },
+  {
+    "time": "2026-10-15 08:41:11.193103+1100",
+    "message": "phase=target_request trace=54 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:11.193683+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:11.196204+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:11.197046+1100",
+    "message": "phase=target_capture reason=target_query_busy flags=6 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:11.197053+1100",
+    "message": "phase=target_request trace=55 operation=capture reason=target_query_busy queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:11.197059+1100",
+    "message": "phase=capture_reply reason=no_reply flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:11.218781+1100",
+    "message": "phase=target_request trace=56 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:11.254481+1100",
+    "message": "phase=target_capture reason=ok flags=15 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:11.254494+1100",
+    "message": "phase=target_request trace=57 operation=capture reason=ok queued_ms=0 execution_ms=1"
+  },
+  {
+    "time": "2026-10-15 08:41:11.254625+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:11.551084+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:12.021384+1100",
+    "message": "phase=target_request trace=58 operation=release reason=ok queued_ms=0 execution_ms=2"
+  },
+  {
+    "time": "2026-10-15 08:41:12.106804+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:12.166730+1100",
+    "message": "phase=target_request trace=59 operation=capture reason=ok queued_ms=0 execution_ms=15"
+  },
+  {
+    "time": "2026-10-15 08:41:12.547304+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:13.108415+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:13.270932+1100",
+    "message": "phase=target_request trace=60 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:13.623674+1100",
+    "message": "phase=target_request trace=61 operation=capture reason=ok queued_ms=0 execution_ms=16"
+  },
+  {
+    "time": "2026-10-15 08:41:13.623823+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:13.624325+1100",
+    "message": "phase=target_request trace=64 operation=release reason=ok queued_ms=7 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:13.625785+1100",
+    "message": "phase=query reason=target_query_busy flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:13.627109+1100",
+    "message": "phase=target_request trace=62 operation=capture reason=ok queued_ms=15 execution_ms=2"
+  },
+  {
+    "time": "2026-10-15 08:41:13.627392+1100",
+    "message": "phase=target_request trace=65 operation=release reason=ok queued_ms=3 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:13.638254+1100",
+    "message": "phase=target_request trace=63 operation=capture reason=ok queued_ms=11 execution_ms=10"
+  },
+  {
+    "time": "2026-10-15 08:41:13.638429+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:13.638615+1100",
+    "message": "phase=target_request trace=66 operation=release reason=ok queued_ms=10 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:13.689110+1100",
+    "message": "phase=query reason=ok flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:13.969862+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:14.103370+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:14.114401+1100",
+    "message": "phase=query reason=target_query_busy flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:14.117305+1100",
+    "message": "phase=target_request trace=67 operation=capture reason=ok queued_ms=0 execution_ms=7"
+  },
+  {
+    "time": "2026-10-15 08:41:14.117581+1100",
+    "message": "phase=target_request trace=68 operation=release reason=ok queued_ms=7 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:14.118487+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:14.118700+1100",
+    "message": "phase=target_request trace=69 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:14.120376+1100",
+    "message": "phase=target_request trace=70 operation=capture reason=ok queued_ms=0 execution_ms=1"
+  },
+  {
+    "time": "2026-10-15 08:41:14.120724+1100",
+    "message": "phase=target_request trace=71 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:14.122935+1100",
+    "message": "phase=target_request trace=72 operation=capture reason=ok queued_ms=0 execution_ms=1"
+  },
+  {
+    "time": "2026-10-15 08:41:14.123289+1100",
+    "message": "phase=target_request trace=73 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:14.184415+1100",
+    "message": "phase=query reason=ok flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:15.110104+1100",
+    "message": "phase=target_request trace=74 operation=capture reason=ok queued_ms=0 execution_ms=3"
+  },
+  {
+    "time": "2026-10-15 08:41:15.110347+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:15.124444+1100",
+    "message": "phase=query reason=ok flags=3 count=3"
+  },
+  {
+    "time": "2026-10-15 08:41:15.289468+1100",
+    "message": "phase=target_request trace=75 operation=validate reason=ok queued_ms=0 execution_ms=1"
+  },
+  {
+    "time": "2026-10-15 08:41:15.299752+1100",
+    "message": "phase=target_request trace=76 operation=capture reason=ok queued_ms=0 execution_ms=4"
+  },
+  {
+    "time": "2026-10-15 08:41:15.299976+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:15.300305+1100",
+    "message": "phase=target_request trace=77 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:15.309688+1100",
+    "message": "phase=target_request trace=78 operation=capture reason=ok queued_ms=0 execution_ms=2"
+  },
+  {
+    "time": "2026-10-15 08:41:15.309842+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:15.322226+1100",
+    "message": "phase=query reason=ok flags=3 count=1"
+  },
+  {
+    "time": "2026-10-15 08:41:16.151686+1100",
+    "message": "phase=target_request trace=79 operation=capture reason=ok queued_ms=0 execution_ms=4"
+  },
+  {
+    "time": "2026-10-15 08:41:16.153204+1100",
+    "message": "phase=target_request trace=80 operation=validate reason=ok queued_ms=1 execution_ms=1"
+  },
+  {
+    "time": "2026-10-15 08:41:16.554854+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:17.108217+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:17.108978+1100",
+    "message": "phase=target_request trace=81 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.081409+1100",
+    "message": "phase=query reason=target_query_busy flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.084790+1100",
+    "message": "phase=target_request trace=82 operation=capture reason=ok queued_ms=0 execution_ms=14"
+  },
+  {
+    "time": "2026-10-15 08:41:18.084996+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.085140+1100",
+    "message": "phase=target_request trace=84 operation=release reason=ok queued_ms=13 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.090619+1100",
+    "message": "phase=target_request trace=83 operation=capture reason=ok queued_ms=14 execution_ms=5"
+  },
+  {
+    "time": "2026-10-15 08:41:18.090937+1100",
+    "message": "phase=target_request trace=85 operation=release reason=ok queued_ms=5 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.091342+1100",
+    "message": "phase=target_request trace=86 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.137629+1100",
+    "message": "phase=target_request trace=87 operation=capture reason=ok queued_ms=0 execution_ms=3"
+  },
+  {
+    "time": "2026-10-15 08:41:18.137844+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.148999+1100",
+    "message": "phase=query reason=ok flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.203308+1100",
+    "message": "phase=query reason=target_query_busy flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.205624+1100",
+    "message": "phase=target_request trace=88 operation=capture reason=ok queued_ms=0 execution_ms=9"
+  },
+  {
+    "time": "2026-10-15 08:41:18.205758+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.205919+1100",
+    "message": "phase=target_request trace=90 operation=release reason=ok queued_ms=9 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.210357+1100",
+    "message": "phase=target_request trace=89 operation=capture reason=ok queued_ms=9 execution_ms=4"
+  },
+  {
+    "time": "2026-10-15 08:41:18.210529+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.210739+1100",
+    "message": "phase=target_request trace=91 operation=release reason=ok queued_ms=4 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.217358+1100",
+    "message": "phase=target_request trace=92 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.269186+1100",
+    "message": "phase=query reason=ok flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.320894+1100",
+    "message": "phase=target_request trace=93 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:18.325906+1100",
+    "message": "phase=target_request trace=94 operation=capture reason=ok queued_ms=0 execution_ms=4"
+  },
+  {
+    "time": "2026-10-15 08:41:18.787692+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:19.106423+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:19.504784+1100",
+    "message": "phase=target_request trace=95 operation=capture reason=ok queued_ms=0 execution_ms=12"
+  },
+  {
+    "time": "2026-10-15 08:41:19.505222+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:19.505487+1100",
+    "message": "phase=target_request trace=96 operation=release reason=target_query_busy queued_ms=12 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:19.505785+1100",
+    "message": "phase=target_request trace=97 operation=release reason=target_query_busy queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:19.538142+1100",
+    "message": "phase=target_request trace=98 operation=capture reason=ok queued_ms=0 execution_ms=3"
+  },
+  {
+    "time": "2026-10-15 08:41:19.538301+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:19.698606+1100",
+    "message": "phase=query reason=target_query_busy flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:19.701897+1100",
+    "message": "phase=target_request trace=99 operation=capture reason=ok queued_ms=0 execution_ms=14"
+  },
+  {
+    "time": "2026-10-15 08:41:19.702106+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:19.702246+1100",
+    "message": "phase=target_request trace=100 operation=release reason=ok queued_ms=14 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:19.702620+1100",
+    "message": "phase=target_request trace=101 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:19.749188+1100",
+    "message": "phase=target_request trace=102 operation=capture reason=ok queued_ms=0 execution_ms=3"
+  },
+  {
+    "time": "2026-10-15 08:41:19.749422+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:19.765290+1100",
+    "message": "phase=query reason=ok flags=3 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:20.177386+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:20.237895+1100",
+    "message": "phase=commit reason=missing_selection flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:20.238466+1100",
+    "message": "phase=target_request trace=103 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:20.241889+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:20.251949+1100",
+    "message": "phase=target_request trace=104 operation=capture reason=ok queued_ms=0 execution_ms=10"
+  },
+  {
+    "time": "2026-10-15 08:41:20.252099+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:20.252336+1100",
+    "message": "phase=target_request trace=105 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:20.254785+1100",
+    "message": "phase=target_request trace=106 operation=capture reason=ok queued_ms=0 execution_ms=1"
+  },
+  {
+    "time": "2026-10-15 08:41:20.263292+1100",
+    "message": "phase=target_request trace=107 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:21.115585+1100",
+    "message": "phase=target_request trace=108 operation=capture reason=ok queued_ms=0 execution_ms=3"
+  },
+  {
+    "time": "2026-10-15 08:41:21.115832+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:21.133040+1100",
+    "message": "phase=query reason=ok flags=3 count=3"
+  },
+  {
+    "time": "2026-10-15 08:41:21.810838+1100",
+    "message": "phase=target_request trace=109 operation=validate reason=ok queued_ms=0 execution_ms=2"
+  },
+  {
+    "time": "2026-10-15 08:41:21.816823+1100",
+    "message": "phase=commit reason=ok flags=1 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:21.822901+1100",
+    "message": "phase=target_request trace=110 operation=capture reason=ok queued_ms=0 execution_ms=4"
+  },
+  {
+    "time": "2026-10-15 08:41:21.823300+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:21.823576+1100",
+    "message": "phase=target_request trace=111 operation=release reason=target_query_busy queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:21.839901+1100",
+    "message": "phase=target_request trace=112 operation=capture reason=ok queued_ms=0 execution_ms=2"
+  },
+  {
+    "time": "2026-10-15 08:41:21.840100+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:22.330417+1100",
+    "message": "phase=target_request trace=113 operation=capture reason=ok queued_ms=0 execution_ms=8"
+  },
+  {
+    "time": "2026-10-15 08:41:22.507974+1100",
+    "message": "phase=target_request trace=114 operation=release reason=ok queued_ms=0 execution_ms=3"
+  },
+  {
+    "time": "2026-10-15 08:41:22.522844+1100",
+    "message": "phase=target_request trace=115 operation=validate reason=ok queued_ms=0 execution_ms=2"
+  },
+  {
+    "time": "2026-10-15 08:41:22.529903+1100",
+    "message": "phase=target_request trace=116 operation=capture reason=ok queued_ms=1 execution_ms=7"
+  },
+  {
+    "time": "2026-10-15 08:41:22.530030+1100",
+    "message": "phase=capture_reply reason=selection_changed flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:22.530369+1100",
+    "message": "phase=target_request trace=117 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:22.533677+1100",
+    "message": "phase=target_request trace=118 operation=capture reason=ok queued_ms=0 execution_ms=2"
+  },
+  {
+    "time": "2026-10-15 08:41:22.533844+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:23.093211+1100",
+    "message": "phase=target_request trace=119 operation=validate reason=ok queued_ms=0 execution_ms=1"
+  },
+  {
+    "time": "2026-10-15 08:41:23.103363+1100",
+    "message": "phase=target_request trace=120 operation=capture reason=ok queued_ms=0 execution_ms=3"
+  },
+  {
+    "time": "2026-10-15 08:41:23.103596+1100",
+    "message": "phase=capture_reply reason=remote_selection_mismatch flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:23.104109+1100",
+    "message": "phase=target_request trace=121 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:23.112880+1100",
+    "message": "phase=target_capture reason=target_query_busy flags=6 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:23.112908+1100",
+    "message": "phase=target_request trace=122 operation=capture reason=target_query_busy queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:23.112926+1100",
+    "message": "phase=capture_reply reason=no_reply flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:23.120752+1100",
+    "message": "phase=target_capture reason=ok flags=15 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:23.120777+1100",
+    "message": "phase=target_request trace=123 operation=capture reason=ok queued_ms=0 execution_ms=3"
+  },
+  {
+    "time": "2026-10-15 08:41:23.120959+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:23.249725+1100",
+    "message": "phase=target_request trace=124 operation=release reason=ok queued_ms=0 execution_ms=1"
+  },
+  {
+    "time": "2026-10-15 08:41:23.893590+1100",
+    "message": "phase=target_request trace=125 operation=validate reason=ok queued_ms=0 execution_ms=1"
+  },
+  {
+    "time": "2026-10-15 08:41:23.903574+1100",
+    "message": "phase=target_request trace=126 operation=capture reason=ok queued_ms=0 execution_ms=3"
+  },
+  {
+    "time": "2026-10-15 08:41:24.555415+1100",
+    "message": "phase=target_request trace=127 operation=capture reason=ok queued_ms=0 execution_ms=9"
+  },
+  {
+    "time": "2026-10-15 08:41:24.559043+1100",
+    "message": "phase=target_request trace=128 operation=release reason=ok queued_ms=0 execution_ms=1"
+  },
+  {
+    "time": "2026-10-15 08:41:24.560948+1100",
+    "message": "phase=target_request trace=129 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:24.754637+1100",
+    "message": "phase=target_request trace=130 operation=capture reason=ok queued_ms=0 execution_ms=7"
+  },
+  {
+    "time": "2026-10-15 08:41:24.820977+1100",
+    "message": "phase=target_request trace=131 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:24.974924+1100",
+    "message": "phase=target_request trace=132 operation=release reason=ok queued_ms=0 execution_ms=2"
+  },
+  {
+    "time": "2026-10-15 08:41:25.203003+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:25.542017+1100",
+    "message": "phase=target_request trace=133 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:26.106161+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:26.106573+1100",
+    "message": "phase=target_request trace=134 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:26.323542+1100",
+    "message": "phase=target_request trace=135 operation=capture reason=ok queued_ms=0 execution_ms=3"
+  },
+  {
+    "time": "2026-10-15 08:41:26.774007+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:26.946752+1100",
+    "message": "phase=target_request trace=136 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:27.106992+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:33.974136+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:34.105011+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:35.401399+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:36.110323+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:36.800300+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:37.107221+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:38.186715+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:39.107248+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:39.571699+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:40.107411+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:40.978881+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:41.103708+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:42.391798+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:43.107136+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:43.793458+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:44.107401+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:45.189809+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:46.111251+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:46.558073+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:47.113711+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:47.999906+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:48.104699+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:49.410339+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:50.106943+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:41:50.633508+1100",
+    "message": "phase=target_request trace=137 operation=release reason=ok queued_ms=0 execution_ms=0"
+  },
+  {
+    "time": "2026-10-15 08:41:50.656502+1100",
+    "message": "phase=capture_guard reason=invalid_selection flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:40.745209+1100",
+    "message": "phase=capture_guard reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:40.777103+1100",
+    "message": "phase=target_capture reason=target_focus_changed flags=6 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:40.777133+1100",
+    "message": "phase=target_request trace=138 operation=capture reason=target_focus_changed queued_ms=0 execution_ms=31"
+  },
+  {
+    "time": "2026-10-15 08:42:40.777161+1100",
+    "message": "phase=capture_reply reason=no_reply flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:41.151581+1100",
+    "message": "phase=target_capture reason=ok flags=15 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:41.151608+1100",
+    "message": "phase=target_request trace=139 operation=capture reason=ok queued_ms=0 execution_ms=3"
+  },
+  {
+    "time": "2026-10-15 08:42:41.151931+1100",
+    "message": "phase=capture_reply reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:41.565646+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:42.054200+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:43.040434+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:43.043977+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:44.356667+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:45.047067+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:45.747315+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:46.052167+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:47.156013+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:48.045285+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:48.552604+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:49.045848+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:49.939684+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:50.045334+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:51.217728+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:52.050780+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:52.557021+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:53.053822+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:53.968145+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:54.042906+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:58.043602+1100",
+    "message": "phase=personal_transport reason=timeout flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:58.043672+1100",
+    "message": "phase=policy reason=no_reply flags=4 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:58.043701+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:58.074554+1100",
+    "message": "phase=target_transport reason=timeout flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:58.074696+1100",
+    "message": "phase=target_request trace=140 operation=release reason=timeout queued_ms=0 execution_ms=2001"
+  },
+  {
+    "time": "2026-10-15 08:42:59.043435+1100",
+    "message": "phase=personal_transport reason=policy flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:59.043497+1100",
+    "message": "phase=policy reason=no_reply flags=6 count=0"
+  },
+  {
+    "time": "2026-10-15 08:42:59.575164+1100",
+    "message": "phase=target_request trace=141 operation=capture reason=capture_cancelled queued_ms=0 execution_ms=250"
+  },
+  {
+    "time": "2026-10-15 08:42:59.575168+1100",
+    "message": "phase=capture_reply reason=no_reply flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:43:01.918105+1100",
+    "message": "phase=target_request trace=142 operation=capture reason=capture_cancelled queued_ms=0 execution_ms=1677"
+  },
+  {
+    "time": "2026-10-15 08:43:02.760417+1100",
+    "message": "phase=target_request trace=143 operation=capture reason=capture_cancelled queued_ms=0 execution_ms=221"
+  },
+  {
+    "time": "2026-10-15 08:43:03.260369+1100",
+    "message": "phase=target_request trace=144 operation=capture reason=capture_cancelled queued_ms=0 execution_ms=226"
+  },
+  {
+    "time": "2026-10-15 08:43:03.781406+1100",
+    "message": "phase=target_request trace=145 operation=capture reason=capture_cancelled queued_ms=0 execution_ms=255"
+  },
+  {
+    "time": "2026-10-15 08:43:04.538374+1100",
+    "message": "phase=capture_guard reason=invalid_selection flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:43:05.239812+1100",
+    "message": "phase=personal_transport reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:43:06.025352+1100",
+    "message": "phase=policy reason=ok flags=7 count=0"
+  },
+  {
+    "time": "2026-10-15 08:43:06.025381+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:43:07.493528+1100",
+    "message": "phase=schedule reason=disabled flags=0 count=0"
+  },
+  {
+    "time": "2026-10-15 08:43:08.204842+1100",
+    "message": "phase=schedule reason=ok flags=0 count=0"
+  }
+]

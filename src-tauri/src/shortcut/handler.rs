@@ -37,26 +37,15 @@ pub fn handle_shortcut_event(
     };
     #[cfg(target_os = "macos")]
     {
-        // 原生快捷键回调可能来自后台线程；Carbon 输入源查询只能在主线程执行。
-        // 主线程只探测输入源；服务查询和动作保持在同一后台队列中处理。
-        let dispatched_app = app.clone();
-        let binding_id = binding_id.to_owned();
-        let hotkey_string = hotkey_string.to_owned();
-        if app
-            .run_on_main_thread(move || {
-                enqueue_native_shortcut(NativeShortcutEvent {
-                    app: dispatched_app,
-                    binding_id,
-                    hotkey_string,
-                    is_pressed,
-                    generation,
-                    source: crate::host_shortcut_broker::current_input_source(),
-                });
-            })
-            .is_err()
-        {
-            warn!("Shortcut main-thread dispatch unavailable; event not replayed");
-        }
+        // 普通全局快捷键固定进入本地听写，不因输入源或 Host 租约改变路线。
+        enqueue_native_shortcut(NativeShortcutEvent {
+            app: app.clone(),
+            binding_id: binding_id.to_owned(),
+            hotkey_string: hotkey_string.to_owned(),
+            is_pressed,
+            generation,
+            occurred_at: std::time::Instant::now(),
+        });
     }
     #[cfg(not(target_os = "macos"))]
     handle_shortcut_event_on_dispatch_thread(
@@ -74,7 +63,7 @@ fn handle_shortcut_event_on_dispatch_thread(
     hotkey_string: &str,
     is_pressed: bool,
     generation: u64,
-    #[cfg(target_os = "macos")] source: crate::host_shortcut_broker::CurrentInputSource,
+    #[cfg(target_os = "macos")] occurred_at: std::time::Instant,
 ) {
     let Some(_lease) = super::settings_barrier::admit(generation, is_pressed) else {
         return;
@@ -84,40 +73,18 @@ fn handle_shortcut_event_on_dispatch_thread(
     // Transcribe bindings are handled by the coordinator.
     if is_transcribe_binding(binding_id) {
         if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
-            if coordinator.voice_output_context().is_some_and(|request| {
-                matches!(
-                    request.command,
-                    inputia_handy_runtime::voice_protocol::VoiceCommand::Start { .. }
-                )
-            }) {
-                coordinator.send_input(
+            #[cfg(target_os = "macos")]
+            {
+                coordinator.send_dictation_input(
                     binding_id,
                     hotkey_string,
                     is_pressed,
                     settings.shortcut_activation,
                     std::time::Duration::from_millis(settings.hold_threshold_ms),
+                    occurred_at,
                 );
-                return;
             }
-        }
-        #[cfg(target_os = "macos")]
-        match route_inputia_host_shortcut(app, binding_id, hotkey_string, is_pressed, source) {
-            crate::host_shortcut_broker::ShortcutRouting::Legacy => {}
-            crate::host_shortcut_broker::ShortcutRouting::Forwarded => return,
-            crate::host_shortcut_broker::ShortcutRouting::HostPending => {
-                if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
-                    coordinator.send_legacy_continuation(
-                        binding_id,
-                        hotkey_string,
-                        is_pressed,
-                        settings.shortcut_activation,
-                        std::time::Duration::from_millis(settings.hold_threshold_ms),
-                    );
-                }
-                return;
-            }
-        }
-        if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
+            #[cfg(not(target_os = "macos"))]
             coordinator.send_input(
                 binding_id,
                 hotkey_string,
@@ -157,39 +124,13 @@ fn handle_shortcut_event_on_dispatch_thread(
 }
 
 #[cfg(target_os = "macos")]
-fn route_inputia_host_shortcut(
-    app: &AppHandle,
-    binding_id: &str,
-    hotkey_string: &str,
-    is_pressed: bool,
-    source: crate::host_shortcut_broker::CurrentInputSource,
-) -> crate::host_shortcut_broker::ShortcutRouting {
-    let Some(broker) = app.try_state::<crate::host_shortcut_broker::HostShortcutBroker>() else {
-        return crate::host_shortcut_broker::ShortcutRouting::HostPending;
-    };
-    let policy_epoch = app
-        .try_state::<Arc<crate::managers::integration::IntegrationManager>>()
-        .and_then(|manager| manager.service.policy_epoch().ok());
-    let settings = get_settings(app);
-    broker.route_shortcut_event(
-        binding_id,
-        hotkey_string,
-        is_pressed,
-        settings.shortcut_activation,
-        std::time::Duration::from_millis(settings.hold_threshold_ms),
-        policy_epoch,
-        source,
-    )
-}
-
-#[cfg(target_os = "macos")]
 struct NativeShortcutEvent {
     app: AppHandle,
     binding_id: String,
     hotkey_string: String,
     is_pressed: bool,
     generation: u64,
-    source: crate::host_shortcut_broker::CurrentInputSource,
+    occurred_at: std::time::Instant,
 }
 
 #[cfg(target_os = "macos")]
@@ -208,7 +149,7 @@ fn enqueue_native_shortcut(event: NativeShortcutEvent) {
                         &event.hotkey_string,
                         event.is_pressed,
                         event.generation,
-                        event.source,
+                        event.occurred_at,
                     );
                 }
             })

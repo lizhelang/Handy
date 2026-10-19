@@ -170,6 +170,15 @@ pub enum PasteMethod {
     ExternalScript,
 }
 
+/// 普通口述在开始录音时固定本轮的插入位置偏好。
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DictationTargetMode {
+    #[default]
+    CurrentCursor,
+    RecordingApplication,
+}
+
 /// How the transcribe shortcut's key events drive a recording.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
 #[serde(rename_all = "snake_case")]
@@ -459,6 +468,8 @@ pub struct AppSettings {
     pub recording_retention_period: RecordingRetentionPeriod,
     #[serde(default)]
     pub paste_method: PasteMethod,
+    #[serde(default)]
+    pub dictation_target_mode: DictationTargetMode,
     #[serde(default)]
     pub clipboard_handling: ClipboardHandling,
     #[serde(default = "default_auto_submit")]
@@ -1041,6 +1052,7 @@ pub fn get_default_settings() -> AppSettings {
         history_limit: default_history_limit(),
         recording_retention_period: default_recording_retention_period(),
         paste_method: PasteMethod::default(),
+        dictation_target_mode: DictationTargetMode::default(),
         clipboard_handling: ClipboardHandling::default(),
         auto_submit: default_auto_submit(),
         auto_submit_key: AutoSubmitKey::default(),
@@ -1714,6 +1726,63 @@ mod tests {
             settings.settings_schema_version,
             CURRENT_SETTINGS_SCHEMA_VERSION
         );
+    }
+
+    #[test]
+    fn dictation_target_mode_defaults_to_current_cursor() {
+        assert_eq!(
+            get_default_settings().dictation_target_mode,
+            DictationTargetMode::CurrentCursor
+        );
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(
+            settings.dictation_target_mode,
+            DictationTargetMode::CurrentCursor
+        );
+    }
+
+    #[test]
+    fn legacy_store_without_dictation_target_mode_preserves_other_settings() {
+        let mut stored = default_settings_json();
+        let object = stored.as_object_mut().unwrap();
+        object.remove("dictation_target_mode");
+        object.insert("selected_model".into(), serde_json::json!("existing-model"));
+        object.insert("paste_method".into(), serde_json::json!("none"));
+        object.insert("auto_submit".into(), serde_json::json!(true));
+        object.insert(
+            "custom_words".into(),
+            serde_json::json!(["Inputia", "保留词语"]),
+        );
+
+        let settings: AppSettings = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!(
+            settings.dictation_target_mode,
+            DictationTargetMode::CurrentCursor
+        );
+        let mut round_trip = serde_json::to_value(settings).unwrap();
+        round_trip
+            .as_object_mut()
+            .unwrap()
+            .remove("dictation_target_mode");
+        assert_eq!(round_trip, stored);
+    }
+
+    #[test]
+    fn dictation_target_mode_round_trips_both_preferences() {
+        for (mode, serialized) in [
+            (DictationTargetMode::CurrentCursor, "current_cursor"),
+            (
+                DictationTargetMode::RecordingApplication,
+                "recording_application",
+            ),
+        ] {
+            let mut settings = get_default_settings();
+            settings.dictation_target_mode = mode;
+            let stored = serde_json::to_value(settings).unwrap();
+            assert_eq!(stored["dictation_target_mode"], serialized);
+            let restored: AppSettings = serde_json::from_value(stored).unwrap();
+            assert_eq!(restored.dictation_target_mode, mode);
+        }
     }
 
     #[test]

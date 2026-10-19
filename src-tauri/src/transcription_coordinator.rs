@@ -190,6 +190,12 @@ enum Command {
         input: InputEvent,
         epoch: Result<u64, String>,
     },
+    #[cfg(target_os = "macos")]
+    DictationInput {
+        input: InputEvent,
+        epoch: Result<u64, String>,
+        occurred_at: Instant,
+    },
     LegacyContinuation(InputEvent),
     GlobalCancel,
     ProcessingFinished,
@@ -245,7 +251,7 @@ struct OwnedVoiceSession {
 struct VoiceProjection {
     context: Mutex<Option<VoiceRequest>>,
     #[cfg(target_os = "macos")]
-    platform: Mutex<Option<crate::integration_output::PlatformVoiceContext>>,
+    dictation: Mutex<Option<crate::dictation::DictationContext>>,
 }
 
 const MAX_VOICE_SESSIONS: usize = 1024;
@@ -332,6 +338,22 @@ impl CoordinatorState {
     fn is_locked(&self) -> bool {
         self.hold.as_ref().is_some_and(|h| h.locked)
             || self.pending_press.as_ref().is_some_and(|p| p.locked)
+    }
+
+    /// 普通全局听写始终由同一个协调器消费；Host 租约和输入源不参与路由。
+    #[cfg(target_os = "macos")]
+    fn on_dictation_input(
+        &mut self,
+        input: InputEvent,
+        permission_ready: bool,
+        now: Instant,
+    ) -> Option<Effect> {
+        if self.settings_barrier.is_some()
+            || (!permission_ready && !matches!(self.stage, Stage::Recording(_)))
+        {
+            return None;
+        }
+        self.on_input(input, now)
     }
 
     fn on_input(&mut self, input: InputEvent, now: Instant) -> Option<Effect> {
@@ -1291,11 +1313,9 @@ impl TranscriptionCoordinator {
 
     /// 只移动一次 Start 时冻结的原字段；异步输出拥有租约，不会影响下一次录音。
     #[cfg(target_os = "macos")]
-    pub(crate) fn take_platform_output_context(
-        &self,
-    ) -> Option<crate::integration_output::PlatformVoiceContext> {
+    pub(crate) fn take_dictation_context(&self) -> Option<crate::dictation::DictationContext> {
         self.voice_projection
-            .platform
+            .dictation
             .lock()
             .ok()
             .and_then(|mut value| value.take())
@@ -1319,6 +1339,38 @@ impl TranscriptionCoordinator {
             hold_threshold,
             false,
         );
+    }
+
+    /// 原生边沿直接排入本地听写队列，保留真实发生时间，不查询 Host 或历史策略。
+    #[cfg(target_os = "macos")]
+    pub(crate) fn send_dictation_input(
+        &self,
+        binding_id: &str,
+        hotkey_string: &str,
+        is_pressed: bool,
+        mode: ShortcutActivation,
+        hold_threshold: Duration,
+        occurred_at: Instant,
+    ) {
+        if self
+            .tx
+            .send(Command::DictationInput {
+                input: InputEvent {
+                    binding_id: binding_id.into(),
+                    hotkey_string: hotkey_string.into(),
+                    is_pressed,
+                    mode,
+                    hold_threshold,
+                    external: false,
+                    owned: false,
+                },
+                epoch: crate::input_permission::capture_epoch(),
+                occurred_at,
+            })
+            .is_err()
+        {
+            warn!("Transcription coordinator channel closed; shortcut not replayed");
+        }
     }
 
     /// Send an external trigger (SIGUSR2, CLI flag). Always a toggle press,
@@ -1465,6 +1517,26 @@ fn dispatch_command(
                 }
             }
         }
+        #[cfg(target_os = "macos")]
+        Command::DictationInput {
+            input,
+            epoch,
+            occurred_at,
+        } => {
+            // 排队可能晚于 release grace，但 hold/tap 仍按原物理边沿时间分类。
+            if state
+                .grace_deadline()
+                .is_some_and(|deadline| deadline <= occurred_at)
+            {
+                if let Some(effect) = state.on_grace_expired() {
+                    execute(state, effect);
+                }
+            }
+            let permission_ready = epoch.and_then(crate::input_permission::check_epoch).is_ok();
+            if let Some(effect) = state.on_dictation_input(input, permission_ready, occurred_at) {
+                execute(state, effect);
+            }
+        }
         Command::Input(input) => {
             if state.settings_barrier.is_some() {
                 return;
@@ -1577,10 +1649,11 @@ fn run_effect(
             hotkey_string,
         } => {
             #[cfg(target_os = "macos")]
-            if let Ok(mut platform) = projection.platform.lock() {
+            if let Ok(mut platform) = projection.dictation.lock() {
                 *platform = if state.active_voice.is_none() {
-                    Some(crate::integration_output::PlatformVoiceContext::capture(
+                    Some(crate::dictation::DictationContext::capture(
                         app,
+                        crate::settings::get_settings(app).auto_submit,
                     ))
                 } else {
                     None
@@ -1589,7 +1662,7 @@ fn run_effect(
             let started = start(app, &binding_id, &hotkey_string);
             #[cfg(target_os = "macos")]
             if !started {
-                if let Ok(mut platform) = projection.platform.lock() {
+                if let Ok(mut platform) = projection.dictation.lock() {
                     platform.take();
                 }
             }
@@ -1601,7 +1674,7 @@ fn run_effect(
         } => stop(app, &binding_id, &hotkey_string),
         Effect::Cancel => {
             #[cfg(target_os = "macos")]
-            if let Ok(mut platform) = projection.platform.lock() {
+            if let Ok(mut platform) = projection.dictation.lock() {
                 platform.take();
             }
             crate::utils::cancel_current_operation_raw(app);
@@ -1638,6 +1711,160 @@ fn stop(app: &AppHandle, binding_id: &str, hotkey_string: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    mod dictation_shortcuts {
+        use super::*;
+
+        #[test]
+        fn native_dictation_starts_and_stops_without_host_or_history_service() {
+            for mode in [
+                ShortcutActivation::Toggle,
+                ShortcutActivation::PushToTalk,
+                ShortcutActivation::HoldOrToggle,
+            ] {
+                let now = Instant::now();
+                let mut state = CoordinatorState::new();
+                assert!(matches!(
+                    state.on_dictation_input(input(mode, true), true, now),
+                    Some(Effect::Start { .. })
+                ));
+                assert!(state
+                    .on_dictation_input(input(mode, false), true, now + Duration::from_millis(50))
+                    .is_none());
+                if mode == ShortcutActivation::PushToTalk {
+                    assert!(matches!(
+                        state.on_grace_expired(),
+                        Some(Effect::Stop { .. })
+                    ));
+                } else {
+                    assert!(state.on_grace_expired().is_none());
+                    assert!(matches!(
+                        state.on_dictation_input(
+                            input(mode, true),
+                            true,
+                            now + Duration::from_millis(500)
+                        ),
+                        Some(Effect::Stop { .. })
+                    ));
+                }
+                assert_eq!(state.stage, Stage::Processing);
+            }
+        }
+
+        #[test]
+        fn delayed_queued_release_preserves_tap_and_stops_ptt_without_timeout_loss() {
+            for mode in [
+                ShortcutActivation::HoldOrToggle,
+                ShortcutActivation::PushToTalk,
+            ] {
+                let now = Instant::now();
+                let mut state = CoordinatorState::new();
+                let mut effects = Vec::new();
+                dispatch_command(
+                    &mut state,
+                    Command::Input(input(mode, true)),
+                    now,
+                    &mut |_, effect| effects.push(effect),
+                );
+                dispatch_command(
+                    &mut state,
+                    Command::DictationInput {
+                        input: input(mode, false),
+                        epoch: Err("permission expired".into()),
+                        occurred_at: now + Duration::from_millis(50),
+                    },
+                    now + Duration::from_secs(3),
+                    &mut |_, effect| effects.push(effect),
+                );
+                assert_eq!(
+                    state.pending_release.as_ref().unwrap().released_at,
+                    now + Duration::from_millis(50)
+                );
+                effects.extend(state.on_grace_expired());
+                if mode == ShortcutActivation::HoldOrToggle {
+                    assert!(state.is_locked());
+                    dispatch_command(
+                        &mut state,
+                        Command::DictationInput {
+                            input: input(mode, true),
+                            epoch: Err("permission expired".into()),
+                            occurred_at: now + Duration::from_millis(500),
+                        },
+                        now + Duration::from_secs(4),
+                        &mut |_, effect| effects.push(effect),
+                    );
+                }
+                assert_eq!(
+                    effects
+                        .iter()
+                        .filter(|e| matches!(e, Effect::Start { .. }))
+                        .count(),
+                    1
+                );
+                assert_eq!(
+                    effects
+                        .iter()
+                        .filter(|e| matches!(e, Effect::Stop { .. }))
+                        .count(),
+                    1
+                );
+            }
+        }
+
+        #[test]
+        fn dictation_busy_parity_and_cancel_do_not_create_another_owner() {
+            let now = Instant::now();
+            let mut state = CoordinatorState::new();
+            state.on_dictation_input(input(ShortcutActivation::Toggle, true), true, now);
+            state.on_dictation_input(
+                input(ShortcutActivation::Toggle, true),
+                true,
+                now + Duration::from_millis(100),
+            );
+            for offset in [200, 300] {
+                state.on_dictation_input(
+                    input(ShortcutActivation::Toggle, true),
+                    true,
+                    now + Duration::from_millis(offset),
+                );
+            }
+            assert!(state.pending_press.is_none());
+            assert!(state.on_processing_finished().is_none());
+            state.on_dictation_input(
+                input(ShortcutActivation::Toggle, true),
+                true,
+                now + Duration::from_millis(500),
+            );
+            state.on_cancel(true);
+            assert_eq!(state.stage, Stage::Idle);
+            assert!(state
+                .on_dictation_input(
+                    input(ShortcutActivation::Toggle, true),
+                    false,
+                    now + Duration::from_millis(700)
+                )
+                .is_none());
+            assert_eq!(state.stage, Stage::Idle);
+        }
+
+        #[test]
+        fn explicit_ime_owner_is_preserved_when_native_shortcut_stops_it() {
+            let now = Instant::now();
+            let mut state = CoordinatorState::new();
+            let start = voice_start("ime-session", "explicit-start");
+            state.on_voice(start.clone(), now).0.unwrap();
+            assert!(matches!(
+                state.on_dictation_input(
+                    input(ShortcutActivation::Toggle, true),
+                    true,
+                    now + Duration::from_millis(500)
+                ),
+                Some(Effect::Stop { .. })
+            ));
+            assert_eq!(state.voice_context(), Some(start));
+        }
+    }
 
     #[test]
     fn settings_barrier_refuses_active_and_queued_gestures_and_blocks_new_starts() {

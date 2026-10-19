@@ -384,6 +384,16 @@ fi
 
 /bin/bash "$ROOT_DIR/Tools/settings-store-self-check.sh"
 /bin/bash "$ROOT_DIR/Tools/managed-memory-self-check.sh"
+/usr/bin/python3 "$ROOT_DIR/Tools/candidate-panel-placement-self-check.py"
+/usr/bin/python3 "$ROOT_DIR/Tools/prediction-panel-handoff-self-check.py"
+/usr/bin/python3 "$ROOT_DIR/Tools/prediction-presentation-host-self-check.py"
+/usr/bin/python3 "$ROOT_DIR/Tools/prediction-lifecycle-integration-self-check.py"
+/usr/bin/python3 "$ROOT_DIR/Tools/physical-input-priority-self-check.py"
+/usr/bin/python3 "$ROOT_DIR/Tools/target-capture-queue-self-check.py"
+/usr/bin/python3 "$ROOT_DIR/Tools/privacy-owned-context-self-check.py"
+/usr/bin/python3 "$ROOT_DIR/Tools/word-span-key-path-self-check.py"
+/usr/bin/python3 "$ROOT_DIR/Tools/shortcut-registration-lifecycle-self-check.py"
+/usr/bin/python3 "$ROOT_DIR/Tools/candidate-panel-refresh-self-check.py"
 
 CAPI_LIB="$(run_cargo build --release --manifest-path "$CAPI_MANIFEST" "${CAPI_FEATURE_ARGS[@]}" --message-format=json-render-diagnostics |
   /usr/bin/python3 -c '
@@ -446,6 +456,18 @@ fi
   -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-word-span-self-check"
 "$BUILD_DIR/inputia-word-span-self-check"
 
+/usr/bin/swiftc -parse-as-library \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPredictionPresentation.swift" \
+  "$ROOT_DIR/Tools/InputiaPredictionPresentationSelfCheck.swift" \
+  -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-prediction-presentation-self-check"
+"$BUILD_DIR/inputia-prediction-presentation-self-check"
+
+/usr/bin/swiftc -parse-as-library \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaConfirmedFieldContext.swift" \
+  "$ROOT_DIR/Tools/InputiaConfirmedFieldContextSelfCheck.swift" \
+  -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-confirmed-field-context-self-check"
+"$BUILD_DIR/inputia-confirmed-field-context-self-check"
+
 /usr/bin/swiftc \
   "$ROOT_DIR/Sources/InputiaInputMethod/main.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaStartupMaintenance.swift" \
@@ -456,6 +478,7 @@ fi
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaMemoryImport.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaTypedCapture.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPersonalization.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPredictionPresentation.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExplicitHotwords.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHostTextPolicy.swift" \
@@ -465,6 +488,7 @@ fi
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExpandedCandidateGridNavigation.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceInputLauncher.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPermissionLifecycle.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaConfirmedFieldContext.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceTargetSnapshot.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaFramedConnection.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
@@ -610,6 +634,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
 /usr/bin/swiftc \
   "${HOST_SWIFT_DEFINES[@]}" \
   "$ROOT_DIR/Tools/InputiaVoiceTargetSnapshotSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaConfirmedFieldContext.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceTargetSnapshot.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPermissionLifecycle.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceServiceConnection.swift" \
@@ -634,6 +659,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
 
 # 有界后台查询自检：模拟挂起任务，不访问真实窗口。
 /usr/bin/swiftc "$ROOT_DIR/Tools/InputiaWindowTitleQuerySelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaConfirmedFieldContext.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaVoiceTargetSnapshot.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPermissionLifecycle.swift" \
   -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-window-title-query-self-check"

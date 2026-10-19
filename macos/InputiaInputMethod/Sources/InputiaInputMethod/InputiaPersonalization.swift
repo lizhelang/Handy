@@ -197,6 +197,7 @@ final class InputiaPersonalization {
     let candidates: [InputiaPersonalCandidate]
     let predictions: [InputiaPersonalPrediction]
     let generation: UInt64
+    let queryContext: String
   }
   struct Admission {
     let targetID: String
@@ -216,11 +217,14 @@ final class InputiaPersonalization {
   private(set) var epoch: UInt64 = 0
   private var server: String?
   private var enabled = false
+  private(set) var explicitlyDisabled = false
   private var deadline: TimeInterval = 0
   private var timer: Timer?
   private var privacyRevision: UInt64 = 0
   private var privacyObserver: NSObjectProtocol?
   private var policyBusy = false
+  private var predictionPolicyRefreshUsed = false
+  private var predictionPolicyRefreshPending = false
   private var queryBusy = false
   private var feedbackCount = 0
   private var admissionTicket: UInt64?
@@ -239,20 +243,40 @@ final class InputiaPersonalization {
     let candidates: [InputiaPersonalCandidate]
   }
   private struct CacheEntry { let key: CacheKey; let view: View; let expiry: TimeInterval }
+  private final class QueryRequest {
+    let key: CacheKey
+    let version: UInt64
+    let deadline: TimeInterval
+    let originalIsCurrent: (() -> Bool)?
+    var latestIsCurrent: (() -> Bool)?
+    var completion: (View) -> Void
+    init(key: CacheKey, version: UInt64, deadline: TimeInterval, isCurrent: (() -> Bool)?,
+      completion: @escaping (View) -> Void) {
+      self.key = key; self.version = version; self.deadline = deadline
+      originalIsCurrent = isCurrent; latestIsCurrent = isCurrent; self.completion = completion
+    }
+  }
+  private var activeQuery: QueryRequest?
   private var cache: [CacheEntry] = []
   var changed: (() -> Void)?
   var policyChanged: (() -> Void)?
+  var ownContextInvalidated: ((String) -> Void)?
   var allowed: Bool { enabled && ProcessInfo.processInfo.systemUptime < deadline }
   func start() {
     guard timer == nil else { return }
-    privacyObserver = NotificationCenter.default.addObserver(forName: Notification.Name("InputiaPrivacyRevoked"), object: nil, queue: nil) { [weak self] _ in
-      guard let self else { return }; self.privacyRevision &+= 1; self.enabled = false; self.deadline = 0; self.reset(); self.policyChanged?()
+    privacyObserver = NotificationCenter.default.addObserver(forName: Notification.Name("InputiaPrivacyRevoked"), object: nil, queue: nil) { [weak self] notification in
+      guard let self else { return }; self.privacyRevision &+= 1
+      let action = notification.userInfo?["owned_context_action"] as? String ?? "clear_all"
+      self.ownContextInvalidated?(action == "preserve" || action == "clear_prefix" ? action : "clear_all")
+      // 屏障必须清旧身份，但通知自身不说明新策略是否关闭了学习。
+      self.enabled = false; self.explicitlyDisabled = false; self.deadline = 0; self.reset(); self.policyChanged?()
     }
     poll()
     timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.poll() }
     if let timer { RunLoop.main.add(timer, forMode: .common) }
   }
-  func stop() { timer?.invalidate(); timer = nil; enabled = false; reset()
+  func stop() { timer?.invalidate(); timer = nil; enabled = false; explicitlyDisabled = false
+    predictionPolicyRefreshUsed = false; predictionPolicyRefreshPending = false; reset()
     if let privacyObserver { NotificationCenter.default.removeObserver(privacyObserver) }; privacyObserver = nil
   }
   deinit { if let privacyObserver { NotificationCenter.default.removeObserver(privacyObserver) } }
@@ -260,13 +284,22 @@ final class InputiaPersonalization {
   func invalidateView() {
     resultsFrozen = false
     admissionTicket = nil
+    activeQuery = nil
     ticket &+= 1; scheduledQuery?.cancel(); scheduledQuery = nil
     waitingQuery?.cancel(); waitingQuery = nil; view = nil; changed?()
   }
   /// 用户开始浏览候选后保留当前顺序，正在飞行的查询不能改写数字键身份。
   func freezeResults() {
     resultsFrozen = true
+    activeQuery = nil
     scheduledQuery?.cancel(); scheduledQuery = nil; waitingQuery?.cancel(); waitingQuery = nil
+  }
+  /// 由仍有效的联想会话调用；每个持续不可用期只提前读取一次，失败仍等待原定时器。
+  func refreshPolicyForPrediction() {
+    guard timer != nil, !allowed, !explicitlyDisabled, !predictionPolicyRefreshUsed else { return }
+    predictionPolicyRefreshUsed = true
+    if policyBusy { predictionPolicyRefreshPending = true }
+    else { poll() }
   }
   private func poll() {
     guard !policyBusy else { return }
@@ -275,16 +308,27 @@ final class InputiaPersonalization {
     let privacyVersion = privacyRevision
     InputiaVoiceInputLauncher.personalization(.init(kind: "policy"), deadline: start + 2) { [weak self] reply in
       guard let self else { return }; self.policyBusy = false
+      defer {
+        if self.predictionPolicyRefreshPending {
+          self.predictionPolicyRefreshPending = false
+          if self.timer != nil, !self.allowed, !self.explicitlyDisabled { self.poll() }
+        }
+      }
       guard self.privacyRevision == privacyVersion else { return }
       InputiaPersonalizationDiagnostics.record("policy", reply?.code ?? (reply == nil ? "no_reply" : "ok"),
         flags: (reply?.enabled == true ? 1 : 0) | (ProcessInfo.processInfo.systemUptime < start + 2 ? 2 : 0) | (self.timer != nil ? 4 : 0))
       guard self.timer != nil || self.allowed else { return }
-      guard let reply, ProcessInfo.processInfo.systemUptime < start + 2 else {
-        self.enabled = false; self.reset(); return
+      guard let reply, reply.code == nil, ProcessInfo.processInfo.systemUptime < start + 2 else {
+        self.failClosed(); return
+      }
+      if (self.epoch != 0 && self.epoch != reply.epoch)
+        || (self.server != nil && self.server != reply.server_instance) {
+        self.ownContextInvalidated?("clear_all")
       }
       if self.epoch != reply.epoch || self.server != reply.server_instance || !reply.enabled { self.reset() }
       self.epoch = reply.epoch; self.server = reply.server_instance
-      self.enabled = reply.enabled; self.deadline = start + 2
+      self.enabled = reply.enabled; self.explicitlyDisabled = !reply.enabled; self.deadline = start + 2
+      if self.allowed { self.predictionPolicyRefreshUsed = false }
       self.policyChanged?()
       let expiry = self.deadline
       DispatchQueue.main.asyncAfter(deadline: .now() + max(0, expiry - ProcessInfo.processInfo.systemUptime)) { [weak self] in
@@ -296,35 +340,65 @@ final class InputiaPersonalization {
   func bind(_ target: InputiaVoiceTarget) {
     if context.targetID != target.target_id { reset(); context.bind(target.target_id) }
   }
+  private func failClosed(explicitlyDisabled: Bool = false) {
+    enabled = false; self.explicitlyDisabled = explicitlyDisabled; reset(); policyChanged?()
+  }
   func query(target: InputiaVoiceTarget, code: String, schemaID: String = "", candidates: [InputiaPersonalCandidate],
+    predictionContext: String? = nil, isCurrent: (() -> Bool)? = nil,
     completion: @escaping (View) -> Void) {
-    guard allowed, !resultsFrozen, target.field_id != nil, candidates.count <= 64, let server else { return }
+    guard allowed, !resultsFrozen, target.field_id != nil, candidates.count <= 64, let server,
+      isCurrent?() != false, predictionContext.map({ code.isEmpty && $0.unicodeScalars.count <= 512 }) ?? true else { return }
     bind(target)
+    let contextVersion = context.generation
+    // 明确上屏文字仅作本次只读查询；bind清理旧目标时不能吞掉它，也不能回写学习上下文。
+    let key = CacheKey(target: target, code: code, schemaID: schemaID, context: predictionContext ?? context.text,
+      contextGeneration: contextVersion, epoch: epoch, server: server, candidates: candidates)
+    if let request = activeQuery, request.key == key, queryIsCurrent(request) {
+      // 完全相同的读取沿用原票据、期限及重试次数；只保留最新UI接收者。
+      request.latestIsCurrent = isCurrent; request.completion = completion
+      return
+    }
     ticket &+= 1
     let version = ticket
-    let contextVersion = context.generation
+    activeQuery = nil
     scheduledQuery?.cancel(); waitingQuery?.cancel(); waitingQuery = nil
-    let key = CacheKey(target: target, code: code, schemaID: schemaID, context: context.text,
-      contextGeneration: contextVersion, epoch: epoch, server: server, candidates: candidates)
     let now = ProcessInfo.processInfo.systemUptime
     cache.removeAll { $0.expiry <= now }
     if let hit = cache.first(where: { $0.key == key }) {
       let restored = View(target: target, code: code, schemaID: schemaID, epoch: epoch,
-        candidates: hit.view.candidates, predictions: hit.view.predictions, generation: version)
+        candidates: hit.view.candidates, predictions: hit.view.predictions, generation: version, queryContext: key.context)
       view = restored; completion(restored); return
     }
+    let request = QueryRequest(key: key, version: version, deadline: deadline, isCurrent: isCurrent, completion: completion)
+    activeQuery = request
+    scheduleQuery(request, attempt: 0)
+  }
+  private func queryIsCurrent(_ request: QueryRequest) -> Bool {
+    activeQuery === request && allowed && !resultsFrozen && server == request.key.server
+      && ProcessInfo.processInfo.systemUptime < request.deadline
+      && InputiaPersonalContext.replyIsCurrent(ticket: ticket, expectedTicket: request.version,
+        target: context.targetID, expectedTarget: request.key.target.target_id, context: context.generation,
+        expectedContext: request.key.contextGeneration, epoch: epoch, expectedEpoch: request.key.epoch)
+      && request.originalIsCurrent?() != false && request.latestIsCurrent?() != false
+  }
+  private func finishQuery(_ request: QueryRequest) {
+    guard activeQuery === request else { return }
+    activeQuery = nil; scheduledQuery = nil
+  }
+  private func scheduleQuery(_ request: QueryRequest, attempt: Int) {
     let work = DispatchWorkItem { [weak self] in
-      guard let self, self.allowed, !self.resultsFrozen, self.ticket == version,
-        self.context.generation == contextVersion, let server = self.server else { return }
+      guard let self else { return }
+      guard self.queryIsCurrent(request) else { self.finishQuery(request); return }
       if self.queryBusy {
         self.waitingQuery?.cancel(); self.waitingQuery = self.scheduledQuery
         return
       }
       self.queryBusy = true
-      let sentEpoch = self.epoch
-      let command = InputiaPersonalCommand(kind: "query", target: target, learning_epoch: sentEpoch,
-        input_code: code, schema_id: schemaID, context: self.context.text, context_id: target.target_id, candidates: candidates, limit: code.isEmpty ? 3 : 5)
-      InputiaVoiceInputLauncher.personalization(command, deadline: self.deadline, expectedServer: server) { [weak self] reply in
+      let key = request.key, version = request.version, requestDeadline = request.deadline
+      let command = InputiaPersonalCommand(kind: "query", target: key.target, learning_epoch: key.epoch,
+        input_code: key.code, schema_id: key.schemaID, context: key.context, context_id: key.target.target_id,
+        candidates: key.candidates, limit: key.code.isEmpty ? 3 : 5)
+      InputiaVoiceInputLauncher.personalization(command, deadline: requestDeadline, expectedServer: key.server) { [weak self] reply in
         guard let self else { return }; self.queryBusy = false
         InputiaPersonalizationDiagnostics.record("query", reply?.code ?? (reply == nil ? "no_reply" : "ok"),
           flags: (reply?.enabled == true ? 1 : 0) | (self.ticket == version ? 2 : 0),
@@ -335,32 +409,44 @@ final class InputiaPersonalization {
             DispatchQueue.main.async(execute: waiting)
           }
         }
-        if let reply, !reply.enabled || reply.epoch != sentEpoch || reply.code != nil {
-          self.enabled = false; self.reset(); return
+        // 迟到的拒绝与成功一样，先核验归属；旧请求不能撤销新会话。
+        guard self.queryIsCurrent(request) else { self.finishQuery(request); return }
+        guard let reply, reply.server_instance == key.server else {
+          self.failClosed(); return
         }
-        guard self.allowed, !self.resultsFrozen, InputiaPersonalContext.replyIsCurrent(ticket: self.ticket, expectedTicket: version,
-          target: self.context.targetID, expectedTarget: target.target_id, context: self.context.generation,
-          expectedContext: contextVersion, epoch: self.epoch, expectedEpoch: sentEpoch),
-          let reply, reply.enabled, reply.epoch == sentEpoch, reply.server_instance == server,
-          let result = reply.result, result.context_id == target.target_id else { return }
+        guard reply.enabled else { self.failClosed(explicitlyDisabled: true); return }
+        guard reply.epoch == key.epoch else { self.failClosed(); return }
+        if reply.code == "target_query_busy" {
+          // broker尚未给出字段证明：撤下旧结果和准入，仅保留已确认的本地文字。
+          self.cache.removeAll(); self.view = nil; self.admissionTicket = nil; self.changed?()
+          if attempt < 2, self.queryIsCurrent(request) { self.scheduleQuery(request, attempt: attempt + 1) }
+          else { self.finishQuery(request) }
+          return
+        }
+        guard reply.code == nil, let result = reply.result, result.context_id == key.target.target_id else {
+          self.failClosed(); return
+        }
+        let candidates = key.candidates
         let ids = result.ordered_ids ?? []
-        guard InputiaPersonalContext.validOrder(ids, candidates: candidates.map { ($0.id, $0.text) }) else { return }
+        guard InputiaPersonalContext.validOrder(ids, candidates: candidates.map { ($0.id, $0.text) }) else { self.finishQuery(request); return }
         let byID = Dictionary(candidates.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let ordered = ids.compactMap { byID[$0] } + candidates.filter { !ids.contains($0.id) }
-        let recalled = Self.validatedRecall(result.recalled_candidates ?? [], code: code, candidates: candidates)
+        let recalled = Self.validatedRecall(result.recalled_candidates ?? [], code: key.code, candidates: candidates)
         // 无共同评分标尺时保留原生首选，精确个人词紧随其后，仍保留独立学习身份。
         let merged = Array(ordered.prefix(1)) + recalled + Array(ordered.dropFirst())
         let predictions = (result.predictions ?? []).filter { !$0.text.isEmpty && $0.text.count <= 64 }.prefix(5)
-        let view = View(target: target, code: code, schemaID: schemaID, epoch: sentEpoch, candidates: merged,
-          predictions: Array(predictions), generation: version)
+        let view = View(target: key.target, code: key.code, schemaID: key.schemaID, epoch: key.epoch, candidates: merged,
+          predictions: Array(predictions), generation: version, queryContext: key.context)
         self.cache.removeAll { $0.key == key }
-        self.cache.append(CacheEntry(key: key, view: view, expiry: min(self.deadline, ProcessInfo.processInfo.systemUptime + 2)))
+        self.cache.append(CacheEntry(key: key, view: view, expiry: min(requestDeadline, self.deadline, ProcessInfo.processInfo.systemUptime + 2)))
         if self.cache.count > 16 { self.cache.removeFirst(self.cache.count - 16) }
-        self.view = view; completion(view)
+        self.finishQuery(request)
+        self.view = view; request.completion(view)
       }
     }
     scheduledQuery = work
-    DispatchQueue.main.async(execute: work)
+    if attempt == 0 { DispatchQueue.main.async(execute: work) }
+    else { DispatchQueue.main.asyncAfter(deadline: .now() + Double(attempt) * 0.05, execute: work) }
   }
   static func validatedRecall(_ recalled: [InputiaPersonalCandidate], code: String,
     candidates: [InputiaPersonalCandidate]) -> [InputiaPersonalCandidate] {
@@ -386,6 +472,7 @@ final class InputiaPersonalization {
     }
     guard allowed, admissionTicket == nil, isPrediction || isRecall, selected.epoch == epoch,
       selected.generation == ticket, view?.generation == ticket,
+      view?.queryContext == selected.queryContext,
       context.targetID == selected.target.target_id,
       let server else { completion(nil); return }
     admissionTicket = ticket
@@ -393,7 +480,7 @@ final class InputiaPersonalization {
       contextGeneration: context.generation, server: server,
       deadline: min(deadline, ProcessInfo.processInfo.systemUptime + 0.75))
     let command = InputiaPersonalCommand(kind: "admit", target: selected.target, learning_epoch: epoch,
-      input_code: selected.code, schema_id: selected.schemaID, context: context.text, context_id: selected.target.target_id, text: prediction.text, prediction_id: prediction.id)
+      input_code: selected.code, schema_id: selected.schemaID, context: selected.queryContext, context_id: selected.target.target_id, text: prediction.text, prediction_id: prediction.id)
     InputiaVoiceInputLauncher.personalization(command, deadline: receipt.deadline, expectedServer: server) { [weak self] reply in
       guard let self else { completion(nil); return }
       if self.admissionTicket == receipt.ticket { self.admissionTicket = nil }
@@ -402,8 +489,9 @@ final class InputiaPersonalization {
         reply.code == nil, reply.result?.admitted == true,
         reply.result?.prediction_id == prediction.id, reply.result?.context_id == receipt.targetID,
         self.admissionIsCurrent(receipt) else {
-        self.reset()
-        if let reply, !reply.enabled || reply.epoch != self.epoch { self.enabled = false }
+        if let reply, !reply.enabled || reply.epoch != self.epoch {
+          self.failClosed(explicitlyDisabled: !reply.enabled && reply.server_instance == server)
+        } else { self.reset() }
         completion(nil); return
       }
       completion(receipt)
@@ -421,10 +509,24 @@ final class InputiaPersonalization {
     cache.removeAll()
     if appendContext { context.append(text) }
     invalidateView(); feedbackCount += 1
+    let contextVersion = context.generation
+    let version = ticket
     InputiaVoiceInputLauncher.personalization(command, deadline: deadline, expectedServer: server) { [weak self] reply in
       guard let self else { return }; self.feedbackCount -= 1
-      guard self.allowed, self.epoch == receipt.epoch, self.context.targetID == target.target_id,
-        let reply, reply.enabled, reply.epoch == receipt.epoch, reply.code == nil else { self.reset(); return }
+      guard self.allowed, self.epoch == receipt.epoch, self.server == server,
+        self.context.targetID == target.target_id, self.context.generation == contextVersion else { return }
+      if let reply, reply.enabled, reply.epoch == receipt.epoch, reply.server_instance == server, reply.code == nil {
+        completion(); return
+      }
+      // 反馈可能已经写入服务端。迟到失败不能清新查询，忙碌也绝不能自动重放写入。
+      guard self.ticket == version else { return }
+      guard let reply, reply.server_instance == server else {
+        self.failClosed(); return
+      }
+      guard reply.enabled else { self.failClosed(explicitlyDisabled: true); return }
+      guard reply.epoch == receipt.epoch else { self.failClosed(); return }
+      guard reply.code == "target_query_busy" else { self.failClosed(); return }
+      self.cache.removeAll(); self.view = nil; self.admissionTicket = nil; self.changed?()
       completion()
     }
     return receipt

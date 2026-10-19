@@ -82,7 +82,9 @@ impl PersonalizationRequest {
     /// 限定当前对端、策略与原字段；服务端另行核验活的AX字段与学习世代。
     pub fn validate_for(&self, peer: &VoicePeer<'_>) -> Result<(), ProtocolError> {
         let clean = |s: &str, n: usize| s.len() <= n && !s.chars().any(char::is_control);
-        let bounded_context = |s: &str| s.chars().count() <= 64 && clean(s, 1024);
+        // 查询可利用本字段已确认的较长前文；学习反馈仍保持原来的短上下文边界。
+        let query_context = |s: &str| s.chars().count() <= 512 && clean(s, 2048);
+        let feedback_context = |s: &str| s.chars().count() <= 64 && clean(s, 1024);
         let bridge = match &self.personalization {
             PersonalizationCommand::Policy => TargetBridgeCommand::Status,
             PersonalizationCommand::Admit {
@@ -98,7 +100,7 @@ impl PersonalizationRequest {
                 if *learning_epoch == 0
                     || context_id != &target.target_id
                     || target.field_id.as_deref() != Some(target.target_id.as_str())
-                    || !bounded_context(context)
+                    || !query_context(context)
                     || !clean(input_code, 256)
                     || !clean(schema_id, 128)
                     || (!input_code.is_empty() && (schema_id.is_empty() || !input_code.is_ascii()))
@@ -128,7 +130,7 @@ impl PersonalizationRequest {
                 if *learning_epoch == 0
                     || !clean(input_code, 256)
                     || !clean(schema_id, 128)
-                    || !bounded_context(context)
+                    || !query_context(context)
                     || context_id != &target.target_id
                     || target.field_id.as_deref() != Some(target.target_id.as_str())
                     || candidates.len() > 64
@@ -163,7 +165,7 @@ impl PersonalizationRequest {
                     || !clean(schema_id, 128)
                     || !clean(text, 512)
                     || text.trim().is_empty()
-                    || !bounded_context(previous)
+                    || !feedback_context(previous)
                     || context_id != &target.target_id
                     || target.field_id.as_deref() != Some(target.target_id.as_str())
                     || *original_rank > 1000
