@@ -1260,6 +1260,17 @@ pub fn run(cli_args: CliArgs) {
                     Ok(()) => log::info!("service_lifecycle window_close label={} action=hide service=running", window.label()),
                     Err(error) => log::warn!("service_lifecycle window_close label={} action=hide_failed service=running error={error}", window.label()),
                 }
+                // 关闭控制中心只收起界面：退回 Accessory，Dock 不再保留图标，
+                // 后台语音与输入服务继续运行。再次打开时 show_main_window 会提升回 Regular。
+                #[cfg(target_os = "macos")]
+                if window.label() == "main" {
+                    if let Err(error) = window
+                        .app_handle()
+                        .set_activation_policy(tauri::ActivationPolicy::Accessory)
+                    {
+                        log::warn!("service_lifecycle window_close action=dock_hide_failed error={error}");
+                    }
+                }
             }
             tauri::WindowEvent::ThemeChanged(theme) => {
                 log::info!("Theme changed to: {:?}", theme);
