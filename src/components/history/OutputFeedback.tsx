@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
+  acknowledgeOutputNotice,
   listUnresolvedOutputs,
   listenForOutputResults,
   type OutputResult,
@@ -14,7 +15,6 @@ const seenResults = new Map<
 >();
 const activeNotices = new Map<string, OutputResult>();
 let startupSummaryClaimed = false;
-let liveResultSeen = false;
 
 function rememberResult(result: OutputResult) {
   const previous = seenResults.get(result.operation_id);
@@ -91,16 +91,23 @@ export function OutputFeedback({
     };
     const unlisten = listenForOutputResults((result) => {
       if (!active) return;
-      liveResultSeen = true;
-      // 标准粘贴已派发不等于失败；保存失败单独说明，不冒充插入成功。
-      if (result.state === "dispatched" && result.history_saved !== false)
-        return;
-      if (!rememberResult(result)) return;
-      if (result.state === "confirmed" && result.history_saved !== false) {
+      // 已保存在历史记录中的普通未插入结果不再反复弹窗提醒。
+      if (result.history_saved !== false) {
+        if (
+          result.state === "pending_target" ||
+          result.state === "rejected" ||
+          result.state === "uncertain"
+        ) {
+          void acknowledgeOutputNotice({
+            operation_id: result.operation_id,
+            item_id: result.operation_id,
+            state: result.state,
+          }).catch(() => {});
+        }
         if (activeNotices.delete(result.operation_id)) showActiveNotice();
         return;
       }
-      // 同一提示汇总实时故障，未知结果不能被另一条普通拒绝覆盖。
+      if (!rememberResult(result)) return;
       const previous = activeNotices.get(result.operation_id);
       activeNotices.delete(result.operation_id);
       activeNotices.set(result.operation_id, {
@@ -114,21 +121,14 @@ export function OutputFeedback({
     });
     void unlisten
       .then(async () => {
-        if (!active || startupSummaryClaimed || liveResultSeen) return;
+        if (!active || startupSummaryClaimed) return;
         startupSummaryClaimed = true;
         const page = await listUnresolvedOutputs();
-        if (active && !liveResultSeen && page.items.length) {
-          toast.info(t("unifiedHistory.outputNotices.startupSummary"), {
-            id: notificationId,
-            duration: 8000,
-            closeButton: true,
-            action,
-          });
+        for (const item of page.items) {
+          await acknowledgeOutputNotice(item).catch(() => {});
         }
       })
-      .catch(() => {
-        // 历史页保留可重试的查询错误，不将失败查询当作空收件箱。
-      });
+      .catch(() => {});
     return () => {
       active = false;
       void unlisten.then((stop) => stop()).catch(() => {});

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { commands } from "@/bindings";
 import { UnifiedHistory } from "./UnifiedHistory";
-import { UnresolvedOutputNotices } from "./UnresolvedOutputNotices";
 import { requireActiveOutputAttempt } from "@/stores/unifiedOutputStore";
 import type {
   UnifiedHistoryActionResult,
@@ -36,7 +35,6 @@ export function UnifiedHistoryPage() {
   }, []);
   return (
     <div className="flex h-full w-full min-h-0 flex-col">
-      <UnresolvedOutputNotices />
       <div className="min-h-0 min-w-0 w-full flex-1">
         <UnifiedHistory
           onCheckOutputReceipt={async (operationId) => {

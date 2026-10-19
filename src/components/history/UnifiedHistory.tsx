@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import {
+  ChevronDown,
+  ChevronRight,
   Clipboard,
   Copy,
   File,
@@ -9,7 +11,6 @@ import {
   Pin,
   Search,
   Star,
-  X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ConfirmHistoryTerm } from "./ConfirmHistoryTerm";
@@ -420,47 +421,62 @@ export function UnifiedHistory({
           {t(`unifiedHistory.feedback.${feedbackMessage}`)}
         </p>
       )}
-      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-4 md:grid-cols-2">
-        <div
-          className="min-h-0 min-w-0 overflow-y-auto"
-          aria-busy={state.loading}
+      <div
+        className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+        aria-busy={state.loading}
+      >
+        <ul
+          aria-label={t("unifiedHistory.entries")}
+          className="divide-y divide-text/10 rounded-md border border-text/10"
         >
-          <ul
-            aria-label={t("unifiedHistory.entries")}
-            className="divide-y divide-text/10 rounded-md border border-text/10"
-          >
-            {state.items.map((item) => (
+          {state.items.map((item) => {
+            const isExpanded =
+              item.item_id === state.selectedId && state.previewOpen;
+            const detailBody =
+              item.content_type === "files"
+                ? fileNames(item).join("\n")
+                : item.text?.trim() || "";
+            const collapsedSummary =
+              (item.content_type === "files"
+                ? item.title || fileNames(item).join(", ")
+                : item.source_kind === "voice"
+                  ? item.text?.trim() || item.title
+                  : item.title || item.text?.trim()) ||
+              t(`unifiedHistory.types.${item.content_type}`);
+
+            return (
               <li
                 key={item.item_id}
                 tabIndex={0}
-                aria-current={
-                  item.item_id === state.selectedId ? "true" : undefined
-                }
-                onFocus={(event) => {
-                  if (
-                    event.target === event.currentTarget &&
-                    state.selectedId !== item.item_id
-                  )
+                aria-current={isExpanded ? "true" : undefined}
+                aria-expanded={isExpanded}
+                onClick={(event) => {
+                  if (event.detail > 1) return;
+                  if (isExpanded) {
+                    state.closePreview();
+                  } else {
                     state.select(item.item_id);
+                  }
                 }}
-                onClick={() => state.select(item.item_id)}
                 onDoubleClick={(event) => {
-                  if (!(event.target as HTMLElement).closest("button"))
+                  if (
+                    !(event.target as HTMLElement).closest(
+                      "button, input, textarea, select, summary",
+                    )
+                  ) {
+                    if (!isExpanded) state.select(item.item_id);
                     void output(item, "insert");
+                  }
                 }}
-                className={`cursor-default p-3 outline-none focus:ring-1 focus:ring-inset focus:ring-logo-primary ${item.item_id === state.selectedId ? "bg-logo-primary/10" : "hover:bg-text/5"}`}
+                className={`cursor-pointer p-3 outline-none transition-colors focus:ring-1 focus:ring-inset focus:ring-logo-primary ${isExpanded ? "bg-logo-primary/10" : "hover:bg-text/5"}`}
               >
-                <div className="flex items-start gap-2.5">
+                <div className="flex items-center gap-2.5">
                   <ItemIcon item={item} />
                   <div className="min-w-0 flex-1">
-                    <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm">
-                      {item.title ||
-                        (item.content_type === "files"
-                          ? fileNames(item).join(", ")
-                          : item.text) ||
-                        t(`unifiedHistory.types.${item.content_type}`)}
+                    <p className="truncate text-sm font-medium">
+                      {collapsedSummary}
                     </p>
-                    <p className="mt-1 line-clamp-2 break-words [overflow-wrap:anywhere] text-xs text-text/50">
+                    <p className="mt-1 truncate text-xs text-text/50">
                       {t(`unifiedHistory.sources.${item.source_kind}`)} ·{" "}
                       {new Date(item.created_at_ms).toLocaleString(
                         i18n.language,
@@ -469,7 +485,11 @@ export function UnifiedHistory({
                     </p>
                   </div>
                   {item.pinned && (
-                    <Pin size={13} aria-label={t("unifiedHistory.pinned")} />
+                    <Pin
+                      size={13}
+                      aria-label={t("unifiedHistory.pinned")}
+                      className="shrink-0 text-text/50"
+                    />
                   )}
                   <button
                     aria-label={
@@ -483,259 +503,268 @@ export function UnifiedHistory({
                       event.stopPropagation();
                       void update(item, { starred: !item.starred });
                     }}
-                    className="rounded p-1 text-text/50 hover:text-accent-text"
+                    className="shrink-0 rounded p-1 text-text/50 hover:text-accent-text"
                   >
                     <Star
                       size={15}
                       fill={item.starred ? "currentColor" : "none"}
                     />
                   </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-          {state.loading && (
-            <p role="status" className="p-4 text-sm text-text/50">
-              {t("unifiedHistory.loading")}
-            </p>
-          )}
-          {!state.loading && !state.error && state.items.length === 0 && (
-            <p className="p-8 text-center text-sm text-text/50">
-              {t("unifiedHistory.empty")}
-            </p>
-          )}
-          {state.hasMore && (
-            <button
-              className={`${buttonClass} mt-3 w-full`}
-              disabled={state.loading}
-              onClick={() => void state.load(true)}
-            >
-              {t("unifiedHistory.loadMore")}
-            </button>
-          )}
-        </div>
-        {(!selected || !state.previewOpen) && (
-          <div className="flex min-h-0 min-w-0 items-center justify-center rounded-md border border-text/10 p-8 text-center text-sm text-text/45">
-            {t("unifiedHistory.previewHint")}
-          </div>
-        )}
-        {selected && state.previewOpen && (
-          <aside
-            aria-label={t("unifiedHistory.preview")}
-            className="min-h-0 min-w-0 space-y-4 overflow-y-auto rounded-md border border-text/10 p-4"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold">
-                {t("unifiedHistory.preview")}
-              </h2>
-              <button
-                aria-label={t("unifiedHistory.closePreview")}
-                onClick={state.closePreview}
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <Attachment item={selected} resolveAsset={resolveAsset} />
-            {editing ? (
-              <div data-history-editor className="space-y-2">
-                <label className="block text-sm">
-                  {t("unifiedHistory.title")}
-                  <input
-                    aria-label={t("unifiedHistory.title")}
-                    className={`${inputClass} mt-1 w-full`}
-                    value={title}
-                    onChange={(event) => setTitle(event.target.value)}
-                  />
-                </label>
-                {selected.content_type === "text" && (
-                  <label className="block text-sm">
-                    {t("unifiedHistory.body")}
-                    <textarea
-                      aria-label={t("unifiedHistory.body")}
-                      className={`${inputClass} mt-1 min-h-32 w-full`}
-                      value={text}
-                      onChange={(event) => setText(event.target.value)}
+                  {isExpanded ? (
+                    <ChevronDown
+                      size={16}
+                      aria-hidden="true"
+                      className="shrink-0 text-text/50"
                     />
-                  </label>
-                )}
-                <div className="flex gap-2">
-                  <button
-                    disabled={busy}
-                    className={buttonClass}
-                    onClick={() =>
-                      editingItem &&
-                      void update(editingItem, {
-                        title: title.trim() || null,
-                        ...(editingItem.content_type === "text" &&
-                        text !== editingItem.text
-                          ? { text }
-                          : {}),
-                      })
-                    }
-                  >
-                    {t("unifiedHistory.save")}
-                  </button>
-                  <button
-                    className={buttonClass}
-                    disabled={busy}
-                    onClick={() => setEditing(false)}
-                  >
-                    {t("unifiedHistory.cancel")}
-                  </button>
+                  ) : (
+                    <ChevronRight
+                      size={16}
+                      aria-hidden="true"
+                      className="shrink-0 text-text/45"
+                    />
+                  )}
                 </div>
-              </div>
-            ) : (
-              <>
-                <h3 className="break-words [overflow-wrap:anywhere] text-sm font-medium">
-                  {selected.title}
-                </h3>
-                <pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-sans text-sm leading-relaxed">
-                  {selected.content_type === "files"
-                    ? fileNames(selected).join("\n")
-                    : selected.text}
-                </pre>
-              </>
-            )}
-            <div className="flex flex-wrap gap-2">
-              {onRetranscribe &&
-                selected.source_kind === "voice" &&
-                selected.asset_ref && (
-                  <button
-                    className={buttonClass}
-                    disabled={busy}
-                    onClick={() =>
-                      void recordingAction(() => onRetranscribe(selected), true)
-                    }
+
+                {isExpanded && selected && (
+                  <aside
+                    aria-label={t("unifiedHistory.preview")}
+                    onClick={(event) => event.stopPropagation()}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                    className="mt-3 cursor-default space-y-3 border-t border-text/10 pt-3"
                   >
-                    {t("settings.history.retranscribe")}
-                  </button>
-                )}
-              {(["insert", "copy"] as const).map(
-                (action) =>
-                  outputNeedsAcknowledgement(
-                    getOutputAttempt(selected.item_id, action),
-                  ) && (
-                    <span key={action} className="contents">
-                      {onCheckOutputReceipt && (
-                        <button
-                          className={buttonClass}
-                          disabled={busy || outputs.storageFailed}
-                          onClick={() => void output(selected, action, true)}
-                        >
-                          {t("unifiedHistory.checkOutputReceipt")}
-                        </button>
+                    <Attachment item={selected} resolveAsset={resolveAsset} />
+                    {editing ? (
+                      <div data-history-editor className="space-y-2">
+                        <label className="block text-sm">
+                          {t("unifiedHistory.title")}
+                          <input
+                            aria-label={t("unifiedHistory.title")}
+                            className={`${inputClass} mt-1 w-full`}
+                            value={title}
+                            onChange={(event) => setTitle(event.target.value)}
+                          />
+                        </label>
+                        {selected.content_type === "text" && (
+                          <label className="block text-sm">
+                            {t("unifiedHistory.body")}
+                            <textarea
+                              aria-label={t("unifiedHistory.body")}
+                              className={`${inputClass} mt-1 min-h-32 w-full`}
+                              value={text}
+                              onChange={(event) => setText(event.target.value)}
+                            />
+                          </label>
+                        )}
+                        <div className="flex gap-2">
+                          <button
+                            disabled={busy}
+                            className={buttonClass}
+                            onClick={() =>
+                              editingItem &&
+                              void update(editingItem, {
+                                title: title.trim() || null,
+                                ...(editingItem.content_type === "text" &&
+                                text !== editingItem.text
+                                  ? { text }
+                                  : {}),
+                              })
+                            }
+                          >
+                            {t("unifiedHistory.save")}
+                          </button>
+                          <button
+                            className={buttonClass}
+                            disabled={busy}
+                            onClick={() => setEditing(false)}
+                          >
+                            {t("unifiedHistory.cancel")}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      detailBody && (
+                        <pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-md bg-text/[0.03] p-3 font-sans text-sm leading-relaxed">
+                          {detailBody}
+                        </pre>
+                      )
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      {onRetranscribe &&
+                        selected.source_kind === "voice" &&
+                        selected.asset_ref && (
+                          <button
+                            className={buttonClass}
+                            disabled={busy}
+                            onClick={() =>
+                              void recordingAction(
+                                () => onRetranscribe(selected),
+                                true,
+                              )
+                            }
+                          >
+                            {t("settings.history.retranscribe")}
+                          </button>
+                        )}
+                      {(["insert", "copy"] as const).map(
+                        (action) =>
+                          outputNeedsAcknowledgement(
+                            getOutputAttempt(selected.item_id, action),
+                          ) && (
+                            <span key={action} className="contents">
+                              {onCheckOutputReceipt && (
+                                <button
+                                  className={buttonClass}
+                                  disabled={busy || outputs.storageFailed}
+                                  onClick={() =>
+                                    void output(selected, action, true)
+                                  }
+                                >
+                                  {t("unifiedHistory.checkOutputReceipt")}
+                                </button>
+                              )}
+                              <button
+                                className={buttonClass}
+                                disabled={busy}
+                                onClick={() => {
+                                  outputs.acknowledge(selected.item_id, action);
+                                  setFeedback(null);
+                                }}
+                              >
+                                {t(
+                                  action === "insert"
+                                    ? "unifiedHistory.allowAnotherInsert"
+                                    : "unifiedHistory.allowAnotherCopy",
+                                )}
+                              </button>
+                            </span>
+                          ),
                       )}
+                      <button
+                        className={`${buttonClass} border-logo-primary/40`}
+                        disabled={
+                          busy ||
+                          outputs.storageFailed ||
+                          outputNeedsAcknowledgement(insertAttempt)
+                        }
+                        onClick={() => void output(selected, "insert")}
+                      >
+                        {t("unifiedHistory.insert")}
+                      </button>
+                      <button
+                        className={`${buttonClass} inline-flex items-center gap-1.5`}
+                        disabled={
+                          busy ||
+                          outputs.storageFailed ||
+                          outputNeedsAcknowledgement(copyAttempt)
+                        }
+                        onClick={() => void output(selected, "copy")}
+                      >
+                        <Copy size={14} aria-hidden="true" />
+                        {t("unifiedHistory.copy")}
+                      </button>
                       <button
                         className={buttonClass}
                         disabled={busy}
                         onClick={() => {
-                          outputs.acknowledge(selected.item_id, action);
-                          setFeedback(null);
+                          setTitle(selected.title || "");
+                          setText(selected.text || "");
+                          setEditing(true);
+                          setEditingItem(selected);
                         }}
                       >
+                        {t("unifiedHistory.edit")}
+                      </button>
+                      <button
+                        className={buttonClass}
+                        disabled={busy}
+                        aria-pressed={selected.pinned}
+                        onClick={() =>
+                          void update(selected, { pinned: !selected.pinned })
+                        }
+                      >
                         {t(
-                          action === "insert"
-                            ? "unifiedHistory.allowAnotherInsert"
-                            : "unifiedHistory.allowAnotherCopy",
+                          selected.pinned
+                            ? "unifiedHistory.unpin"
+                            : "unifiedHistory.pin",
                         )}
                       </button>
-                    </span>
-                  ),
-              )}
-              <button
-                className={`${buttonClass} border-logo-primary/40`}
-                disabled={
-                  busy ||
-                  outputs.storageFailed ||
-                  outputNeedsAcknowledgement(insertAttempt)
-                }
-                onClick={() => void output(selected, "insert")}
-              >
-                {t("unifiedHistory.insert")}
-              </button>
-              <button
-                className={`${buttonClass} inline-flex items-center gap-1.5`}
-                disabled={
-                  busy ||
-                  outputs.storageFailed ||
-                  outputNeedsAcknowledgement(copyAttempt)
-                }
-                onClick={() => void output(selected, "copy")}
-              >
-                <Copy size={14} aria-hidden="true" />
-                {t("unifiedHistory.copy")}
-              </button>
-              <button
-                className={buttonClass}
-                disabled={busy}
-                onClick={() => {
-                  setTitle(selected.title || "");
-                  setText(selected.text || "");
-                  setEditing(true);
-                  setEditingItem(selected);
-                }}
-              >
-                {t("unifiedHistory.edit")}
-              </button>
-              <button
-                className={buttonClass}
-                disabled={busy}
-                aria-pressed={selected.pinned}
-                onClick={() =>
-                  void update(selected, { pinned: !selected.pinned })
-                }
-              >
-                {t(
-                  selected.pinned
-                    ? "unifiedHistory.unpin"
-                    : "unifiedHistory.pin",
+                      <button
+                        className={buttonClass}
+                        onClick={state.closePreview}
+                      >
+                        {t("unifiedHistory.closePreview")}
+                      </button>
+                    </div>
+                    {selected.content_type === "text" && (
+                      <ConfirmHistoryTerm
+                        key={`${selected.item_id}:${selected.revision}`}
+                        itemId={selected.item_id}
+                        revision={selected.revision}
+                      />
+                    )}
+                    <details>
+                      <summary className="cursor-pointer text-sm font-medium">
+                        {t("unifiedHistory.revisions")}
+                      </summary>
+                      {state.revisionsLoading && (
+                        <p className="mt-2 text-sm">
+                          {t("unifiedHistory.loading")}
+                        </p>
+                      )}
+                      {state.revisionsError && (
+                        <p role="alert" className="mt-2 text-sm">
+                          {t("unifiedHistory.errors.revisions")}{" "}
+                          <button
+                            className="underline"
+                            onClick={() => void state.loadRevisions()}
+                          >
+                            {t("unifiedHistory.retry")}
+                          </button>
+                        </p>
+                      )}
+                      <ol className="mt-3 space-y-3">
+                        {state.revisions.map((revision) => (
+                          <li
+                            key={revision.revision}
+                            className="border-l-2 border-text/10 pl-3"
+                          >
+                            <p className="text-xs text-text/50">
+                              {t("unifiedHistory.revision", {
+                                number: revision.revision,
+                              })}
+                            </p>
+                            <pre className="mt-1 whitespace-pre-wrap break-words font-sans text-sm">
+                              {revision.text ??
+                                t("unifiedHistory.attachmentRevision")}
+                            </pre>
+                          </li>
+                        ))}
+                      </ol>
+                    </details>
+                  </aside>
                 )}
-              </button>
-            </div>
-            {selected.content_type === "text" && (
-              <ConfirmHistoryTerm
-                key={`${selected.item_id}:${selected.revision}`}
-                itemId={selected.item_id}
-                revision={selected.revision}
-              />
-            )}
-            <details>
-              <summary className="cursor-pointer text-sm font-medium">
-                {t("unifiedHistory.revisions")}
-              </summary>
-              {state.revisionsLoading && (
-                <p className="mt-2 text-sm">{t("unifiedHistory.loading")}</p>
-              )}
-              {state.revisionsError && (
-                <p role="alert" className="mt-2 text-sm">
-                  {t("unifiedHistory.errors.revisions")}{" "}
-                  <button
-                    className="underline"
-                    onClick={() => void state.loadRevisions()}
-                  >
-                    {t("unifiedHistory.retry")}
-                  </button>
-                </p>
-              )}
-              <ol className="mt-3 space-y-3">
-                {state.revisions.map((revision) => (
-                  <li
-                    key={revision.revision}
-                    className="border-l-2 border-text/10 pl-3"
-                  >
-                    <p className="text-xs text-text/50">
-                      {t("unifiedHistory.revision", {
-                        number: revision.revision,
-                      })}
-                    </p>
-                    <pre className="mt-1 whitespace-pre-wrap break-words font-sans text-sm">
-                      {revision.text ?? t("unifiedHistory.attachmentRevision")}
-                    </pre>
-                  </li>
-                ))}
-              </ol>
-            </details>
-          </aside>
+              </li>
+            );
+          })}
+        </ul>
+        {state.loading && (
+          <p role="status" className="p-4 text-sm text-text/50">
+            {t("unifiedHistory.loading")}
+          </p>
+        )}
+        {!state.loading && !state.error && state.items.length === 0 && (
+          <p className="p-8 text-center text-sm text-text/50">
+            {t("unifiedHistory.empty")}
+          </p>
+        )}
+        {state.hasMore && (
+          <button
+            className={`${buttonClass} mt-3 w-full`}
+            disabled={state.loading}
+            onClick={() => void state.load(true)}
+          >
+            {t("unifiedHistory.loadMore")}
+          </button>
         )}
       </div>
     </section>
