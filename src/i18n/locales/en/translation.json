@@ -57,6 +57,8 @@
       "revisions": "Could not load revisions."
     },
     "feedback": {
+      "failedWithoutHistory": "The output failed. Check the target before trying again.",
+      "historyNotSaved": "This transcription could not be saved to history.",
       "copied": "Copied.",
       "inserted": "Inserted.",
       "dispatched": "Dispatched. The target has not confirmed insertion; automatic retry is disabled.",
@@ -403,6 +405,18 @@
             "bottom": "Bottom",
             "top": "Top"
           }
+        }
+      },
+      "dictationTargetMode": {
+        "title": "Dictation insertion location",
+        "description": "Choose where text is inserted when it is ready. Changes apply to the next recording.",
+        "options": {
+          "currentCursor": "Current cursor (default)",
+          "recordingApplication": "App where recording started"
+        },
+        "descriptions": {
+          "currentCursor": "Insert at the current cursor when the text is ready. You can switch apps while speaking.",
+          "recordingApplication": "Return to the app where recording started before insertion. You can switch apps while speaking; Inputia will not switch back for you."
         }
       },
       "pasteMethod": {
@@ -870,6 +884,22 @@
   "accessibility": {
     "permissionsDescription": "Inputia needs accessibility permissions to type transcribed text.",
     "openSettings": "Open System Settings"
+  },
+  "accessibilityDragAssist": {
+    "title": "Add Inputia to Accessibility",
+    "description": "You can drag Inputia into the Accessibility list. No need to hunt through the “+” file picker.",
+    "dragHandle": "Drag Inputia into System Settings",
+    "dragHint": "Press and drag",
+    "appLabel": "Inputia.app",
+    "stepOpen": "System Settings → Privacy & Security → Accessibility stays open.",
+    "stepDrag": "Drag this Inputia icon into the Accessibility app list.",
+    "stepToggle": "Turn on the Inputia switch, then return here.",
+    "openAssist": "Open settings and show app",
+    "revealApp": "Show Inputia.app again",
+    "opened": "Settings opened and Inputia.app is selected in Finder.",
+    "revealed": "Inputia.app is selected in Finder — drag it into the Accessibility list.",
+    "dragFallback": "Direct drag was blocked. Inputia.app is selected in Finder — drag it from there.",
+    "failed": "Could not open the helper. Open System Settings → Privacy & Security → Accessibility manually."
   },
   "errors": {
     "loadDirectory": "Error loading directory: {{error}}",

@@ -57,6 +57,8 @@
       "revisions": "无法加载修订记录。"
     },
     "feedback": {
+      "failedWithoutHistory": "输出失败，请检查目标内容后再操作。",
+      "historyNotSaved": "本次转写未能保存到历史记录。",
       "copied": "已复制。",
       "inserted": "已插入。",
       "dispatched": "已派发，目标尚未确认插入。已停用自动重试。",
@@ -403,6 +405,18 @@
             "bottom": "底部",
             "top": "顶部"
           }
+        }
+      },
+      "dictationTargetMode": {
+        "title": "语音插入位置",
+        "description": "选择文字准备好后的插入位置。更改从下次录音生效。",
+        "options": {
+          "currentCursor": "当前光标（默认）",
+          "recordingApplication": "开始录音的应用"
+        },
+        "descriptions": {
+          "currentCursor": "文字准备好后，插入当时的光标位置。讲话时可以切换应用。",
+          "recordingApplication": "插入前需回到开始录音的应用。讲话时可以切换应用，Inputia 不会自动切回。"
         }
       },
       "pasteMethod": {
@@ -867,6 +881,22 @@
   "accessibility": {
     "permissionsDescription": "Inputia 需要辅助功能权限才能输入转录的文字。",
     "openSettings": "打开系统设置"
+  },
+  "accessibilityDragAssist": {
+    "title": "把 Inputia 加到辅助功能",
+    "description": "可以直接把 Inputia 拖进辅助功能列表，不必再点「+」翻文件找应用。",
+    "dragHandle": "拖动 Inputia 到系统设置",
+    "dragHint": "按住拖动",
+    "appLabel": "Inputia.app",
+    "stepOpen": "保持「系统设置 → 隐私与安全性 → 辅助功能」打开。",
+    "stepDrag": "把这个 Inputia 图标拖进辅助功能的应用列表。",
+    "stepToggle": "打开 Inputia 开关，然后回到这里。",
+    "openAssist": "打开设置并显示应用",
+    "revealApp": "再次显示 Inputia.app",
+    "opened": "已打开设置，并在 Finder 中选中了 Inputia.app。",
+    "revealed": "已在 Finder 中选中 Inputia.app，把它拖进辅助功能列表即可。",
+    "dragFallback": "无法直接拖出。已在 Finder 中选中 Inputia.app，请从那里拖进列表。",
+    "failed": "无法打开助手。请手动打开「系统设置 → 隐私与安全性 → 辅助功能」。"
   },
   "errors": {
     "loadDirectory": "加载目录时出错: {{error}}",

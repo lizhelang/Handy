@@ -57,6 +57,8 @@
       "revisions": "Could not load revisions."
     },
     "feedback": {
+      "failedWithoutHistory": "The output failed. Check the target before trying again.",
+      "historyNotSaved": "This transcription could not be saved to history.",
       "copied": "Copied.",
       "inserted": "Inserted.",
       "dispatched": "Dispatched. The target has not confirmed insertion; automatic retry is disabled.",
@@ -403,6 +405,18 @@
             "bottom": "Dưới",
             "top": "Trên"
           }
+        }
+      },
+      "dictationTargetMode": {
+        "title": "Vị trí chèn văn bản đọc",
+        "description": "Chọn nơi chèn văn bản khi sẵn sàng. Thay đổi áp dụng từ lần ghi âm tiếp theo.",
+        "options": {
+          "currentCursor": "Con trỏ hiện tại (mặc định)",
+          "recordingApplication": "Ứng dụng khi bắt đầu ghi âm"
+        },
+        "descriptions": {
+          "currentCursor": "Văn bản được chèn tại con trỏ hiện tại khi sẵn sàng. Bạn có thể chuyển ứng dụng khi đang nói.",
+          "recordingApplication": "Quay lại ứng dụng lúc bắt đầu ghi âm trước khi chèn. Bạn có thể chuyển ứng dụng khi đang nói; Inputia sẽ không tự chuyển lại."
         }
       },
       "pasteMethod": {
@@ -867,6 +881,22 @@
   "accessibility": {
     "permissionsDescription": "Inputia cần quyền truy cập để gõ văn bản đã chuyển đổi.",
     "openSettings": "Mở Cài đặt Hệ thống"
+  },
+  "accessibilityDragAssist": {
+    "title": "Add Inputia to Accessibility",
+    "description": "You can drag Inputia into the Accessibility list. No need to hunt through the “+” file picker.",
+    "dragHandle": "Drag Inputia into System Settings",
+    "dragHint": "Press and drag",
+    "appLabel": "Inputia.app",
+    "stepOpen": "System Settings → Privacy & Security → Accessibility stays open.",
+    "stepDrag": "Drag this Inputia icon into the Accessibility app list.",
+    "stepToggle": "Turn on the Inputia switch, then return here.",
+    "openAssist": "Open settings and show app",
+    "revealApp": "Show Inputia.app again",
+    "opened": "Settings opened and Inputia.app is selected in Finder.",
+    "revealed": "Inputia.app is selected in Finder — drag it into the Accessibility list.",
+    "dragFallback": "Direct drag was blocked. Inputia.app is selected in Finder — drag it from there.",
+    "failed": "Could not open the helper. Open System Settings → Privacy & Security → Accessibility manually."
   },
   "errors": {
     "loadDirectory": "Lỗi khi tải thư mục: {{error}}",

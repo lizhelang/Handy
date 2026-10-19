@@ -12,6 +12,10 @@ mod commands;
 mod custom_words_model;
 mod data_migration;
 mod decision_worker;
+#[cfg(target_os = "macos")]
+mod dictation;
+#[cfg(target_os = "macos")]
+mod dictation_target;
 mod dispatch_gate;
 mod embedding_worker;
 mod helpers;
@@ -738,6 +742,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_paste_delay_after_ms_setting,
             shortcut::change_reliable_paste_setting,
             shortcut::change_paste_method_setting,
+            shortcut::change_dictation_target_mode_setting,
             shortcut::get_available_typing_tools,
             shortcut::change_typing_tool_setting,
             shortcut::change_external_script_path_setting,
@@ -792,6 +797,7 @@ pub fn run(cli_args: CliArgs) {
             commands::set_log_level,
             commands::open_recordings_folder,
             commands::permissions::open_inputia_permission_help,
+            commands::permissions::begin_inputia_app_bundle_drag,
             commands::open_log_dir,
             commands::open_app_data_dir,
             commands::check_apple_intelligence_available,

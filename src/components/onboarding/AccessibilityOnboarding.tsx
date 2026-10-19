@@ -13,6 +13,7 @@ import { commands } from "@/bindings";
 import { useSettingsStore } from "@/stores/settingsStore";
 import InputiaWordmark from "../icons/InputiaWordmark";
 import { InputiaPermissionHelp } from "../settings/general/InputiaPermissionHelp";
+import { AccessibilityDragAssist } from "./AccessibilityDragAssist";
 import {
   Keyboard,
   Mic,
@@ -54,6 +55,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
   const [isRechecking, setIsRechecking] = useState(false);
   const [initializationFailed, setInitializationFailed] = useState(false);
   const [inputReady, setInputReady] = useState(false);
+  const [dragAssistOpen, setDragAssistOpen] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const errorCountRef = useRef<number>(0);
@@ -341,6 +343,9 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     try {
       await requestAccessibilityPermission();
       setPermissions((prev) => ({ ...prev, accessibility: "waiting" }));
+      setDragAssistOpen(true);
+      // 同时打开系统设置并露出主程序，方便直接拖进辅助功能列表。
+      void commands.openInputiaPermissionHelp("assist");
       startPolling();
     } catch (error) {
       console.error("Failed to request accessibility permission:", error);
@@ -535,6 +540,11 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
           </button>
         )}
       </div>
+
+      <AccessibilityDragAssist
+        open={isMacOS && dragAssistOpen}
+        onClose={() => setDragAssistOpen(false)}
+      />
     </div>
   );
 };

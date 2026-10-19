@@ -5,6 +5,8 @@ import {
   checkAccessibilityPermission,
   requestAccessibilityPermission,
 } from "tauri-plugin-macos-permissions-api";
+import { commands } from "@/bindings";
+import { AccessibilityDragAssist } from "./onboarding/AccessibilityDragAssist";
 
 // Define permission state type
 type PermissionState = "request" | "verify" | "granted";
@@ -20,6 +22,7 @@ const AccessibilityPermissions: React.FC = () => {
   const [hasAccessibility, setHasAccessibility] = useState<boolean>(false);
   const [permissionState, setPermissionState] =
     useState<PermissionState>("request");
+  const [dragAssistOpen, setDragAssistOpen] = useState(false);
 
   // Accessibility permissions are only required on macOS
   const isMacOS = type() === "macos";
@@ -37,10 +40,13 @@ const AccessibilityPermissions: React.FC = () => {
     if (permissionState === "request") {
       try {
         await requestAccessibilityPermission();
+        setDragAssistOpen(true);
+        void commands.openInputiaPermissionHelp("assist");
         // After system prompt, transition to verification state
         setPermissionState("verify");
       } catch (error) {
         console.error("Error requesting permissions:", error);
+        setDragAssistOpen(true);
         setPermissionState("verify");
       }
     } else if (permissionState === "verify") {
@@ -85,21 +91,27 @@ const AccessibilityPermissions: React.FC = () => {
   const config = buttonConfig[permissionState] as ButtonConfig;
 
   return (
-    <div className="p-4 w-full rounded-lg border border-mid-gray">
-      <div className="flex justify-between items-center gap-2">
-        <div className="">
-          <p className="text-sm font-medium">
-            {t("accessibility.permissionsDescription")}
-          </p>
+    <>
+      <div className="p-4 w-full rounded-lg border border-mid-gray">
+        <div className="flex justify-between items-center gap-2">
+          <div className="">
+            <p className="text-sm font-medium">
+              {t("accessibility.permissionsDescription")}
+            </p>
+          </div>
+          <button
+            onClick={handleButtonClick}
+            className={`min-h-10 ${config.className}`}
+          >
+            {config.text}
+          </button>
         </div>
-        <button
-          onClick={handleButtonClick}
-          className={`min-h-10 ${config.className}`}
-        >
-          {config.text}
-        </button>
       </div>
-    </div>
+      <AccessibilityDragAssist
+        open={dragAssistOpen}
+        onClose={() => setDragAssistOpen(false)}
+      />
+    </>
   );
 };
 

@@ -6,11 +6,48 @@ import { SettingsGroup } from "../../ui/SettingsGroup";
 
 type PermissionStatus = {
   gate_open: boolean;
+  probe_in_flight: boolean;
+  recovery_pending?: boolean;
   maintenance_state: "active" | "retiring" | "restart_required" | "inactive";
   permission: { accessibility: string; input_monitoring: string };
-  health: { enigo: string; shortcuts: string };
+  health: { enigo: string; shortcuts: string; targets: string };
   components: { ime?: { state?: string; stale?: boolean } };
 };
+
+function backgroundState(status: PermissionStatus | null) {
+  if (!status) return "unknown";
+  if (status.gate_open) return "ready";
+  const health = [
+    status.health.enigo,
+    status.health.shortcuts,
+    status.health.targets,
+  ];
+  if (status.maintenance_state === "restart_required") return "restart";
+  if (
+    status.permission.accessibility === "denied" ||
+    status.permission.input_monitoring === "denied"
+  )
+    return "denied";
+  if (status.maintenance_state === "active") return "paused";
+  if (status.recovery_pending && status.maintenance_state === "inactive")
+    return "checking";
+  if (health.includes("restart_required")) return "restart";
+  if (
+    status.probe_in_flight ||
+    status.maintenance_state === "retiring" ||
+    health.includes("retiring")
+  )
+    return "checking";
+  if (health.every((state) => state === "stopped")) return "paused";
+  return "unknown";
+}
+
+function recoveryIsRunning(status: PermissionStatus | null) {
+  return (
+    backgroundState(status) === "checking" &&
+    (status?.probe_in_flight === true || status?.recovery_pending === true)
+  );
+}
 
 export function InputiaPermissionHelp() {
   const { t } = useTranslation();
@@ -18,6 +55,7 @@ export function InputiaPermissionHelp() {
   const [status, setStatus] = useState<PermissionStatus | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const mounted = useRef(true);
+  const rechecking = recoveryIsRunning(status);
 
   useEffect(() => {
     mounted.current = true;
@@ -42,7 +80,17 @@ export function InputiaPermissionHelp() {
     };
   }, []);
 
-  const perform = async (action: "component" | "settings" | "resume") => {
+  useEffect(() => {
+    if (!rechecking) {
+      setMessage((current) =>
+        current === "inputiaPermissionHelp.rechecking" ? null : current,
+      );
+    }
+  }, [rechecking]);
+
+  const perform = async (
+    action: "component" | "settings" | "resume" | "assist" | "app",
+  ) => {
     setBusy(true);
     setMessage(null);
     try {
@@ -52,7 +100,9 @@ export function InputiaPermissionHelp() {
         );
         if (mounted.current) {
           setStatus(next);
-          setMessage("inputiaPermissionHelp.rechecking");
+          setMessage(
+            recoveryIsRunning(next) ? "inputiaPermissionHelp.rechecking" : null,
+          );
         }
       } else if (action === "settings") {
         let next = await invoke<PermissionStatus>(
@@ -76,6 +126,13 @@ export function InputiaPermissionHelp() {
         }
         await invoke("open_inputia_permission_help", { action: "settings" });
         setMessage("inputiaPermissionHelp.pausedNote");
+      } else if (action === "assist" || action === "app") {
+        await invoke("open_inputia_permission_help", { action });
+        setMessage(
+          action === "assist"
+            ? "accessibilityDragAssist.opened"
+            : "accessibilityDragAssist.revealed",
+        );
       } else {
         await invoke("open_inputia_permission_help", { action });
       }
@@ -86,20 +143,7 @@ export function InputiaPermissionHelp() {
     }
   };
 
-  const backgroundKey = !status
-    ? "unknown"
-    : status.gate_open
-      ? "ready"
-      : status.maintenance_state === "restart_required" ||
-          status.health.enigo === "restart_required" ||
-          status.health.shortcuts === "restart_required"
-        ? "restart"
-        : status.permission.accessibility === "denied" ||
-            status.permission.input_monitoring === "denied"
-          ? "denied"
-          : status.maintenance_state === "active"
-            ? "paused"
-            : "checking";
+  const backgroundKey = backgroundState(status);
 
   return (
     <SettingsGroup title={t("inputiaPermissionHelp.title")}>
@@ -127,6 +171,13 @@ export function InputiaPermissionHelp() {
             onClick={() => void perform("settings")}
           >
             {t("inputiaPermissionHelp.settings")}
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={busy}
+            onClick={() => void perform("assist")}
+          >
+            {t("accessibilityDragAssist.openAssist")}
           </Button>
         </div>
         <p className="text-xs text-mid-gray">

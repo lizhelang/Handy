@@ -57,6 +57,8 @@
       "revisions": "Could not load revisions."
     },
     "feedback": {
+      "failedWithoutHistory": "The output failed. Check the target before trying again.",
+      "historyNotSaved": "This transcription could not be saved to history.",
       "copied": "Copied.",
       "inserted": "Inserted.",
       "dispatched": "Dispatched. The target has not confirmed insertion; automatic retry is disabled.",
@@ -403,6 +405,18 @@
             "bottom": "하단",
             "top": "상단"
           }
+        }
+      },
+      "dictationTargetMode": {
+        "title": "음성 입력 위치",
+        "description": "텍스트가 준비되면 삽입할 위치를 선택합니다. 변경 사항은 다음 녹음부터 적용됩니다.",
+        "options": {
+          "currentCursor": "현재 커서(기본값)",
+          "recordingApplication": "녹음을 시작한 앱"
+        },
+        "descriptions": {
+          "currentCursor": "텍스트가 준비되면 당시 커서 위치에 삽입합니다. 말하는 동안 앱을 전환할 수 있습니다.",
+          "recordingApplication": "삽입 전에 녹음을 시작한 앱으로 돌아오세요. 말하는 동안 앱을 전환할 수 있으며 Inputia가 자동으로 돌아가지는 않습니다."
         }
       },
       "pasteMethod": {
@@ -867,6 +881,22 @@
   "accessibility": {
     "permissionsDescription": "Inputia는 녹음된 텍스트를 입력하기 위해 접근성 권한이 필요합니다.",
     "openSettings": "시스템 설정 열기"
+  },
+  "accessibilityDragAssist": {
+    "title": "Add Inputia to Accessibility",
+    "description": "You can drag Inputia into the Accessibility list. No need to hunt through the “+” file picker.",
+    "dragHandle": "Drag Inputia into System Settings",
+    "dragHint": "Press and drag",
+    "appLabel": "Inputia.app",
+    "stepOpen": "System Settings → Privacy & Security → Accessibility stays open.",
+    "stepDrag": "Drag this Inputia icon into the Accessibility app list.",
+    "stepToggle": "Turn on the Inputia switch, then return here.",
+    "openAssist": "Open settings and show app",
+    "revealApp": "Show Inputia.app again",
+    "opened": "Settings opened and Inputia.app is selected in Finder.",
+    "revealed": "Inputia.app is selected in Finder — drag it into the Accessibility list.",
+    "dragFallback": "Direct drag was blocked. Inputia.app is selected in Finder — drag it from there.",
+    "failed": "Could not open the helper. Open System Settings → Privacy & Security → Accessibility manually."
   },
   "errors": {
     "loadDirectory": "디렉토리 로딩 오류: {{error}}",
