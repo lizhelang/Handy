@@ -9,6 +9,8 @@ source = (root / "Sources/InputiaInputMethod/main.swift").read_text()
 
 def extract(marker, source=source):
     start = source.index(marker)
+    if source[:start].endswith("  @discardableResult\n"):
+        start -= len("  @discardableResult\n")
     brace = source.index("{", start)
     depth, end = 1, brace + 1
     while depth:

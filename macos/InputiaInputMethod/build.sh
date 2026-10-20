@@ -394,6 +394,7 @@ fi
 /usr/bin/python3 "$ROOT_DIR/Tools/word-span-key-path-self-check.py"
 /usr/bin/python3 "$ROOT_DIR/Tools/shortcut-registration-lifecycle-self-check.py"
 /usr/bin/python3 "$ROOT_DIR/Tools/candidate-panel-refresh-self-check.py"
+/usr/bin/python3 "$ROOT_DIR/Tools/managed-memory-basic-fallback-self-check.py"
 
 CAPI_LIB="$(run_cargo build --release --manifest-path "$CAPI_MANIFEST" "${CAPI_FEATURE_ARGS[@]}" --message-format=json-render-diagnostics |
   /usr/bin/python3 -c '
@@ -656,6 +657,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPermissionLifecycle.swift" \
   -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-permission-lifecycle-self-check"
 "$BUILD_DIR/inputia-permission-lifecycle-self-check"
+/usr/bin/python3 "$ROOT_DIR/Tools/permission-probe-integration-self-check.py"
 
 # 有界后台查询自检：模拟挂起任务，不访问真实窗口。
 /usr/bin/swiftc "$ROOT_DIR/Tools/InputiaWindowTitleQuerySelfCheck.swift" \

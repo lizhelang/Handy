@@ -227,7 +227,8 @@ final class InputiaInputController: IMKInputController {
     permissionEpoch = current
     targetCaptureScope.invalidate()
     releaseConfirmedFieldAnchor()
-    clearManagedMemoryDisplay(restoringBasicCandidates: true, preservingPredictionPresentation: true) {
+    clearManagedMemoryDisplay(restoringBasicCandidates: true, preservingPredictionPresentation: true,
+      reason: "permission_epoch") {
       discardTypedCompositionOrigin()
       voiceActivationGeneration &+= 1
       for snapshot in voiceTargetSnapshots.values { InputiaVoiceInputLauncher.releaseTarget(snapshot.targetID) }
@@ -767,7 +768,7 @@ final class InputiaInputController: IMKInputController {
     targetCaptureScope.invalidate()
     bridge.memoryDidExpire = { [weak self] in self?.managedMemoryWasCleared()?() }
     _ = bridge.clearManagedMemory()
-    clearManagedMemoryDisplay()
+    clearManagedMemoryDisplay(reason: "activation")
     #endif
     #if INPUTIA_PAIRED_BUILD
     discardTypedCompositionOrigin()
@@ -823,7 +824,7 @@ final class InputiaInputController: IMKInputController {
     clearConfirmedFieldContext()
     targetCaptureScope.invalidate()
     _ = bridge.clearManagedMemory()
-    clearManagedMemoryDisplay()
+    clearManagedMemoryDisplay(reason: "deactivation")
     clearHotwordOverlay()
     explicitEnglishCandidates = [:]
     personalization.stop()
@@ -1362,9 +1363,14 @@ final class InputiaInputController: IMKInputController {
     clearedOutcome: InputiaBridgeOutcome? = nil,
     deferRestoration: Bool = false,
     preservingPredictionPresentation: Bool = false,
+    reason: String = "lifecycle",
     additionalCleanup: () -> Void = {}
   ) -> (() -> Void)? {
     let wasActive = InputiaHost.activeInputController === self
+    // 仅记录固定原因、归属/恢复标志和数量，不写拼音、候选正文或字段身份。
+    let diagnosticFlags = (wasActive ? 1 : 0) | (restoringBasicCandidates ? 2 : 0)
+    InputiaPersonalizationDiagnostics.record("candidate_clear", reason,
+      flags: diagnosticFlags, count: latestCandidates.count)
     // 先清旧正文；宿主同步查询或全局延迟恢复期间只保留不可选空框。
     let restorationPanel = ownedCandidatePanel
     let restorationToken = restorationPanel?.clearForRestoration()
@@ -1419,16 +1425,25 @@ final class InputiaInputController: IMKInputController {
         && $0.composing == originalComposing
     } == true && originalClient != nil && wasActive && originalSourceSelected
       && !IsSecureEventInputEnabled() && InputiaPermissionLifecycle.shared.snapshot.status != .maintenance
+    var preparationResult = "stale"
+    if !restoringBasicCandidates { preparationResult = "not_requested" }
+    else if !wasActive { preparationResult = "not_active" }
+    else if !originalSourceSelected { preparationResult = "target_source_changed" }
+    else if IsSecureEventInputEnabled() { preparationResult = "secure_input_enabled" }
+    else if InputiaPermissionLifecycle.shared.snapshot.status == .maintenance { preparationResult = "maintenance" }
+    else if !canRestoreBasic { preparationResult = "no_baseline" }
     if let preservedPrediction, let live = client(), currentPredictionToken(client: live) == preservedPrediction {
       if let restorationPanel, let restorationToken, ownedCandidatePanel === restorationPanel,
         restorationPanel.isRestorationCurrent(restorationToken) {
         restorationPanel.showPredictionPending(near: chineseCandidateRect)
+        preparationResult = "prediction_preserved"
       }
     } else if !canRestoreBasic || ownedCandidatePanel !== restorationPanel {
       discardRestoration()
     }
     // 增强缓存撤销与所有同步回调完成后，只恢复本次得到的基础 Rime 快照。
     let restore: () -> Void = { [weak self] in
+      var restorationResult = preparationResult
       if let self, let preservedPrediction, let live = self.client(),
         self.currentPredictionToken(client: live) == preservedPrediction {
         DispatchQueue.main.async { [weak self] in
@@ -1436,13 +1451,20 @@ final class InputiaInputController: IMKInputController {
           self.schedulePersonalization(client: live)
         }
       }
-      defer { discardRestoration() }
+      defer {
+        discardRestoration()
+        InputiaPersonalizationDiagnostics.record("candidate_restore", restorationResult,
+          flags: diagnosticFlags, count: self?.latestCandidates.count ?? 0)
+      }
       guard let self, let restorationPanel, let restorationToken,
         self.ownedCandidatePanel === restorationPanel,
-        restorationPanel.isRestorationCurrent(restorationToken),
+        restorationPanel.isRestorationCurrent(restorationToken) else { return }
+      restorationResult = "no_baseline"
+      guard
         let baseline, baseline.ok, baseline.mode == "Chinese",
         !baseline.composing.isEmpty, !baseline.candidates.isEmpty,
         let originalClient, let live = self.client() else { return }
+      restorationResult = "stale"
       // IMK 查询可能同步进入其他生命周期回调；查询结束后再核验内存中的归属和代数。
       let sensitive = InputiaSecureDirectPolicy.shouldUseSecureDirectMode(context: self.appContext(for: live))
       let selection = live.selectedRange(), marked = live.markedRange()
@@ -1464,9 +1486,19 @@ final class InputiaInputController: IMKInputController {
         self.bridge.latestOutcome.composing == baseline.composing,
         self.bridge.latestOutcome.candidates == baseline.candidates,
         self.bridge.latestOutcome.candidateIDs == baseline.candidateIDs
-      else { return }
+      else {
+        if secure { restorationResult = "secure_input_enabled" }
+        else if maintenance { restorationResult = "maintenance" }
+        else if sensitive { restorationResult = "target_sensitive_source" }
+        else if !sourceSelected { restorationResult = "target_source_changed" }
+        else if selection != originalSelection { restorationResult = "selection_changed" }
+        else if marked != originalMarked { restorationResult = "marked_changed" }
+        return
+      }
       self.latestCandidates = baseline.candidates
-      self.updateCandidateWindow(client: live, restorationToken: restorationToken)
+      if self.updateCandidateWindow(client: live, restorationToken: restorationToken) {
+        restorationResult = "restored"
+      }
     }
     if deferRestoration { return restore }
     restore()
@@ -1476,7 +1508,8 @@ final class InputiaInputController: IMKInputController {
   /// 仅由刚完成同步 CAPI 清理的到期通知或全局屏障调用，不再次清理或重放选择键。
   func managedMemoryWasCleared() -> (() -> Void)? {
     clearManagedMemoryDisplay(restoringBasicCandidates: true,
-      clearedOutcome: bridge.latestOutcome, deferRestoration: true, preservingPredictionPresentation: true)
+      clearedOutcome: bridge.latestOutcome, deferRestoration: true, preservingPredictionPresentation: true,
+      reason: "memory_barrier")
   }
 
   private func observePersonalKey(_ event: NSEvent, client: IMKTextInput) {
@@ -2704,7 +2737,8 @@ final class InputiaInputController: IMKInputController {
                                      stillValid: @escaping () -> Bool, perform: @escaping () -> Void) -> Bool {
     guard let snapshot = memoryDisplayedTargets[kind], let field = memoryTargetFields[snapshot.targetID],
       managedDisplayCurrent(kind, client: client), stillValid() else {
-      _ = bridge.clearManagedMemory(); clearManagedMemoryDisplay(); return true
+      clearManagedMemoryDisplay(restoringBasicCandidates: true, reason: "selection_unavailable")
+      return true
     }
     guard let token = personalInputDeferral.begin(now: ProcessInfo.processInfo.systemUptime) else { return true }
     let pending = PersonalDeferredOrigin(token: token, origin: snapshot, client: client,
@@ -2733,7 +2767,8 @@ final class InputiaInputController: IMKInputController {
         self.managedDisplayCurrent(kind, client: client), stillValid() else {
         self.voiceStatus = "输入框或候选已变化，已取消候选与排队输入"
         self.finishDeferredPersonalInput(token)
-        _ = self.bridge.clearManagedMemory(); self.clearManagedMemoryDisplay(); return
+        self.clearManagedMemoryDisplay(restoringBasicCandidates: true, reason: "selection_rejected")
+        return
       }
       guard let queued = self.personalInputDeferral.finish(token) else { return }
       self.personalDeferredOrigin = nil; self.personalRecoveryToken = nil
@@ -2921,8 +2956,7 @@ final class InputiaInputController: IMKInputController {
       if !forPrediction, let field = reply.field_instance {
         let identity = reply.server_instance + ":" + field
         if let previous = self.memoryFieldID, previous != identity {
-          _ = self.bridge.clearManagedMemory()
-          self.clearManagedMemoryDisplay()
+          self.clearManagedMemoryDisplay(restoringBasicCandidates: true, reason: "field_identity_changed")
         }
         self.memoryFieldID = identity
         self.memoryTargetFields[target.target_id] = identity
@@ -3747,10 +3781,11 @@ final class InputiaInputController: IMKInputController {
     ownedCandidatePanel?.hide()
   }
 
-  private func updateCandidateWindow(client: IMKTextInput, restorationToken: UInt64? = nil) {
+  @discardableResult
+  private func updateCandidateWindow(client: IMKTextInput, restorationToken: UInt64? = nil) -> Bool {
     guard let panel = ownedCandidatePanel,
       restorationToken.map({ panel.isRestorationCurrent($0) }) ?? true else {
-      return
+      return false
     }
     let displayedCandidates = InputiaHostTextPolicy.candidatesForPanel(
       composing: latestComposing,
@@ -3761,13 +3796,13 @@ final class InputiaInputController: IMKInputController {
       : displayedCandidates
     if panelCandidates.isEmpty {
       panel.hide()
-      return
+      return false
     }
 
     var inputRect = NSRect.zero
     client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputRect)
     guard ownedCandidatePanel === panel,
-      restorationToken.map({ panel.isRestorationCurrent($0) }) ?? true else { return }
+      restorationToken.map({ panel.isRestorationCurrent($0) }) ?? true else { return false }
     chineseCandidateRect = inputRect
     panel.show(
       candidates: panelCandidates,
@@ -3776,6 +3811,7 @@ final class InputiaInputController: IMKInputController {
       primaryCandidateCount: displayedCandidates.count,
       activeRowIndex: expandedActiveRowIndex
     )
+    return true
   }
 
   private func cursorAnchorRect(for client: IMKTextInput) -> NSRect {
@@ -3949,28 +3985,30 @@ struct InputiaInputMethodApp {
         for controller in InputiaHost.inputControllers.allObjects { controller.removeRetiredVoiceTarget(id) }
       }
       InputiaPermissionLifecycle.shared.configureProbe { InputiaVoiceInputLauncher.probeServicePermission() }
-      InputiaPermissionLifecycle.shared.start(root: InputiaProfile.current.root.deletingLastPathComponent()) { completed in
+      InputiaPermissionLifecycle.shared.start(root: InputiaProfile.current.root.deletingLastPathComponent()) { transition, completed in
+        guard InputiaPermissionLifecycle.shared.isCurrentEpoch(transition.epoch) else { completed(); return }
         for controller in InputiaHost.inputControllers.allObjects { controller.synchronizePermissionEpoch() }
         InputiaHost.removeGlobalMonitors()
-        let epoch = InputiaPermissionLifecycle.shared.epoch
-        InputiaVoiceInputLauncher.invalidatePermissionWork {
-          defer { completed() }
-          guard InputiaPermissionLifecycle.shared.permits(epoch) else { return }
-          InputiaHost.installGlobalMonitors()
-          InputiaVoiceInputLauncher.ensureUnifiedServiceReady()
-          InputiaVoiceInputLauncher.startShortcutListening(targetProvider: {
-            InputiaHost.activeInputController?.shortcutRegistrationTarget()
-          }, targetRejected: { id in
-            for controller in InputiaHost.inputControllers.allObjects {
-              controller.rejectShortcutRegistrationTarget(id)
-            }
-          }, sharedTermsReceiver: { terms, ticket in
-            InputiaHost.activeInputController?.acceptSharedTerms(terms, ticket: ticket)
-          }, acceptStart: { trigger, completion in
-            guard let controller = InputiaHost.activeInputController else { completion(false); return }
-            controller.acceptUnifiedShortcut(trigger, completion: completion)
-          })
+        guard !transition.requiresRetirement else {
+          InputiaVoiceInputLauncher.invalidatePermissionWork(expectedEpoch: transition.epoch, completion: completed)
+          return
         }
+        defer { completed() }
+        guard InputiaPermissionLifecycle.shared.permits(transition.epoch) else { return }
+        InputiaHost.installGlobalMonitors()
+        InputiaVoiceInputLauncher.ensureUnifiedServiceReady()
+        InputiaVoiceInputLauncher.startShortcutListening(targetProvider: {
+          InputiaHost.activeInputController?.shortcutRegistrationTarget()
+        }, targetRejected: { id in
+          for controller in InputiaHost.inputControllers.allObjects {
+            controller.rejectShortcutRegistrationTarget(id)
+          }
+        }, sharedTermsReceiver: { terms, ticket in
+          InputiaHost.activeInputController?.acceptSharedTerms(terms, ticket: ticket)
+        }, acceptStart: { trigger, completion in
+          guard let controller = InputiaHost.activeInputController else { completion(false); return }
+          controller.acceptUnifiedShortcut(trigger, completion: completion)
+        })
       }
       #endif
       #if !INPUTIA_PAIRED_BUILD

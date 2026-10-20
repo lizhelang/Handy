@@ -18,6 +18,8 @@ source = (args.main_source or root / "Sources/InputiaInputMethod/main.swift").re
 
 def declaration(marker: str) -> str:
     start = source.index(marker)
+    if source[:start].endswith("  @discardableResult\n"):
+        start -= len("  @discardableResult\n")
     brace = source.index("{", start)
     depth, end = 1, brace + 1
     while depth:
