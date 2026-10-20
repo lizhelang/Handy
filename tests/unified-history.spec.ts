@@ -13,6 +13,7 @@ interface HistoryHarness {
   output: string;
   rejectMutation: boolean;
   rejectListener: boolean;
+  audioUrl?: string;
   pending: Map<string, (value: unknown) => void>;
   deferQueries: boolean;
   emit: () => void;
@@ -55,6 +56,7 @@ async function mountHistory(page: Page) {
       source_app: null,
     };
     const harness = {
+      audioUrl: undefined as string | undefined,
       calls: [] as { command: string; args?: Record<string, unknown> }[],
       actions: [] as {
         action: string;
@@ -175,7 +177,8 @@ async function mountHistory(page: Page) {
         React.createElement(UnifiedHistory, {
           resolveAsset: async (item: typeof fixture) =>
             item.asset_ref
-              ? `data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=`
+              ? (harness.audioUrl ??
+                `data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=`)
               : null,
           onCheckOutputReceipt: async (operationId: string) => {
             harness.calls.push({
@@ -313,6 +316,86 @@ test("switching voice previews keeps a single recording player", async ({
       .toBe(1);
     await expect(page.locator("audio[controls]")).toHaveCount(0);
   }
+});
+
+test("无转写正文的录音展开后读取真实时长，读取元数据不会自动播放", async ({
+  page,
+}) => {
+  await mountHistory(page);
+  await page.evaluate(() => {
+    // 合成 159.24 秒 PCM16 WAV，不读取或保存用户录音。
+    const sampleRate = 16000;
+    const samples = Math.round(159.24 * sampleRate);
+    const bytes = new ArrayBuffer(44 + samples * 2);
+    const header = new DataView(bytes);
+    const text = (offset: number, value: string) =>
+      [...value].forEach((char, index) =>
+        header.setUint8(offset + index, char.charCodeAt(0)),
+      );
+    text(0, "RIFF");
+    header.setUint32(4, bytes.byteLength - 8, true);
+    text(8, "WAVE");
+    text(12, "fmt ");
+    header.setUint32(16, 16, true);
+    header.setUint16(20, 1, true);
+    header.setUint16(22, 1, true);
+    header.setUint32(24, sampleRate, true);
+    header.setUint32(28, sampleRate * 2, true);
+    header.setUint16(32, 2, true);
+    header.setUint16(34, 16, true);
+    text(36, "data");
+    header.setUint32(40, samples * 2, true);
+    const harness = window.__HISTORY_TEST__;
+    harness.audioUrl = URL.createObjectURL(
+      new Blob([bytes], { type: "audio/wav" }),
+    );
+    harness.items = [
+      {
+        ...harness.items[0],
+        text: "",
+        title: "Untranscribed recording",
+        asset_ref: "asset://untranscribed.wav",
+      },
+    ];
+  });
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await page.getByText("Untranscribed recording", { exact: true }).click();
+  const player = page.locator("[data-history-recording]");
+  await expect(player.getByText("2:39", { exact: true })).toBeVisible();
+  await expect(player.getByText("0:00", { exact: true })).toHaveCount(1);
+  await expect(player.getByRole("slider")).toHaveAttribute("max", "159.24");
+  expect(
+    await page.locator("audio").evaluate((audio: HTMLAudioElement) => ({
+      paused: audio.paused,
+      currentTime: audio.currentTime,
+      duration: audio.duration,
+    })),
+  ).toEqual({ paused: true, currentTime: 0, duration: 159.24 });
+});
+
+test("录音元数据读取失败显示错误和未知时长，不伪报为零秒", async ({ page }) => {
+  await mountHistory(page);
+  await page.route("**/__missing-recording.wav", (route) => route.abort());
+  await page.evaluate(() => {
+    const harness = window.__HISTORY_TEST__;
+    harness.audioUrl = "/__missing-recording.wav";
+    harness.items = [
+      {
+        ...harness.items[0],
+        asset_ref: "asset://missing.wav",
+      },
+    ];
+  });
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await page.getByText("Voice fixture", { exact: true }).click();
+  const player = page.locator("[data-history-recording]");
+  await expect(player.getByRole("alert")).toBeVisible();
+  await expect(player.getByText("—:—", { exact: true })).toBeVisible();
+  await expect(player.getByText("0:00", { exact: true })).toHaveCount(1);
+  await expect(player.getByRole("slider")).toBeDisabled();
+  await expect(
+    player.getByRole("button", { name: "Play recording" }),
+  ).toBeEnabled();
 });
 
 test("composition and search letters are not intercepted; Enter inserts and Escape closes preview", async ({
