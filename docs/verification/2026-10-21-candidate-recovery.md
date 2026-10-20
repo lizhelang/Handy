@@ -3,6 +3,7 @@
 ## 现场与判断边界
 
 用户在 1.1.24/build112 反馈候选偶发不出现，截图中组合串仍在输入框。
+随后明确补充：刚开始输入拼音/双拼就可能一直没有候选，且多个应用都会发生。
 主应用和输入法均从前晚持续运行。两者瞬时健康显示 ready，但输入法代数在
 10:07 左右为 134、10:08 左右为 170，10:16 的采样已到 296；后台仍为代数 1。
 
@@ -10,6 +11,7 @@
 25 次远端选区不匹配及 26 次目标查询忙；另有策略无回复和一次权限不可用提示。
 一次目标捕获耗时约 3102 ms。现存日志没有候选窗 hide 的记录，不能据此认定
 截图精确命中了哪一条代码路径，也不能以瞬时 ready 断言输入体验正常。
+同期还有 4 次 InputMethodKit XPC 等待响应超时，仅读取静态错误模板，未展开用户值。
 
 ## 修复
 
@@ -45,5 +47,24 @@
 
 ## 本机交付
 
-准备构建 1.1.25/build113。构建、安装及新鲜运行观察完成后补充；用户词库和设置不重置。
-私有证据目录为 `/Users/lzl/Library/Application Support/InputiaBuilds/candidate-recovery-20261021`。
+已构建并安装 **1.1.25/build113**，两组件来源提交均为
+`bbf53187cd05d7d723292e316bb409ad9e8b3193`，分支为 `codex/inputia-candidate-recovery`。
+完整成套构建（包括新增两组门槛）、配对预检、签名、更新事务与实际运行身份校验通过。
+输入源仍为 `com.inputia.inputmethod.Inputia.UnifiedCandidate.Hans`，TCC 未改变。
+
+新进程启动时记录到 transport/connection_gate 暂不可得，以及一次真实证明到期后的恢复；
+没有把暂不可得当作拒权。之后连续 7 次新鲜采样覆盖约 30 秒，两端均为 ready，
+后台代数保持 1、IME 代数保持 4，后台准入开启。该短时观测不能替代用户的跨应用输入验收。
+
+数据核对：10 条语音历史与 8388 条剪贴记录逐条保留，两份设置、11 个 WAV 字节一致，
+5 个数据库完整性检查通过。原词库目录的 43 个文件均保留，42 个文件字节一致，
+另一个 Rime 日志仅追加 66 字节，原前缀完整；没有运行词库重置或迁移。
+
+已请用户在原输入框及另一个应用中复测“刚开始输入”场景，尚未获得本次实机反馈。
+没有把回归通过、安装成功或短时 ready 表述为所有偶发问题已经消失。
+
+制品目录：`/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-NmcIMcTR`。
+旧程序备份：`/Users/lzl/Library/Application Support/HandyUnifiedBuilds/permission-update-e0w3o1a6`。
+私有日志、状态采样和数据备份目录：
+`/Users/lzl/Library/Application Support/InputiaBuilds/candidate-recovery-20261021`。
+未推送或公开发布。
