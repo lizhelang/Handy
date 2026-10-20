@@ -35,7 +35,9 @@ interface UnifiedHistoryState extends Filters {
 }
 
 // Each webview owns this module and its subscription lifecycle independently.
-export const createUnifiedHistoryStore = () => {
+export const createUnifiedHistoryStore = (
+  sourceScope?: Exclude<UnifiedHistorySource, "all">,
+) => {
   let requestId = 0;
   let revisionRequestId = 0;
   let subscribers = 0;
@@ -67,7 +69,7 @@ export const createUnifiedHistoryStore = () => {
   };
   const store = create<UnifiedHistoryState>((set, get) => ({
     search: "",
-    source: "all",
+    source: sourceScope ?? "all",
     contentType: "all",
     starredOnly: false,
     items: [],
@@ -85,6 +87,8 @@ export const createUnifiedHistoryStore = () => {
       ++revisionRequestId;
       set({
         ...filters,
+        // 页面来源是固定范围，搜索、收藏等筛选不能重新放开它。
+        source: sourceScope ?? filters.source ?? get().source,
         items: [],
         selectedId: null,
         previewOpen: false,
@@ -99,7 +103,7 @@ export const createUnifiedHistoryStore = () => {
       const { search, source, contentType, starredOnly, items } = get();
       const query: UnifiedHistoryQuery = {
         search: search.trim() || null,
-        source_kind: source === "all" ? null : source,
+        source_kind: sourceScope ?? (source === "all" ? null : source),
         content_type: contentType === "all" ? null : contentType,
         starred_only: starredOnly,
         limit: PAGE_SIZE,
@@ -216,3 +220,5 @@ export const createUnifiedHistoryStore = () => {
 };
 
 export const useUnifiedHistoryStore = createUnifiedHistoryStore();
+export const useRecordingHistoryStore = createUnifiedHistoryStore("voice");
+export const useClipboardHistoryStore = createUnifiedHistoryStore("clipboard");

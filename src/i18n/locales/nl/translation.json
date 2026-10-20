@@ -86,17 +86,17 @@
     "quit": "Afsluiten",
     "cancel": "Annuleren",
     "secureInputWarning": "⚠ Sneltoetsen geblokkeerd door Secure Input",
-    "clipboardHistory": "Clipboard History"
+    "clipboardHistory": "Klembord"
   },
   "sidebar": {
     "general": "Algemeen",
     "models": "Modellen",
     "advanced": "Geavanceerd",
     "postProcessing": "Naverwerking",
-    "history": "Geschiedenis",
+    "history": "Opnamen",
     "debug": "Probleemoplossing",
     "about": "Over Inputia",
-    "clipboard": "Clipboard",
+    "clipboard": "Klembord",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -590,10 +590,11 @@
       }
     },
     "history": {
-      "title": "Geschiedenis",
+      "title": "Opnamen",
+      "search": "Zoeken in opnamen en transcripties",
       "openFolder": "Opnamemap openen",
-      "loading": "Geschiedenis laden...",
-      "empty": "Nog geen transcripties. Start met opnemen om je geschiedenis op te bouwen!",
+      "loading": "Opnamen laden...",
+      "empty": "Geen opnamen gevonden.",
       "copyToClipboard": "Transcriptie naar klembord kopiëren",
       "save": "Transcriptie opslaan",
       "unsave": "Verwijderen uit opgeslagen",
@@ -779,7 +780,7 @@
       }
     },
     "clipboard": {
-      "title": "Clipboard Manager",
+      "title": "Klembord",
       "searchPlaceholder": "Search clipboard history...",
       "filterAll": "All",
       "filterText": "Text",

@@ -37,6 +37,7 @@ export function UnifiedHistoryPage() {
     <div className="flex h-full w-full min-h-0 flex-col">
       <div className="min-h-0 min-w-0 w-full flex-1">
         <UnifiedHistory
+          recordingsOnly
           onCheckOutputReceipt={async (operationId) => {
             const result = await commands.getUnifiedOutputReceipt(operationId);
             if (result.status === "error") throw new Error(result.error);

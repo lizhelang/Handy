@@ -15,7 +15,10 @@ import {
 import { useTranslation } from "react-i18next";
 import { ConfirmHistoryTerm } from "./ConfirmHistoryTerm";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
-import { useUnifiedHistoryStore } from "@/stores/unifiedHistoryStore";
+import {
+  useRecordingHistoryStore,
+  useUnifiedHistoryStore,
+} from "@/stores/unifiedHistoryStore";
 import {
   getOutputAttempt,
   outputNeedsAcknowledgement,
@@ -152,6 +155,7 @@ function Attachment({
 }
 
 export function UnifiedHistory({
+  recordingsOnly = false,
   onCopy,
   onInsert,
   onUpdate,
@@ -165,7 +169,16 @@ export function UnifiedHistory({
   ) => Promise<UnifiedHistoryActionResult | null>;
 }) {
   const { t, i18n } = useTranslation();
-  const state = useUnifiedHistoryStore();
+  const useHistoryStore = recordingsOnly
+    ? useRecordingHistoryStore
+    : useUnifiedHistoryStore;
+  const state = useHistoryStore();
+  const headingKey = recordingsOnly
+    ? "settings.history.title"
+    : "unifiedHistory.heading";
+  const searchKey = recordingsOnly
+    ? "settings.history.search"
+    : "unifiedHistory.search";
   const [localBusy, setBusy] = useState(false);
   const outputs = useUnifiedOutputStore();
   const busy =
@@ -372,14 +385,12 @@ export function UnifiedHistory({
 
   return (
     <section
-      aria-label={t("unifiedHistory.heading")}
+      aria-label={t(headingKey)}
       className="flex h-full w-full min-h-0 min-w-0 flex-col gap-4 text-text"
       onKeyDown={handleKeys}
     >
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="min-w-0 text-lg font-semibold">
-          {t("unifiedHistory.heading")}
-        </h1>
+        <h1 className="min-w-0 text-lg font-semibold">{t(headingKey)}</h1>
         {onOpenRecordings && (
           <button
             className={buttonClass}
@@ -408,8 +419,8 @@ export function UnifiedHistory({
           />
           <input
             type="search"
-            aria-label={t("unifiedHistory.search")}
-            placeholder={t("unifiedHistory.search")}
+            aria-label={t(searchKey)}
+            placeholder={t(searchKey)}
             value={state.search}
             onChange={(event) =>
               state.setFilters({ search: event.target.value })
@@ -417,40 +428,44 @@ export function UnifiedHistory({
             className={`${inputClass} w-full pl-9`}
           />
         </label>
-        <select
-          aria-label={t("unifiedHistory.sourceFilter")}
-          className={inputClass}
-          value={state.source}
-          onChange={(event) =>
-            state.setFilters({
-              source: event.target.value as UnifiedHistorySource,
-            })
-          }
-        >
-          {(["all", "voice", "clipboard"] as const).map((source) => (
-            <option key={source} value={source}>
-              {t(`unifiedHistory.sources.${source}`)}
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label={t("unifiedHistory.typeFilter")}
-          className={inputClass}
-          value={state.contentType}
-          onChange={(event) =>
-            state.setFilters({
-              contentType: event.target.value as UnifiedHistoryContentType,
-            })
-          }
-        >
-          {(["all", "text", "image", "files", "html", "rtf"] as const).map(
-            (type) => (
-              <option key={type} value={type}>
-                {t(`unifiedHistory.types.${type}`)}
-              </option>
-            ),
-          )}
-        </select>
+        {!recordingsOnly && (
+          <>
+            <select
+              aria-label={t("unifiedHistory.sourceFilter")}
+              className={inputClass}
+              value={state.source}
+              onChange={(event) =>
+                state.setFilters({
+                  source: event.target.value as UnifiedHistorySource,
+                })
+              }
+            >
+              {(["all", "voice", "clipboard"] as const).map((source) => (
+                <option key={source} value={source}>
+                  {t(`unifiedHistory.sources.${source}`)}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label={t("unifiedHistory.typeFilter")}
+              className={inputClass}
+              value={state.contentType}
+              onChange={(event) =>
+                state.setFilters({
+                  contentType: event.target.value as UnifiedHistoryContentType,
+                })
+              }
+            >
+              {(["all", "text", "image", "files", "html", "rtf"] as const).map(
+                (type) => (
+                  <option key={type} value={type}>
+                    {t(`unifiedHistory.types.${type}`)}
+                  </option>
+                ),
+              )}
+            </select>
+          </>
+        )}
         <button
           aria-pressed={state.starredOnly}
           className={`${buttonClass} inline-flex items-center gap-1.5 ${state.starredOnly ? "text-accent-text" : ""}`}
@@ -479,7 +494,7 @@ export function UnifiedHistory({
         aria-busy={state.loading}
       >
         <ul
-          aria-label={t("unifiedHistory.entries")}
+          aria-label={t(recordingsOnly ? headingKey : "unifiedHistory.entries")}
           className="divide-y divide-text/10 rounded-md border border-text/10"
         >
           {state.items.map((item) => {
@@ -811,7 +826,11 @@ export function UnifiedHistory({
         )}
         {!state.loading && !state.error && state.items.length === 0 && (
           <p className="p-8 text-center text-sm text-text/50">
-            {t("unifiedHistory.empty")}
+            {t(
+              recordingsOnly
+                ? "settings.history.empty"
+                : "unifiedHistory.empty",
+            )}
           </p>
         )}
         {state.hasMore && (

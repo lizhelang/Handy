@@ -86,17 +86,17 @@
     "quit": "बाहर निकलें",
     "cancel": "रद्द करें",
     "secureInputWarning": "⚠ Secure Input ने शॉर्टकट ब्लॉक किए हैं",
-    "clipboardHistory": "Clipboard History"
+    "clipboardHistory": "क्लिपबोर्ड"
   },
   "sidebar": {
     "general": "सामान्य",
     "models": "मॉडल",
     "advanced": "ऐडवांस",
     "postProcessing": "पोस्ट प्रोसेस",
-    "history": "इतिहास",
+    "history": "रिकॉर्डिंग",
     "debug": "डिबग",
     "about": "के बारे में",
-    "clipboard": "Clipboard",
+    "clipboard": "क्लिपबोर्ड",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -590,10 +590,11 @@
       }
     },
     "history": {
-      "title": "इतिहास",
+      "title": "रिकॉर्डिंग",
+      "search": "रिकॉर्डिंग और ट्रांसक्रिप्ट खोजें",
       "openFolder": "रिकॉर्डिंग फ़ोल्डर खोलें",
-      "loading": "इतिहास लोड हो रहा है...",
-      "empty": "अभी तक कोई ट्रांसक्रिप्शन नहीं है. अपना इतिहास बनाने के लिए रिकॉर्डिंग शुरू करें!",
+      "loading": "रिकॉर्डिंग लोड हो रही हैं...",
+      "empty": "कोई रिकॉर्डिंग नहीं मिली।",
       "copyToClipboard": "ट्रांसक्रिप्शन क्लिपबोर्ड पर कॉपी करें",
       "save": "ट्रांसक्रिप्शन सेव करें",
       "unsave": "सेव किए गए से हटाएं",
@@ -779,7 +780,7 @@
       }
     },
     "clipboard": {
-      "title": "Clipboard Manager",
+      "title": "क्लिपबोर्ड",
       "searchPlaceholder": "Search clipboard history...",
       "filterAll": "All",
       "filterText": "Text",

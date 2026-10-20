@@ -129,8 +129,11 @@ async function installTauriMocks(
             if (cmd === "get_unified_history") {
               const query = args?.query as {
                 search?: string;
+                source_kind?: string;
                 content_type?: string;
                 starred_only?: boolean;
+                offset: number;
+                limit: number;
               };
               return currentItems
                 .map((item) => ({
@@ -138,7 +141,7 @@ async function installTauriMocks(
                   store_id: "store",
                   record_id: String(item.id),
                   revision: 3,
-                  source_kind: item.id === 101 ? "voice" : "clipboard",
+                  source_kind: "clipboard",
                   content_type:
                     item.content_type === "file" ? "files" : item.content_type,
                   text: item.full_text ?? null,
@@ -146,11 +149,28 @@ async function installTauriMocks(
                   starred: item.is_favorite,
                   pinned: item.is_pinned,
                   created_at_ms: Date.parse(item.created_at),
-                  asset_ref: item.id === 101 ? "recording:opaque" : null,
+                  asset_ref: null as string | null,
                   source_app: item.source_app,
                 }))
+                .concat({
+                  item_id: "voice:store:303",
+                  store_id: "store",
+                  record_id: "303",
+                  revision: 1,
+                  source_kind: "voice",
+                  content_type: "text",
+                  text: "Voice sentinel must stay in recordings",
+                  title: null,
+                  starred: true,
+                  pinned: false,
+                  created_at_ms: Date.parse("2026-09-02T03:22:00Z"),
+                  asset_ref: "recording:opaque",
+                  source_app: "Notes",
+                })
                 .filter(
                   (item) =>
+                    (!query.source_kind ||
+                      item.source_kind === query.source_kind) &&
                     (!query.search ||
                       item.text
                         ?.toLowerCase()
@@ -158,7 +178,8 @@ async function installTauriMocks(
                     (!query.content_type ||
                       item.content_type === query.content_type) &&
                     (!query.starred_only || item.starred),
-                );
+                )
+                .slice(query.offset, query.offset + query.limit);
             }
             if (cmd === "update_unified_history_item") {
               const item = currentItems.find(
@@ -572,10 +593,11 @@ test.describe("clipboard overlay", () => {
   });
 });
 
-test("shared voice identity preserves recording attachment and explicit insert", async ({
-  page,
-}) => {
+test("剪切悬浮窗排除语音，并保留剪贴条目的精确插入身份", async ({ page }) => {
   await openClipboardOverlay(page, "confirmed", "paste");
+  await expect(
+    page.getByText("Voice sentinel must stay in recordings"),
+  ).toHaveCount(0);
   await page.locator('[data-clipboard-item-id="clipboard:store:101"]').click();
   const records = await invokeRecords(page);
   expect(
@@ -592,6 +614,17 @@ test("shared voice identity preserves recording attachment and explicit insert",
   expect(records.some((record) => record.cmd === "get_clipboard_items")).toBe(
     false,
   );
+  const queries = records.filter(
+    (record) => record.cmd === "get_unified_history",
+  );
+  expect(queries.length).toBeGreaterThan(0);
+  expect(
+    queries.every(
+      (record) =>
+        (record.args?.query as { source_kind?: string }).source_kind ===
+        "clipboard",
+    ),
+  ).toBe(true);
 });
 
 for (const status of ["dispatched", "uncertain", "future_status"]) {

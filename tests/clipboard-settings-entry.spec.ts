@@ -59,7 +59,7 @@ const installClipboardMocks = async (page: Page) => {
           if (cmd === "plugin:event|unlisten") return null;
           if (cmd === "get_clipboard_stats") {
             return {
-              total_items: 1,
+              total_items: 4,
               favorites_count: 0,
               pinned_count: 0,
               total_size_bytes: 24,
@@ -87,6 +87,41 @@ const installClipboardMocks = async (page: Page) => {
                   created_at: "2026-09-02T03:20:58Z",
                   size_bytes: 24,
                 },
+                {
+                  id: 2,
+                  content_type: "image",
+                  content_preview: "Image 2x2",
+                  content_hash: "hash-2",
+                  source_app: "Preview",
+                  is_favorite: false,
+                  is_pinned: false,
+                  created_at: "2026-09-02T03:20:57Z",
+                  size_bytes: 32,
+                },
+                {
+                  id: 3,
+                  content_type: "file",
+                  content_preview: "Files",
+                  content_hash: "hash-3",
+                  full_text: '["/synthetic/retained-document.pdf"]',
+                  source_app: "Finder",
+                  is_favorite: false,
+                  is_pinned: false,
+                  created_at: "2026-09-02T03:20:56Z",
+                  size_bytes: 40,
+                },
+                {
+                  id: 4,
+                  content_type: "richtext",
+                  content_preview: "Retained rich text",
+                  content_hash: "hash-4",
+                  full_text: "<p>Retained rich text</p>",
+                  source_app: "Notes",
+                  is_favorite: false,
+                  is_pinned: false,
+                  created_at: "2026-09-02T03:20:55Z",
+                  size_bytes: 30,
+                },
               ],
               has_more: false,
             };
@@ -105,6 +140,8 @@ test("sidebar keeps separate history and clipboard entries when capture is off",
 }) => {
   await installReactHarness(page, "__clipboard-sidebar-test");
   await page.evaluate(async () => {
+    const { default: i18n } = await import("/src/i18n/index.ts");
+    await i18n.changeLanguage("zh");
     const { default: React } = await import(
       "/node_modules/.vite/deps/react.js"
     );
@@ -129,8 +166,10 @@ test("sidebar keeps separate history and clipboard entries when capture is off",
     );
   });
 
-  await expect(page.getByText("History", { exact: true })).toBeVisible();
-  await expect(page.getByText("Clipboard", { exact: true })).toBeVisible();
+  await expect(page.getByText("录音", { exact: true })).toBeVisible();
+  await expect(page.getByText("剪切", { exact: true })).toBeVisible();
+  await expect(page.getByText("历史记录", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("剪贴历史", { exact: true })).toHaveCount(0);
 });
 
 test("clipboard page opens the real overlay only from the explicit button", async ({
@@ -164,6 +203,25 @@ test("clipboard page opens the real overlay only from the explicit button", asyn
   });
 
   await expect(page.getByText("Existing clipboard item")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Clipboard", exact: true }),
+  ).toBeVisible();
+  await page.getByTitle("List", { exact: true }).click();
+  await expect(page.getByText("Images 2x2", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("retained-document.pdf", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Retained rich text", { exact: true }),
+  ).toBeVisible();
+  const loadCommands = await page.evaluate(() =>
+    window.__CLIPBOARD_SETTINGS_TEST__.records.map((record) => record.cmd),
+  );
+  expect(loadCommands).toContain("get_clipboard_items");
+  expect(loadCommands).not.toContain("get_unified_history");
+  expect(
+    loadCommands.some((command) => /delete|clear|migrat/.test(command)),
+  ).toBe(false);
   expect(
     await page.evaluate(() =>
       window.__CLIPBOARD_SETTINGS_TEST__.records.map((record) => record.cmd),

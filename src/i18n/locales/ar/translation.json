@@ -86,17 +86,17 @@
     "quit": "إنهاء",
     "cancel": "إلغاء",
     "secureInputWarning": "⚠ الاختصارات محجوبة بواسطة Secure Input",
-    "clipboardHistory": "سجل الحافظة"
+    "clipboardHistory": "الحافظة"
   },
   "sidebar": {
     "general": "عام",
     "advanced": "متقدم",
     "postProcessing": "معالجة لاحقة",
-    "history": "السجل",
+    "history": "التسجيلات",
     "debug": "تصحيح الأخطاء",
     "about": "حول",
     "models": "النماذج",
-    "clipboard": "Clipboard",
+    "clipboard": "الحافظة",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -567,10 +567,11 @@
       }
     },
     "history": {
-      "title": "السجل",
+      "title": "التسجيلات",
+      "search": "البحث في التسجيلات والنصوص المفرغة",
       "openFolder": "فتح مجلد التسجيلات",
-      "loading": "...جاري تحميل السجل",
-      "empty": "!لا يوجد تفريغ صوتي بعد. ابدأ التسجيل لبناء سجلك",
+      "loading": "جارٍ تحميل التسجيلات...",
+      "empty": "لم يتم العثور على تسجيلات.",
       "copyToClipboard": "نسخ التفريغ إلى الحافظة",
       "save": "حفظ التفريغ",
       "unsave": "إزالة من المحفوظات",
@@ -779,7 +780,7 @@
       }
     },
     "clipboard": {
-      "title": "مدير الحافظة",
+      "title": "الحافظة",
       "searchPlaceholder": "البحث في سجل الحافظة...",
       "filterAll": "الكل",
       "filterText": "نص",

@@ -26,6 +26,8 @@ export type UnifiedHistoryActionResult = {
 };
 
 export interface UnifiedHistoryProps {
+  /** 录音入口固定语音来源；通用历史组件仍可供其他界面复用。 */
+  recordingsOnly?: boolean;
   onRetranscribe?: (item: UnifiedHistoryItem) => Promise<void>;
   onOpenRecordings?: () => Promise<void>;
   onCopy: (item: UnifiedHistoryItem) => Promise<UnifiedHistoryActionResult>;

@@ -7,7 +7,7 @@ import type {
   ClipboardSettings,
   ClipboardStats,
 } from "@/lib/types/clipboard";
-import { useUnifiedHistoryStore } from "@/stores/unifiedHistoryStore";
+import { useClipboardHistoryStore } from "@/stores/unifiedHistoryStore";
 
 export type OverlayHistoryItem = Pick<
   ClipboardItem,
@@ -68,7 +68,7 @@ export function useHistoryImage(item: OverlayHistoryItem) {
 }
 
 export function useSharedClipboard() {
-  const history = useUnifiedHistoryStore();
+  const history = useClipboardHistoryStore();
   const [settings, setSettings] = useState<ClipboardSettings | null>(null);
   const [stats, setStats] = useState<ClipboardStats | null>(null);
   const [error, setError] = useState<string | null>(null);

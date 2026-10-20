@@ -33,7 +33,7 @@ declare global {
 }
 
 // Browser mocks verify UI behavior only; they do not prove native insertion.
-async function mountHistory(page: Page) {
+async function mountHistory(page: Page, recordingsOnly = false) {
   await page.route("**/__unified-history-test", (route) =>
     route.fulfill({
       contentType: "text/html",
@@ -41,7 +41,7 @@ async function mountHistory(page: Page) {
     }),
   );
   await page.goto("/__unified-history-test");
-  await page.evaluate(async () => {
+  await page.evaluate(async (recordingsOnly) => {
     const callbacks = new Map<number, (value: unknown) => void>();
     const listeners = new Map<number, number>();
     let next = 0;
@@ -182,6 +182,7 @@ async function mountHistory(page: Page) {
     const render = () =>
       root.render(
         React.createElement(UnifiedHistory, {
+          recordingsOnly,
           resolveAsset: async (item: typeof fixture) =>
             item.asset_ref
               ? (harness.audioUrl ??
@@ -275,7 +276,7 @@ async function mountHistory(page: Page) {
       },
     });
     render();
-  });
+  }, recordingsOnly);
   await expect(page.getByText("Voice fixture", { exact: true })).toBeVisible();
 }
 
@@ -948,4 +949,145 @@ test("late listener registration is disposed and failed registration can be retr
   expect(result.afterDispose).toBe(result.baseline);
   expect(result.failed).toBe(true);
   expect(result.recovered).toBe(true);
+});
+
+test("录音页在搜索、分页、收藏和实时刷新中始终只请求语音", async ({ page }) => {
+  await mountHistory(page, true);
+  await page.evaluate(async () => {
+    const { default: i18n } = await import("/src/i18n/index.ts");
+    await i18n.changeLanguage("zh");
+  });
+  await expect(
+    page.getByRole("heading", { name: "录音", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("searchbox")).toHaveAttribute(
+    "placeholder",
+    "搜索录音和转写文字",
+  );
+  await expect(page.getByRole("combobox")).toHaveCount(0);
+  await expect(page.getByText("report.pdf", { exact: true })).toHaveCount(0);
+  await page.evaluate(() => {
+    const harness = window.__HISTORY_TEST__;
+    const base = harness.items[0];
+    harness.items = Array.from({ length: 45 }, (_, index) => [
+      {
+        ...base,
+        item_id: `voice-${index}`,
+        record_id: String(index),
+        text: `Shared voice ${index}`,
+        starred: index % 2 === 0,
+      },
+      {
+        ...base,
+        item_id: `clipboard-${index}`,
+        record_id: String(index),
+        source_kind: "clipboard",
+        text: `Shared clipboard ${index}`,
+        starred: true,
+      },
+    ]).flat();
+    harness.emit();
+  });
+  const rows = page.getByRole("list").first().locator(":scope > li");
+  await expect(rows).toHaveCount(40);
+  await expect(page.getByText(/Shared clipboard/)).toHaveCount(0);
+  await page.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect(rows).toHaveCount(45);
+  await page.getByRole("searchbox").fill("Shared");
+  await expect(rows).toHaveCount(40);
+  await page.getByRole("button", { name: "收藏", exact: true }).click();
+  await expect(rows).toHaveCount(23);
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(rows).toHaveCount(23);
+  await page.evaluate(() => {
+    const harness = window.__HISTORY_TEST__;
+    harness.items.push(
+      { ...harness.items[0], item_id: "voice-live", text: "Shared voice live" },
+      {
+        ...harness.items[1],
+        item_id: "clipboard-live",
+        text: "Shared clipboard live",
+      },
+    );
+    harness.emit();
+  });
+  await expect(rows).toHaveCount(24);
+  await expect(
+    page.getByText("Shared voice live", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/Shared clipboard/)).toHaveCount(0);
+  await page.evaluate(async () => {
+    const { useRecordingHistoryStore } = await import(
+      "/src/stores/unifiedHistoryStore.ts"
+    );
+    useRecordingHistoryStore.getState().setFilters({ source: "clipboard" });
+  });
+  await expect(rows).toHaveCount(24);
+  await page.getByRole("searchbox").fill("Shared clipboard");
+  await expect(rows).toHaveCount(0);
+  await expect(page.getByText("没有找到录音。", { exact: true })).toBeVisible();
+  const evidence = await page.evaluate(async () => {
+    const { useRecordingHistoryStore } = await import(
+      "/src/stores/unifiedHistoryStore.ts"
+    );
+    return {
+      source: useRecordingHistoryStore.getState().source,
+      queries: window.__HISTORY_TEST__.calls
+        .filter((call) => call.command === "get_unified_history")
+        .map(
+          (call) =>
+            call.args?.query as {
+              source_kind: string;
+              offset: number;
+              search: string | null;
+              starred_only: boolean;
+            },
+        ),
+      commands: window.__HISTORY_TEST__.calls.map((call) => call.command),
+    };
+  });
+  expect(evidence.source).toBe("voice");
+  expect(evidence.queries.every((query) => query.source_kind === "voice")).toBe(
+    true,
+  );
+  expect(evidence.queries.some((query) => query.offset === 40)).toBe(true);
+  expect(evidence.queries.some((query) => query.search === "Shared")).toBe(
+    true,
+  );
+  expect(evidence.queries.some((query) => query.starred_only)).toBe(true);
+  expect(
+    evidence.commands.some((command) =>
+      /delete|clear|update_unified/.test(command),
+    ),
+  ).toBe(false);
+});
+
+test("来源限定store无法被筛选覆盖，通用store仍支持混合历史", async ({
+  page,
+}) => {
+  await mountHistory(page);
+  const evidence = await page.evaluate(async () => {
+    const { createUnifiedHistoryStore } = await import(
+      "/src/stores/unifiedHistoryStore.ts"
+    );
+    const voice = createUnifiedHistoryStore("voice");
+    const clipboard = createUnifiedHistoryStore("clipboard");
+    const generic = createUnifiedHistoryStore();
+    voice.getState().setFilters({ source: "all" });
+    clipboard.getState().setFilters({ source: "voice" });
+    await Promise.all([
+      voice.getState().load(),
+      clipboard.getState().load(),
+      generic.getState().load(),
+    ]);
+    return [voice, clipboard, generic].map((store) => ({
+      source: store.getState().source,
+      kinds: store.getState().items.map((item) => item.source_kind),
+    }));
+  });
+  expect(evidence).toEqual([
+    { source: "voice", kinds: ["voice"] },
+    { source: "clipboard", kinds: ["clipboard"] },
+    { source: "all", kinds: ["voice", "clipboard"] },
+  ]);
 });

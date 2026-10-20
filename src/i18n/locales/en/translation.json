@@ -86,14 +86,14 @@
     "quit": "Quit",
     "cancel": "Cancel",
     "secureInputWarning": "⚠ Shortcuts blocked by Secure Input",
-    "clipboardHistory": "Clipboard history"
+    "clipboardHistory": "Clipboard"
   },
   "sidebar": {
     "general": "General",
     "models": "Models",
     "advanced": "Advanced",
     "postProcessing": "Post Process",
-    "history": "History",
+    "history": "Recordings",
     "debug": "Debug",
     "about": "About",
     "clipboard": "Clipboard",
@@ -590,10 +590,11 @@
       }
     },
     "history": {
-      "title": "History",
+      "title": "Recordings",
+      "search": "Search recordings and transcripts",
       "openFolder": "Open Recordings Folder",
-      "loading": "Loading history...",
-      "empty": "No transcriptions yet. Start recording to build your history!",
+      "loading": "Loading recordings...",
+      "empty": "No recordings found.",
       "copyToClipboard": "Copy transcription to clipboard",
       "save": "Save transcription",
       "unsave": "Remove from saved",
@@ -779,7 +780,7 @@
       }
     },
     "clipboard": {
-      "title": "Clipboard history",
+      "title": "Clipboard",
       "searchPlaceholder": "Search clipboard history...",
       "filterAll": "All",
       "filterText": "Text",

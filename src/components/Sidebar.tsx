@@ -6,7 +6,7 @@ import {
   Cog,
   Cpu,
   FlaskConical,
-  History,
+  Mic,
   Info,
   Keyboard,
   Sparkles,
@@ -59,7 +59,7 @@ export const SECTIONS_CONFIG = {
   },
   history: {
     labelKey: "sidebar.history",
-    icon: History,
+    icon: Mic,
     component: UnifiedHistoryPage,
     enabled: () => true,
   },

@@ -86,17 +86,17 @@
     "quit": "Salir",
     "cancel": "Cancelar",
     "secureInputWarning": "⚠ Atajos bloqueados por Secure Input",
-    "clipboardHistory": "Historial del portapapeles"
+    "clipboardHistory": "Portapapeles"
   },
   "sidebar": {
     "general": "General",
     "models": "Modelos",
     "advanced": "Avanzado",
     "postProcessing": "Post proceso",
-    "history": "Historial",
+    "history": "Grabaciones",
     "debug": "Depuración",
     "about": "Acerca de",
-    "clipboard": "Clipboard",
+    "clipboard": "Portapapeles",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -590,10 +590,11 @@
       }
     },
     "history": {
-      "title": "Historial",
+      "title": "Grabaciones",
+      "search": "Buscar en grabaciones y transcripciones",
       "openFolder": "Abrir carpeta de grabaciones",
-      "loading": "Cargando historial...",
-      "empty": "Aún no hay transcripciones. ¡Comienza a grabar para crear tu historial!",
+      "loading": "Cargando grabaciones...",
+      "empty": "No se encontraron grabaciones.",
       "copyToClipboard": "Copiar transcripción al portapapeles",
       "save": "Guardar transcripción",
       "unsave": "Eliminar de guardados",
@@ -779,7 +780,7 @@
       }
     },
     "clipboard": {
-      "title": "Gestor del portapapeles",
+      "title": "Portapapeles",
       "searchPlaceholder": "Buscar en el historial del portapapeles...",
       "filterAll": "Todo",
       "filterText": "Texto",

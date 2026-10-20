@@ -86,17 +86,17 @@
     "quit": "Thoát",
     "cancel": "Hủy",
     "secureInputWarning": "⚠ Phím tắt bị Secure Input chặn",
-    "clipboardHistory": "Lịch sử clipboard"
+    "clipboardHistory": "Bảng nhớ tạm"
   },
   "sidebar": {
     "general": "Chung",
     "models": "Mô hình",
     "advanced": "Nâng cao",
     "postProcessing": "Xử lý sau",
-    "history": "Lịch sử",
+    "history": "Bản ghi âm",
     "debug": "Gỡ lỗi",
     "about": "Giới thiệu",
-    "clipboard": "Clipboard",
+    "clipboard": "Bảng nhớ tạm",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -590,10 +590,11 @@
       }
     },
     "history": {
-      "title": "Lịch sử",
+      "title": "Bản ghi âm",
+      "search": "Tìm kiếm bản ghi âm và bản chép lời",
       "openFolder": "Mở thư mục ghi âm",
-      "loading": "Đang tải lịch sử...",
-      "empty": "Chưa có bản ghi nào. Bắt đầu ghi âm để xây dựng lịch sử của bạn!",
+      "loading": "Đang tải bản ghi âm...",
+      "empty": "Không tìm thấy bản ghi âm.",
       "copyToClipboard": "Sao chép bản ghi vào clipboard",
       "save": "Lưu bản ghi",
       "unsave": "Xóa khỏi đã lưu",
@@ -779,7 +780,7 @@
       }
     },
     "clipboard": {
-      "title": "Trình quản lý clipboard",
+      "title": "Bảng nhớ tạm",
       "searchPlaceholder": "Tìm kiếm lịch sử clipboard...",
       "filterAll": "Tất cả",
       "filterText": "Văn bản",

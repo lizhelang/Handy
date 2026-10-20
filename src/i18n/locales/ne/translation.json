@@ -86,17 +86,17 @@
     "quit": "बाहिर निस्कनुहोस्",
     "cancel": "रद्द गर्नुहोस्",
     "secureInputWarning": "⚠ Secure Input ले सर्टकटहरू रोकेको छ",
-    "clipboardHistory": "Clipboard History"
+    "clipboardHistory": "क्लिपबोर्ड"
   },
   "sidebar": {
     "general": "सामान्य",
     "models": "मोडेलहरू",
     "advanced": "उन्नत",
     "postProcessing": "पोस्ट प्रोसेस",
-    "history": "हिस्ट्री",
+    "history": "रेकर्डिङहरू",
     "debug": "डिबग",
     "about": "बारेमा",
-    "clipboard": "Clipboard",
+    "clipboard": "क्लिपबोर्ड",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -590,10 +590,11 @@
       }
     },
     "history": {
-      "title": "हिस्ट्री",
+      "title": "रेकर्डिङहरू",
+      "search": "रेकर्डिङ र ट्रान्सक्रिप्ट खोज्नुहोस्",
       "openFolder": "रेकर्डिङ फोल्डर खोल्नुहोस्",
-      "loading": "हिस्ट्री लोड गरिँदैछ...",
-      "empty": "अहिलेसम्म कुनै ट्रान्सक्रिप्सन छैन। हिस्ट्री बनाउन रेकर्डिङ सुरु गर्नुहोस्!",
+      "loading": "रेकर्डिङहरू लोड गरिँदैछ...",
+      "empty": "कुनै रेकर्डिङ भेटिएन।",
       "copyToClipboard": "ट्रान्सक्रिप्सन क्लिपबोर्डमा कपी गर्नुहोस्",
       "save": "ट्रान्सक्रिप्सन सेभ गर्नुहोस्",
       "unsave": "सेभ गरिएकाबाट हटाउनुहोस्",
@@ -779,7 +780,7 @@
       }
     },
     "clipboard": {
-      "title": "Clipboard Manager",
+      "title": "क्लिपबोर्ड",
       "searchPlaceholder": "Search clipboard history...",
       "filterAll": "All",
       "filterText": "Text",
