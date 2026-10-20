@@ -60,8 +60,10 @@
 5 个数据库完整性检查通过。原词库目录的 43 个文件均保留，42 个文件字节一致，
 另一个 Rime 日志仅追加 66 字节，原前缀完整；没有运行词库重置或迁移。
 
-已请用户在原输入框及另一个应用中复测“刚开始输入”场景，尚未获得本次实机反馈。
-没有把回归通过、安装成功或短时 ready 表述为所有偶发问题已经消失。
+2026-10-21，已请用户在原输入框连续输入、选词几轮，再换一个应用复测。
+用户明确回复：“现在候选正常出现”。该反馈确认本次实际试用中候选恢复正常，
+未提供具体应用名称或测试轮次，不能据此推断所有应用或长期使用均无偶发问题。
+本轮到此停止继续测试和修改输入链路。
 
 制品目录：`/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-NmcIMcTR`。
 旧程序备份：`/Users/lzl/Library/Application Support/HandyUnifiedBuilds/permission-update-e0w3o1a6`。
