@@ -33,4 +33,26 @@
 
 ## 本机交付
 
-准备构建 1.1.24/build112；成套安装与实际界面核对在完成后补充。
+已构建并安装 **1.1.24/build112**，两组件来源提交均为
+`0617a1ef88938d29f7ac41a3117c4456786d9e93`，分支为 `codex/inputia-recordings-clipboard`。
+完整构建及原生自检、成套配对校验、签名验证、安装事务和运行进程身份检查通过；
+两组件 `ready`，维护已退出，TCC 未改变。
+
+实际安装后的界面核对：
+
+- 侧栏入口为“录音”和“剪切”，版本显示 1.1.24。
+- 录音页标题与搜索文案正确，显示 10 条语音、0 条复制记录，没有来源或内容类型下拉。
+- 剪切页标题正确，统计仍为 8356 条，实际文字和图片卡片可见。
+- 点击“打开快捷浮窗”后，浮窗内标题为“剪切”，未出现语音来源标记；
+  关闭浮窗后返回主应用，并将界面留在录音页。
+- 安装前后的 10 条语音和 8356 条剪贴记录逐条一致；11 个 WAV 字节一致，
+  两份设置文件字节一致，三个数据库完整性检查通过。
+
+制品目录：
+`/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-FRziky4c`。
+构建、安装日志和数据备份：
+`/Users/lzl/Library/Application Support/InputiaBuilds/recordings-clipboard-20261020`。
+旧程序备份：
+`/Users/lzl/Library/Application Support/HandyUnifiedBuilds/permission-update-ojanby_s`。
+
+没有推送或公开发布；没有重复执行未改动的语音识别与实体键盘验收。
