@@ -48,6 +48,9 @@ use transcribe_rs::{
 const STREAM_PERF_LOG_INTERVAL: Duration = Duration::from_secs(5);
 const STREAM_FINALIZE_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[path = "qwen_batch.rs"]
+mod qwen_batch;
+
 const SHARED_NATIVE_PROMPT_TTL: Duration = Duration::from_secs(2);
 const SHARED_STREAM_RECHECK: Duration = Duration::from_millis(500);
 
@@ -1825,16 +1828,74 @@ impl TranscriptionManager {
                         } else {
                             None
                         };
-                        let result = private_session
-                            .as_mut()
-                            .unwrap_or(session)
-                            .run(&audio, &run_options)
-                            .map(|t| {
-                                // Whisper's audio-based LID (auto mode only;
-                                // `None` when a language hint was passed).
-                                model_detected_language = t.language;
-                                strip_qwen_context_echo(t.text, active_qwen_context)
-                            });
+                        let native_session = private_session.as_mut().unwrap_or(session);
+                        let result = if model_is_qwen3_asr {
+                            let mut attempts = 0;
+                            qwen_batch::transcribe(
+                                &audio,
+                                || {
+                                    !shared_submitted
+                                        || shared_prompt.as_ref().is_some_and(|shared| {
+                                            // watch 持续验证同一快照；初次获取时间不能代替它的新鲜度。
+                                            shared.watch.current()
+                                                && !shared.watch.cancel_token().is_cancelled()
+                                                && !crate::secure_input::is_enabled_now()
+                                        })
+                                },
+                                |segment| {
+                                    let result = native_session.run(segment, &run_options);
+                                    attempts += 1;
+                                    info!(
+                                        "Qwen3-ASR segment attempt={} audio_seconds={:.2} succeeded={}",
+                                        attempts,
+                                        segment.len() as f64 / 16_000.0,
+                                        result.is_ok()
+                                    );
+                                    result
+                                        .map(|transcript| qwen_batch::SegmentTranscript {
+                                            text: strip_qwen_context_echo(
+                                                transcript.text,
+                                                active_qwen_context,
+                                            ),
+                                            language: transcript.language,
+                                        })
+                                        .map_err(|error| match error {
+                                            transcribe_cpp::Error::OutputTruncated { .. }
+                                            | transcribe_cpp::Error::InputTooLong(_) => {
+                                                qwen_batch::SegmentError::Retryable(error)
+                                            }
+                                            _ => qwen_batch::SegmentError::Fatal(error),
+                                        })
+                                },
+                            )
+                            .map(|transcript| {
+                                model_detected_language = transcript.language;
+                                transcript.text
+                            })
+                            .map_err(|error| match error {
+                                qwen_batch::BatchError::Revoked => {
+                                    anyhow::anyhow!("transcription prompt was revoked")
+                                }
+                                qwen_batch::BatchError::Failed { range, source } => anyhow::anyhow!(
+                                    "transcribe-cpp transcription failed at {:.2}–{:.2}s: {}",
+                                    range.start as f64 / 16_000.0,
+                                    range.end as f64 / 16_000.0,
+                                    source
+                                ),
+                            })
+                        } else {
+                            native_session
+                                .run(&audio, &run_options)
+                                .map(|t| {
+                                    // Whisper's audio-based LID (auto mode only;
+                                    // `None` when a language hint was passed).
+                                    model_detected_language = t.language;
+                                    strip_qwen_context_echo(t.text, active_qwen_context)
+                                })
+                                .map_err(|e| {
+                                    anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
+                                })
+                        };
                         drop(private_session);
                         if shared_submitted
                             && shared_prompt
@@ -1850,9 +1911,7 @@ impl TranscriptionManager {
                                     shared.snapshot.terms.len(), shared.snapshot.policy_epoch, shared.snapshot.learning_generation);
                             }
                         }
-                        result.map_err(|e| {
-                            anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
-                        })
+                        result
                     }
                     LoadedEngine::Parakeet(parakeet_engine) => {
                         let params = ParakeetParams {

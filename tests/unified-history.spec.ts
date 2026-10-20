@@ -13,6 +13,11 @@ interface HistoryHarness {
   output: string;
   rejectMutation: boolean;
   rejectListener: boolean;
+  recordingFailure: {
+    operation: "retranscribe" | "openRecordings";
+    message?: string;
+  } | null;
+  deferRetranscribe: boolean;
   audioUrl?: string;
   pending: Map<string, (value: unknown) => void>;
   deferQueries: boolean;
@@ -78,6 +83,8 @@ async function mountHistory(page: Page) {
       output: "confirmed",
       rejectMutation: false,
       rejectListener: false,
+      recordingFailure: null as HistoryHarness["recordingFailure"],
+      deferRetranscribe: false,
       pending: new Map<string, (value: unknown) => void>(),
       deferQueries: false,
       emit: () => {
@@ -225,6 +232,38 @@ async function mountHistory(page: Page) {
                 : entry,
             );
           },
+          onRetranscribe: async (item: typeof fixture) => {
+            harness.calls.push({
+              command: "retranscribe",
+              args: { itemId: item.item_id, revision: item.revision },
+            });
+            if (harness.deferRetranscribe)
+              await new Promise<void>((resolve) =>
+                harness.pending.set("retranscribe", () => resolve()),
+              );
+            if (harness.recordingFailure?.operation === "retranscribe") {
+              if (harness.recordingFailure.message)
+                throw new Error(harness.recordingFailure.message);
+              throw { code: "unknown" };
+            }
+            harness.items = harness.items.map((entry) =>
+              entry.item_id === item.item_id
+                ? {
+                    ...entry,
+                    text: "Recovered transcription",
+                    revision: entry.revision + 1,
+                  }
+                : entry,
+            );
+          },
+          onOpenRecordings: async () => {
+            harness.calls.push({ command: "openRecordings" });
+            if (harness.recordingFailure?.operation === "openRecordings") {
+              if (harness.recordingFailure.message)
+                throw new Error(harness.recordingFailure.message);
+              throw { code: "unknown" };
+            }
+          },
         }),
       );
     Object.assign(harness, {
@@ -267,6 +306,147 @@ test("single click previews; explicit copy preserves the file item and does not 
       ]),
     ),
   ).toEqual([["copy", "files"]]);
+});
+
+test("重转录失败持续显示后端原因，并允许再次重试成功", async ({ page }) => {
+  await page.clock.install();
+  await mountHistory(page);
+  await page.evaluate(() => {
+    const harness = window.__HISTORY_TEST__;
+    harness.items[0] = { ...harness.items[0], asset_ref: "recording-1" };
+    harness.recordingFailure = {
+      operation: "retranscribe",
+      message: "output truncated before end-of-stream: run: status 18",
+    };
+    harness.emit();
+  });
+  await page.getByText("Voice fixture", { exact: true }).click();
+  const retry = page.getByRole("button", {
+    name: "Re-transcribe",
+    exact: true,
+  });
+  await retry.click();
+  const failure = page
+    .getByRole("complementary", { name: "Preview" })
+    .getByRole("alert");
+  await expect(failure).toContainText(
+    "Failed to re-transcribe. Please try again.",
+  );
+  await expect(failure).toContainText(
+    "output truncated before end-of-stream: run: status 18",
+  );
+  await expect(page.getByText(/Could not save/)).toHaveCount(0);
+  await expect(retry).toBeEnabled();
+  await page.clock.fastForward(5000);
+  await expect(failure).toBeVisible();
+  expect(await page.evaluate(() => window.__HISTORY_TEST__.items[0].text)).toBe(
+    "Voice fixture",
+  );
+
+  await page.evaluate(() => {
+    window.__HISTORY_TEST__.recordingFailure = null;
+  });
+  await retry.click();
+  await expect(
+    page.getByText("Saved and synchronized.", { exact: true }),
+  ).toBeVisible();
+  await expect(failure).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.__HISTORY_TEST__.calls.filter(
+        (call) => call.command === "retranscribe",
+      ),
+    ),
+  ).toEqual([
+    { command: "retranscribe", args: { itemId: "voice-1", revision: 1 } },
+    { command: "retranscribe", args: { itemId: "voice-1", revision: 1 } },
+  ]);
+  expect(await page.evaluate(() => window.__HISTORY_TEST__.items[0].text)).toBe(
+    "Recovered transcription",
+  );
+});
+
+for (const outcome of ["failure", "success"] as const) {
+  test(`切换历史条目后，迟到的重转录${outcome === "failure" ? "失败" : "成功"}不会误归属到新条目`, async ({
+    page,
+  }) => {
+    await mountHistory(page);
+    await page.evaluate((result) => {
+      const harness = window.__HISTORY_TEST__;
+      harness.items[0] = { ...harness.items[0], asset_ref: "recording-1" };
+      harness.deferRetranscribe = true;
+      if (result === "failure")
+        harness.recordingFailure = {
+          operation: "retranscribe",
+          message: "late failure for voice-1",
+        };
+      harness.emit();
+    }, outcome);
+    await page.getByText("Voice fixture", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "Re-transcribe", exact: true })
+      .click();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__HISTORY_TEST__.pending.has("retranscribe"),
+        ),
+      )
+      .toBe(true);
+    await page.getByText("report.pdf", { exact: true }).click();
+    const selectedFile = page
+      .getByRole("listitem")
+      .filter({ hasText: "report.pdf" });
+    await expect(selectedFile).toHaveAttribute("aria-expanded", "true");
+    await page.evaluate(() =>
+      window.__HISTORY_TEST__.pending.get("retranscribe")!(null),
+    );
+    await expect(
+      page.getByRole("button", { name: "Open Recordings Folder" }),
+    ).toBeEnabled();
+    await expect(selectedFile).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(
+      page.getByText("Saved and synchronized.", { exact: true }),
+    ).toHaveCount(0);
+    expect(
+      await page.evaluate(() => window.__HISTORY_TEST__.items[0].text),
+    ).toBe(outcome === "failure" ? "Voice fixture" : "Recovered transcription");
+  });
+}
+
+test("未知录音操作错误按实际操作显示本地化提示", async ({ page }) => {
+  await mountHistory(page);
+  await page.evaluate(() => {
+    const harness = window.__HISTORY_TEST__;
+    harness.items[0] = { ...harness.items[0], asset_ref: "recording-1" };
+    harness.recordingFailure = { operation: "retranscribe" };
+    harness.emit();
+  });
+  await page.getByText("Voice fixture", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Re-transcribe", exact: true })
+    .click();
+  const preview = page.getByRole("complementary", { name: "Preview" });
+  await expect(preview.getByRole("alert")).toHaveText(
+    "Failed to re-transcribe. Please try again.",
+  );
+
+  await page.evaluate(() => {
+    window.__HISTORY_TEST__.recordingFailure = {
+      operation: "openRecordings",
+    };
+  });
+  const open = page.getByRole("button", { name: "Open Recordings Folder" });
+  await open.click();
+  await expect(page.getByRole("alert")).toContainText("Open Recordings Folder");
+  await expect(page.getByRole("alert")).toContainText(
+    "The action failed. Your content is kept in history.",
+  );
+  await expect(preview.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText(/Could not save/)).toHaveCount(0);
+  await expect(page.getByText("[object Object]")).toHaveCount(0);
+  await expect(open).toBeEnabled();
 });
 
 test("switching voice previews keeps a single recording player", async ({
@@ -669,6 +849,14 @@ test("live changes preserve edit revision and failed mutations do not report suc
   ).toBeVisible();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText(/Could not save/)).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Preview" }).getByRole("alert"),
+  ).toContainText("conflict");
+  await expect(
+    page.getByText("Failed to re-transcribe. Please try again.", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
   expect(
     await page.evaluate(() => window.__HISTORY_TEST__.actions[0].item.revision),
   ).toBe(1);

@@ -254,10 +254,17 @@ pub(crate) async fn retry_history_entry_checked(
     let tm = Arc::clone(transcription_manager);
     let transcription = tauri::async_runtime::spawn_blocking(move || tm.transcribe(samples))
         .await
-        .map_err(|e| format!("Transcription task panicked: {}", e))?
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            log::error!("History re-transcription worker failed: history_id={id}");
+            format!("Transcription task panicked: {}", e)
+        })?
+        .map_err(|e| {
+            log::warn!("History re-transcription failed: history_id={id}, error={e}");
+            e.to_string()
+        })?;
 
     if transcription.is_empty() {
+        log::warn!("History re-transcription returned no speech: history_id={id}");
         return Err("Recording contains no speech".to_string());
     }
 

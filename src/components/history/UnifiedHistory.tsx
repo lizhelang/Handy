@@ -35,6 +35,20 @@ const buttonClass =
 const inputClass =
   "min-w-0 rounded-md border border-text/15 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-logo-primary";
 
+type RecordingOperation = "retranscribe" | "openRecordings";
+type HistoryActionError = {
+  operation: RecordingOperation | "update";
+  itemId: string | null;
+  detail: string | null;
+};
+type HistoryFeedback = { itemId: string; message: string };
+
+function actionErrorDetail(error: unknown): string | null {
+  if (error instanceof Error) return error.message.trim() || null;
+  if (typeof error === "string") return error.trim() || null;
+  return null;
+}
+
 function fileNames(item: UnifiedHistoryItem): string[] {
   if (item.content_type !== "files" || !item.text) return [];
   try {
@@ -160,7 +174,10 @@ export function UnifiedHistory({
       (attempt) => attempt.status === "inflight",
     );
   const busyRef = useRef(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<HistoryFeedback | null>(null);
+  const [actionError, setActionError] = useState<HistoryActionError | null>(
+    null,
+  );
   const [editing, setEditing] = useState(false);
   const [editingItem, setEditingItem] = useState<UnifiedHistoryItem | null>(
     null,
@@ -177,7 +194,7 @@ export function UnifiedHistory({
     ? getOutputAttempt(selected.item_id, "copy")
     : undefined;
   const feedbackMessage =
-    feedback ||
+    (feedback?.itemId === state.selectedId ? feedback.message : null) ||
     (outputs.storageFailed
       ? "failed"
       : outputNeedsAcknowledgement(insertAttempt)
@@ -185,10 +202,33 @@ export function UnifiedHistory({
         : outputNeedsAcknowledgement(copyAttempt)
           ? copyAttempt?.status
           : null);
+  const visibleActionError =
+    actionError &&
+    (actionError.itemId === null || actionError.itemId === state.selectedId)
+      ? actionError
+      : null;
+  const actionErrorNotice = visibleActionError && (
+    <div role="alert" className="break-words text-sm text-red-600">
+      <p>
+        {visibleActionError.operation === "retranscribe"
+          ? t("settings.history.retranscribeError")
+          : visibleActionError.operation === "update"
+            ? t("unifiedHistory.feedback.updateFailed")
+            : t("settings.history.openFolder")}
+      </p>
+      {(visibleActionError.detail ||
+        visibleActionError.operation === "openRecordings") && (
+        <p className="whitespace-pre-wrap">
+          {visibleActionError.detail || t("unifiedHistory.feedback.failed")}
+        </p>
+      )}
+    </div>
+  );
   useEffect(() => state.subscribe(), [state.subscribe]);
   useEffect(() => {
     setEditing(false);
     setFeedback(null);
+    setActionError(null);
   }, [state.selectedId]);
 
   const output = async (
@@ -205,6 +245,7 @@ export function UnifiedHistory({
     );
     if (!attempt) return;
     setFeedback(null);
+    setActionError(null);
     try {
       const result: UnifiedHistoryActionResult = receiptOnly
         ? ((await onCheckOutputReceipt?.(attempt.operationId)) ?? {
@@ -212,16 +253,18 @@ export function UnifiedHistory({
           })
         : await (action === "copy" ? onCopy(item) : onInsert(item));
       outputs.finish(attempt, result.status);
-      setFeedback(
-        result.status === "confirmed"
-          ? action === "copy"
-            ? "copied"
-            : "inserted"
-          : result.status,
-      );
+      setFeedback({
+        itemId: item.item_id,
+        message:
+          result.status === "confirmed"
+            ? action === "copy"
+              ? "copied"
+              : "inserted"
+            : result.status,
+      });
     } catch {
       outputs.finish(attempt, "uncertain");
-      setFeedback("uncertain");
+      setFeedback({ itemId: item.item_id, message: "uncertain" });
     }
   };
   const update = async (
@@ -232,13 +275,18 @@ export function UnifiedHistory({
     busyRef.current = true;
     setBusy(true);
     setFeedback(null);
+    setActionError(null);
     try {
       await onUpdate(item, patch);
       setEditing(false);
       await state.load();
-      setFeedback("updated");
-    } catch {
-      setFeedback("updateFailed");
+      setFeedback({ itemId: item.item_id, message: "updated" });
+    } catch (error) {
+      setActionError({
+        operation: "update",
+        itemId: item.item_id,
+        detail: actionErrorDetail(error),
+      });
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -246,20 +294,22 @@ export function UnifiedHistory({
   };
   const recordingAction = async (
     action: () => Promise<void>,
-    reload = false,
+    operation: RecordingOperation,
+    itemId: string | null = null,
   ) => {
     if (busyRef.current || busy) return;
     busyRef.current = true;
     setBusy(true);
     setFeedback(null);
+    setActionError(null);
     try {
       await action();
-      if (reload) {
+      if (operation === "retranscribe" && itemId !== null) {
         await state.load();
-        setFeedback("updated");
+        setFeedback({ itemId, message: "updated" });
       }
-    } catch {
-      setFeedback("updateFailed");
+    } catch (error) {
+      setActionError({ operation, itemId, detail: actionErrorDetail(error) });
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -334,7 +384,9 @@ export function UnifiedHistory({
           <button
             className={buttonClass}
             disabled={busy}
-            onClick={() => void recordingAction(onOpenRecordings)}
+            onClick={() =>
+              void recordingAction(onOpenRecordings, "openRecordings")
+            }
           >
             {t("settings.history.openFolder")}
           </button>
@@ -416,7 +468,8 @@ export function UnifiedHistory({
           </button>
         </div>
       )}
-      {feedbackMessage && (
+      {visibleActionError?.itemId === null && actionErrorNotice}
+      {!visibleActionError && feedbackMessage && (
         <p role="status" aria-live="polite" className="text-sm text-text/70">
           {t(`unifiedHistory.feedback.${feedbackMessage}`)}
         </p>
@@ -533,6 +586,8 @@ export function UnifiedHistory({
                     className="mt-3 cursor-default space-y-3 border-t border-text/10 pt-3"
                   >
                     <Attachment item={selected} resolveAsset={resolveAsset} />
+                    {visibleActionError?.itemId === selected.item_id &&
+                      actionErrorNotice}
                     {editing ? (
                       <div data-history-editor className="space-y-2">
                         <label className="block text-sm">
@@ -598,7 +653,8 @@ export function UnifiedHistory({
                             onClick={() =>
                               void recordingAction(
                                 () => onRetranscribe(selected),
-                                true,
+                                "retranscribe",
+                                selected.item_id,
                               )
                             }
                           >
@@ -628,6 +684,7 @@ export function UnifiedHistory({
                                 onClick={() => {
                                   outputs.acknowledge(selected.item_id, action);
                                   setFeedback(null);
+                                  setActionError(null);
                                 }}
                               >
                                 {t(
