@@ -49,7 +49,17 @@ CAPI 保留该结果。本次修正 Host 的消费结果，不改变引擎和上
 
 自动化在新建 TextEdit 文稿输入 `abc` 时未观察到待确认的组合状态，未执行目标回车验证，
 因此不能据此声称完成真实输入框验收。测试文稿已保存在本轮私有验证目录并关闭，
-未向聊天对象发送测试内容。已请用户在原来会误发送的输入框试用，反馈待确认。
+未向聊天对象发送测试内容。
+
+用户随后明确回复“仍然同时发送”，并提供 X Web App 的 Grok 截图，已上屏的
+`nihk` 被当作消息发送。因此 **1.1.26 没有通过该原场景验收**，之前的 Host 分支
+回归及安装成功只能证明已修掉显式透传例外，不能证明网页侧不会再次处理回车。
+
+只读核实 `/Users/lzl/Applications/X.app` 使用 Safari Web App 模板，标识为
+`com.apple.Safari.WebApp.7DAA0D15-0997-433C-9820-ED5C74751C09`，manifest 为
+`https://x.com/manifest.json`。X 的扩展设置当前为空，未安装脚本扩展、授予站点权限
+或通过自动化向 Grok 发送测试消息。后续浏览器边界调查见
+[X Web App 回车保护候选](2026-10-21-x-webapp-return.md)。
 
 制品目录：`/Users/lzl/Library/Application Support/HandyUnifiedBuilds/release-hflTpfXU`。
 旧程序备份：`/Users/lzl/Library/Application Support/HandyUnifiedBuilds/permission-update-8z9hmebm`。
