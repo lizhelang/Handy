@@ -389,6 +389,7 @@ fi
 /usr/bin/python3 "$ROOT_DIR/Tools/prediction-presentation-host-self-check.py"
 /usr/bin/python3 "$ROOT_DIR/Tools/prediction-lifecycle-integration-self-check.py"
 /usr/bin/python3 "$ROOT_DIR/Tools/physical-input-priority-self-check.py"
+/usr/bin/python3 "$ROOT_DIR/Tools/return-key-commit-self-check.py"
 /usr/bin/python3 "$ROOT_DIR/Tools/target-capture-queue-self-check.py"
 /usr/bin/python3 "$ROOT_DIR/Tools/privacy-owned-context-self-check.py"
 /usr/bin/python3 "$ROOT_DIR/Tools/word-span-key-path-self-check.py"

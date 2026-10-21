@@ -157,20 +157,4 @@ enum InputiaHostTextPolicy {
   static func shouldPassThroughAppCommand(selectorName: String) -> Bool {
     appCommandSelectors.contains(selectorName)
   }
-
-  static func shouldPassThroughNewlineAfterRawFallbackCommit(
-    previousComposing: String,
-    candidates: [String],
-    committedText: String?
-  ) -> Bool {
-    guard !previousComposing.isEmpty, candidates.isEmpty else {
-      return false
-    }
-    guard committedText == previousComposing else {
-      return false
-    }
-    return previousComposing.unicodeScalars.allSatisfy { scalar in
-      scalar.isASCII && scalar.value >= 0x20 && scalar.value != 0x7f
-    }
-  }
 }

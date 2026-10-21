@@ -1068,19 +1068,13 @@ final class InputiaInputController: IMKInputController {
         clearEnglishCompletion()
         return false
       }
-      let previousComposing = latestComposing
-      let previousCandidates = latestCandidates
       let outcome = bridge.enter()
-      let shouldPassThroughNewline = InputiaHostTextPolicy.shouldPassThroughNewlineAfterRawFallbackCommit(
-        previousComposing: previousComposing,
-        candidates: previousCandidates,
-        committedText: outcome.commit
-      )
       let handled = apply(outcome, client: client)
       if outcome.mode == "English" && !outcome.consumed {
         learnAndClearEnglishCompletion(client: client)
       }
-      return shouldPassThroughNewline ? false : handled
+      // 有组合时本次 Return 只负责上屏；下一次无组合的 Return 才交给宿主。
+      return handled
     case keyCodeSpace:
       #if INPUTIA_PAIRED_BUILD
       let predictionTrigger = predictionTriggerForSpace(event, client: client)

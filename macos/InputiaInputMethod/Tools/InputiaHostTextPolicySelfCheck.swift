@@ -199,38 +199,6 @@ struct InputiaHostTextPolicySelfCheck {
         "showPreferencesCommandPassesThrough",
         InputiaHostTextPolicy.shouldPassThroughAppCommand(selectorName: "showPreferences:")
       ),
-      (
-        "asciiRawFallbackNewlinePassesThroughAfterCommit",
-        InputiaHostTextPolicy.shouldPassThroughNewlineAfterRawFallbackCommit(
-          previousComposing: "abc",
-          candidates: [],
-          committedText: "abc"
-        )
-      ),
-      (
-        "candidateCommitNewlineDoesNotPassThrough",
-        !InputiaHostTextPolicy.shouldPassThroughNewlineAfterRawFallbackCommit(
-          previousComposing: "ni",
-          candidates: ["你"],
-          committedText: "你"
-        )
-      ),
-      (
-        "nonAsciiRawFallbackNewlineDoesNotPassThrough",
-        !InputiaHostTextPolicy.shouldPassThroughNewlineAfterRawFallbackCommit(
-          previousComposing: "你好",
-          candidates: [],
-          committedText: "你好"
-        )
-      ),
-      (
-        "changedCommitNewlineDoesNotPassThrough",
-        !InputiaHostTextPolicy.shouldPassThroughNewlineAfterRawFallbackCommit(
-          previousComposing: "abc",
-          candidates: [],
-          committedText: "ab"
-        )
-      ),
     ] + appCommandPassThroughChecks
 
     let ok = checks.allSatisfy { $0.1 }
