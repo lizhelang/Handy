@@ -481,6 +481,10 @@ enum InputiaVoiceInputLauncher {
           ) { notification in
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
               app.bundleIdentifier == identity.identifier else { return }
+            // 与 trustedServiceIsRunning 同一安装路径判定：同标识的构建备份退出不是本服务退出，
+            // 不能借此暂停自动准备或断开当前业务连接。
+            if let installation = InputiaProfile.current.installation,
+              app.bundleURL?.path != installation.receipt.components.control { return }
             readinessQueue.async { readiness.suspend() }
             retireBusinessConnections()
           }
