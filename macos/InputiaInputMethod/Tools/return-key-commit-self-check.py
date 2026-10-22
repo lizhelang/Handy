@@ -39,10 +39,22 @@ assert key_down.index(modifier_gate) < key_down.index("    case keyCodeReturn, k
     "宿主快捷键必须先于 Return 组合处理放行"
 )
 assert "if let handled = handlePersonalCandidateKey(event, client: client) { return handled }" in key_down
+# 延后上屏只有补完路径齐全才不会丢字：任何新事件、外部提交和停用都必须先补完。
+handle = declaration("  override func handle(_ event: NSEvent!, client sender: Any!)")
+flush_gate = "    if pendingReturnCommit != nil {\n      flushPendingReturnCommit()"
+assert flush_gate in handle and handle.index(flush_gate) < handle.index("shouldUseSecureDirectMode(client)"), (
+    "handle 必须在任何其他处理之前补完延后的回车上屏"
+)
+for marker in ["  override func commitComposition(_ sender: Any!)", "  override func deactivateServer(_ sender: Any!)"]:
+    body = declaration(marker)
+    assert body.split("{", 1)[1].lstrip().startswith("flushPendingReturnCommit()"), f"{marker.strip()} 必须先补完上屏"
 methods = "\n".join(
     declaration(marker)
     for marker in [
         "  private func apply(",
+        "  private func commitComposingOnReturn(",
+        "  private func deferReturnCommit(",
+        "  private func flushPendingReturnCommit(",
         "  private func syncHostState(",
         "  private func insertCommittedText(",
         "  private func clearShiftEnglishComposition(",
@@ -73,6 +85,8 @@ final class Bridge {
 final class Client {
   var inserted: [String] = []
   var marked = NSRange(location: 0, length: 3)
+  var bundle: String? = "com.apple.TextEdit"
+  func bundleIdentifier() -> String? { bundle }
   func markedRange() -> NSRange { marked }
   func insertText(_ value: String, replacementRange: NSRange) { inserted.append(value); marked = emptyReplacementRange }
 }
@@ -80,6 +94,7 @@ typealias IMKTextInput = Client
 final class Panel { func hide() {} }
 final class Controller {
   let bridge = Bridge()
+  var pendingReturnCommit: (() -> Void)?
   var latestComposing = "", latestCandidates: [String] = [], shiftEnglishComposition = ""
   var englishCompletionPrefix = "", englishCompletionCandidates: [String] = []
   var candidatePanelExpanded = false, expandedActiveRowIndex = 0
@@ -108,11 +123,12 @@ __RETURN_BRANCH__
   }
 __METHODS__
 }
-func event(_ code: UInt16, modifiers: NSEvent.ModifierFlags = []) -> NSEvent {
+func event(_ code: UInt16, modifiers: NSEvent.ModifierFlags = [], repeat: Bool = false) -> NSEvent {
   NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
     timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0, context: nil,
-    characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: code)!
+    characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: `repeat`, keyCode: code)!
 }
+let webApp = "com.apple.Safari.WebApp.7DAA0D15-0997-433C-9820-ED5C74751C09"
 var checks = 0, failures = 0
 func check(_ passed: Bool, _ label: String) {
   checks += 1
@@ -164,6 +180,34 @@ for code: UInt16 in [36, 76] {
   check(!prediction.handleReturn(event(code), client: predictionClient)
     && prediction.predictionAccepts == 0 && predictionClient.inserted.isEmpty,
     "\(code) 空输入联想不能误吞 Return 或选词")
+  // 程序坞网页应用：keyDown 只吞下并保留组合，补完（同一回车 keyUp）时才上屏一次。
+  let deferred = Controller(), deferredClient = Client()
+  deferredClient.bundle = webApp
+  deferred.latestComposing = "nihk"; deferred.bridge.outcome.commit = "nihk"
+  check(deferred.handleReturn(event(code), client: deferredClient) && deferredClient.inserted.isEmpty
+    && deferred.latestComposing == "nihk" && deferred.bridge.calls == 0 && deferred.pendingReturnCommit != nil,
+    "\(code) 网页应用：回车 keyDown 吞下且组合仍在进行")
+  deferred.flushPendingReturnCommit()
+  check(deferredClient.inserted == ["nihk"] && deferred.latestComposing.isEmpty && deferred.bridge.calls == 1
+    && deferred.pendingReturnCommit == nil, "\(code) 网页应用：keyUp 补完后只上屏一次")
+  deferred.flushPendingReturnCommit()
+  check(!deferred.handleReturn(event(code), client: deferredClient) && deferredClient.inserted == ["nihk"]
+    && deferred.bridge.calls == 1, "\(code) 网页应用：重复补完无副作用，下一次无组合回车交给宿主")
+  let deferredShift = Controller(), deferredShiftClient = Client()
+  deferredShiftClient.bundle = webApp
+  deferredShift.shiftEnglishComposition = "AbC"; deferredShift.latestComposing = "AbC"
+  check(deferredShift.handleReturn(event(code), client: deferredShiftClient)
+    && deferredShiftClient.inserted.isEmpty && deferredShift.shiftEnglishComposition == "AbC",
+    "\(code) 网页应用：Shift 英文组合同样等 keyUp")
+  deferredShift.flushPendingReturnCommit()
+  check(deferredShiftClient.inserted == ["AbC"] && deferredShift.shiftEnglishComposition.isEmpty,
+    "\(code) 网页应用：Shift 英文补完后只上屏一次")
+  let repeated = Controller(), repeatedClient = Client()
+  repeatedClient.bundle = webApp
+  repeated.latestComposing = "abc"; repeated.bridge.outcome.commit = "abc"
+  check(repeated.handleReturn(event(code, repeat: true), client: repeatedClient)
+    && repeatedClient.inserted == ["abc"] && repeated.pendingReturnCommit == nil,
+    "\(code) 网页应用：按住重复的回车不进入延后")
   let failed = Controller(), failedClient = Client()
   failed.latestComposing = "abc"; failed.bridge.outcome.ok = false
   check(!failed.handleReturn(event(code), client: failedClient) && failedClient.inserted.isEmpty,

@@ -301,6 +301,8 @@ final class InputiaInputController: IMKInputController {
   private var sharedChineseOrder: (order: InputiaSharedCandidateOrder, candidates: [String], identity: String, target: InputiaVoiceTarget)?
   #endif
   private let bridge = InputiaRustBridge.makeDefault()
+  /// 程序坞网页应用中等待同一回车 keyUp 的上屏；见 deferReturnCommit。
+  private var pendingReturnCommit: (() -> Void)?
   private var latestCandidates: [String] = []
   private var localCompositionGeneration: UInt64 = 0
   private var localSelectionGeneration: UInt64 = 0
@@ -339,6 +341,13 @@ final class InputiaInputController: IMKInputController {
       let client = sender as? IMKTextInput
     else {
       return false
+    }
+    if pendingReturnCommit != nil {
+      flushPendingReturnCommit()
+      // 延后上屏的那次回车松开后已完成上屏，keyUp 照旧交给宿主。
+      if event.type == .keyUp, event.keyCode == keyCodeReturn || event.keyCode == keyCodeKeypadEnter {
+        return false
+      }
     }
 
     #if INPUTIA_PAIRED_BUILD
@@ -708,6 +717,7 @@ final class InputiaInputController: IMKInputController {
   }
 
   override func commitComposition(_ sender: Any!) {
+    flushPendingReturnCommit()
     #if INPUTIA_PAIRED_BUILD
     retirePredictionPresentation()
     retireWordSpan(reason: "external_commit_boundary")
@@ -819,6 +829,7 @@ final class InputiaInputController: IMKInputController {
   }
 
   override func deactivateServer(_ sender: Any!) {
+    flushPendingReturnCommit()
     #if INPUTIA_PAIRED_BUILD
     predictionActivationGeneration &+= 1
     clearConfirmedFieldContext()
@@ -922,6 +933,35 @@ final class InputiaInputController: IMKInputController {
       resetShiftInputModeSession(reason: "clientChanged")
     }
     gestureInputClient = currentClient
+  }
+
+  /// 有组合时本次 Return 只负责上屏；下一次无组合的 Return 才交给宿主。
+  private func commitComposingOnReturn(client: IMKTextInput) -> Bool {
+    let outcome = bridge.enter()
+    let handled = apply(outcome, client: client)
+    if outcome.mode == "English" && !outcome.consumed {
+      learnAndClearEnglishCompletion(client: client)
+    }
+    return handled
+  }
+
+  /// 程序坞网页应用中，确认组合的回车 keyDown 只吞下、保留组合，等同一回车的 keyUp
+  /// 再上屏：宿主处理完 keyDown 才会送来 keyUp，网页收到 keydown 时组合仍在进行。
+  /// keyUp 之前的任何事件、提交组合或停用都会先补完上屏，不丢字也不改变顺序。
+  private func deferReturnCommit(_ event: NSEvent, client: IMKTextInput,
+    _ commit: @escaping () -> Void) -> Bool {
+    guard !event.isARepeat,
+      InputiaHostTextPolicy.defersReturnCommit(bundleIdentifier: client.bundleIdentifier())
+    else { return false }
+    flushPendingReturnCommit()
+    pendingReturnCommit = commit
+    return true
+  }
+
+  private func flushPendingReturnCommit() {
+    guard let commit = pendingReturnCommit else { return }
+    pendingReturnCommit = nil
+    commit()
   }
 
   private func handleKeyDown(_ event: NSEvent, client: IMKTextInput) -> Bool {
@@ -1061,6 +1101,9 @@ final class InputiaInputController: IMKInputController {
       return handleCandidatePageUp(client: client)
     case keyCodeReturn, keyCodeKeypadEnter:
       if !shiftEnglishComposition.isEmpty {
+        if deferReturnCommit(event, client: client, { [weak self] in
+          self?.commitShiftEnglishComposition(client: client)
+        }) { return true }
         commitShiftEnglishComposition(client: client)
         return true
       }
@@ -1068,13 +1111,10 @@ final class InputiaInputController: IMKInputController {
         clearEnglishCompletion()
         return false
       }
-      let outcome = bridge.enter()
-      let handled = apply(outcome, client: client)
-      if outcome.mode == "English" && !outcome.consumed {
-        learnAndClearEnglishCompletion(client: client)
-      }
-      // 有组合时本次 Return 只负责上屏；下一次无组合的 Return 才交给宿主。
-      return handled
+      if deferReturnCommit(event, client: client, { [weak self] in
+        _ = self?.commitComposingOnReturn(client: client)
+      }) { return true }
+      return commitComposingOnReturn(client: client)
     case keyCodeSpace:
       #if INPUTIA_PAIRED_BUILD
       let predictionTrigger = predictionTriggerForSpace(event, client: client)

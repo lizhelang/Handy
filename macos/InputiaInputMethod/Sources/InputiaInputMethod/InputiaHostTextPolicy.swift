@@ -157,4 +157,10 @@ enum InputiaHostTextPolicy {
   static func shouldPassThroughAppCommand(selectorName: String) -> Bool {
     appCommandSelectors.contains(selectorName)
   }
+
+  /// WebKit 324380：Safari“添加到程序坞”的网页应用会在组合结束之后才把确认回车的
+  /// keydown 交给网页，网页看到 isComposing=false 便当作发送。只有这类宿主延后上屏。
+  static func defersReturnCommit(bundleIdentifier: String?) -> Bool {
+    bundleIdentifier?.hasPrefix("com.apple.Safari.WebApp.") == true
+  }
 }

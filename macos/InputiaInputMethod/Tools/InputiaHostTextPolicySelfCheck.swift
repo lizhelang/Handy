@@ -199,6 +199,18 @@ struct InputiaHostTextPolicySelfCheck {
         "showPreferencesCommandPassesThrough",
         InputiaHostTextPolicy.shouldPassThroughAppCommand(selectorName: "showPreferences:")
       ),
+      (
+        "safariWebAppDefersReturnCommit",
+        InputiaHostTextPolicy.defersReturnCommit(
+          bundleIdentifier: "com.apple.Safari.WebApp.7DAA0D15-0997-433C-9820-ED5C74751C09")
+      ),
+      (
+        "safariBrowserAndOtherHostsCommitImmediately",
+        !InputiaHostTextPolicy.defersReturnCommit(bundleIdentifier: "com.apple.Safari")
+          && !InputiaHostTextPolicy.defersReturnCommit(bundleIdentifier: "com.apple.Safari.WebApp")
+          && !InputiaHostTextPolicy.defersReturnCommit(bundleIdentifier: "com.google.Chrome")
+          && !InputiaHostTextPolicy.defersReturnCommit(bundleIdentifier: nil)
+      ),
     ] + appCommandPassThroughChecks
 
     let ok = checks.allSatisfy { $0.1 }
