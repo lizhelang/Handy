@@ -163,4 +163,8 @@ enum InputiaHostTextPolicy {
   static func defersReturnCommit(bundleIdentifier: String?) -> Bool {
     bundleIdentifier?.hasPrefix("com.apple.Safari.WebApp.") == true
   }
+
+  /// 吞下回车后由输入法自行上屏的等待时间：只决定上屏时机，不决定回车是否被吞；
+  /// 期间的新事件会立即补完上屏。
+  static let deferredReturnCommitDelay: TimeInterval = 0.05
 }

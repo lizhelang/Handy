@@ -301,8 +301,9 @@ final class InputiaInputController: IMKInputController {
   private var sharedChineseOrder: (order: InputiaSharedCandidateOrder, candidates: [String], identity: String, target: InputiaVoiceTarget)?
   #endif
   private let bridge = InputiaRustBridge.makeDefault()
-  /// 程序坞网页应用中等待同一回车 keyUp 的上屏；见 deferReturnCommit。
+  /// 程序坞网页应用中延后的回车上屏；见 deferReturnCommit。
   private var pendingReturnCommit: (() -> Void)?
+  private var pendingReturnCommitGeneration: UInt64 = 0
   private var latestCandidates: [String] = []
   private var localCompositionGeneration: UInt64 = 0
   private var localSelectionGeneration: UInt64 = 0
@@ -344,7 +345,7 @@ final class InputiaInputController: IMKInputController {
     }
     if pendingReturnCommit != nil {
       flushPendingReturnCommit()
-      // 延后上屏的那次回车松开后已完成上屏，keyUp 照旧交给宿主。
+      // 若宿主送来延后那次回车的 keyUp，上屏已在上面完成，keyUp 照旧交给宿主。
       if event.type == .keyUp, event.keyCode == keyCodeReturn || event.keyCode == keyCodeKeypadEnter {
         return false
       }
@@ -945,9 +946,10 @@ final class InputiaInputController: IMKInputController {
     return handled
   }
 
-  /// 程序坞网页应用中，确认组合的回车 keyDown 只吞下、保留组合，等同一回车的 keyUp
-  /// 再上屏：宿主处理完 keyDown 才会送来 keyUp，网页收到 keydown 时组合仍在进行。
-  /// keyUp 之前的任何事件、提交组合或停用都会先补完上屏，不丢字也不改变顺序。
+  /// 程序坞网页应用中，确认组合的回车 keyDown 只吞下、保留组合，稍后由输入法自行上屏，
+  /// 使网页先收到组合仍在进行的 keydown。该宿主不把回车 keyUp 交给输入法（2026-10-22
+  /// 实测），不能等 keyUp。期间到来的任何事件、提交组合或停用都会先补完上屏，不丢字
+  /// 也不改变顺序；代次确保旧的延时只补完自己那一次。
   private func deferReturnCommit(_ event: NSEvent, client: IMKTextInput,
     _ commit: @escaping () -> Void) -> Bool {
     guard !event.isARepeat,
@@ -955,6 +957,13 @@ final class InputiaInputController: IMKInputController {
     else { return false }
     flushPendingReturnCommit()
     pendingReturnCommit = commit
+    pendingReturnCommitGeneration &+= 1
+    let generation = pendingReturnCommitGeneration
+    DispatchQueue.main.asyncAfter(deadline: .now() + InputiaHostTextPolicy.deferredReturnCommitDelay) {
+      [weak self] in
+      guard let self, self.pendingReturnCommitGeneration == generation else { return }
+      self.flushPendingReturnCommit()
+    }
     return true
   }
 

@@ -95,6 +95,7 @@ final class Panel { func hide() {} }
 final class Controller {
   let bridge = Bridge()
   var pendingReturnCommit: (() -> Void)?
+  var pendingReturnCommitGeneration: UInt64 = 0
   var latestComposing = "", latestCandidates: [String] = [], shiftEnglishComposition = ""
   var englishCompletionPrefix = "", englishCompletionCandidates: [String] = []
   var candidatePanelExpanded = false, expandedActiveRowIndex = 0
@@ -202,6 +203,33 @@ for code: UInt16 in [36, 76] {
   deferredShift.flushPendingReturnCommit()
   check(deferredShiftClient.inserted == ["AbC"] && deferredShift.shiftEnglishComposition.isEmpty,
     "\(code) 网页应用：Shift 英文补完后只上屏一次")
+  // 该宿主不送回车 keyUp：没有任何后续事件时也必须由延时自行上屏，候选随之消失。
+  let unattended = Controller(), unattendedClient = Client()
+  unattendedClient.bundle = webApp
+  unattended.latestComposing = "nihk"; unattended.bridge.outcome.commit = "nihk"
+  check(unattended.handleReturn(event(code), client: unattendedClient) && unattendedClient.inserted.isEmpty,
+    "\(code) 网页应用：吞下回车时尚未上屏")
+  RunLoop.main.run(until: Date().addingTimeInterval(InputiaHostTextPolicy.deferredReturnCommitDelay + 0.2))
+  check(unattendedClient.inserted == ["nihk"] && unattended.latestComposing.isEmpty
+    && unattended.pendingReturnCommit == nil && unattended.bridge.calls == 1,
+    "\(code) 网页应用：无 keyUp 也在延时后只上屏一次")
+  check(!unattended.handleReturn(event(code), client: unattendedClient) && unattendedClient.inserted == ["nihk"],
+    "\(code) 网页应用：自动上屏后的下一次回车交给宿主")
+  // 延时到期前来了新事件：handle 开头先补完（此处按生产顺序直接调用），之后新的组合再次
+  // 延后；旧代次的延时不能重复上屏，两次各上屏一次且顺序不变。
+  let chained = Controller(), chainedClient = Client()
+  chainedClient.bundle = webApp
+  chained.latestComposing = "abc"; chained.bridge.outcome.commit = "abc"
+  _ = chained.handleReturn(event(code), client: chainedClient)
+  chained.flushPendingReturnCommit()
+  check(chainedClient.inserted == ["abc"] && chained.latestComposing.isEmpty,
+    "\(code) 网页应用：新事件到来先补完前一次")
+  chained.latestComposing = "def"; chained.bridge.outcome.commit = "def"
+  check(chained.handleReturn(event(code), client: chainedClient) && chainedClient.inserted == ["abc"],
+    "\(code) 网页应用：新的组合回车再次延后")
+  RunLoop.main.run(until: Date().addingTimeInterval(InputiaHostTextPolicy.deferredReturnCommitDelay + 0.2))
+  check(chainedClient.inserted == ["abc", "def"] && chained.pendingReturnCommit == nil
+    && chained.bridge.calls == 2, "\(code) 网页应用：两次各只上屏一次且顺序不变")
   let repeated = Controller(), repeatedClient = Client()
   repeatedClient.bundle = webApp
   repeated.latestComposing = "abc"; repeated.bridge.outcome.commit = "abc"
