@@ -1374,9 +1374,19 @@ final class InputiaInputController: IMKInputController {
         restorationPanel.isRestorationCurrent(restorationToken) else { return }
       restorationPanel.hide()
     }
-    let originalSourceSelected = isCurrentInputiaSourceSelected()
+    let originalSourceSelected = wasActive && isCurrentInputiaSourceSelected()
     let originalComposing = latestComposing
-    let originalClient = restoringBasicCandidates || preservingPredictionPresentation ? client() : nil
+    // 全局屏障也清理旧控制器；它们没有可恢复的窗口，不得为此同步询问旧宿主。
+    // 已取得清理回执时先核基础快照；没有正文/联想可恢复也不需要字段查询。
+    let hasBasicRestoration = restoringBasicCandidates && !originalComposing.isEmpty
+      && (clearedOutcome.map {
+        $0.ok && $0.mode == "Chinese" && $0.composing == originalComposing && !$0.candidates.isEmpty
+      } ?? true)
+    let hasPredictionRestoration = preservingPredictionPresentation
+      && predictionPresentation.currentToken != nil
+    let requiresHostValidation = wasActive && restorationPanel != nil
+      && (hasBasicRestoration || hasPredictionRestoration)
+    let originalClient = requiresHostValidation ? client() : nil
     let originalSelection = originalClient?.selectedRange()
     let originalMarked = originalClient?.markedRange()
     // 只接受本次成功撤销后重建的Rime结果；失败时不能复用旧的latestOutcome。
@@ -1426,7 +1436,8 @@ final class InputiaInputController: IMKInputController {
     else if IsSecureEventInputEnabled() { preparationResult = "secure_input_enabled" }
     else if InputiaPermissionLifecycle.shared.snapshot.status == .maintenance { preparationResult = "maintenance" }
     else if !canRestoreBasic { preparationResult = "no_baseline" }
-    if let preservedPrediction, let live = client(), currentPredictionToken(client: live) == preservedPrediction {
+    if let preservedPrediction, InputiaHost.activeInputController === self,
+      let live = client(), currentPredictionToken(client: live) == preservedPrediction {
       if let restorationPanel, let restorationToken, ownedCandidatePanel === restorationPanel,
         restorationPanel.isRestorationCurrent(restorationToken) {
         restorationPanel.showPredictionPending(near: chineseCandidateRect)
@@ -1438,10 +1449,13 @@ final class InputiaInputController: IMKInputController {
     // 增强缓存撤销与所有同步回调完成后，只恢复本次得到的基础 Rime 快照。
     let restore: () -> Void = { [weak self] in
       var restorationResult = preparationResult
-      if let self, let preservedPrediction, let live = self.client(),
+      if let self, let preservedPrediction, InputiaHost.activeInputController === self,
+        self.predictionPresentation.currentToken == preservedPrediction, let live = self.client(),
         self.currentPredictionToken(client: live) == preservedPrediction {
         DispatchQueue.main.async { [weak self] in
-          guard let self, self.currentPredictionToken(client: live) == preservedPrediction else { return }
+          guard let self, InputiaHost.activeInputController === self,
+            self.predictionPresentation.currentToken == preservedPrediction,
+            self.currentPredictionToken(client: live) == preservedPrediction else { return }
           self.schedulePersonalization(client: live)
         }
       }

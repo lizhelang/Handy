@@ -65,10 +65,15 @@ struct InputiaBridgeOutcome {
 final class Client {
   var selection = NSRange(location: 2, length: 0)
   var marked = NSRange(location: 0, length: 2)
+  var hostQueries = 0, rejectsQueries = false
   var duringAttributes: (() -> Void)?
-  func attributes(forCharacterIndex: Int, lineHeightRectangle: inout NSRect) { duringAttributes?() }
-  func selectedRange() -> NSRange { selection }
-  func markedRange() -> NSRange { marked }
+  func queried() {
+    precondition(!rejectsQueries, "不可恢复/旧控制器不得同步查询宿主")
+    hostQueries += 1
+  }
+  func attributes(forCharacterIndex: Int, lineHeightRectangle: inout NSRect) { queried(); duringAttributes?() }
+  func selectedRange() -> NSRange { queried(); return selection }
+  func markedRange() -> NSRange { queried(); return marked }
 }
 typealias IMKTextInput = Client
 enum InputiaHostTextPolicy {
@@ -145,6 +150,7 @@ final class Personalization {
   func reset() { changed?(); duringReset?() }
 }
 struct Entry { var candidateID: String? = "old-id" }
+struct PredictionPresentation { var currentToken: UInt64? }
 class BaseController {
   var paletteCalls = 0
   func hidePalettes() { paletteCalls += 1 }
@@ -153,10 +159,15 @@ final class Controller: BaseController {
   let targetCaptureScope = CaptureScope()
   var candidateDisplayCleanupDepth = 0, predictionHandoffDepth = 0
   var predictionDisplayedAt: TimeInterval?
-  func retirePredictionPresentation() {}
+  var predictionPresentation = PredictionPresentation()
+  func retirePredictionPresentation() { predictionPresentation.currentToken = nil }
   func invalidatePredictionTarget(cancelCapture: Bool = true) {}
   func schedulePersonalization(client: Client) {}
-  func currentPredictionToken(client: Client) -> UInt64? { nil }
+  func currentPredictionToken(client: Client) -> UInt64? {
+    guard let token = predictionPresentation.currentToken else { return nil }
+    _ = client.selectedRange()
+    return InputiaHost.activeInputController === self && sourceSelected && !secure ? token : nil
+  }
   var confirmedFieldContext = InputiaConfirmedFieldContext()
   func clearConfirmedFieldContext() { confirmedFieldContext.reset() }
   func releaseConfirmedFieldAnchor() {}
@@ -199,7 +210,12 @@ final class Controller: BaseController {
   var expandedCandidateEntries = [Entry()], expandedActiveRowIndex = 1
   var recallCandidates = ["秘密"], englishCompletionCandidates = ["secret"], englishCompletionPrefix = "sec"
   var candidatePanelExpanded = true, cachedAppContext: Int? = 1, pushedAppContext: Int? = 1
-  func client() -> Client? { live }
+  var clientAccesses = 0, rejectsClientAccess = false
+  func client() -> Client? {
+    precondition(!rejectsClientAccess, "不可恢复/旧控制器不得取得宿主client")
+    clientAccesses += 1
+    return live
+  }
   func retireWordSpan(reason: String) {}
   func retireMemoryCommit() {}
   func removeRetiredVoiceTarget(_ id: String) {}
@@ -270,6 +286,54 @@ inactive.hidePalettes()
 precondition(InputiaHost.candidatePanel!.writes == 0 && inactive.paletteCalls == 1)
 checks += 1
 
+// 现场复现：全局屏障遍历仍存活的旧控制器。替身一经查询就失败，不能只测窗口归属。
+for hasComposition in [false, true] {
+  let old = Controller()
+  old.latestComposing = hasComposition ? "ni" : ""
+  old.live!.rejectsQueries = true; old.rejectsClientAccess = true
+  InputiaHost.activeInputController = Controller()
+  InputiaHost.candidatePanel = InputiaCandidatePanel()
+  precondition(old.bridge.clearManagedMemory())
+  let restore = old.managedMemoryWasCleared()
+  restore?()
+  precondition(old.clientAccesses == 0 && old.live!.hostQueries == 0)
+  precondition(old.memoryDisplayedTargets.isEmpty && old.memoryDisplayedComposing.isEmpty
+    && old.personalCandidates.isEmpty && old.personalPredictions.isEmpty
+    && old.memorySelectionIntent == nil && old.sharedChineseOrder == nil
+    && old.bridge.requestsRetired, "旧控制器仍须完成本地增强撤销")
+  precondition(InputiaHost.candidatePanel!.writes == 0, "旧控制器不得触碰新窗口")
+  checks += 1
+}
+// 已完成 CAPI 清理却无可恢复基础时，活动控制器也不得为屏障询问宿主。
+for missing in ["failed", "empty_composition", "empty_candidates", "english", "different_composition"] {
+  let empty = Controller()
+  InputiaHost.activeInputController = empty
+  InputiaHost.candidatePanel = InputiaCandidatePanel()
+  switch missing {
+  case "failed": empty.bridge.latestOutcome.ok = false
+  case "empty_composition": empty.bridge.latestOutcome.composing = ""
+  case "empty_candidates": empty.bridge.latestOutcome.candidates = []
+  case "english": empty.bridge.latestOutcome.mode = "English"
+  default: empty.bridge.latestOutcome.composing = "hao"
+  }
+  empty.live!.rejectsQueries = true; empty.rejectsClientAccess = true
+  empty.managedMemoryWasCleared()?()
+  precondition(empty.clientAccesses == 0 && empty.live!.hostQueries == 0, missing)
+  precondition(empty.latestCandidates.isEmpty && empty.memoryDisplayedTargets.isEmpty
+    && !InputiaHost.candidatePanel!.visible, missing)
+  checks += 1
+}
+
+// 尚未清理时旧候选为空，不能提前断言清理后的基础候选也为空。
+let newlyAvailable = Controller()
+InputiaHost.activeInputController = newlyAvailable
+InputiaHost.candidatePanel = InputiaCandidatePanel()
+newlyAvailable.bridge.latestOutcome.candidates = []
+newlyAvailable.clearManagedMemoryDisplay(restoringBasicCandidates: true)
+precondition(InputiaHost.candidatePanel!.shown == newlyAvailable.bridge.clearedOutcome.candidates
+  && InputiaHost.candidatePanel!.visible && newlyAvailable.live!.hostQueries > 0)
+checks += 1
+
 // ready/unknown/ready 都撤销增强映射，一次 epoch 只清一次，并在全部同步回调后恢复。
 let epochController = Controller()
 InputiaHost.activeInputController = epochController
@@ -325,6 +389,35 @@ InputiaHost.candidatePanel = InputiaCandidatePanel()
 staleRestore?()
 precondition(InputiaHost.candidatePanel!.writes == 0)
 checks += 1
+// 已排队的基础恢复失去 owner 后，不能再次取得旧client或查询字段。
+let staleBase = Controller()
+InputiaHost.activeInputController = staleBase
+InputiaHost.candidatePanel = InputiaCandidatePanel()
+precondition(staleBase.bridge.clearManagedMemory())
+let staleBaseRestore = staleBase.managedMemoryWasCleared()
+let baseClientAccesses = staleBase.clientAccesses, baseQueries = staleBase.live!.hostQueries
+InputiaHost.activeInputController = previous
+staleBase.rejectsClientAccess = true; staleBase.live!.rejectsQueries = true
+staleBaseRestore?()
+precondition(staleBase.clientAccesses == baseClientAccesses && staleBase.live!.hostQueries == baseQueries)
+checks += 1
+// 联想中性窗保留时也一样；其恢复闭包不能先查询旧字段再判断 owner。
+let stalePrediction = Controller()
+stalePrediction.latestComposing = ""
+stalePrediction.bridge.latestOutcome.composing = ""
+stalePrediction.predictionPresentation.currentToken = 7
+InputiaHost.activeInputController = stalePrediction
+InputiaHost.candidatePanel = InputiaCandidatePanel()
+let stalePredictionRestore = stalePrediction.managedMemoryWasCleared()
+precondition(InputiaHost.candidatePanel!.events == ["blank", "pending"])
+let predictionClientAccesses = stalePrediction.clientAccesses, predictionQueries = stalePrediction.live!.hostQueries
+InputiaHost.activeInputController = previous
+stalePrediction.rejectsClientAccess = true; stalePrediction.live!.rejectsQueries = true
+stalePredictionRestore?()
+precondition(stalePrediction.clientAccesses == predictionClientAccesses
+  && stalePrediction.live!.hostQueries == predictionQueries)
+checks += 1
+InputiaHost.candidatePanel = InputiaCandidatePanel()
 let fieldRestore = previous.managedMemoryWasCleared()
 previous.live?.selection.location = 100
 fieldRestore?()
@@ -408,6 +501,7 @@ precondition(InputiaHost.candidatePanel!.shown == ["重入后的候选"]
 checks += 1
 
 print("managedMemoryPanelContinuity=true oldTextClearedBeforeRestore=true noHideForFreshBase=true staleRestoreCannotTouchNewDisplay=true invalidBoundaryHides=true")
+print("inactiveControllerHostQueries=0 emptyBaselineHostQueries=0 staleRestorationHostQueries=0 localRevocationPreserved=true")
 
 // 字段捕获变化、同步准入失败与异步准入失败均撤销增强，保留原marked范围并恢复基础。
 let revocationPaths = ["field_identity_changed", "selection_unavailable", "selection_rejected"].filter({
