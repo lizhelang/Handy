@@ -4,7 +4,7 @@
 
 **本项目工作语言为中文，当前产品统一称为 Inputia。** 对话、文档、提交描述和 PR 说明使用中文；代码标识保持英文，已有英文注释风格可延续。不得用历史产品名称称呼当前产品。
 
-本目录维护当前产品源码；产品主分支为 `codex/unified-input-system`。本机主工作树位于 `/Users/lzl/FILE/github/Handy-unified-input-system`，隔离修复工作树会随任务更换（2026-10-22 为 `/Users/lzl/.codex/worktrees/inputia-player-duration/Handy`，分支 `codex/inputia-return-commit`），以 `git worktree list` 和已安装制品记录的来源提交为准，不要沿用文档里的旧路径。先读 [README.md](README.md)，并核对实际 Git 状态和安装制品来源。`/Users/lzl/FILE/github/Handy` 是历史基线，不能用其旧版本配置覆盖当前产品。
+本目录维护当前产品源码；产品主分支为 `codex/unified-input-system`。本机主工作树位于 `/Users/lzl/FILE/github/Handy-unified-input-system`，隔离修复工作树会随任务更换（2026-10-23 为 `/Users/lzl/FILE/github/Handy-prediction-ngram`，分支 `codex/prediction-ngram`，基于已安装 1.1.30 的来源分支 `codex/inputia-return-commit`），以 `git worktree list` 和已安装制品记录的来源提交为准，不要沿用文档里的旧路径。先读 [README.md](README.md)，并核对实际 Git 状态和安装制品来源。`/Users/lzl/FILE/github/Handy` 是历史基线，不能用其旧版本配置覆盖当前产品。
 
 真实远程 URL、版权和第三方许可证、历史证据、兼容 bundle ID、协议字段及已有数据路径保留原值；产品显示名称清理不授权破坏这些身份或用户数据。需要迁移时单独设计并验证，不能宣称仓库已无所有历史名称。
 

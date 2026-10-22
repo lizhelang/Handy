@@ -68,12 +68,33 @@ T3 在 2026-10-23 新快照上重测新旧引擎（语音、键入各取时间�
 
 ## 测试与构建检查
 
-- 改基前（起点 `d1fac07e`）`inputia-handy-runtime` 全套：364 项通过，`tests/history_service.rs` 2 项失败，同两项在未含本次改动的提交上同样失败（统一历史写者锁）。改基到已安装 1.1.30 的来源 `7dca22b2` 后，这两项已由该分支的修复通过；T1/T2 测试集复测结果与改基前完全一致。
-- 主应用 `cargo check` 通过；输入法只改了一处查询上限，未单独构建。
-- 未构建成套制品、未安装、未做实机试用。
+- 改基前（起点 `d1fac07e`）`inputia-handy-runtime` 全套：364 项通过，`tests/history_service.rs` 2 项失败，同两项在未含本次改动的提交上同样失败（统一历史写者锁）。
+- 改基到已安装 1.1.30 的来源 `7dca22b2` 后全套 368 项通过（上述两项已由该分支的修复通过）；联想相关源码在两个基线间完全相同，T1/T2 测试集复测结果与改基前一致。主分支独有的 `d1fac07e`（统一历史显示语音输入目标）没有安装过，本版同样不包含。
+- 主应用 `cargo check` 通过；clippy（runtime 全目标、`-D warnings`）与格式检查通过。
+
+## 构建与安装（1.1.31/build119）
+
+- 改基原因：本机安装的是 1.1.30/build118，来源为 `codex/inputia-return-commit` 的 `46014842`，比本分支原起点多 27 个已安装修复。直接从原起点构建会退回旧代码，因此把两个联想提交改基到 `7dca22b2`，再单独提交版本升级 `3dd5b13a`。
+- 构建：`scripts/build-inputia-release.sh --build-local`，配对元数据与私钥沿用固定的 `loop-20260908.r0xugn`（私钥只以路径传入），签名证书为本机 "Inputia Local Test Signing 2026"，静态 Rime 复用主工作树已核验产物（源锁一致）。构建时工作区干净；三组件均为 1.1.31/119，`codesign --verify --deep --strict` 通过，release ID `inputia-1.1.31-119-3dd5b13a82a0-0ae466a7970e4b5781302162096b0ba7`；包内联想表 SHA256 与仓库一致。制品目录 `~/Library/Application Support/HandyUnifiedBuilds/release-PPo9cCkZ`。
+- 安装前在线备份五个数据库与两份设置（副本完整性均 ok）；更新器预检 `updatePreflight=true permissionRecordsUnchanged=true`。`--apply` 一次成功：两组件运行身份校验通过（后台 PID 84882、IME PID 84887），输入源选回 Inputia，`tccChanged=false`、`previousRecordingsReplayed=false`；旧应用备份 `permission-update-thlagrni`。
+- 安装后连续 5 次读取（约 10 秒）两端均为新鲜的 ready，后台权限代数 1、IME 2，无恢复中或错误。语音 1950 条、剪贴 8685 条、录音 1951 个、学习记录 690 条与安装前一致，四个库完整性 ok，录音保留仍为"从不"。联想表已自动登记为 `/Applications/Inputia.app/Contents/Resources/resources/personalization/prediction-ngram.sqlite`，摘要匹配。
+- 证据目录 `~/Library/Application Support/InputiaBuilds/prediction-ngram-20261023`：`build.log`、`update-preflight.log`、`update.log`、`before-install.json`、`after-install.json`、`postinstall-health.txt` 与 `data-backup/`。
+
+## 实机试用（待用户确认）
+
+在常用的 2–3 个应用里（如备忘录、Safari 输入框、聊天软件）试：
+
+1. 打"我们"按空格上屏：候选框最多 5 个后续词，不再固定是"们 / 的 / 觉得"之类补全。
+2. 上屏"今天下午"：第一项不再是"茶"。
+3. 上屏"的"：候选可能很少或不出，属于预期（宁可不出也不给明显错误的）。
+4. 空格或 1 选第一项，2–5 选对应项，都能正确上屏，并继续出下一轮联想。
+5. Esc 关闭、5 秒自动消失、直接打新拼音会结束联想。
+6. 句号、逗号之后，英文或数字之后，不出中文联想。
+7. 在同一个词后面几次明确选同一个联想，之后它会排到前面。
+8. 空格后联想出现没有可感知的延迟，没有卡顿或候选框闪断；普通拼音候选、语音输入、剪贴板不受影响。
 
 ## 未覆盖
 
-- 未测 IMK、IPC 与绘制的端到端延迟。
+- 未测 IMK、IPC 与绘制的端到端延迟；以上试用尚未进行。
 - 个人层仍沿用"完整前文相同 / 片段重合"匹配，按最后一个词匹配与历史二元回填属于第 2 阶段。
 - 三元模型未评估。
