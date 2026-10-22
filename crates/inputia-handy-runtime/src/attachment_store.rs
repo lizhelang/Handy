@@ -119,11 +119,19 @@ pub struct AttachmentBudget {
 impl Default for AttachmentBudget {
     fn default() -> Self {
         Self {
-            capacity_bytes: 4 * 1024 * 1024 * 1024,
-            max_file_bytes: 256 * 1024 * 1024,
-            minimum_free_bytes: 512 * 1024 * 1024,
+            capacity_bytes: 32 * 1024 * 1024 * 1024,
+            ..Self::LEGACY_DEFAULT
         }
     }
+}
+impl AttachmentBudget {
+    /// 早期默认 4 GiB：不限条数的剪贴图片很快占满，之后新录音和图片都会因容量被拒收，
+    /// 而界面不提供调整入口。启动时只升级仍等于该值的配置，保留显式设置。
+    const LEGACY_DEFAULT: Self = Self {
+        capacity_bytes: 4 * 1024 * 1024 * 1024,
+        max_file_bytes: 256 * 1024 * 1024,
+        minimum_free_bytes: 512 * 1024 * 1024,
+    };
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AttachmentImport {
@@ -318,6 +326,13 @@ impl AttachmentStore {
         conn.execute(
             "INSERT OR IGNORE INTO attachment_config(singleton,budget) VALUES(1,?1)",
             [serde_json::to_string(&AttachmentBudget::default())?],
+        )?;
+        conn.execute(
+            "UPDATE attachment_config SET budget=?1 WHERE singleton=1 AND budget=?2",
+            [
+                serde_json::to_string(&AttachmentBudget::default())?,
+                serde_json::to_string(&AttachmentBudget::LEGACY_DEFAULT)?,
+            ],
         )?;
         Ok(())
     }
@@ -1707,6 +1722,41 @@ fn validate(kind: AttachmentKind, bytes: &[u8]) -> Result<()> {
 mod tests {
     use super::*;
     use crate::deletion_lifecycle::{AttachmentCleanup, DeleteRequest, DELETE_SCHEMA_VERSION};
+
+    #[test]
+    fn legacy_default_budget_is_upgraded_but_explicit_budget_is_kept() {
+        let budget = |conn: &Connection| -> AttachmentBudget {
+            let raw: String = conn
+                .query_row("SELECT budget FROM attachment_config", [], |r| r.get(0))
+                .unwrap();
+            serde_json::from_str(&raw).unwrap()
+        };
+        let legacy = Connection::open_in_memory().unwrap();
+        AttachmentStore::initialize(&legacy).unwrap();
+        legacy
+            .execute(
+                "UPDATE attachment_config SET budget=?1",
+                [serde_json::to_string(&AttachmentBudget::LEGACY_DEFAULT).unwrap()],
+            )
+            .unwrap();
+        AttachmentStore::initialize(&legacy).unwrap();
+        assert_eq!(budget(&legacy).capacity_bytes, 32 * 1024 * 1024 * 1024);
+
+        let explicit = Connection::open_in_memory().unwrap();
+        AttachmentStore::initialize(&explicit).unwrap();
+        let chosen = AttachmentBudget {
+            capacity_bytes: 2 * 1024 * 1024 * 1024,
+            ..AttachmentBudget::LEGACY_DEFAULT
+        };
+        explicit
+            .execute(
+                "UPDATE attachment_config SET budget=?1",
+                [serde_json::to_string(&chosen).unwrap()],
+            )
+            .unwrap();
+        AttachmentStore::initialize(&explicit).unwrap();
+        assert_eq!(budget(&explicit).capacity_bytes, chosen.capacity_bytes);
+    }
     struct Fixture {
         root: tempfile::TempDir,
         conn: Connection,

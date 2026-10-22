@@ -657,8 +657,8 @@
         "entries": "entries"
       },
       "recordingRetention": {
-        "title": "Auto-Delete Recordings",
-        "description": "Automatically delete old recordings to save space",
+        "title": "Auto-Delete Voice Records",
+        "description": "Deletes entire old voice records, including the transcript and the recording. Starred records are kept.",
         "never": "Never",
         "preserveLimit": "Keep latest {{count}}",
         "days3": "After 3 days",

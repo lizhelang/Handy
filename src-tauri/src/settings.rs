@@ -683,8 +683,9 @@ fn default_history_limit() -> usize {
     5
 }
 
+/// 清理会删除整条语音记录（文字与录音），统一历史和学习都以其为来源；默认不删除。
 fn default_recording_retention_period() -> RecordingRetentionPeriod {
-    RecordingRetentionPeriod::PreserveLimit
+    RecordingRetentionPeriod::Never
 }
 
 fn default_audio_feedback_volume() -> f32 {
