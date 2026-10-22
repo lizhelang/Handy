@@ -1,0 +1,396 @@
+{
+  "version": 1,
+  "frozen": "2026-10-22",
+  "engine_commit": "d1fac07e9a4c53ff8e122e6ee730f99720749fd8",
+  "positions": {
+    "segmenter": "jieba 0.42.1 HMM=True (evaluation only)",
+    "rule": "word boundaries with CJK on both sides; at most 40 per item; context = previous <=512 chars; remaining = following CJK run <=32 chars",
+    "hit": "a prediction is a prefix of remaining",
+    "split_salt": "prediction-eval-split-v1"
+  },
+  "sets": {
+    "t1": {
+      "file": "t1_everyday.jsonl",
+      "sha256": "8e3fc7d8eddbd8d2a0a975a333240b1f3754a316e49070dcd67ce838eb922711",
+      "items": 400,
+      "dev_items": 100,
+      "categories": 8,
+      "author": "independent agent without repository or network access",
+      "positions": {
+        "t1-dev": 841,
+        "t1-test": 2580
+      },
+      "cases_sha256": "f480799b8cf4c45e41dc6223d6a7e21929b2f3115df426e73edffcfae2b5bdb3"
+    },
+    "t2": {
+      "sources": "t2_wikipedia_sources.json",
+      "text_license": "CC BY-SA 4.0 (text cached outside git)",
+      "pages": 2600,
+      "items": 2500,
+      "dev_items": 500,
+      "items_sha256": "b10b8225e0f4ffcf0a6aab00af2b2e534f1267880ec503b3d48421824770cc95",
+      "positions": {
+        "t2-dev": 5936,
+        "t2-test": 23450
+      },
+      "cases_sha256": "02ba9f20996979b57efd08d829306c3c1447f7c7113ba098cb63f63069a15052"
+    },
+    "t3": {
+      "local_only": true,
+      "rule": "voice and typed history, latest 20% of each by time as test; learned database copy keeps only evidence before the typed split; regenerate on a fresh snapshot and measure old and new engines on the same snapshot",
+      "positions_at_freeze": {
+        "t3-typed": 213,
+        "t3-voice": 8654
+      }
+    }
+  },
+  "baseline": {
+    "t1": {
+      "t1-dev": {
+        "limit_3": {
+          "all_wrong_rate": 0.8918,
+          "empty_rate": 0.0,
+          "hits": {
+            "hit_at_1": 0.0654,
+            "hit_at_2": 0.0963,
+            "hit_at_3": 0.1082
+          },
+          "mrr": 0.0848,
+          "positions": 841,
+          "query_micros": {
+            "max": 8861,
+            "p50": 626,
+            "p95": 2383
+          },
+          "saved_chars_per_position": 0.1296,
+          "shown_per_position": 2.7134
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.8692,
+          "empty_rate": 0.0,
+          "hits": {
+            "hit_at_1": 0.0654,
+            "hit_at_2": 0.0963,
+            "hit_at_3": 0.1082,
+            "hit_at_4": 0.1189,
+            "hit_at_5": 0.1308
+          },
+          "mrr": 0.0899,
+          "positions": 841,
+          "query_micros": {
+            "max": 8555,
+            "p50": 605,
+            "p95": 2455
+          },
+          "saved_chars_per_position": 0.1629,
+          "shown_per_position": 4.2414
+        }
+      },
+      "t1-test": {
+        "limit_3": {
+          "all_wrong_rate": 0.9035,
+          "empty_rate": 0.0004,
+          "hits": {
+            "hit_at_1": 0.0574,
+            "hit_at_2": 0.0798,
+            "hit_at_3": 0.0961
+          },
+          "mrr": 0.074,
+          "positions": 2580,
+          "query_micros": {
+            "max": 8833,
+            "p50": 653,
+            "p95": 2347
+          },
+          "saved_chars_per_position": 0.1155,
+          "shown_per_position": 2.7279
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.8787,
+          "empty_rate": 0.0004,
+          "hits": {
+            "hit_at_1": 0.0574,
+            "hit_at_2": 0.0798,
+            "hit_at_3": 0.0961,
+            "hit_at_4": 0.1116,
+            "hit_at_5": 0.1209
+          },
+          "mrr": 0.0798,
+          "positions": 2580,
+          "query_micros": {
+            "max": 8746,
+            "p50": 619,
+            "p95": 2293
+          },
+          "saved_chars_per_position": 0.1535,
+          "shown_per_position": 4.288
+        }
+      }
+    },
+    "t2": {
+      "t2-dev": {
+        "limit_3": {
+          "all_wrong_rate": 0.9414,
+          "empty_rate": 0.003,
+          "hits": {
+            "hit_at_1": 0.0342,
+            "hit_at_2": 0.0473,
+            "hit_at_3": 0.0556
+          },
+          "mrr": 0.0435,
+          "positions": 5936,
+          "query_micros": {
+            "max": 8909,
+            "p50": 718,
+            "p95": 1790
+          },
+          "saved_chars_per_position": 0.0699,
+          "shown_per_position": 2.7278
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.9294,
+          "empty_rate": 0.003,
+          "hits": {
+            "hit_at_1": 0.0342,
+            "hit_at_2": 0.0473,
+            "hit_at_3": 0.0556,
+            "hit_at_4": 0.0627,
+            "hit_at_5": 0.0676
+          },
+          "mrr": 0.0463,
+          "positions": 5936,
+          "query_micros": {
+            "max": 8638,
+            "p50": 688,
+            "p95": 1695
+          },
+          "saved_chars_per_position": 0.0859,
+          "shown_per_position": 4.2928
+        }
+      },
+      "t2-test": {
+        "limit_3": {
+          "all_wrong_rate": 0.9408,
+          "empty_rate": 0.0027,
+          "hits": {
+            "hit_at_1": 0.0346,
+            "hit_at_2": 0.0479,
+            "hit_at_3": 0.0565
+          },
+          "mrr": 0.0441,
+          "positions": 23450,
+          "query_micros": {
+            "max": 21771,
+            "p50": 674,
+            "p95": 1743
+          },
+          "saved_chars_per_position": 0.0716,
+          "shown_per_position": 2.7223
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.9284,
+          "empty_rate": 0.0027,
+          "hits": {
+            "hit_at_1": 0.0346,
+            "hit_at_2": 0.0479,
+            "hit_at_3": 0.0565,
+            "hit_at_4": 0.0644,
+            "hit_at_5": 0.0689
+          },
+          "mrr": 0.047,
+          "positions": 23450,
+          "query_micros": {
+            "max": 8990,
+            "p50": 686,
+            "p95": 1722
+          },
+          "saved_chars_per_position": 0.0888,
+          "shown_per_position": 4.2861
+        }
+      }
+    },
+    "t3_current": {
+      "t3-typed": {
+        "limit_3": {
+          "all_wrong_rate": 0.8967,
+          "empty_rate": 0.0,
+          "hits": {
+            "hit_at_1": 0.0423,
+            "hit_at_2": 0.0704,
+            "hit_at_3": 0.1033
+          },
+          "mrr": 0.0673,
+          "positions": 213,
+          "query_micros": {
+            "max": 8466,
+            "p50": 552,
+            "p95": 2310
+          },
+          "saved_chars_per_position": 0.1127,
+          "shown_per_position": 2.8545
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.8779,
+          "empty_rate": 0.0,
+          "hits": {
+            "hit_at_1": 0.0423,
+            "hit_at_2": 0.0704,
+            "hit_at_3": 0.1033,
+            "hit_at_4": 0.1127,
+            "hit_at_5": 0.1221
+          },
+          "mrr": 0.0715,
+          "positions": 213,
+          "query_micros": {
+            "max": 8259,
+            "p50": 557,
+            "p95": 2293
+          },
+          "saved_chars_per_position": 0.1362,
+          "shown_per_position": 4.554
+        }
+      },
+      "t3-voice": {
+        "limit_3": {
+          "all_wrong_rate": 0.9103,
+          "empty_rate": 0.0005,
+          "hits": {
+            "hit_at_1": 0.0425,
+            "hit_at_2": 0.0694,
+            "hit_at_3": 0.0892
+          },
+          "mrr": 0.0626,
+          "positions": 8654,
+          "query_micros": {
+            "max": 9197,
+            "p50": 784,
+            "p95": 2629
+          },
+          "saved_chars_per_position": 0.1033,
+          "shown_per_position": 2.9171
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.8735,
+          "empty_rate": 0.0005,
+          "hits": {
+            "hit_at_1": 0.0425,
+            "hit_at_2": 0.0694,
+            "hit_at_3": 0.0892,
+            "hit_at_4": 0.1106,
+            "hit_at_5": 0.1261
+          },
+          "mrr": 0.071,
+          "positions": 8654,
+          "query_micros": {
+            "max": 8862,
+            "p50": 761,
+            "p95": 2593
+          },
+          "saved_chars_per_position": 0.1506,
+          "shown_per_position": 4.7276
+        }
+      }
+    },
+    "t3_public_only": {
+      "t3-typed": {
+        "limit_3": {
+          "all_wrong_rate": 0.8967,
+          "empty_rate": 0.0,
+          "hits": {
+            "hit_at_1": 0.061,
+            "hit_at_2": 0.0845,
+            "hit_at_3": 0.1033
+          },
+          "mrr": 0.079,
+          "positions": 213,
+          "query_micros": {
+            "max": 8558,
+            "p50": 497,
+            "p95": 2323
+          },
+          "saved_chars_per_position": 0.1127,
+          "shown_per_position": 2.77
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.8685,
+          "empty_rate": 0.0,
+          "hits": {
+            "hit_at_1": 0.061,
+            "hit_at_2": 0.0845,
+            "hit_at_3": 0.1033,
+            "hit_at_4": 0.1127,
+            "hit_at_5": 0.1315
+          },
+          "mrr": 0.0851,
+          "positions": 213,
+          "query_micros": {
+            "max": 8276,
+            "p50": 513,
+            "p95": 2275
+          },
+          "saved_chars_per_position": 0.1502,
+          "shown_per_position": 4.446
+        }
+      },
+      "t3-voice": {
+        "limit_3": {
+          "all_wrong_rate": 0.8906,
+          "empty_rate": 0.0008,
+          "hits": {
+            "hit_at_1": 0.0595,
+            "hit_at_2": 0.0886,
+            "hit_at_3": 0.1086
+          },
+          "mrr": 0.0807,
+          "positions": 8654,
+          "query_micros": {
+            "max": 13443,
+            "p50": 655,
+            "p95": 2566
+          },
+          "saved_chars_per_position": 0.1299,
+          "shown_per_position": 2.7024
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.8563,
+          "empty_rate": 0.0008,
+          "hits": {
+            "hit_at_1": 0.0595,
+            "hit_at_2": 0.0886,
+            "hit_at_3": 0.1086,
+            "hit_at_4": 0.1299,
+            "hit_at_5": 0.1429
+          },
+          "mrr": 0.0887,
+          "positions": 8654,
+          "query_micros": {
+            "max": 8686,
+            "p50": 673,
+            "p95": 2472
+          },
+          "saved_chars_per_position": 0.1749,
+          "shown_per_position": 4.2498
+        }
+      }
+    }
+  },
+  "gates": {
+    "t1-test": {
+      "hit_at_5_min": 0.2709,
+      "hit_at_1_min": 0.1074,
+      "all_wrong_rate_max": 0.8787
+    },
+    "t2-test": {
+      "hit_at_5_min": 0.2189,
+      "hit_at_1_min": 0.0846,
+      "all_wrong_rate_max": 0.9284
+    },
+    "t3": {
+      "rule": "new engine with learned database copy: hit_at_1, hit_at_5 and mrr not below the old engine on the same snapshot minus 0.01; hit_at_1 with learned database not below the same new engine public-only"
+    },
+    "determinism_mismatches": 0,
+    "query_micros_p95_max": 5000,
+    "negative_cases": "all pass: forgotten term, scoped rejection, no mid-word English completion, excluded app, sentence-final punctuation, admission re-query contains displayed predictions",
+    "device_acceptance": "required after offline gates pass"
+  }
+}
