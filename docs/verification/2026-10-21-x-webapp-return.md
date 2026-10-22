@@ -49,3 +49,22 @@ commitComposition、漏收 Shift 松开后的补偿。当前没有 X 的实际�
 本次限定代码检查确认脚本没有网络、Cookie、持久存储或正文读取路径，仅保存节点身份
 及当前组合/回车状态。它依靠 document-start 捕获监听先于网页处理，仍需确认扩展在
 Safari Web App 中的实际加载与原输入场景；模拟回归不构成 X 已修复的证据。
+
+## 原生修复候选（2026-10-22，1.1.29/build117）
+
+用户脚本需要另装 Safari 扩展并授予站点权限，尚未获得安装授权。改为在输入法内处理，
+范围限定为 bundle ID 以 `com.apple.Safari.WebApp.` 开头的宿主（Safari“添加到程序坞”
+的网页应用），Safari 浏览器本身和其他应用不变。
+
+- 有组合时的回车 keyDown 只吞下并保留组合，等同一回车的 keyUp 再上屏。宿主处理完
+  keyDown 才会把 keyUp 交给输入法，网页收到 keydown 时组合仍在进行，按 WebKit 的
+  行为应得到 `isComposing=true`；上屏发生在 keyUp 处理期间，随后 keyup 照旧交给网页。
+- keyUp 之前到来的任何事件、`commitComposition` 与 `deactivateServer` 都先同步补完上屏，
+  不丢字、不改变顺序。按住重复的回车不进入延后。不使用计时窗口。
+- `return-key-commit-self-check.py` 增至 62 项（新增网页应用延后、补完幂等、Shift 英文、
+  按住重复及补完路径结构断言）；宿主策略自检新增网页应用与 Safari/Chrome/无标识对照；
+  46 项普通物理输入、75 项候选恢复及联想、候选面板回归通过。
+
+这是依据 WebKit 324380 排序现象推断的修复，无法在本机自动化中用实体按键验证，
+也不会代替用户向 Grok 发送测试消息；是否解决须由用户在原 X Web App 的 Grok 输入框
+实际确认。上节用户脚本保留为备选。
