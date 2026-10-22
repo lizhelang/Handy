@@ -21,9 +21,12 @@ fn background_service_combines_real_sources_and_notifies_revisions() {
     })
     .unwrap();
     service.synchronize().unwrap();
-    let contender = HistoryService::start(root.path().into(), "fixture".into(), |_| {}).unwrap();
-    assert!(contender.query(HistoryQuery::default()).is_err());
-    drop(contender);
+    // 单写者租约在启动时即拒绝第二个服务，不能先启动成功再让查询失败。
+    let contender = HistoryService::start(root.path().into(), "fixture".into(), |_| {});
+    assert_eq!(
+        contender.err().as_deref(),
+        Some("unified history already has a writer")
+    );
     let items = service.query(HistoryQuery::default()).unwrap();
     assert_eq!(items.len(), 2);
     assert_eq!(items[0].snapshot.source_kind, SourceKind::Clipboard);
@@ -184,7 +187,10 @@ fn background_service_combines_real_sources_and_notifies_revisions() {
 #[test]
 fn missing_sources_fail_explicitly_without_creating_empty_replacements() {
     let root = tempfile::tempdir().unwrap();
-    let service = HistoryService::start(root.path().into(), "fixture".into(), |_| {}).unwrap();
-    assert!(service.query(HistoryQuery::default()).is_err());
+    let service = HistoryService::start(root.path().into(), "fixture".into(), |_| {});
+    assert_eq!(
+        service.err().as_deref(),
+        Some("source database unavailable")
+    );
     assert!(!root.path().join("history.db").exists());
 }
