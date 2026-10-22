@@ -615,7 +615,7 @@ impl SourceOutbox {
                 .optional()?;
             let exists: bool = tx.query_row(
                 &format!(
-                    "SELECT EXISTS(SELECT 1 FROM {} WHERE CAST(id AS TEXT)=?1)",
+                    "SELECT EXISTS(SELECT 1 FROM {} WHERE id=CAST(?1 AS INTEGER) AND CAST(id AS TEXT)=?1)",
                     source.table()
                 ),
                 [record_id],
@@ -632,7 +632,7 @@ impl SourceOutbox {
             // 清单与 expected_revision 的 CAS 和源删除属于同一个 IMMEDIATE 事务。
             let attachments = record_attachments(tx, source, record_id)?;
             let changed = tx.execute(
-                &format!("DELETE FROM {} WHERE CAST(id AS TEXT)=?1", source.table()),
+                &format!("DELETE FROM {} WHERE id=CAST(?1 AS INTEGER) AND CAST(id AS TEXT)=?1", source.table()),
                 [record_id],
             )?;
             if changed != 1 {
@@ -690,7 +690,7 @@ impl SourceOutbox {
         }
         let exists: bool = tx.query_row(
             &format!(
-                "SELECT EXISTS(SELECT 1 FROM {} WHERE CAST(id AS TEXT)=?1)",
+                "SELECT EXISTS(SELECT 1 FROM {} WHERE id=CAST(?1 AS INTEGER) AND CAST(id AS TEXT)=?1)",
                 source.table()
             ),
             [record_id],
@@ -848,10 +848,12 @@ fn record_attachments(
     record_id: &str,
 ) -> rusqlite::Result<Vec<DeletedAttachment>> {
     use crate::attachment_store::AttachmentKind;
+    // 审计逐条调用：id 先走主键索引，CAST 比较仍只接受规范十进制 record_id；
+    // 只写 CAST(id AS TEXT) 会令每条都全表扫描，整轮审计退化为 O(N²)。
     match source {
         SourceTable::History => {
             let name: Option<String> = conn.query_row(
-                "SELECT file_name FROM transcription_history WHERE CAST(id AS TEXT)=?1",
+                "SELECT file_name FROM transcription_history WHERE id=CAST(?1 AS INTEGER) AND CAST(id AS TEXT)=?1",
                 [record_id],
                 |r| r.get(0),
             )?;
@@ -865,7 +867,7 @@ fn record_attachments(
                 .collect())
         }
         SourceTable::Clipboard => {
-            let (kind,path,files):(String,Option<String>,Option<String>)=conn.query_row("SELECT content_type,image_path,CASE WHEN content_type='file' THEN full_text ELSE NULL END FROM clipboard_history WHERE CAST(id AS TEXT)=?1",[record_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+            let (kind,path,files):(String,Option<String>,Option<String>)=conn.query_row("SELECT content_type,image_path,CASE WHEN content_type='file' THEN full_text ELSE NULL END FROM clipboard_history WHERE id=CAST(?1 AS INTEGER) AND CAST(id AS TEXT)=?1",[record_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
             if kind == "file" {
                 Ok(vec![DeletedAttachment {
                     kind: AttachmentKind::External,

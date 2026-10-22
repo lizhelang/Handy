@@ -283,9 +283,30 @@ impl From<serde_json::Error> for StoreError {
 
 pub type StoreResult<T> = Result<T, StoreError>;
 
+/// 策略代数的跨线程只读镜像。只在推进代数的事务期间为未知；
+/// 读者遇到未知必须回到持有连接的线程做权威读取，不能沿用旧值。
+#[derive(Clone, Debug)]
+pub struct PolicyEpochMirror(std::sync::Arc<std::sync::atomic::AtomicU64>);
+impl PolicyEpochMirror {
+    const UNKNOWN: u64 = u64::MAX;
+    pub fn unknown() -> Self {
+        Self(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+            Self::UNKNOWN,
+        )))
+    }
+    pub fn get(&self) -> Option<u64> {
+        let value = self.0.load(std::sync::atomic::Ordering::Acquire);
+        (value != Self::UNKNOWN).then_some(value)
+    }
+    fn set(&self, value: u64) {
+        self.0.store(value, std::sync::atomic::Ordering::Release);
+    }
+}
+
 /// 连接由统一服务拥有，不允许 Host 按键线程持有或等待该连接。
 pub struct IntegrationStore {
     conn: Connection,
+    epoch_mirror: Option<PolicyEpochMirror>,
 }
 
 impl IntegrationStore {
@@ -1131,6 +1152,19 @@ impl IntegrationStore {
         operation_id: Option<&Identifier>,
         privacy: Option<&crate::privacy_operation::PrivacyRequest>,
     ) -> StoreResult<u64> {
+        self.with_policy_epoch_change(|store| {
+            store.forget_term_unmirrored(key, term, expected_epoch, operation_id, privacy)
+        })
+    }
+
+    fn forget_term_unmirrored(
+        &mut self,
+        key: &[u8],
+        term: Option<&str>,
+        expected_epoch: u64,
+        operation_id: Option<&Identifier>,
+        privacy: Option<&crate::privacy_operation::PrivacyRequest>,
+    ) -> StoreResult<u64> {
         let ledger = LearningLedger::new(key)?;
         let tx = self
             .conn
@@ -1332,7 +1366,32 @@ impl IntegrationStore {
             crate::memory_projection_clock::Domain::Projection,
         )?;
         tx.commit()?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            epoch_mirror: None,
+        })
+    }
+
+    /// 绑定后由本连接的每次代数推进维护镜像；绑定时立即发布当前值。
+    pub(crate) fn mirror_policy_epoch(&mut self, mirror: PolicyEpochMirror) -> StoreResult<()> {
+        mirror.set(epoch(&self.conn)?);
+        self.epoch_mirror = Some(mirror);
+        Ok(())
+    }
+
+    /// 推进代数的事务开始前先置未知，提交或失败后按库内实际值重新发布。
+    fn with_policy_epoch_change<T>(
+        &mut self,
+        change: impl FnOnce(&mut Self) -> StoreResult<T>,
+    ) -> StoreResult<T> {
+        if let Some(mirror) = &self.epoch_mirror {
+            mirror.set(PolicyEpochMirror::UNKNOWN);
+        }
+        let result = change(self);
+        if let Some(mirror) = &self.epoch_mirror {
+            mirror.set(epoch(&self.conn).unwrap_or(PolicyEpochMirror::UNKNOWN));
+        }
+        result
     }
 
     /// 逻辑来源与物理库 UUID 显式绑定；幂等注册不重置游标。
@@ -1450,6 +1509,16 @@ impl IntegrationStore {
 
     /// CAS 更新策略屏障；失败的旧消费者不能自行跳过服务端当前版本。
     pub fn advance_policy_epoch(&mut self, expected: u64, new_epoch: u64) -> StoreResult<()> {
+        self.with_policy_epoch_change(|store| {
+            store.advance_policy_epoch_unmirrored(expected, new_epoch)
+        })
+    }
+
+    fn advance_policy_epoch_unmirrored(
+        &mut self,
+        expected: u64,
+        new_epoch: u64,
+    ) -> StoreResult<()> {
         checked_number(new_epoch)?;
         if new_epoch <= expected {
             return Err(StoreError::Invalid("epoch must increase"));

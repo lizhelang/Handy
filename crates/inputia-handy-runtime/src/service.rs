@@ -672,6 +672,7 @@ impl Drop for PendingAttachmentImport {
 pub struct HistoryService {
     output_generation: Arc<AtomicU64>,
     source_writes: Arc<SourceWrites>,
+    policy_epoch: crate::store::PolicyEpochMirror,
     sender: SyncSender<Job>,
     stopping: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
@@ -734,6 +735,8 @@ impl HistoryService {
         let worker_generation = output_generation.clone();
         let source_writes = Arc::new(SourceWrites::default());
         let worker_source_writes = source_writes.clone();
+        let policy_epoch = crate::store::PolicyEpochMirror::unknown();
+        let worker_policy_epoch = policy_epoch.clone();
         let thread = thread::Builder::new()
             .name("handy-unified-history".into())
             .spawn(move || {
@@ -768,6 +771,9 @@ impl HistoryService {
                     let mut store =
                         IntegrationStore::open(root.join("integration.db"), &profile_id)
                             .map_err(|e| e.to_string())?;
+                    store
+                        .mirror_policy_epoch(worker_policy_epoch)
+                        .map_err(|e| e.to_string())?;
                     let key = crate::private_key::load_or_create(
                         &root.join("integration-learning.key"),
                         !store.learning_initialized().map_err(|e| e.to_string())?,
@@ -889,6 +895,7 @@ impl HistoryService {
         Ok(Self {
             output_generation,
             source_writes,
+            policy_epoch,
             sender,
             stopping,
             thread: Some(thread),
@@ -1581,6 +1588,15 @@ impl HistoryService {
 
     pub fn policy_epoch(&self) -> ServiceResult<u64> {
         self.call_metadata(|worker| worker.store.policy_epoch().map_err(|e| e.to_string()))
+    }
+
+    /// 供 IME 每 0.25 秒的权限探针使用：代数稳定时直接读镜像，不排在来源同步、
+    /// 附件审计之后；推进代数期间镜像为未知，回到工作线程取得权威值。
+    pub fn probe_policy_epoch(&self) -> ServiceResult<u64> {
+        match self.policy_epoch.get() {
+            Some(epoch) => Ok(epoch),
+            None => self.policy_epoch(),
+        }
     }
 
     pub fn prepare_voice_request(

@@ -389,9 +389,15 @@ impl VoiceConnection {
                         TargetBridgeCommand, TargetBridgePurpose, TargetBridgeReply,
                     };
                     let result = (|| {
-                        let epoch = history
-                            .policy_epoch()
-                            .map_err(|_| "target_policy_unavailable")?;
+                        // IME 每 0.25 秒的 status 权限探针只核策略代数；排在内容线程的
+                        // 同步/附件审计之后会超时，令输入法撤销权限并清空候选。
+                        let epoch = if matches!(request.target_bridge, TargetBridgeCommand::Status)
+                        {
+                            history.probe_policy_epoch()
+                        } else {
+                            history.policy_epoch()
+                        }
+                        .map_err(|_| "target_policy_unavailable")?;
                         request
                             .validate_for(&self.context.voice_peer(epoch))
                             .map_err(|_| "target_unauthorized")?;
