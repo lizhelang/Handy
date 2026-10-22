@@ -23,6 +23,13 @@ pub fn start_indexer(app: &AppHandle) {
             tauri::path::BaseDirectory::Resource,
         )
         .ok();
+    let ngram = app
+        .path()
+        .resolve(
+            "resources/personalization/prediction-ngram.sqlite",
+            tauri::path::BaseDirectory::Resource,
+        )
+        .ok();
     STOP_INDEXER.store(false, std::sync::atomic::Ordering::Relaxed);
     std::thread::spawn(move || {
         if let Some(path) = lexicon.filter(|path| path.is_file()) {
@@ -30,6 +37,14 @@ pub fn start_indexer(app: &AppHandle) {
                 inputia_handy_runtime::personalization::install_base_lexicon(&root, &path)
             {
                 log::warn!("Unable to prepare public prediction lexicon: {error}");
+            }
+        }
+        // 未登记或登记失败时联想退回原有词库补全，不影响基础输入。
+        if let Some(path) = ngram.filter(|path| path.is_file()) {
+            if let Err(error) =
+                inputia_handy_runtime::personalization::install_prediction_table(&root, &path)
+            {
+                log::warn!("Unable to register next-word prediction table: {error}");
             }
         }
         while !STOP_INDEXER.load(std::sync::atomic::Ordering::Relaxed) {

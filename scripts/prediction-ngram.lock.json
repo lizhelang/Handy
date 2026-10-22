@@ -1,0 +1,41 @@
+{
+  "files": {
+    "1-00000-of-00001.gz": {
+      "url": "https://storage.googleapis.com/books/ngrams/books/20200217/chi_sim/1-00000-of-00001.gz",
+      "bytes": 60833224,
+      "sha256": "6ab29862a8c904c261bb9d5a02a342285c4dbabf79cee5c4f8818076fd44fb86"
+    },
+    "2-00000-of-00006.gz": {
+      "url": "https://storage.googleapis.com/books/ngrams/books/20200217/chi_sim/2-00000-of-00006.gz",
+      "bytes": 380995836,
+      "sha256": "1a87340267b3e9eaea45efb6c19bb5c25033980e013742f213a8773da837e849"
+    },
+    "2-00001-of-00006.gz": {
+      "url": "https://storage.googleapis.com/books/ngrams/books/20200217/chi_sim/2-00001-of-00006.gz",
+      "bytes": 452877206,
+      "sha256": "20e6ed0f4c6a765da71bf74bdf293bc6ba80430a8f8fce7117c388b8134b532a"
+    },
+    "2-00002-of-00006.gz": {
+      "url": "https://storage.googleapis.com/books/ngrams/books/20200217/chi_sim/2-00002-of-00006.gz",
+      "bytes": 442627209,
+      "sha256": "f344351d922ee6cd7fca2c29fc6e2f262f16894f832a9f8a17102b0b3e66c5f0"
+    },
+    "2-00003-of-00006.gz": {
+      "url": "https://storage.googleapis.com/books/ngrams/books/20200217/chi_sim/2-00003-of-00006.gz",
+      "bytes": 430319920,
+      "sha256": "2455e510375e5c155c352639f4bce50a80908e28a699d87a919c211d595cebea"
+    },
+    "2-00004-of-00006.gz": {
+      "url": "https://storage.googleapis.com/books/ngrams/books/20200217/chi_sim/2-00004-of-00006.gz",
+      "bytes": 466345800,
+      "sha256": "472e4827eed7af76eda58d2b1cc2f78b153311639fd1139471341fb9bbb74753"
+    },
+    "2-00005-of-00006.gz": {
+      "url": "https://storage.googleapis.com/books/ngrams/books/20200217/chi_sim/2-00005-of-00006.gz",
+      "bytes": 544115889,
+      "sha256": "c83db884cff2f0b6b9b881b45814cdfe8153100846b903053ca355372d8912d2"
+    }
+  },
+  "source": "Google Books Ngram Viewer dataset v3 (20200217), chi_sim",
+  "license": "CC BY 3.0"
+}

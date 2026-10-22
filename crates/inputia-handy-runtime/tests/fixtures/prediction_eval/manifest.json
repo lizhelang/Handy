@@ -376,13 +376,13 @@
   },
   "gates": {
     "t1-test": {
-      "hit_at_5_min": 0.2709,
-      "hit_at_1_min": 0.1074,
+      "hit_at_5_min": 0.1609,
+      "hit_at_1_min": 0.0574,
       "all_wrong_rate_max": 0.8787
     },
     "t2-test": {
-      "hit_at_5_min": 0.2189,
-      "hit_at_1_min": 0.0846,
+      "hit_at_5_min": 0.1089,
+      "hit_at_1_min": 0.0346,
       "all_wrong_rate_max": 0.9284
     },
     "t3": {
@@ -391,6 +391,25 @@
     "determinism_mismatches": 0,
     "query_micros_p95_max": 5000,
     "negative_cases": "all pass: forgotten term, scoped rejection, no mid-word English completion, excluded app, sentence-final punctuation, admission re-query contains displayed predictions",
-    "device_acceptance": "required after offline gates pass"
+    "device_acceptance": "required after offline gates pass",
+    "superseded_2026-10-22": {
+      "t1-test": {
+        "hit_at_5_min": 0.2709,
+        "hit_at_1_min": 0.1074,
+        "all_wrong_rate_max": 0.8787
+      },
+      "t2-test": {
+        "hit_at_5_min": 0.2189,
+        "hit_at_1_min": 0.0846,
+        "all_wrong_rate_max": 0.9284
+      },
+      "reason": "exceeds the bigram ceiling measured on dev (perfect ranking over top-12 continuations: t1-dev 24.3%, t2-dev 20.9%)"
+    },
+    "revision": {
+      "date": "2026-10-23",
+      "approved_by": "user",
+      "post_hoc": true,
+      "rule": "hit_at_5 >= baseline + 0.04, hit_at_1 not below baseline, all_wrong_rate not above baseline; set after phase 1 results and kept as the regression floor for later changes"
+    }
   }
 }

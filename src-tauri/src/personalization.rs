@@ -87,7 +87,8 @@ pub fn respond(app: &tauri::AppHandle, request: &PersonalizationRequest) -> Pers
                         source_app: source.into(),
                         learning_epoch: epoch,
                         candidates: Vec::new(),
-                        limit: 5,
+                        // 宽于展示的 5 项，避免衰减带来的名次微调让已显示项准入失败。
+                        limit: 9,
                     },
                 )?;
                 let collection = if input_code.is_empty() {

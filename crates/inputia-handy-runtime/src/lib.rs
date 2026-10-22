@@ -26,6 +26,7 @@ pub mod output_ledger;
 )]
 mod owned_memory_connection;
 pub mod personalization;
+pub mod prediction;
 pub mod privacy_operation;
 pub mod private_key;
 pub mod protocol;

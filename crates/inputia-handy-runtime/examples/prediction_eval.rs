@@ -4,6 +4,7 @@
 //! 恰好是 `remaining` 的开头，不依赖评测分词与引擎词表是否一致。`--dump` 仅用于
 //! 公开测试集，个人历史评测不得传入。
 use inputia_handy_runtime::personalization::{self, Query};
+use inputia_handy_runtime::prediction;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -98,6 +99,7 @@ fn round(value: f64) -> f64 {
 struct Args {
     root: PathBuf,
     lexicon: Option<PathBuf>,
+    ngram: Option<PathBuf>,
     cases: PathBuf,
     limits: Vec<usize>,
     dump: Option<PathBuf>,
@@ -106,6 +108,7 @@ struct Args {
 fn parse_args() -> Result<Args, String> {
     let mut root = None;
     let mut lexicon = None;
+    let mut ngram = None;
     let mut cases = None;
     let mut limits = vec![3, 5];
     let mut dump = None;
@@ -115,6 +118,7 @@ fn parse_args() -> Result<Args, String> {
         match flag.as_str() {
             "--root" => root = Some(PathBuf::from(value()?)),
             "--lexicon" => lexicon = Some(PathBuf::from(value()?)),
+            "--ngram" => ngram = Some(PathBuf::from(value()?)),
             "--cases" => cases = Some(PathBuf::from(value()?)),
             "--dump" => dump = Some(PathBuf::from(value()?)),
             "--limits" => {
@@ -123,12 +127,30 @@ fn parse_args() -> Result<Args, String> {
                     .map(|v| v.trim().parse::<usize>().map_err(|e| e.to_string()))
                     .collect::<Result<_, _>>()?;
             }
+            // kappa,tau,weak,backoff,completion；只允许在开发集上调参。
+            "--tuning" => {
+                let values = value()?
+                    .split(',')
+                    .map(|v| v.trim().parse::<f64>().map_err(|e| e.to_string()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let [kappa, tau, weak, backoff, completion] = values[..] else {
+                    return Err("--tuning 需要 kappa,tau,weak,backoff,completion".into());
+                };
+                prediction::set_tuning(prediction::Tuning {
+                    kappa,
+                    tau,
+                    weak,
+                    backoff,
+                    completion,
+                });
+            }
             other => return Err(format!("未知参数 {other}")),
         }
     }
     Ok(Args {
         root: root.ok_or("需要 --root")?,
         lexicon,
+        ngram,
         cases: cases.ok_or("需要 --cases")?,
         limits,
         dump,
@@ -169,6 +191,9 @@ fn main() -> Result<(), String> {
     std::fs::create_dir_all(&args.root).map_err(|e| e.to_string())?;
     if let Some(lexicon) = &args.lexicon {
         personalization::install_base_lexicon(&args.root, lexicon)?;
+    }
+    if let Some(ngram) = &args.ngram {
+        personalization::install_prediction_table(&args.root, ngram)?;
     }
     let epoch = personalization::policy(&args.root)?.epoch;
     let file = std::fs::File::open(&args.cases).map_err(|e| e.to_string())?;

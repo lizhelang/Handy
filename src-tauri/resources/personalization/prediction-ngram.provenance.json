@@ -1,0 +1,15 @@
+{
+  "source": "Google Books Ngram Viewer dataset v3 (20200217), Chinese (Simplified)",
+  "url": "https://storage.googleapis.com/books/ngrams/books/datasetsv3.html",
+  "license": "CC BY 3.0",
+  "attribution": "Google Books Ngram Viewer, http://books.google.com/ngrams",
+  "files": "scripts/prediction-ngram.lock.json",
+  "transform": "years 1980-2019; untagged tokens only; both tokens in the Rime public lexicon vocabulary; unigram >= 40; bigram >= 20; top 12 next words and top 8 completions per word",
+  "vocabulary": "src-tauri/resources/personalization/base-lexicon.tsv plus its characters",
+  "reproduce": "python3 scripts/prepare-prediction-ngram.py",
+  "derived_sha256": "10bfa08830819671359f6c3e538a1047b2a0c00035718f1529858c74781c2d8b",
+  "bytes": 8589312,
+  "words": 79856,
+  "next_rows": 338382,
+  "completion_rows": 32765
+}

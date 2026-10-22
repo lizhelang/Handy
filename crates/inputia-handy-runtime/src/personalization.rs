@@ -248,7 +248,7 @@ fn db(root: &Path) -> Result<Connection> {
             .map_err(err)?;
         }
     }
-    db.execute_batch("CREATE INDEX IF NOT EXISTS evidence_schema_code ON evidence(schema_id,code,created DESC); CREATE TABLE IF NOT EXISTS evidence_anchors(event_id TEXT NOT NULL,anchor TEXT NOT NULL,PRIMARY KEY(event_id,anchor)); CREATE INDEX IF NOT EXISTS evidence_anchor_lookup ON evidence_anchors(anchor,event_id); CREATE INDEX IF NOT EXISTS evidence_active_recency ON evidence((origin='') DESC,created DESC) WHERE undone=0;").map_err(err)?;
+    db.execute_batch("CREATE INDEX IF NOT EXISTS evidence_schema_code ON evidence(schema_id,code,created DESC); CREATE TABLE IF NOT EXISTS evidence_anchors(event_id TEXT NOT NULL,anchor TEXT NOT NULL,PRIMARY KEY(event_id,anchor)); CREATE INDEX IF NOT EXISTS evidence_anchor_lookup ON evidence_anchors(anchor,event_id); CREATE INDEX IF NOT EXISTS evidence_active_recency ON evidence((origin='') DESC,created DESC) WHERE undone=0; CREATE TABLE IF NOT EXISTS prediction_meta(id INTEGER PRIMARY KEY,path TEXT NOT NULL,sha256 TEXT NOT NULL);").map_err(err)?;
     Ok(db)
 }
 fn state(db: &Connection) -> Result<LearningPolicy> {
@@ -873,6 +873,16 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
     let mut evidence_limited = false;
     let mut suppressed = HashSet::new();
     let mut validated: HashMap<(String, String), bool> = HashMap::new();
+    // 登记了联想表时，空输入联想改用公共二元表与个人证据的合并概率。
+    let engine = if q.input_code.is_empty() {
+        prediction_engine(&db, &norm(&q.context))?
+    } else {
+        None
+    };
+    let completion_prefix = engine
+        .as_ref()
+        .and_then(|engine| completion_prefix(&norm(&q.context), &engine.tail));
+    let mut personal = PersonalContinuations::default();
     if enabled {
         let context = norm(&q.context);
         let code = q.input_code.clone();
@@ -929,6 +939,11 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
             }
             args.push(context.clone().into());
             args.push(format!("{context}\u{10ffff}").into());
+        }
+        if let Some(prefix) = &completion_prefix {
+            predicates.push("(normalized>? AND normalized<?)".into());
+            args.push(prefix.clone().into());
+            args.push(format!("{prefix}\u{10ffff}").into());
         }
         if predicates.is_empty() {
             predicates.push("0".into());
@@ -1001,6 +1016,7 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
                 continue;
             }
             let decay = (-((timestamp - created).max(0.0)) / (14.0 * 86400.0)).exp();
+            let personal_key = (engine.is_some() && weight >= 0.0).then(|| key.clone());
             let stat = scores.entry(key).or_default();
             if stat.text.is_empty() {
                 stat.text = text;
@@ -1043,8 +1059,19 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
                     stat.frequency += contribution;
                 }
             }
-            stat.context += contribution
-                * cached_context_affinity(&context, &previous, &current_anchors, &mut affinities);
+            let affinity =
+                cached_context_affinity(&context, &previous, &current_anchors, &mut affinities);
+            stat.context += contribution * affinity;
+            if let Some(key) = personal_key {
+                personal.observe(
+                    &key,
+                    &stat.text,
+                    &context,
+                    completion_prefix.as_deref(),
+                    contribution,
+                    affinity,
+                );
+            }
         }
         skipped_origins = skipped.len();
         let mut base_gains = HashMap::new();
@@ -1104,6 +1131,9 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
                     suppressed.insert(key.clone());
                     continue;
                 }
+                if engine.is_some() {
+                    continue;
+                }
                 if s.context > 0.0 && key != &context {
                     proposed.insert(key.clone(), (s.text.clone(), s.context));
                 }
@@ -1144,6 +1174,15 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
         }
     }
     if q.input_code.is_empty()
+        && !q.context.trim().is_empty()
+        && safe_app(&q.source_app)
+        && p.epoch == q.learning_epoch
+        && engine.is_some()
+    {
+        if let Some(engine) = &engine {
+            predictions = blended_predictions(&db, &q, engine, &personal, &suppressed)?;
+        }
+    } else if q.input_code.is_empty()
         && !q.context.trim().is_empty()
         && safe_app(&q.source_app)
         && p.epoch == q.learning_epoch
@@ -1594,6 +1633,198 @@ pub fn install_base_lexicon(root: &Path, path: &Path) -> Result<Value> {
     tx.commit().map_err(err)?;
     Ok(json!({"changed":true,"sha256":sha,"entries":count}))
 }
+
+/// 登记随应用打包的联想二元表。只记录路径与摘要，查询时只读打开，不复制进学习库。
+pub fn install_prediction_table(root: &Path, path: &Path) -> Result<Value> {
+    let gate = root_gate(root)?;
+    let _guard = gate.lock().map_err(err)?;
+    let path = std::fs::canonicalize(path).map_err(err)?;
+    let text = path.to_str().ok_or("联想表路径无效")?.to_owned();
+    let sha = crate::prediction::inspect(&path)?;
+    let db = db(root)?;
+    let old: Option<(String, String)> = db
+        .query_row(
+            "SELECT path,sha256 FROM prediction_meta WHERE id=1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(err)?;
+    if old.is_some_and(|(p, s)| p == text && s == sha) {
+        return Ok(json!({"changed":false,"sha256":sha}));
+    }
+    db.execute(
+        "INSERT OR REPLACE INTO prediction_meta VALUES(1,?1,?2)",
+        params![text, sha],
+    )
+    .map_err(err)?;
+    Ok(json!({"changed":true,"sha256":sha}))
+}
+
+struct PredictionEngine {
+    path: std::path::PathBuf,
+    sha256: String,
+    tail: crate::prediction::Tail,
+}
+
+fn prediction_engine(db: &Connection, context: &str) -> Result<Option<PredictionEngine>> {
+    let Some((path, sha256)) = db
+        .query_row(
+            "SELECT path,sha256 FROM prediction_meta WHERE id=1",
+            [],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(err)?
+    else {
+        return Ok(None);
+    };
+    let path = std::path::PathBuf::from(path);
+    let tail = crate::prediction::with_table(&path, &sha256, |table| table.tail(context))?;
+    Ok(tail.map(|tail| PredictionEngine { path, sha256, tail }))
+}
+
+/// 个人补全的前缀：前文末尾的汉语词，或末尾的完整英文词。
+fn completion_prefix(context: &str, tail: &crate::prediction::Tail) -> Option<String> {
+    if let Some(word) = tail.last_word() {
+        return Some(word.to_owned());
+    }
+    let mut word: Vec<char> = context
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    word.reverse();
+    (!word.is_empty() && word.len() <= 64).then(|| word.into_iter().collect())
+}
+
+/// 个人证据对每个续写的贡献；总量决定个人层在合并中的权重。
+#[derive(Default)]
+struct PersonalContinuations {
+    total: f64,
+    texts: HashMap<String, (String, f64)>,
+}
+impl PersonalContinuations {
+    fn add(&mut self, key: String, text: &str, amount: f64) {
+        if amount <= 0.0 || key.is_empty() {
+            return;
+        }
+        self.total += amount;
+        self.texts
+            .entry(key)
+            .or_insert_with(|| (text.to_owned(), 0.0))
+            .1 += amount;
+    }
+
+    /// 完整前文相同的证据按原权重计入，只有片段重合的弱证据打折；
+    /// 以前文最后一个词开头的已学短语按一半权重作为补全。
+    fn observe(
+        &mut self,
+        key: &str,
+        text: &str,
+        context: &str,
+        prefix: Option<&str>,
+        contribution: f64,
+        affinity: f64,
+    ) {
+        let strength = if affinity >= 1.0 {
+            1.0
+        } else {
+            affinity * crate::prediction::tuning().weak
+        };
+        if key != context {
+            self.add(key.to_owned(), text, contribution * strength);
+        }
+        let Some(prefix) = prefix else {
+            return;
+        };
+        let Some(rest) = key.strip_prefix(prefix).filter(|rest| !rest.is_empty()) else {
+            return;
+        };
+        // 前缀必须从词首开始；英文不能从词中间截断制造错误补全。
+        let boundary = !prefix
+            .chars()
+            .last()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+            || rest
+                .chars()
+                .next()
+                .is_some_and(|c| !c.is_ascii_alphanumeric());
+        if boundary {
+            let shown = remaining_prefix(text, prefix).unwrap_or(rest).trim();
+            if !shown.is_empty() {
+                self.add(norm(shown), shown, contribution * 0.5);
+            }
+        }
+    }
+}
+
+fn forgotten_term(db: &Connection, text: &str) -> Result<bool> {
+    db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM forgotten WHERE text=privacy_term_digest(?1))",
+        [text],
+        |r| r.get(0),
+    )
+    .map_err(err)
+}
+
+/// 合并概率 P = (1-λ)·P公共 + λ·P个人，λ = n/(n+κ)。两类候选同一标尺，
+/// 个人证据少时不能整页占位；低于阈值的不展示，宁可空框也不给明显错误的续写。
+fn blended_predictions(
+    db: &Connection,
+    q: &Query,
+    engine: &PredictionEngine,
+    personal: &PersonalContinuations,
+    suppressed: &HashSet<String>,
+) -> Result<Vec<Value>> {
+    let tuning = crate::prediction::tuning();
+    let public = crate::prediction::with_table(&engine.path, &engine.sha256, |table| {
+        table.continuations(&engine.tail, tuning)
+    })?
+    .unwrap_or_default();
+    let lambda = if personal.total > 0.0 {
+        personal.total / (personal.total + tuning.kappa)
+    } else {
+        0.0
+    };
+    let mut merged: HashMap<String, (String, f64, f64)> = HashMap::new();
+    for (text, probability) in public {
+        merged
+            .entry(norm(&text))
+            .or_insert_with(|| (text.clone(), 0.0, 0.0))
+            .1 += probability;
+    }
+    for (key, (text, amount)) in &personal.texts {
+        merged
+            .entry(key.clone())
+            .or_insert_with(|| (text.clone(), 0.0, 0.0))
+            .2 += amount / personal.total;
+    }
+    let word = engine.tail.last_word().unwrap_or("");
+    let mut ranked = Vec::new();
+    for (key, (text, public, own)) in merged {
+        let score = (1.0 - lambda) * public + lambda * own;
+        if score < tuning.tau
+            || suppressed.contains(&key)
+            || scoped_rejected(db, q, &key)?
+            || forgotten_term(db, &key)?
+            || (!word.is_empty() && forgotten_term(db, &format!("{word}{key}"))?)
+        {
+            continue;
+        }
+        ranked.push((score, key, text, own > 0.0));
+    }
+    ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    Ok(ranked
+        .into_iter()
+        .take(q.limit.clamp(1, 10))
+        .map(|(_, _, text, own)| {
+            let source = if own { "learned" } else { "base" };
+            json!({"id":format!("{source}:{}",digest(&text)),"text":text})
+        })
+        .collect())
+}
+
 fn base_predictions(db: &Connection, context: &str, limit: usize) -> Result<Vec<String>> {
     let context = norm(context);
     let forgotten = {

@@ -397,7 +397,7 @@ final class InputiaPersonalization {
       let key = request.key, version = request.version, requestDeadline = request.deadline
       let command = InputiaPersonalCommand(kind: "query", target: key.target, learning_epoch: key.epoch,
         input_code: key.code, schema_id: key.schemaID, context: key.context, context_id: key.target.target_id,
-        candidates: key.candidates, limit: key.code.isEmpty ? 3 : 5)
+        candidates: key.candidates, limit: 5)
       InputiaVoiceInputLauncher.personalization(command, deadline: requestDeadline, expectedServer: key.server) { [weak self] reply in
         guard let self else { return }; self.queryBusy = false
         InputiaPersonalizationDiagnostics.record("query", reply?.code ?? (reply == nil ? "no_reply" : "ok"),
