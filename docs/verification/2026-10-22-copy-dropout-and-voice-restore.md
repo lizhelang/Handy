@@ -42,7 +42,24 @@
 - inputia-handy-runtime 362 项、inputia-core 61 项、inputia-settings 49 项全部通过。
 - src-tauri `cargo check --tests` 通过；tsc、ESLint、23 种语言翻译键检查通过。
 - 输入法启动器自检编译并运行通过；X 回车保护脚本 20 项回归通过。
-- 尚未构建、安装包含这些修复的新版本，已安装的 1.1.27 仍是修复前的行为。
+- 已构建并安装 **1.1.28/build116**（来源提交 `971f83a0`，工作区干净），见下节。
+
+## 本机安装与实机验证
+
+制品目录 `~/Library/Application Support/HandyUnifiedBuilds/release-75HKidiQ`，配对钥匙与
+1.1.27 相同。第一次 `update-candidate.py --apply` 在写安装收据时失败：v1 收据要登记机器上
+已有的 `/Applications/Inputia 设置.app`，而它此前被当作失效残留移进了废纸篓。更新器按设计
+回滚到 1.1.27 并恢复原输入源，核对后语音、录音、设置与库完整性均未变化。把该启动器从
+废纸篓原样放回（root 所有、签名校验通过）后重新预检并安装成功：两组件运行身份校验通过，
+`tccChanged=false`、`previousRecordingsReplayed=false`，输入源恢复为安装前的 ABC。
+
+安装后两端 ready，保留设置仍为“从不”，1945 条语音、1945 个录音附件、8649 条剪贴记录
+保留，两个数据库完整性为 ok，附件容量 32 GiB、未暂停。
+
+实机复制验证：用 `pbcopy` 连续写入 5 段文字（需设置 `LANG=en_US.UTF-8`，否则非 ASCII
+内容会被写成空串、被监控按设计忽略），后台逐条入库（id 8652–8656），输入法全程 ready，
+权限代数保持 2，期间没有任何权限状态切换；修复前同样操作每次都会掉线。测试前剪贴板中的
+图片已存档并恢复。测试文字留在剪贴历史中，可在界面删除。
 
 ## 语音数据找回（本机已执行）
 
@@ -67,10 +84,10 @@
 
 ## 环境残留
 
-同 bundle ID 的 `/Applications/Inputia.app.backup-20261003-0720`（1.1.1）及失效的
-`/Applications/Inputia 设置.app`（0.0.50，指向已不存在的系统级输入法）已打包归档到
+同 bundle ID 的 `/Applications/Inputia.app.backup-20261003-0720`（1.1.1）已打包归档到
 `~/Library/Application Support/HandyUnifiedBuilds/legacy-app-archive-20261022/`，原件移入
-废纸篓。
+废纸篓。`/Applications/Inputia 设置.app`（0.0.50）虽然指向已不存在的系统级输入法、无法
+打开，但它是 v1 安装收据登记的组件，必须保留，已放回原位。
 
 ## 仍未关闭
 
