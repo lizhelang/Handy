@@ -1016,6 +1016,11 @@ impl ShortcutAction for TranscribeAction {
                             let voice_source = owned_voice.as_ref().and_then(
                                 crate::managers::history::VerifiedVoiceSource::from_owned_request,
                             );
+                            let detected_app = if voice_source.is_none() {
+                                crate::utils::get_foreground_app_identifier()
+                            } else {
+                                None
+                            };
                             let saved_entry = persist_completed_transcription(
                                 wav_saved,
                                 file_name,
@@ -1023,13 +1028,14 @@ impl ShortcutAction for TranscribeAction {
                                 post_process,
                                 &processed,
                                 |file, text, requested, processed_text, prompt| {
-                                    hm.save_entry_with_voice_source(
+                                    hm.save_entry_with_voice_source_and_app(
                                         file,
                                         text,
                                         requested,
                                         processed_text,
                                         prompt,
                                         voice_source.as_ref(),
+                                        detected_app.as_deref(),
                                     )
                                 },
                             );

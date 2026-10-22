@@ -480,8 +480,18 @@ export function UnifiedHistory({
                       {t(`unifiedHistory.sources.${item.source_kind}`)} ·{" "}
                       {new Date(item.created_at_ms).toLocaleString(
                         i18n.language,
-                      )}{" "}
-                      · {item.source_app || t("unifiedHistory.unknownSource")}
+                      )}
+                      {item.source_kind === "voice"
+                        ? ` · ${t("unifiedHistory.inputTarget", {
+                            app:
+                              item.source_app ||
+                              t("unifiedHistory.unknownSource"),
+                          })}`
+                        : item.source_app
+                          ? ` · ${t("unifiedHistory.copySource", {
+                              app: item.source_app,
+                            })}`
+                          : ""}
                     </p>
                   </div>
                   {item.pinned && (

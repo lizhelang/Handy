@@ -75,7 +75,9 @@
       "acknowledgeHelp": "Dismissing a reminder does not retry or undo insertion. Check the target before inserting again.",
       "historyHelp": "These are earlier unfinished outputs, not ongoing retry attempts. Your content remains in history.",
       "startupSummary": "Earlier outputs need attention. Review them in history; they will not be retried automatically."
-    }
+    },
+    "inputTarget": "Target: {{app}}",
+    "copySource": "Copied from: {{app}}"
   },
   "tray": {
     "settings": "Instellingen...",

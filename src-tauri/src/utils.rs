@@ -17,6 +17,23 @@ pub fn redact_text(_text: &str) -> &str {
     "[REDACTED]"
 }
 
+/// 当前前台应用的 bundle ID。写入 `inputia_source_app` 后会参与保留排除与敏感应用
+/// 判定（均按标识匹配），因此不能用本地化显示名代替；取不到标识时返回 None。
+pub fn get_foreground_app_identifier() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::NSWorkspace;
+        let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
+        let bundle = app.bundleIdentifier()?.to_string();
+        (!bundle.trim().is_empty() && bundle.len() <= 256 && !bundle.chars().any(char::is_control))
+            .then_some(bundle)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
 #[cfg(any(test, all(target_os = "windows", target_arch = "x86_64")))]
 const IMAGE_FILE_MACHINE_ARM64: u16 = 0xaa64;
 

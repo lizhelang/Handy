@@ -324,6 +324,16 @@ pub(crate) fn dispatch_result(
                 &mut || boundary(),
             ));
         }
+        if let (Some(id), Some(app_name)) =
+            (history_id, crate::utils::get_foreground_app_identifier())
+        {
+            use tauri::Manager;
+            if let Some(hm) =
+                dispatch_app.try_state::<Arc<crate::managers::history::HistoryManager>>()
+            {
+                let _ = hm.update_source_app(id, &app_name);
+            }
+        }
         let submit_boundary = boundary.clone();
         let clipboard_boundary = boundary.clone();
         let submit = context.auto_submit;
@@ -394,6 +404,16 @@ pub(crate) fn dispatch_result(
                                     "dictation_preparation_unavailable".into(),
                                 );
                             };
+                            if let (Some(id), Some(app_name)) =
+                                (history_id, crate::utils::get_foreground_app_identifier())
+                            {
+                                use tauri::Manager;
+                                if let Some(hm) = inject_app
+                                    .try_state::<Arc<crate::managers::history::HistoryManager>>()
+                                {
+                                    let _ = hm.update_source_app(id, &app_name);
+                                }
+                            }
                             pending.inject(&inject_app)
                         });
                         match injection {

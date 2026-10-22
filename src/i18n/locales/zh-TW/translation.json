@@ -75,7 +75,9 @@
       "acknowledgeHelp": "關閉提醒不會重試或復原插入。再次插入前，請先檢查目標輸入框。",
       "historyHelp": "這些是先前未完成的輸出結果，不代表正在反覆嘗試。內容仍保留在歷史記錄中。",
       "startupSummary": "有歷史輸出尚未處理，可在歷史記錄查看。不會自動重試。"
-    }
+    },
+    "inputTarget": "輸入至：{{app}}",
+    "copySource": "複製自：{{app}}"
   },
   "tray": {
     "settings": "設定...",

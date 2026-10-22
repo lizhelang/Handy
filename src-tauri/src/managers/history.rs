@@ -100,25 +100,53 @@ impl VerifiedVoiceSource {
     }
 }
 
+fn insert_entry_with_voice_source_and_app(
+    conn: &Connection,
+    entry: HistoryEntry,
+    source: Option<&VerifiedVoiceSource>,
+    fallback_app: Option<&str>,
+) -> Result<HistoryEntry> {
+    let (app, trust) = if let Some(source) = source {
+        (Some(source.app.as_str()), "verified")
+    } else if let Some(app) = fallback_app {
+        (Some(app), "unknown")
+    } else {
+        (None, "unknown")
+    };
+
+    let mut entry = entry;
+    if let Some(app) = app {
+        conn.execute(
+            "INSERT INTO transcription_history (file_name,timestamp,saved,title,transcription_text,
+             post_processed_text,post_process_prompt,post_process_requested,inputia_source_app,inputia_source_trust)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![
+                entry.file_name,
+                entry.timestamp,
+                entry.saved,
+                entry.title,
+                entry.transcription_text,
+                entry.post_processed_text,
+                entry.post_process_prompt,
+                entry.post_process_requested,
+                app,
+                trust
+            ],
+        )?;
+        entry.id = conn.last_insert_rowid();
+        Ok(entry)
+    } else {
+        insert_entry_with_conn(conn, entry)
+    }
+}
+
+#[cfg(test)]
 fn insert_entry_with_voice_source(
     conn: &Connection,
     entry: HistoryEntry,
     source: Option<&VerifiedVoiceSource>,
 ) -> Result<HistoryEntry> {
-    let Some(source) = source else {
-        return insert_entry_with_conn(conn, entry);
-    };
-    // 同一INSERT同时写正文及来源，outbox触发器只产生一个完整事件。
-    let mut entry = entry;
-    conn.execute(
-        "INSERT INTO transcription_history (file_name,timestamp,saved,title,transcription_text,
-         post_processed_text,post_process_prompt,post_process_requested,inputia_source_app,inputia_source_trust)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'verified')",
-        params![entry.file_name,entry.timestamp,entry.saved,entry.title,entry.transcription_text,
-                entry.post_processed_text,entry.post_process_prompt,entry.post_process_requested,source.app],
-    )?;
-    entry.id = conn.last_insert_rowid();
-    Ok(entry)
+    insert_entry_with_voice_source_and_app(conn, entry, source, None)
 }
 
 /// 生产与故障回归共用的 SQLite 插入边界；不依赖窗口或录音文件写入成功。
@@ -318,12 +346,33 @@ impl HistoryManager {
         post_process_prompt: Option<String>,
         source: Option<&VerifiedVoiceSource>,
     ) -> Result<HistoryEntry> {
+        self.save_entry_with_voice_source_and_app(
+            file_name,
+            transcription_text,
+            post_process_requested,
+            post_processed_text,
+            post_process_prompt,
+            source,
+            None,
+        )
+    }
+
+    pub(crate) fn save_entry_with_voice_source_and_app(
+        &self,
+        file_name: String,
+        transcription_text: String,
+        post_process_requested: bool,
+        post_processed_text: Option<String>,
+        post_process_prompt: Option<String>,
+        source: Option<&VerifiedVoiceSource>,
+        fallback_app: Option<&str>,
+    ) -> Result<HistoryEntry> {
         let _source_write = super::integration::begin_source_write(&self.app_handle);
         let timestamp = Utc::now().timestamp();
         let title = self.format_timestamp_title(timestamp);
 
         let conn = self.get_connection()?;
-        let entry = insert_entry_with_voice_source(
+        let entry = insert_entry_with_voice_source_and_app(
             &conn,
             HistoryEntry {
                 id: 0,
@@ -337,6 +386,7 @@ impl HistoryManager {
                 post_process_requested,
             },
             source,
+            fallback_app,
         )?;
 
         debug!("Saved history entry with id {}", entry.id);
@@ -356,6 +406,18 @@ impl HistoryManager {
         }
 
         Ok(entry)
+    }
+
+    /// 只补记未验证来源；已验证来源（IME 精确目标）不能被事后观测的前台应用覆盖。
+    pub(crate) fn update_source_app(&self, id: i64, source_app: &str) -> Result<()> {
+        let _source_write = super::integration::begin_source_write(&self.app_handle);
+        let conn = self.get_connection()?;
+        conn.execute(
+            "UPDATE transcription_history SET inputia_source_app = ?1
+             WHERE id = ?2 AND inputia_source_trust = 'unknown'",
+            params![source_app, id],
+        )?;
+        Ok(())
     }
 
     /// Update an existing history entry with new transcription results (used by retry).
