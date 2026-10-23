@@ -4,7 +4,7 @@
 //! 结尾时，补全（X 是更长词的开头）与下一个词使用同一个分母 `count(X) + extend(X)`，
 //! 两类续写因此可以直接比较。
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
 
@@ -36,6 +36,8 @@ pub struct Tuning {
     /// 只有片段重合（前文与当前前文共享 2–4 字片段）的证据按锚点强度乘此系数。
     /// 开发段上与"上一个词相同"同时计入反而更差，且会推回刚打的字，默认不计入。
     pub anchor: f64,
+    /// 用户确认回填的历史中，每出现一次"上一个词→下一个词"计入的个人证据；开发段上 0.05–0.5 差别很小。
+    pub history: f64,
 }
 pub const DEFAULT_TUNING: Tuning = Tuning {
     kappa: 1.0,
@@ -45,6 +47,7 @@ pub const DEFAULT_TUNING: Tuning = Tuning {
     completion: 0.0,
     min_personal: 0.0,
     anchor: 0.0,
+    history: 0.1,
 };
 static TUNING: RwLock<Tuning> = RwLock::new(DEFAULT_TUNING);
 
@@ -56,6 +59,42 @@ pub fn set_tuning(value: Tuning) {
     if let Ok(mut current) = TUNING.write() {
         *current = value;
     }
+}
+
+/// 单条历史最多记录的不同词对，避免超长正文占满个人层。
+const MAX_HISTORY_PAIRS: usize = 256;
+
+/// 用联想表词表做正向最长匹配，统计相邻词对；标点、英文与词表外的字处断开，不组成词对。
+pub(crate) fn bigrams(text: &str, vocabulary: &HashSet<String>) -> HashMap<(String, String), u32> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut pairs: HashMap<(String, String), u32> = HashMap::new();
+    let mut previous: Option<String> = None;
+    let mut i = 0;
+    while i < chars.len() {
+        let run = chars[i..]
+            .iter()
+            .take(MAX_TAIL_CHARS)
+            .take_while(|c| cjk(**c))
+            .count();
+        let word = (1..=run)
+            .rev()
+            .map(|len| chars[i..i + len].iter().collect::<String>())
+            .find(|word| vocabulary.contains(word));
+        let Some(word) = word else {
+            previous = None;
+            i += 1;
+            continue;
+        };
+        i += word.chars().count();
+        if let Some(previous) = previous.replace(word.clone()) {
+            if pairs.len() < MAX_HISTORY_PAIRS
+                || pairs.contains_key(&(previous.clone(), word.clone()))
+            {
+                *pairs.entry((previous, word)).or_default() += 1;
+            }
+        }
+    }
+    pairs
 }
 
 pub(crate) fn cjk(c: char) -> bool {
@@ -143,6 +182,13 @@ pub(crate) struct Table<'a> {
     conn: &'a Connection,
 }
 impl Table<'_> {
+    /// 全部收录词，回填切分历史时一次载入。
+    pub(crate) fn vocabulary(&self) -> Result<HashSet<String>> {
+        let mut stmt = self.conn.prepare("SELECT text FROM words").map_err(err)?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(err)?;
+        rows.collect::<std::result::Result<_, _>>().map_err(err)
+    }
+
     fn word(&self, text: &str) -> Result<Option<Word>> {
         self.conn
             .query_row(
@@ -387,6 +433,22 @@ mod tests {
         .unwrap()
         .unwrap();
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn history_is_split_into_adjacent_word_pairs_without_crossing_punctuation() {
+        let vocabulary: HashSet<String> = ["我们", "明天", "开会", "下午", "的", "会议"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let pairs = bigrams("我们明天开会，下午的会议abc我们开会", &vocabulary);
+        assert_eq!(pairs[&("我们".into(), "明天".into())], 1);
+        assert_eq!(pairs[&("明天".into(), "开会".into())], 1);
+        assert_eq!(pairs[&("我们".into(), "开会".into())], 1);
+        assert_eq!(pairs[&("的".into(), "会议".into())], 1);
+        // 逗号与英文处断开，不产生跨句词对。
+        assert!(!pairs.contains_key(&("开会".into(), "下午".into())));
+        assert!(!pairs.contains_key(&("会议".into(), "我们".into())));
     }
 
     #[test]

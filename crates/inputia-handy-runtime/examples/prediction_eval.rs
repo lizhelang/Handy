@@ -100,6 +100,7 @@ struct Args {
     root: PathBuf,
     lexicon: Option<PathBuf>,
     ngram: Option<PathBuf>,
+    backfill: Vec<String>,
     cases: PathBuf,
     limits: Vec<usize>,
     dump: Option<PathBuf>,
@@ -109,6 +110,7 @@ fn parse_args() -> Result<Args, String> {
     let mut root = None;
     let mut lexicon = None;
     let mut ngram = None;
+    let mut backfill = Vec::new();
     let mut cases = None;
     let mut limits = vec![3, 5];
     let mut dump = None;
@@ -119,6 +121,8 @@ fn parse_args() -> Result<Args, String> {
             "--root" => root = Some(PathBuf::from(value()?)),
             "--lexicon" => lexicon = Some(PathBuf::from(value()?)),
             "--ngram" => ngram = Some(PathBuf::from(value()?)),
+            // 按控制中心的确认回填流程导入这些来源（voice、typed）；只用于私有评测副本。
+            "--backfill" => backfill = value()?.split(',').map(str::to_owned).collect(),
             "--cases" => cases = Some(PathBuf::from(value()?)),
             "--dump" => dump = Some(PathBuf::from(value()?)),
             "--limits" => {
@@ -127,28 +131,26 @@ fn parse_args() -> Result<Args, String> {
                     .map(|v| v.trim().parse::<usize>().map_err(|e| e.to_string()))
                     .collect::<Result<_, _>>()?;
             }
-            // kappa,tau,last_word,backoff,completion,min_personal,anchor；只允许在开发集上调参。
+            // 名字=值，覆盖默认参数；只允许在开发集上调参。
             "--tuning" => {
-                let values = value()?
-                    .split(',')
-                    .map(|v| v.trim().parse::<f64>().map_err(|e| e.to_string()))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let [kappa, tau, last_word, backoff, completion, min_personal, anchor] = values[..]
-                else {
-                    return Err(
-                        "--tuning 需要 kappa,tau,last_word,backoff,completion,min_personal,anchor"
-                            .into(),
-                    );
-                };
-                prediction::set_tuning(prediction::Tuning {
-                    kappa,
-                    tau,
-                    last_word,
-                    backoff,
-                    completion,
-                    min_personal,
-                    anchor,
-                });
+                let mut tuning = prediction::DEFAULT_TUNING;
+                for pair in value()?.split(',') {
+                    let (name, number) = pair.split_once('=').ok_or("--tuning 需要 名字=值")?;
+                    let number = number.trim().parse::<f64>().map_err(|e| e.to_string())?;
+                    let slot = match name.trim() {
+                        "kappa" => &mut tuning.kappa,
+                        "tau" => &mut tuning.tau,
+                        "last_word" => &mut tuning.last_word,
+                        "backoff" => &mut tuning.backoff,
+                        "completion" => &mut tuning.completion,
+                        "min_personal" => &mut tuning.min_personal,
+                        "anchor" => &mut tuning.anchor,
+                        "history" => &mut tuning.history,
+                        other => return Err(format!("未知调参项 {other}")),
+                    };
+                    *slot = number;
+                }
+                prediction::set_tuning(tuning);
             }
             other => return Err(format!("未知参数 {other}")),
         }
@@ -157,6 +159,7 @@ fn parse_args() -> Result<Args, String> {
         root: root.ok_or("需要 --root")?,
         lexicon,
         ngram,
+        backfill,
         cases: cases.ok_or("需要 --cases")?,
         limits,
         dump,
@@ -209,6 +212,28 @@ fn main() -> Result<(), String> {
     }
     if let Some(ngram) = &args.ngram {
         personalization::install_prediction_table(&args.root, ngram)?;
+    }
+    for source in &args.backfill {
+        let started = Instant::now();
+        let (mut cursor, mut imported, mut skipped) = (String::new(), 0, 0);
+        loop {
+            let reply = personalization::manage(
+                &args.root,
+                "personalization_backfill",
+                &json!({"source": source, "cursor": cursor, "limit": 500}),
+            )?;
+            let summary = &reply["backfill_summary"];
+            imported += summary["imported"].as_u64().unwrap_or(0);
+            skipped += summary["skipped"].as_u64().unwrap_or(0);
+            match summary["next_cursor"].as_str() {
+                Some(next) if summary["has_more"] == true => cursor = next.to_owned(),
+                _ => break,
+            }
+        }
+        eprintln!(
+            "backfill source={source} imported={imported} skipped={skipped} seconds={:.1}",
+            started.elapsed().as_secs_f64()
+        );
     }
     let epoch = personalization::policy(&args.root)?.epoch;
     let file = std::fs::File::open(&args.cases).map_err(|e| e.to_string())?;

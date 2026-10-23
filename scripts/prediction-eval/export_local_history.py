@@ -9,6 +9,7 @@ import datetime
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -33,6 +34,8 @@ def main():
     parser.add_argument("--train-fraction", type=float, default=0.8)
     parser.add_argument("--end-fraction", type=float, default=1.0,
                         help="开发段用较早时间窗（如 0.6 至 0.8），最后 20%% 留作测试")
+    parser.add_argument("--with-sources", action="store_true",
+                        help="另建只含切分点之前语音与键入正文的最小来源库，供回填走真实读取与来源核验")
     args = parser.parse_args()
     args.out.mkdir(mode=0o700, parents=True, exist_ok=False)
     snapshots = args.out / "snapshots"
@@ -82,6 +85,31 @@ def main():
     descriptor = os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.write(descriptor, os.urandom(32))
     os.close(descriptor)
+
+    if args.with_sources:
+        root = args.out / "root"
+        # 只复制统一历史中的语音条目表结构与切分点之前的行，不带剪贴板等其他来源。
+        src = sqlite3.connect(f"file:{args.profile / 'integration.db'}?mode=ro", uri=True)
+        schema = src.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='integration_items'").fetchone()[0]
+        columns = [row[1] for row in src.execute("PRAGMA table_info(integration_items)")]
+        voice_rows = src.execute(f"SELECT {','.join(columns)} FROM integration_items "
+                                 "WHERE source_kind='voice' AND created_at_ms<?", (splits["voice"] * 1000,)).fetchall()
+        src.close()
+        dst = sqlite3.connect(root / "integration.db")
+        with dst:
+            dst.execute(schema)
+            dst.executemany(f"INSERT INTO integration_items VALUES({','.join('?' * len(columns))})", voice_rows)
+        dst.close()
+        shutil.copyfile(snapshots / "history.db", root / "history.db")
+        shutil.copyfile(snapshots / "typed.sqlite", knowledge / "typed.sqlite")
+        typed_copy = sqlite3.connect(knowledge / "typed.sqlite")
+        with typed_copy:
+            typed_rows = typed_copy.execute("DELETE FROM typed_segments WHERE created_at_ms>=?", (split * 1000,)).rowcount
+        typed_copy.close()
+        for name in ("index.sqlite", "history-access.sqlite"):
+            if (args.profile / "knowledge" / name).exists():
+                snapshot(args.profile / "knowledge" / name, knowledge / name).close()
+        print(f"backfill_sources voice_items={len(voice_rows)} typed_removed_after_split={typed_rows}")
 
     counts = {}
     for kind, *_ in test:

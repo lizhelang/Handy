@@ -179,7 +179,56 @@ pub fn prioritize_explicit_candidates(
 fn default_limit() -> usize {
     10
 }
+/// 联想查询结束后放回的已初始化学习库连接，键为库文件路径，附文件身份。
+type LearnedPool = std::collections::BTreeMap<std::path::PathBuf, (u64, Connection)>;
+static LEARNED_POOL: std::sync::Mutex<LearnedPool> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+fn learned_identity(path: &Path) -> Option<u64> {
+    let metadata = std::fs::metadata(path).ok().filter(|m| m.is_file())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some(metadata.ino() ^ metadata.dev().rotate_left(32))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        None
+    }
+}
+
+/// 优先取回查询放回的连接：建表检查、隐私密钥与摘要函数只在首次打开时完成。
+/// 库文件被删除或替换（身份变化）时丢弃旧连接重新初始化。
 fn db(root: &Path) -> Result<Connection> {
+    let path = root.join("knowledge/personalization.sqlite");
+    if let Some(identity) = learned_identity(&path) {
+        if let Some((known, conn)) = LEARNED_POOL.lock().map_err(err)?.remove(&path) {
+            if known == identity && conn.is_autocommit() {
+                return Ok(conn);
+            }
+        }
+    }
+    open_db(root)
+}
+
+/// 联想查询结束后归还连接；仍有事务或库文件身份变化时直接关闭。
+fn release_db(root: &Path, conn: Connection) {
+    let path = root.join("knowledge/personalization.sqlite");
+    if !conn.is_autocommit() {
+        return;
+    }
+    if let (Some(identity), Ok(mut pool)) = (learned_identity(&path), LEARNED_POOL.lock()) {
+        // 生产只有一个数据目录；上限防止测试或多目录场景长期占用文件句柄。
+        pool.retain(|known, _| known.is_file());
+        while pool.len() >= 4 {
+            pool.pop_first();
+        }
+        pool.insert(path, (identity, conn));
+    }
+}
+
+fn open_db(root: &Path) -> Result<Connection> {
     std::fs::create_dir_all(root.join("knowledge")).map_err(err)?;
     let db = Connection::open(root.join("knowledge/personalization.sqlite")).map_err(err)?;
     db.busy_timeout(std::time::Duration::from_secs(2))
@@ -248,7 +297,7 @@ fn db(root: &Path) -> Result<Connection> {
             .map_err(err)?;
         }
     }
-    db.execute_batch("CREATE INDEX IF NOT EXISTS evidence_schema_code ON evidence(schema_id,code,created DESC); CREATE TABLE IF NOT EXISTS evidence_anchors(event_id TEXT NOT NULL,anchor TEXT NOT NULL,PRIMARY KEY(event_id,anchor)); CREATE INDEX IF NOT EXISTS evidence_anchor_lookup ON evidence_anchors(anchor,event_id); CREATE INDEX IF NOT EXISTS evidence_active_recency ON evidence((origin='') DESC,created DESC) WHERE undone=0; CREATE TABLE IF NOT EXISTS prediction_meta(id INTEGER PRIMARY KEY,path TEXT NOT NULL,sha256 TEXT NOT NULL); CREATE INDEX IF NOT EXISTS evidence_previous_last ON evidence(substr(previous,-1));").map_err(err)?;
+    db.execute_batch("CREATE INDEX IF NOT EXISTS evidence_schema_code ON evidence(schema_id,code,created DESC); CREATE TABLE IF NOT EXISTS evidence_anchors(event_id TEXT NOT NULL,anchor TEXT NOT NULL,PRIMARY KEY(event_id,anchor)); CREATE INDEX IF NOT EXISTS evidence_anchor_lookup ON evidence_anchors(anchor,event_id); CREATE INDEX IF NOT EXISTS evidence_active_recency ON evidence((origin='') DESC,created DESC) WHERE undone=0; CREATE TABLE IF NOT EXISTS prediction_meta(id INTEGER PRIMARY KEY,path TEXT NOT NULL,sha256 TEXT NOT NULL); CREATE INDEX IF NOT EXISTS evidence_previous_last ON evidence(substr(previous,-1)); CREATE TABLE IF NOT EXISTS history_bigrams(origin TEXT NOT NULL,revision TEXT NOT NULL,previous TEXT NOT NULL,normalized TEXT NOT NULL,text TEXT NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(origin,previous,normalized)) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS history_bigrams_rank ON history_bigrams(previous,normalized,count DESC,origin); CREATE INDEX IF NOT EXISTS evidence_origin_text ON evidence(origin,normalized); CREATE TABLE IF NOT EXISTS history_bigram_totals(previous TEXT NOT NULL,normalized TEXT NOT NULL,text TEXT NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(previous,normalized)) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS history_bigram_totals_rank ON history_bigram_totals(previous,count DESC,normalized); CREATE TRIGGER IF NOT EXISTS history_bigrams_add AFTER INSERT ON history_bigrams BEGIN INSERT INTO history_bigram_totals VALUES(NEW.previous,NEW.normalized,NEW.text,NEW.count) ON CONFLICT(previous,normalized) DO UPDATE SET count=count+excluded.count; END; CREATE TRIGGER IF NOT EXISTS history_bigrams_remove AFTER DELETE ON history_bigrams BEGIN UPDATE history_bigram_totals SET count=count-OLD.count WHERE previous=OLD.previous AND normalized=OLD.normalized; DELETE FROM history_bigram_totals WHERE previous=OLD.previous AND normalized=OLD.normalized AND count<=0; END;").map_err(err)?;
     Ok(db)
 }
 fn state(db: &Connection) -> Result<LearningPolicy> {
@@ -727,7 +776,7 @@ fn validate_origin(root: &Path, db: &Connection, origin: &str, expected: &str) -
  #[cfg(test)] checkpoint("origin_invalid");
  let tx=db.unchecked_transaction().map_err(err)?;
  let removed=tx.execute("DELETE FROM imports WHERE origin=?1 AND item_id=?2 AND revision=?3",params![origin,id,expected]).map_err(err)?;
- if removed>0{tx.execute("DELETE FROM evidence WHERE origin=?1 AND origin_revision=?2",params![origin,expected]).map_err(err)?;bump(&tx)?;}
+ if removed>0{tx.execute("DELETE FROM evidence WHERE origin=?1 AND origin_revision=?2",params![origin,expected]).map_err(err)?;tx.execute("DELETE FROM history_bigrams WHERE origin=?1 AND revision=?2",params![origin,expected]).map_err(err)?;bump(&tx)?;}
  tx.commit().map_err(err)?;Ok(false)
  }
  }
@@ -934,7 +983,12 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
                 "previous IN ({})",
                 vec!["?"; suffixes.len()].join(",")
             ));
-            predicates.push("(normalized>=? AND normalized<?)".into());
+            // 上屏后联想不读导入整句；前缀条件带上来源，走 (origin,normalized) 索引直接跳过它们。
+            predicates.push(if engine.is_some() {
+                "(origin='' AND normalized>=? AND normalized<?)".into()
+            } else {
+                "(normalized>=? AND normalized<?)".into()
+            });
             for suffix in suffixes {
                 args.push(suffix.into());
             }
@@ -942,7 +996,7 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
             args.push(format!("{context}\u{10ffff}").into());
         }
         if let Some(prefix) = &completion_prefix {
-            predicates.push("(normalized>? AND normalized<?)".into());
+            predicates.push("(origin='' AND normalized>? AND normalized<?)".into());
             args.push(prefix.clone().into());
             args.push(format!("{prefix}\u{10ffff}").into());
             // 前文以同一个词结尾的证据：按末字走表达式索引，再在内存中核对整词。
@@ -959,7 +1013,14 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
         } else {
             ""
         };
-        let sql = format!("SELECT text,normalized,previous,code,weight,created,origin,origin_revision,source_app,schema_id FROM evidence {index_hint} WHERE undone=0 AND privacy_term_digest(normalized) NOT IN(SELECT text FROM forgotten) AND ({}) ORDER BY (origin='') DESC,created DESC LIMIT {EVIDENCE_QUERY_LIMIT}", predicates.join(" OR "));
+        // 上屏后联想由历史词对代表已回填的历史；整句导入在开发段上降低命中且要逐条核验来源，
+        // 只留给拼音候选重排使用。
+        let origin_filter = if engine.is_some() {
+            "AND origin=''"
+        } else {
+            ""
+        };
+        let sql = format!("SELECT text,normalized,previous,code,weight,created,origin,origin_revision,source_app,schema_id FROM evidence {index_hint} WHERE undone=0 {origin_filter} AND privacy_term_digest(normalized) NOT IN(SELECT text FROM forgotten) AND ({}) ORDER BY (origin='') DESC,created DESC LIMIT {EVIDENCE_QUERY_LIMIT}", predicates.join(" OR "));
         let rows = {
             let mut stmt = db.prepare(&sql).map_err(err)?;
             let rows = stmt
@@ -1073,6 +1134,12 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
             }
         }
         skipped_origins = skipped.len();
+        if let (Some(_), Some(word)) = (&engine, completion_prefix.as_deref()) {
+            let weight = crate::prediction::tuning().history;
+            for (text, count) in history_continuations(&db, word)? {
+                personal.add_history(norm(&text), &text, count * weight);
+            }
+        }
         let mut base_gains = HashMap::new();
         if !context.is_empty() {
             for c in &candidates {
@@ -1180,6 +1247,15 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
     {
         if let Some(engine) = &engine {
             predictions = blended_predictions(&db, &q, engine, &personal, &suppressed)?;
+            let backed: Vec<String> = predictions
+                .iter()
+                .filter_map(|p| p["text"].as_str().map(norm))
+                .filter(|key| personal.history_keys.contains(key))
+                .collect();
+            if let (Some(word), false) = (completion_prefix.as_deref(), backed.is_empty()) {
+                // 撤销会推进学习世代，下方世代复核随即让本轮作废，失效内容不会展示。
+                revoke_stale_history_sources(root, &db, word, &backed)?;
+            }
         }
     } else if q.input_code.is_empty()
         && !q.context.trim().is_empty()
@@ -1214,9 +1290,9 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
             json!({"enabled":false,"epoch":final_policy.epoch,"ordered_ids":q.candidates.iter().map(|c|&c.id).collect::<Vec<_>>(),"predictions":[],"recalled_candidates":[],"context_id":q.context_id,"invalidated":true}),
         );
     }
-    Ok(
-        json!({"enabled":enabled,"epoch":p.epoch,"ordered_ids":candidates.iter().map(|c|&c.id).collect::<Vec<_>>(),"predictions":predictions,"recalled_candidates":recalled_candidates,"context_id":q.context_id,"skipped_unverified_sources":skipped_origins,"evidence_limited":evidence_limited,"warnings":if skipped_origins>0 {vec!["本次相关来源验证达到32条预算，其余来源未参与排序"]}else{vec![]}}),
-    )
+    let reply = json!({"enabled":enabled,"epoch":p.epoch,"ordered_ids":candidates.iter().map(|c|&c.id).collect::<Vec<_>>(),"predictions":predictions,"recalled_candidates":recalled_candidates,"context_id":q.context_id,"skipped_unverified_sources":skipped_origins,"evidence_limited":evidence_limited,"warnings":if skipped_origins>0 {vec!["本次相关来源验证达到32条预算，其余来源未参与排序"]}else{vec![]}});
+    release_db(root, db);
+    Ok(reply)
 }
 fn status(root: &Path, db: &Connection) -> Result<Value> {
     let origins = {
@@ -1383,6 +1459,11 @@ pub(crate) fn apply_privacy(
             [&key],
         )
         .map_err(err)?;
+        tx.execute(
+            "DELETE FROM history_bigrams WHERE normalized=?1 OR instr(previous,?1)>0",
+            [&key],
+        )
+        .map_err(err)?;
     } else {
         tx.execute(
             "INSERT OR IGNORE INTO retired_events SELECT event_id FROM evidence",
@@ -1398,6 +1479,9 @@ pub(crate) fn apply_privacy(
         tx.execute("DELETE FROM evidence_anchors", [])
             .map_err(err)?;
         tx.execute("DELETE FROM imports", []).map_err(err)?;
+        tx.execute("DELETE FROM history_bigrams", []).map_err(err)?;
+        tx.execute("DELETE FROM history_bigram_totals", [])
+            .map_err(err)?;
     }
     bump(&tx)?;
     let epoch = state(&tx)?.epoch;
@@ -1463,6 +1547,13 @@ pub fn manage(root: &Path, action: &str, payload: &Value) -> Result<Value> {
                 return Err("回填游标过长".into());
             }
             let page = backfill_page(root, source, cursor, limit)?;
+            // 已登记联想表时，同时抽取"上一个词→下一个词"供上屏后联想使用。
+            let vocabulary = match registered_prediction_table(&db)? {
+                Some((path, sha)) => {
+                    crate::prediction::with_table(&path, &sha, |table| table.vocabulary())?
+                }
+                None => None,
+            };
             let mut has_more = page.len() > limit as usize;
             let mut imported = 0;
             let mut skipped = 0;
@@ -1519,7 +1610,10 @@ pub fn manage(root: &Path, action: &str, payload: &Value) -> Result<Value> {
                     warnings.push("单条来源仅处理前8000字符，超长正文未完整导入".to_string());
                 }
                 let list = phrases(read["text"].as_str().unwrap_or(""));
-                if list.is_empty() {
+                let pairs = vocabulary.as_ref().map_or_else(HashMap::new, |vocabulary| {
+                    crate::prediction::bigrams(read["text"].as_str().unwrap_or(""), vocabulary)
+                });
+                if list.is_empty() && pairs.is_empty() {
                     skipped += 1;
                     continue;
                 }
@@ -1532,6 +1626,11 @@ pub fn manage(root: &Path, action: &str, payload: &Value) -> Result<Value> {
                 }
                 tx.execute("DELETE FROM evidence WHERE origin=?1", [&origin])
                     .map_err(err)?;
+                tx.execute("DELETE FROM history_bigrams WHERE origin=?1", [&origin])
+                    .map_err(err)?;
+                for ((previous, next), count) in &pairs {
+                    tx.execute("INSERT OR IGNORE INTO history_bigrams SELECT ?1,?2,?3,?4,?5,?6 WHERE NOT EXISTS(SELECT 1 FROM forgotten WHERE text IN(privacy_term_digest(?3),privacy_term_digest(?4)))",params![origin,revision,norm(previous),norm(next),next,count]).map_err(err)?;
+                }
                 tx.execute(
                     "INSERT OR REPLACE INTO imports VALUES(?1,?2,?3,?4)",
                     params![origin, id, revision, source],
@@ -1660,6 +1759,309 @@ pub fn install_prediction_table(root: &Path, path: &Path) -> Result<Value> {
     Ok(json!({"changed":true,"sha256":sha}))
 }
 
+fn registered_prediction_table(db: &Connection) -> Result<Option<(std::path::PathBuf, String)>> {
+    db.query_row(
+        "SELECT path,sha256 FROM prediction_meta WHERE id=1",
+        [],
+        |r| {
+            Ok((
+                std::path::PathBuf::from(r.get::<_, String>(0)?),
+                r.get::<_, String>(1)?,
+            ))
+        },
+    )
+    .optional()
+    .map_err(err)
+}
+
+/// 用户确认回填的历史里，前一个词为 word 的下一个词及次数。汇总表由触发器随 history_bigrams
+/// 增删维护；来源失效、重新回填、遗忘与清空都会删除对应词对，汇总随之扣减。
+fn history_continuations(db: &Connection, word: &str) -> Result<Vec<(String, f64)>> {
+    let mut stmt = db
+        .prepare_cached("SELECT text,count FROM history_bigram_totals WHERE previous=?1 ORDER BY count DESC,normalized LIMIT 32")
+        .map_err(err)?;
+    let rows = stmt
+        .query_map([word], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+        })
+        .map_err(err)?;
+    rows.collect::<std::result::Result<_, _>>().map_err(err)
+}
+
+type SharedSource = std::sync::Arc<std::sync::Mutex<Connection>>;
+
+/// 来源库只读连接按路径与文件身份复用：只读连接每条语句读取最新已提交的数据；
+/// 文件被删除或整体替换（如从备份恢复）时丢弃旧连接重新打开。
+fn source_db(path: &Path) -> Result<Option<SharedSource>> {
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+    static SOURCES: Mutex<BTreeMap<std::path::PathBuf, (u64, SharedSource)>> =
+        Mutex::new(BTreeMap::new());
+    let metadata = std::fs::metadata(path).ok().filter(|m| m.is_file());
+    let mut cache = SOURCES.lock().map_err(err)?;
+    let Some(metadata) = metadata else {
+        cache.remove(path);
+        return Ok(None);
+    };
+    #[cfg(unix)]
+    let identity = {
+        use std::os::unix::fs::MetadataExt;
+        metadata.ino() ^ metadata.dev().rotate_left(32)
+    };
+    #[cfg(not(unix))]
+    let identity = 0;
+    if let Some((known, shared)) = cache.get(path) {
+        if *known == identity {
+            return Ok(Some(shared.clone()));
+        }
+    }
+    let connection = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(err)?;
+    connection
+        .busy_timeout(std::time::Duration::from_millis(250))
+        .map_err(err)?;
+    let shared = Arc::new(Mutex::new(connection));
+    cache.retain(|known, _| known.is_file());
+    while cache.len() >= 12 {
+        cache.pop_first();
+    }
+    cache.insert(path.to_owned(), (identity, shared.clone()));
+    Ok(Some(shared))
+}
+
+/// 与知识库历史来源开关同一判定（未设置时默认开放），经复用的只读连接读取。
+fn history_kind_open(root: &Path, kind: &str) -> Result<bool> {
+    let Some(shared) = source_db(&root.join("knowledge/history-access.sqlite"))? else {
+        return Ok(true);
+    };
+    let conn = shared.lock().map_err(err)?;
+    conn.query_row(
+        "SELECT enabled FROM history_access WHERE kind=?1",
+        [kind],
+        |r| r.get::<_, bool>(0),
+    )
+    .optional()
+    .map(|enabled| enabled.unwrap_or(true))
+    .map_err(err)
+}
+
+/// 历史词对的一个来源：(origin, revision, item_id, kind)。
+type HistorySource = (String, String, String, String);
+/// 展示前每批核对的来源数；常见续写背后可能有上百条来源，找到一条现存的即可。
+const HISTORY_CHECK_BATCH: i64 = 8;
+
+/// 展示前核对：每个含历史词对贡献的续写，按次数从高到低分批核对来源，至少有一条现存来源才可展示。
+/// 途中发现已删除、已修改、已关闭或应用被排除的来源，立即撤销其全部学习（只删学习库中的派生数据，
+/// 不触碰历史原文），判定与后台来源核对一致；撤销推进学习世代，使本轮作废后重查。
+/// 未被抽到核对的失效来源仍由后台核对扣除，只影响排序，不会让已删内容单独出现。返回撤销的来源数。
+fn revoke_stale_history_sources(
+    root: &Path,
+    db: &Connection,
+    word: &str,
+    keys: &[String],
+) -> Result<usize> {
+    let page = |key: &str, offset: i64| -> Result<Vec<HistorySource>> {
+        let mut stmt = db
+            .prepare_cached("SELECT b.origin,b.revision,i.item_id,i.kind FROM history_bigrams b JOIN imports i ON i.origin=b.origin AND i.revision=b.revision WHERE b.previous=?1 AND b.normalized=?2 ORDER BY b.count DESC,b.origin LIMIT ?3 OFFSET ?4")
+            .map_err(err)?;
+        let rows = stmt
+            .query_map(params![word, key, HISTORY_CHECK_BATCH, offset], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })
+            .map_err(err)?;
+        rows.collect::<std::result::Result<_, _>>().map_err(err)
+    };
+    // 先把各续写的第一批合并核对，只为没有现存来源的续写继续翻页。
+    let mut pending: Vec<(&String, Vec<HistorySource>, i64)> = Vec::new();
+    for key in keys {
+        pending.push((key, page(key, 0)?, 0));
+    }
+    let mut stale: Vec<HistorySource> = Vec::new();
+    while !pending.is_empty() {
+        let batch: Vec<HistorySource> = pending
+            .iter()
+            .flat_map(|(_, rows, _)| rows.clone())
+            .collect();
+        let current = current_history_sources(root, &batch)?;
+        let mut next = Vec::new();
+        for (key, rows, offset) in pending {
+            let (valid, invalid): (Vec<_>, Vec<_>) =
+                rows.into_iter().partition(|(_, revision, item, _)| {
+                    current.contains(&(item.clone(), revision.clone()))
+                });
+            let exhausted = valid.is_empty() && invalid.len() < HISTORY_CHECK_BATCH as usize;
+            stale.extend(invalid);
+            if valid.is_empty() && !exhausted {
+                let offset = offset + HISTORY_CHECK_BATCH;
+                let rows = page(key, offset)?;
+                if !rows.is_empty() {
+                    next.push((key, rows, offset));
+                }
+            }
+        }
+        pending = next;
+    }
+    stale.sort();
+    stale.dedup();
+    if stale.is_empty() {
+        return Ok(0);
+    }
+    let tx = db.unchecked_transaction().map_err(err)?;
+    for (origin, revision, item, _) in &stale {
+        tx.execute(
+            "DELETE FROM imports WHERE origin=?1 AND item_id=?2 AND revision=?3",
+            params![origin, item, revision],
+        )
+        .map_err(err)?;
+        tx.execute(
+            "DELETE FROM evidence WHERE origin=?1 AND origin_revision=?2",
+            params![origin, revision],
+        )
+        .map_err(err)?;
+        tx.execute(
+            "DELETE FROM history_bigrams WHERE origin=?1 AND revision=?2",
+            params![origin, revision],
+        )
+        .map_err(err)?;
+    }
+    bump(&tx)?;
+    tx.commit().map_err(err)?;
+    Ok(stale.len())
+}
+
+/// 一批历史来源中仍然有效的 (item_id, revision)：来源类型已开放、应用未被排除、记录仍存在且修订一致；
+/// 语音与剪贴板另核对统一投影背后的源库身份与源记录修订，与历史引用读取一致。
+fn current_history_sources(
+    root: &Path,
+    sources: &[HistorySource],
+) -> Result<HashSet<(String, String)>> {
+    let mut current: HashSet<(String, String)> = HashSet::new();
+    let (typed, history): (Vec<_>, Vec<_>) = sources.iter().partition(|s| s.3 == "typed");
+    if !typed.is_empty() && history_kind_open(root, "saved_snippet")? {
+        let path = root.join("knowledge/typed.sqlite");
+        if let Some(shared) = source_db(&path)? {
+            let source = shared.lock().map_err(err)?;
+            let ids: Vec<&String> = typed.iter().map(|s| &s.2).collect();
+            let mut stmt = source.prepare(&format!("SELECT id,CAST(revision AS TEXT),source_app FROM typed_segments WHERE id IN ({})", vec!["?"; ids.len()].join(","))).map_err(err)?;
+            let rows = stmt
+                .query_map(params_from_iter(ids), |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(err)?;
+            for row in rows {
+                let (id, revision, app) = row.map_err(err)?;
+                if safe_app(&app) {
+                    current.insert((id, revision));
+                }
+            }
+        }
+    }
+    let kinds: HashSet<&str> = history.iter().map(|s| s.3.as_str()).collect();
+    let open: HashSet<&str> = kinds
+        .into_iter()
+        .filter(|kind| history_kind_open(root, kind).unwrap_or(false))
+        .collect();
+    let path = root.join("integration.db");
+    let shared = if open.is_empty() {
+        None
+    } else {
+        source_db(&path)?
+    };
+    if let Some(shared) = shared {
+        let index = shared.lock().map_err(err)?;
+        let ids: Vec<&str> = history
+            .iter()
+            .filter_map(|s| s.2.strip_prefix("history:"))
+            .collect();
+        let mut stmt = index.prepare(&format!("SELECT item_id,CAST(revision AS TEXT),source_kind,COALESCE(json_extract(snapshot,'$.source_app'),''),store_id,record_id,revision FROM integration_items WHERE item_id IN ({})", vec!["?"; ids.len().max(1)].join(","))).map_err(err)?;
+        let rows = stmt
+            .query_map(params_from_iter(ids), |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, i64>(6)?,
+                ))
+            })
+            .map_err(err)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(err)?;
+        // 与历史引用读取相同：统一投影存在之外，源库身份一致且源记录仍为同一修订。
+        let mut live: HashMap<&str, HashMap<String, i64>> = HashMap::new();
+        for kind in &open {
+            live.insert(kind, live_source_revisions(root, kind, &rows)?);
+        }
+        for (id, revision, kind, app, store, record, number) in &rows {
+            let source_current = live
+                .get(kind.as_str())
+                .and_then(|records| records.get(&format!("{store}\0{record}")))
+                .is_some_and(|live| live == number);
+            if open.contains(kind.as_str()) && source_current && (app.is_empty() || safe_app(app)) {
+                current.insert((format!("history:{id}"), revision.clone()));
+            }
+        }
+    }
+    Ok(current)
+}
+
+/// 源库中仍存在的记录及其修订，键为 "store_id\0record_id"；源库缺失、身份或版本不符时返回空集合。
+fn live_source_revisions(
+    root: &Path,
+    kind: &str,
+    rows: &[(String, String, String, String, String, String, i64)],
+) -> Result<HashMap<String, i64>> {
+    let (file, table, logical) = match kind {
+        "voice" => ("history.db", "transcription_history", "history"),
+        "clipboard" => ("clipboard.db", "clipboard_history", "clipboard"),
+        _ => return Ok(HashMap::new()),
+    };
+    let Some(shared) = source_db(&root.join(file))? else {
+        return Ok(HashMap::new());
+    };
+    let source = shared.lock().map_err(err)?;
+    let meta: Option<(i64, String, String)> = source
+        .query_row("SELECT schema_version,store_id,logical_name FROM unified_source_meta WHERE singleton=1", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .optional()
+        .unwrap_or(None);
+    let Some((schema, store, name)) = meta else {
+        return Ok(HashMap::new());
+    };
+    if schema != crate::source::SOURCE_SCHEMA_VERSION || name != logical {
+        return Ok(HashMap::new());
+    }
+    let records: Vec<&str> = rows
+        .iter()
+        .filter(|row| row.2 == kind && row.4 == store)
+        .map(|row| row.5.as_str())
+        .collect();
+    if records.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut stmt = source
+        .prepare(&format!("SELECT v.record_id,v.revision FROM unified_source_versions v JOIN {table} s ON CAST(s.id AS TEXT)=v.record_id WHERE v.record_id IN ({})", vec!["?"; records.len()].join(",")))
+        .map_err(err)?;
+    let found = stmt
+        .query_map(params_from_iter(records), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })
+        .map_err(err)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(err)?;
+    Ok(found
+        .into_iter()
+        .map(|(record, revision)| (format!("{store}\0{record}"), revision))
+        .collect())
+}
+
 struct PredictionEngine {
     path: std::path::PathBuf,
     sha256: String,
@@ -1705,6 +2107,8 @@ struct PersonalContinuations {
     prefix: Option<String>,
     total: f64,
     texts: HashMap<String, (String, f64)>,
+    /// 含回填历史词对贡献的续写；展示前须核对其来源。
+    history_keys: HashSet<String>,
 }
 impl PersonalContinuations {
     fn for_context(context: String, prefix: Option<String>) -> Self {
@@ -1713,6 +2117,13 @@ impl PersonalContinuations {
             prefix,
             ..Self::default()
         }
+    }
+
+    fn add_history(&mut self, key: String, text: &str, amount: f64) {
+        if amount > 0.0 {
+            self.history_keys.insert(key.clone());
+        }
+        self.add(key, text, amount);
     }
 
     fn add(&mut self, key: String, text: &str, amount: f64) {
@@ -1837,28 +2248,31 @@ fn blended_predictions(
             .2 += amount / total;
     }
     let word = engine.tail.last_word().unwrap_or("");
-    let mut ranked = Vec::new();
-    for (key, (text, public, own)) in merged {
-        let score = (1.0 - lambda) * public + lambda * own;
-        if score < tuning.tau
-            || suppressed.contains(&key)
-            || scoped_rejected(db, q, &key)?
+    let mut ranked: Vec<_> = merged
+        .into_iter()
+        .map(|(key, (text, public, own))| {
+            ((1.0 - lambda) * public + lambda * own, key, text, own > 0.0)
+        })
+        .filter(|(score, key, _, _)| *score >= tuning.tau && !suppressed.contains(key))
+        .collect();
+    ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    // 按分数从高到低逐项核对拒绝与遗忘，凑满展示数即停，不为排不上的候选查库。
+    let limit = q.limit.clamp(1, 10);
+    let mut shown = Vec::with_capacity(limit);
+    for (_, key, text, own) in ranked {
+        if shown.len() == limit {
+            break;
+        }
+        if scoped_rejected(db, q, &key)?
             || forgotten_term(db, &key)?
             || (!word.is_empty() && forgotten_term(db, &format!("{word}{key}"))?)
         {
             continue;
         }
-        ranked.push((score, key, text, own > 0.0));
+        let source = if own { "learned" } else { "base" };
+        shown.push(json!({"id":format!("{source}:{}",digest(&text)),"text":text}));
     }
-    ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-    Ok(ranked
-        .into_iter()
-        .take(q.limit.clamp(1, 10))
-        .map(|(_, _, text, own)| {
-            let source = if own { "learned" } else { "base" };
-            json!({"id":format!("{source}:{}",digest(&text)),"text":text})
-        })
-        .collect())
+    Ok(shown)
 }
 
 fn base_predictions(db: &Connection, context: &str, limit: usize) -> Result<Vec<String>> {
