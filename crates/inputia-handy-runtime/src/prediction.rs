@@ -25,19 +25,26 @@ pub struct Tuning {
     pub kappa: f64,
     /// 合并概率低于该值的续写不展示。
     pub tau: f64,
-    /// 只有片段重合的弱语境证据的折扣。
-    pub weak: f64,
+    /// 前文最后一个词相同（而非完整前文相同）的个人证据的折扣。
+    pub last_word: f64,
     /// 最后一个词没有续写、退到更短词时的折扣。
     pub backoff: f64,
     /// 公共补全（前文末尾是更长词的开头）的权重。开发集上补全几乎不命中且挤占位置，默认关闭。
     pub completion: f64,
+    /// 单个续写的个人证据低于此值不参与合并。本机历史开发段上设 0.3 会降低首选命中，默认不设。
+    pub min_personal: f64,
+    /// 只有片段重合（前文与当前前文共享 2–4 字片段）的证据按锚点强度乘此系数。
+    /// 开发段上与"上一个词相同"同时计入反而更差，且会推回刚打的字，默认不计入。
+    pub anchor: f64,
 }
 pub const DEFAULT_TUNING: Tuning = Tuning {
     kappa: 1.0,
     tau: 0.003,
-    weak: 0.5,
+    last_word: 0.5,
     backoff: 0.4,
     completion: 0.0,
+    min_personal: 0.0,
+    anchor: 0.0,
 };
 static TUNING: RwLock<Tuning> = RwLock::new(DEFAULT_TUNING);
 

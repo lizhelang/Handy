@@ -20,6 +20,8 @@ private let keyCodeTab: UInt16 = 48
 private let keyCodePeriod: UInt16 = 47
 private let keyCodeDownArrow: UInt16 = 125
 private let keyCodeUpArrow: UInt16 = 126
+private let keyCodeLeftArrow: UInt16 = 123
+private let keyCodeRightArrow: UInt16 = 124
 
 private struct InputiaExpandedCandidateEntry {
   let text: String
@@ -118,6 +120,9 @@ final class InputiaInputController: IMKInputController {
   private var predictionClient: ObjectIdentifier?
   private var predictionSelection: NSRange?
   private var predictionDisplayedAt: TimeInterval?
+  // 空格选择的当前高亮项；方向键与 Tab 只移动它，新列表显示时回到第一项。
+  private var predictionHighlight = 0
+  private var predictionAnchorRect = NSRect.zero
   private var confirmedFieldContext = InputiaConfirmedFieldContext()
   private var confirmedFieldAnchor: InputiaVoiceTargetSnapshot.Snapshot?
   private var confirmedFieldAnchorExpiry: DispatchWorkItem?
@@ -352,6 +357,10 @@ final class InputiaInputController: IMKInputController {
     }
 
     #if INPUTIA_PAIRED_BUILD
+    // 先于前文与目标边界处理：移动高亮不移动光标，不能清掉本轮前文或字段证明。
+    if let step = predictionNavigationStep(event), movePredictionHighlight(by: step, client: client) {
+      return true
+    }
     var predictionTransitionKeptWindow = false
     let selectionKey = event.type == .keyDown && (event.keyCode == keyCodeSpace || event.keyCode == keyCodeReturn
       || event.keyCode == keyCodeKeypadEnter || event.keyCode == keyCodeTab
@@ -1620,13 +1629,35 @@ final class InputiaInputController: IMKInputController {
     guard event.type == .keyDown, !event.isARepeat, personalInputReplayDepth == 0,
       latestComposing.isEmpty, !personalPredictions.isEmpty,
       let displayedAt = predictionDisplayedAt, event.timestamp >= displayedAt,
-      event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else { return nil }
-    let index: Int
-    if event.keyCode == keyCodeSpace || event.keyCode == keyCodeTab { index = 0 }
-    else if let text = event.charactersIgnoringModifiers, text.count == 1,
-      let digit = Int(text), (1...9).contains(digit) { index = digit - 1 }
-    else { return nil }
-    return personalPredictions.indices.contains(index) ? index : nil
+      event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+      event.keyCode == keyCodeSpace else { return nil }
+    // 只用空格选当前高亮项；数字键照常输入，Tab 与左右方向键只移动高亮。
+    return personalPredictions.indices.contains(predictionHighlight) ? predictionHighlight : nil
+  }
+
+  /// 推荐已显示后，左右方向键与 Tab（Shift+Tab 反向）在推荐间移动高亮；只有一项时照常交给宿主。
+  private func predictionNavigationStep(_ event: NSEvent) -> Int? {
+    guard event.type == .keyDown, personalInputReplayDepth == 0,
+      latestComposing.isEmpty, personalPredictions.count > 1,
+      let displayedAt = predictionDisplayedAt, event.timestamp >= displayedAt,
+      event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return nil }
+    let shift = event.modifierFlags.contains(.shift)
+    switch event.keyCode {
+    case keyCodeTab: return shift ? -1 : 1
+    case keyCodeRightArrow where !shift: return 1
+    case keyCodeLeftArrow where !shift: return -1
+    default: return nil
+    }
+  }
+
+  /// 只在本轮推荐仍有效时移动高亮并重绘原窗；失效时返回 false，按键照常处理。
+  private func movePredictionHighlight(by step: Int, client: IMKTextInput) -> Bool {
+    guard currentPredictionToken(client: client) != nil, !personalPredictions.isEmpty,
+      let panel = ownedCandidatePanel else { return false }
+    let count = personalPredictions.count
+    predictionHighlight = ((predictionHighlight + step) % count + count) % count
+    panel.showPredictions(personalPredictions.map(\.text), highlighted: predictionHighlight, near: predictionAnchorRect)
+    return true
   }
 
   private func handlePersonalCandidateKey(_ event: NSEvent, client: IMKTextInput) -> Bool? {
@@ -1730,6 +1761,7 @@ final class InputiaInputController: IMKInputController {
     predictionPresentation.invalidate()
     predictionExpiry?.cancel(); predictionExpiry = nil
     predictionClient = nil; predictionSelection = nil; predictionDisplayedAt = nil
+    predictionHighlight = 0
     predictionQueryContext = nil
     invalidatePredictionTarget()
     let wasVisible = !personalPredictions.isEmpty
@@ -1939,7 +1971,11 @@ final class InputiaInputController: IMKInputController {
           live.attributes(forCharacterIndex: selection.location, lineHeightRectangle: &rect)
           guard self.currentPredictionToken(client: live) == predictionToken,
             let panel = self.ownedCandidatePanel else { return }
-          panel.show(candidates: view.predictions.map(\.text), near: rect)
+          if !sameDisplayed || !self.personalPredictions.indices.contains(self.predictionHighlight) {
+            self.predictionHighlight = 0
+          }
+          self.predictionAnchorRect = rect
+          panel.showPredictions(view.predictions.map(\.text), highlighted: self.predictionHighlight, near: rect)
           if !sameDisplayed { self.predictionDisplayedAt = ProcessInfo.processInfo.systemUptime }
         }
       } else {

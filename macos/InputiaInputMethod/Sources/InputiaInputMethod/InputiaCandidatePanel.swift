@@ -153,7 +153,9 @@ final class InputiaCandidatePanel: NSPanel {
     near anchorRect: NSRect,
     expanded: Bool = false,
     primaryCandidateCount: Int? = nil,
-    activeRowIndex: Int = 0
+    activeRowIndex: Int = 0,
+    numbered: Bool = true,
+    highlightedIndex: Int = 0
   ) {
     restorationToken = nil
     guard !candidates.isEmpty else {
@@ -168,10 +170,17 @@ final class InputiaCandidatePanel: NSPanel {
       expanded: expanded,
       fontSize: displaySettings.fontSize,
       primaryCandidateCount: primaryCandidateCount,
-      activeRowIndex: activeRowIndex
+      activeRowIndex: activeRowIndex,
+      numbered: numbered,
+      highlightedIndex: highlightedIndex
     )
     presentConfiguredContent(near: anchorRect, expanded: expanded,
       debugCandidates: Array(candidates.prefix(visibleLimit)))
+  }
+
+  /// 上屏后联想：不显示编号，高亮当前可用空格选择的一项。
+  func showPredictions(_ predictions: [String], highlighted: Int, near anchorRect: NSRect) {
+    show(candidates: predictions, near: anchorRect, numbered: false, highlightedIndex: highlighted)
   }
 
   func showPredictionPending(near anchorRect: NSRect) {
@@ -503,7 +512,9 @@ final class InputiaCandidateContentView: NSView {
     expanded: Bool,
     fontSize: CGFloat,
     primaryCandidateCount: Int?,
-    activeRowIndex: Int
+    activeRowIndex: Int,
+    numbered: Bool = true,
+    highlightedIndex: Int = 0
   ) {
     let previousRows = rows, previousExpanded = self.expanded, previousFontSize = self.fontSize
     let previousPrimaryCount = self.primaryCandidateCount, previousActiveRow = self.activeRowIndex
@@ -522,11 +533,11 @@ final class InputiaCandidateContentView: NSView {
         let row = self.primaryCandidateCount > 0 ? offset / self.primaryCandidateCount : 0
         let column = self.primaryCandidateCount > 0 ? offset % self.primaryCandidateCount : offset
         let isNumberedRow = !expanded || row == self.activeRowIndex
-        let number = isNumberedRow && column < self.primaryCandidateCount ? column + 1 : nil
+        let number = numbered && isNumberedRow && column < self.primaryCandidateCount ? column + 1 : nil
         return InputiaCandidateDisplayItem(
           number: number,
           text: text,
-          isHighlighted: isNumberedRow && column == 0
+          isHighlighted: isNumberedRow && column == highlightedIndex
         )
       }
     )

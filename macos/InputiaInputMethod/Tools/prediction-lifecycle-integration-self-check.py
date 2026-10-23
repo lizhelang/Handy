@@ -72,7 +72,8 @@ markers = [
 methods = "\n".join(declaration(marker) for marker in markers)
 has_prediction_keys = "  private func predictionSelectionIndex(" in source
 if has_prediction_keys:
-    for marker in ["  private func predictionSelectionIndex(", "  private func handlePersonalCandidateKey("]:
+    for marker in ["  private func predictionSelectionIndex(", "  private func predictionNavigationStep(",
+                   "  private func movePredictionHighlight(", "  private func handlePersonalCandidateKey("]:
         methods += "\n" + declaration(marker)
     if "handlePersonalCandidateKey(event, client: client)" not in declaration("  private func handleKeyDown("):
         raise AssertionError("真实handleKeyDown必须调用同一推荐按键入口")
@@ -108,6 +109,7 @@ fixture = r'''
 import AppKit
 setbuf(stdout, nil)
 let keyCodeSpace: UInt16 = 49, keyCodeTab: UInt16 = 48, keyCodeEscape: UInt16 = 53
+let keyCodeLeftArrow: UInt16 = 123, keyCodeRightArrow: UInt16 = 124
 let keyCodeReturn: UInt16 = 36, keyCodeKeypadEnter: UInt16 = 76, keyCodeDelete: UInt16 = 51
 let keyCodePageDown: UInt16 = 121, keyCodePageUp: UInt16 = 116
 let emptyReplacementRange = NSRange(location: NSNotFound, length: 0)
@@ -262,6 +264,10 @@ final class InputiaCandidatePanel {
     primaryCandidateCount: Int? = nil, activeRowIndex: Int = 0) {
     restorationToken = nil; replacements += 1; visible = true; shown = candidates
   }
+  var highlighted = 0
+  func showPredictions(_ predictions: [String], highlighted: Int, near: NSRect) {
+    restorationToken = nil; replacements += 1; visible = true; shown = predictions; self.highlighted = highlighted
+  }
 }
 enum InputiaHost {
   static var activeInputController: Controller?
@@ -299,6 +305,7 @@ final class Controller {
   var candidateDisplayCleanupDepth = 0, predictionHandoffDepth = 0
   let targetCaptureScope = InputiaTargetCaptureScope()
   var predictionSelectionHandoff: UInt64?, predictionDisplayedAt: TimeInterval?
+  var predictionHighlight = 0, predictionAnchorRect = NSRect.zero
   var personalInputReplayDepth = 0, personalReplayKeepsTypedOrigin = false
   var confirmedFieldAnchor: InputiaVoiceTargetSnapshot.Snapshot?
   var confirmedFieldAnchorExpiry: DispatchWorkItem?
@@ -623,7 +630,7 @@ expired.personalization.stop()
 print("predictionLifecycleBoundaries=true preCaptureSingleflight=true fieldIsolation=true explicitDisabledCloses=true realFiveSecondTimer=true lateReplyCannotReopen=true")
 
 #if PREDICTION_ACCEPT_CONTEXT
-func verifyAcceptedKey(_ code: UInt16 = 49, text: String = " ", expectedIndex: Int) {
+func verifyAcceptedKey(_ code: UInt16 = 49, text: String = " ", highlight: Int = 0, expectedIndex: Int) {
 let (accepted, acceptedQuery) = openedQuery()
 let choices = [InputiaPersonalPrediction(id: "prediction:first", text: "后续第一词"),
   InputiaPersonalPrediction(id: "prediction:second", text: "后续第二词")]
@@ -634,12 +641,16 @@ let beforeAcceptanceWrites = InputiaTypedCapture.shared.writes
 let feedbackCountBefore = InputiaVoiceInputLauncher.sent.filter { $0.kind == "feedback" }.count
 let hidesBefore = InputiaHost.candidatePanel!.hides
 let deadlineBefore = accepted.predictionPresentation.deadline
+if highlight != 0 {
+  precondition(accepted.movePredictionHighlight(by: highlight, client: accepted.live)
+    && InputiaHost.candidatePanel!.highlighted == highlight, "方向键/Tab移动高亮后才由空格选择")
+}
 let input = event(code, text: text)
 precondition(!accepted.physicalInput(input), "选择键不能被前置predictionBoundary当作取消消费")
 accepted.observePersonalKey(input, client: accepted.live)
 precondition(accepted.personalPredictions == choices && InputiaHost.candidatePanel!.hides == hidesBefore
   && accepted.predictionPresentation.deadline == deadlineBefore,
-  "真实boundary和observe不能提前清掉Space/数字键要选择的推荐或重置deadline")
+  "真实boundary和observe不能提前清掉Space要选择的推荐或重置deadline")
 #if PREDICTION_KEYS
 precondition(accepted.handlePersonalCandidateKey(input, client: accepted.live) == true,
   "必须由真实按键入口发起推荐准入，不能直接调用accept来伪证按键可用")
@@ -675,12 +686,32 @@ precondition(InputiaVoiceInputLauncher.sent.filter { $0.kind == "feedback" }.cou
 accepted.personalization.stop()
 }
 verifyAcceptedKey(expectedIndex: 0)
-verifyAcceptedKey(18, text: "1", expectedIndex: 0)
-verifyAcceptedKey(19, text: "2", expectedIndex: 1)
-verifyAcceptedKey(48, text: "\t", expectedIndex: 0)
+verifyAcceptedKey(highlight: 1, expectedIndex: 1)
 
 #if PREDICTION_KEYS
-for input in [event(25, text: "9"), event(modifiers: [.control, .shift]), event(36, text: "\r")] {
+// 左右方向键与 Tab（Shift+Tab 反向）只移动高亮并循环，空格选择高亮项。
+let (navigated, navigatedQuery) = openedQuery()
+navigatedQuery.completion(.init(server_instance: "service", enabled: true, epoch: 1,
+  result: .init(ordered_ids: [], predictions: [InputiaPersonalPrediction(id: "nav:a", text: "甲"),
+    InputiaPersonalPrediction(id: "nav:b", text: "乙"), InputiaPersonalPrediction(id: "nav:c", text: "丙")],
+    context_id: navigatedQuery.command.target!.target_id), code: nil))
+precondition(navigated.predictionNavigationStep(event(48, text: "\t")) == 1
+  && navigated.predictionNavigationStep(event(48, text: "\t", modifiers: [.shift])) == -1
+  && navigated.predictionNavigationStep(event(124, text: "")) == 1
+  && navigated.predictionNavigationStep(event(123, text: "")) == -1
+  && navigated.predictionNavigationStep(event(124, text: "", modifiers: [.command])) == nil
+  && navigated.predictionNavigationStep(event(19, text: "2")) == nil, "导航键分类必须与按键入口一致")
+precondition(navigated.movePredictionHighlight(by: -1, client: navigated.live) && navigated.predictionHighlight == 2
+  && InputiaHost.candidatePanel!.highlighted == 2 && navigated.predictionSelectionIndex(event()) == 2
+  && navigated.personalPredictions.count == 3, "高亮循环移动且不关闭本轮推荐")
+navigated.personalization.stop()
+navigated.closePredictionPresentation()
+precondition(navigated.predictionHighlight == 0, "本轮结束后高亮复位")
+#endif
+
+#if PREDICTION_KEYS
+for input in [event(18, text: "1"), event(19, text: "2"), event(25, text: "9"), event(modifiers: [.control, .shift]),
+  event(36, text: "\r")] {
   let (passthrough, request) = openedQuery()
   request.completion(response(request, text: "不能误选的词"))
   let admissionsBefore = InputiaVoiceInputLauncher.sent.filter { $0.kind == "admit" }.count
@@ -689,7 +720,7 @@ for input in [event(25, text: "9"), event(modifiers: [.control, .shift]), event(
   precondition(passthrough.handlePersonalCandidateKey(input, client: passthrough.live) == nil
     && !passthrough.personalPredictionPending && passthrough.live.inserts == 1
     && InputiaVoiceInputLauncher.sent.filter { $0.kind == "admit" }.count == admissionsBefore,
-    "超范围数字/语音快捷键/Return必须交还后续原输入流程，不能误选推荐")
+    "数字键/语音快捷键/Return必须交还后续原输入流程，不能误选推荐")
   passthrough.personalization.stop()
 }
 let composing = Controller()
@@ -704,7 +735,7 @@ for input in [event(), event(18, text: "1"), event(19, text: "2"), event(36, tex
     "非空普通拼音继续交原候选路径，不能被推荐按键入口截走或清窗")
 }
 #endif
-print("predictionAcceptanceSelfCheck=true actualSpaceOneTwoTab=true actualBoundaryAndObserver=true correctTextIDRank=true modifierAndRangePassthrough=true composingRoutePreserved=true transferredTargetRetained=true oneFeedbackPerAcceptance=true previousContextPreserved=true noFeedbackReplay=true")
+print("predictionAcceptanceSelfCheck=true actualSpaceHighlight=true digitsPassThrough=true arrowTabNavigation=true actualBoundaryAndObserver=true correctTextIDRank=true modifierAndRangePassthrough=true composingRoutePreserved=true transferredTargetRetained=true oneFeedbackPerAcceptance=true previousContextPreserved=true noFeedbackReplay=true")
 
 #if PREDICTION_KEYS
 func takeCommand(_ kind: String) -> InputiaVoiceInputLauncher.Pending {
@@ -739,7 +770,10 @@ for round in 0..<3 {
   let tokenBefore = chain.predictionPresentation.currentToken!
   let deadlineBefore = chain.predictionPresentation.deadline!
   let selectedIndex = round == 1 ? 1 : 0
-  let input = selectedIndex == 1 ? event(19, text: "2") : event()
+  if selectedIndex == 1 {
+    precondition(chain.movePredictionHighlight(by: 1, client: chain.live), "移动高亮不能结束本轮")
+  }
+  let input = event()
   precondition(chain.handle(input, client: chain.live), "每轮真实按键入口都应开始选择")
   precondition(chain.predictionSelectionHandoff != nil && chain.predictionPresentation.currentToken == nil
     && InputiaHost.candidatePanel!.visible && InputiaHost.candidatePanel!.shown.isEmpty

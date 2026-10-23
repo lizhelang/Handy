@@ -31,6 +31,8 @@ def main():
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--train-fraction", type=float, default=0.8)
+    parser.add_argument("--end-fraction", type=float, default=1.0,
+                        help="开发段用较早时间窗（如 0.6 至 0.8），最后 20%% 留作测试")
     args = parser.parse_args()
     args.out.mkdir(mode=0o700, parents=True, exist_ok=False)
     snapshots = args.out / "snapshots"
@@ -48,13 +50,14 @@ def main():
     typed.close()
     items = [item for item in items if len(item[2]) >= 4]
     items.sort(key=lambda item: item[3])
-    # 两类来源各自按时间取最后一段作测试；个人证据只来自键入上屏，按键入切分点截断。
-    splits = {}
+    # 两类来源各自按时间取一段作评测（默认最后 20%）；个人证据只来自键入上屏，按键入切分点截断。
+    splits, ends = {}, {}
     for kind in ("voice", "typed"):
         times = [item[3] for item in items if item[0] == kind]
         splits[kind] = times[int(len(times) * args.train_fraction)]
+        ends[kind] = times[int(len(times) * args.end_fraction)] if args.end_fraction < 1 else float("inf")
     split = splits["typed"]
-    test = [item for item in items if item[3] >= splits[item[0]]]
+    test = [item for item in items if splits[item[0]] <= item[3] < ends[item[0]]]
     with (args.out / "t3_items.jsonl").open("w") as out:
         for kind, item_id, text, _, app in test:
             out.write(json.dumps({"id": item_id, "set": f"t3-{kind}", "text": text, "app": app},
@@ -71,6 +74,9 @@ def main():
     with learned:
         learned.execute("DELETE FROM evidence WHERE created >= ?", (split,))
         learned.execute("DELETE FROM evidence_anchors WHERE event_id NOT IN (SELECT event_id FROM evidence)")
+        # 本机学习库可能已由安装版登记联想表；评测由命令行显式登记，旧引擎对照不能被它带走。
+        if learned.execute("SELECT COUNT(*) FROM sqlite_master WHERE name='prediction_meta'").fetchone()[0]:
+            learned.execute("DELETE FROM prediction_meta")
     learned.close()
     key = knowledge / "personalization-privacy.key"
     descriptor = os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

@@ -124,18 +124,43 @@ fn personal_evidence_is_blended_instead_of_taking_every_slot() {
             >= 2,
         "{shown:?}"
     );
-    // 只有片段重合、默认空格接受的弱证据不能压过公共首选。
-    let mut weak = feedback_for(root, "weak", "报告", "昨天写的项目", "accept");
-    weak.explicit_selection = false;
-    feedback(root, weak).unwrap();
+    // 只有片段重合（前文含"项目"但不以它结尾）不说明下一个词，不推荐。
+    feedback(
+        root,
+        feedback_for(root, "anchor", "报告", "项目进展汇报", "accept"),
+    )
+    .unwrap();
+    assert!(!texts(root, "这个项目").contains(&"报告".to_string()));
+    // 上一个词相同（前文同样以"项目"结尾）才计入个人证据。
+    feedback(
+        root,
+        feedback_for(root, "last", "预算", "昨天写的项目", "accept"),
+    )
+    .unwrap();
     let shown = predictions(root, ask(root, "这个项目", 5));
-    assert!(shown[0].0.starts_with("base:"), "{shown:?}");
-    assert!(shown.iter().any(|(_, text)| text == "报告"), "{shown:?}");
+    assert!(
+        shown
+            .iter()
+            .any(|(id, text)| text == "预算" && id.starts_with("learned:")),
+        "{shown:?}"
+    );
     // 关闭个人学习后只剩公共续写。
     manage(root, "personalization_enabled", &json!({"enabled": false})).unwrap();
     let shown = predictions(root, ask(root, "我们", 5));
     assert!(!shown.is_empty());
     assert!(shown.iter().all(|(id, _)| id.starts_with("base:")));
+}
+
+#[test]
+fn just_accepted_continuation_is_not_suggested_again() {
+    let tmp = registered();
+    let root = tmp.path();
+    // 用户在"在这"之后选了"个"；下一轮前文是"在这个"，不能再推"个"。
+    feedback(root, feedback_for(root, "chosen", "个", "在这", "accept")).unwrap();
+    assert_eq!(texts(root, "在这")[0], "个");
+    let next = texts(root, "在这个");
+    assert!(!next.contains(&"个".to_string()), "{next:?}");
+    assert!(!next.is_empty());
 }
 
 #[test]

@@ -103,6 +103,7 @@ final class Controller {
   var ownedCandidatePanel: Panel? = Panel()
   var personalInputReplayDepth = 0, personalPredictions: [String] = []
   var predictionDisplayedAt: TimeInterval? = nil, predictionAccepts = 0
+  var predictionHighlight = 0
   var completionClears = 0
   func cancelShiftInputModeGesture(reason: String) {}
   func clearClipboardRecall() {}

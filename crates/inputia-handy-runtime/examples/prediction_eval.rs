@@ -127,21 +127,27 @@ fn parse_args() -> Result<Args, String> {
                     .map(|v| v.trim().parse::<usize>().map_err(|e| e.to_string()))
                     .collect::<Result<_, _>>()?;
             }
-            // kappa,tau,weak,backoff,completion；只允许在开发集上调参。
+            // kappa,tau,last_word,backoff,completion,min_personal,anchor；只允许在开发集上调参。
             "--tuning" => {
                 let values = value()?
                     .split(',')
                     .map(|v| v.trim().parse::<f64>().map_err(|e| e.to_string()))
                     .collect::<Result<Vec<_>, _>>()?;
-                let [kappa, tau, weak, backoff, completion] = values[..] else {
-                    return Err("--tuning 需要 kappa,tau,weak,backoff,completion".into());
+                let [kappa, tau, last_word, backoff, completion, min_personal, anchor] = values[..]
+                else {
+                    return Err(
+                        "--tuning 需要 kappa,tau,last_word,backoff,completion,min_personal,anchor"
+                            .into(),
+                    );
                 };
                 prediction::set_tuning(prediction::Tuning {
                     kappa,
                     tau,
-                    weak,
+                    last_word,
                     backoff,
                     completion,
+                    min_personal,
+                    anchor,
                 });
             }
             other => return Err(format!("未知参数 {other}")),
@@ -157,7 +163,13 @@ fn parse_args() -> Result<Args, String> {
     })
 }
 
-fn predict(args: &Args, epoch: u64, case: &Case, limit: usize) -> Result<Vec<String>, String> {
+/// 返回 (来源, 文字)；来源取 ID 前缀 `learned` / `base`，只用于公开测试集的调试输出。
+fn predict(
+    args: &Args,
+    epoch: u64,
+    case: &Case,
+    limit: usize,
+) -> Result<Vec<(String, String)>, String> {
     let reply = personalization::query(
         &args.root,
         Query {
@@ -180,7 +192,10 @@ fn predict(args: &Args, epoch: u64, case: &Case, limit: usize) -> Result<Vec<Str
         .map(|items| {
             items
                 .iter()
-                .filter_map(|item| item["text"].as_str().map(str::to_owned))
+                .filter_map(|item| {
+                    let source = item["id"].as_str()?.split(':').next()?.to_owned();
+                    Some((source, item["text"].as_str()?.to_owned()))
+                })
                 .collect()
         })
         .unwrap_or_default())
@@ -214,10 +229,12 @@ fn main() -> Result<(), String> {
         let mut tallies: BTreeMap<String, Tally> = BTreeMap::new();
         for (index, case) in cases.iter().enumerate() {
             let started = Instant::now();
-            let predictions = predict(&args, epoch, case, limit)?;
+            let sourced = predict(&args, epoch, case, limit)?;
             let micros = started.elapsed().as_micros() as u64;
+            let predictions: Vec<String> = sourced.iter().map(|(_, text)| text.clone()).collect();
+            let sources: Vec<&str> = sourced.iter().map(|(source, _)| source.as_str()).collect();
             // 同一前文必须稳定；准入重查依赖这一点。
-            if index < DETERMINISM_SAMPLE && predict(&args, epoch, case, limit)? != predictions {
+            if index < DETERMINISM_SAMPLE && predict(&args, epoch, case, limit)? != sourced {
                 mismatches += 1;
             }
             tallies.entry(case.set.clone()).or_default().record(
@@ -229,7 +246,7 @@ fn main() -> Result<(), String> {
                 writeln!(
                     out,
                     "{}",
-                    json!({"limit":limit,"set":case.set,"item":case.item,"context":case.context,"remaining":case.remaining,"predictions":predictions})
+                    json!({"limit":limit,"set":case.set,"item":case.item,"context":case.context,"remaining":case.remaining,"predictions":predictions,"sources":sources})
                 )
                 .map_err(|e| e.to_string())?;
             }

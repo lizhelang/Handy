@@ -248,7 +248,7 @@ fn db(root: &Path) -> Result<Connection> {
             .map_err(err)?;
         }
     }
-    db.execute_batch("CREATE INDEX IF NOT EXISTS evidence_schema_code ON evidence(schema_id,code,created DESC); CREATE TABLE IF NOT EXISTS evidence_anchors(event_id TEXT NOT NULL,anchor TEXT NOT NULL,PRIMARY KEY(event_id,anchor)); CREATE INDEX IF NOT EXISTS evidence_anchor_lookup ON evidence_anchors(anchor,event_id); CREATE INDEX IF NOT EXISTS evidence_active_recency ON evidence((origin='') DESC,created DESC) WHERE undone=0; CREATE TABLE IF NOT EXISTS prediction_meta(id INTEGER PRIMARY KEY,path TEXT NOT NULL,sha256 TEXT NOT NULL);").map_err(err)?;
+    db.execute_batch("CREATE INDEX IF NOT EXISTS evidence_schema_code ON evidence(schema_id,code,created DESC); CREATE TABLE IF NOT EXISTS evidence_anchors(event_id TEXT NOT NULL,anchor TEXT NOT NULL,PRIMARY KEY(event_id,anchor)); CREATE INDEX IF NOT EXISTS evidence_anchor_lookup ON evidence_anchors(anchor,event_id); CREATE INDEX IF NOT EXISTS evidence_active_recency ON evidence((origin='') DESC,created DESC) WHERE undone=0; CREATE TABLE IF NOT EXISTS prediction_meta(id INTEGER PRIMARY KEY,path TEXT NOT NULL,sha256 TEXT NOT NULL); CREATE INDEX IF NOT EXISTS evidence_previous_last ON evidence(substr(previous,-1));").map_err(err)?;
     Ok(db)
 }
 fn state(db: &Connection) -> Result<LearningPolicy> {
@@ -882,7 +882,8 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
     let completion_prefix = engine
         .as_ref()
         .and_then(|engine| completion_prefix(&norm(&q.context), &engine.tail));
-    let mut personal = PersonalContinuations::default();
+    let mut personal =
+        PersonalContinuations::for_context(norm(&q.context), completion_prefix.clone());
     if enabled {
         let context = norm(&q.context);
         let code = q.input_code.clone();
@@ -944,6 +945,11 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
             predicates.push("(normalized>? AND normalized<?)".into());
             args.push(prefix.clone().into());
             args.push(format!("{prefix}\u{10ffff}").into());
+            // 前文以同一个词结尾的证据：按末字走表达式索引，再在内存中核对整词。
+            if let Some(last) = prefix.chars().last() {
+                predicates.push("substr(previous,-1)=?".into());
+                args.push(last.to_string().into());
+            }
         }
         if predicates.is_empty() {
             predicates.push("0".into());
@@ -1063,14 +1069,7 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
                 cached_context_affinity(&context, &previous, &current_anchors, &mut affinities);
             stat.context += contribution * affinity;
             if let Some(key) = personal_key {
-                personal.observe(
-                    &key,
-                    &stat.text,
-                    &context,
-                    completion_prefix.as_deref(),
-                    contribution,
-                    affinity,
-                );
+                personal.observe(&key, &stat.text, &previous, contribution, affinity);
             }
         }
         skipped_origins = skipped.len();
@@ -1701,10 +1700,21 @@ fn completion_prefix(context: &str, tail: &crate::prediction::Tail) -> Option<St
 /// 个人证据对每个续写的贡献；总量决定个人层在合并中的权重。
 #[derive(Default)]
 struct PersonalContinuations {
+    /// 规范化后的当前前文，以及其最后一个词（汉语词或完整英文词）。
+    context: String,
+    prefix: Option<String>,
     total: f64,
     texts: HashMap<String, (String, f64)>,
 }
 impl PersonalContinuations {
+    fn for_context(context: String, prefix: Option<String>) -> Self {
+        Self {
+            context,
+            prefix,
+            ..Self::default()
+        }
+    }
+
     fn add(&mut self, key: String, text: &str, amount: f64) {
         if amount <= 0.0 || key.is_empty() {
             return;
@@ -1716,28 +1726,31 @@ impl PersonalContinuations {
             .1 += amount;
     }
 
-    /// 完整前文相同的证据按原权重计入，只有片段重合的弱证据打折；
-    /// 以前文最后一个词开头的已学短语按一半权重作为补全。
-    fn observe(
-        &mut self,
-        key: &str,
-        text: &str,
-        context: &str,
-        prefix: Option<&str>,
-        contribution: f64,
-        affinity: f64,
-    ) {
-        let strength = if affinity >= 1.0 {
+    /// 下一个词只认两种证据：完整前文相同（原权重）与上一个词相同（打折）。
+    /// 只有片段重合不说明接下来写什么，不计入；"前文 + 该词"正好是当前前文结尾的，
+    /// 就是刚上屏的这一步，再推会重复刚打的字。以前文最后一个词开头的已学短语按一半权重作为补全。
+    fn observe(&mut self, key: &str, text: &str, previous: &str, contribution: f64, affinity: f64) {
+        let tuning = crate::prediction::tuning();
+        let context = self.context.as_str();
+        let echo = context.ends_with(&format!("{previous}{key}"));
+        let strength = if suffix_context(context, previous) {
             1.0
+        } else if self
+            .prefix
+            .as_deref()
+            .is_some_and(|word| ends_with_word(previous, word))
+        {
+            tuning.last_word
         } else {
-            affinity * crate::prediction::tuning().weak
+            affinity * tuning.anchor
         };
-        if key != context {
+        if key != context && !echo {
             self.add(key.to_owned(), text, contribution * strength);
         }
-        let Some(prefix) = prefix else {
+        let Some(prefix) = self.prefix.clone() else {
             return;
         };
+        let prefix = prefix.as_str();
         let Some(rest) = key.strip_prefix(prefix).filter(|rest| !rest.is_empty()) else {
             return;
         };
@@ -1757,6 +1770,22 @@ impl PersonalContinuations {
             }
         }
     }
+}
+
+/// 前文以该词结尾；英文词前面必须是词边界，避免 "shello" 当作以 "hello" 结尾。
+fn ends_with_word(previous: &str, word: &str) -> bool {
+    let Some(head) = previous.strip_suffix(word) else {
+        return false;
+    };
+    let splits_ascii_word = word
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+        && head
+            .chars()
+            .last()
+            .is_some_and(|c| c.is_ascii_alphanumeric());
+    !word.is_empty() && !splits_ascii_word
 }
 
 fn forgotten_term(db: &Connection, text: &str) -> Result<bool> {
@@ -1782,8 +1811,15 @@ fn blended_predictions(
         table.continuations(&engine.tail, tuning)
     })?
     .unwrap_or_default();
-    let lambda = if personal.total > 0.0 {
-        personal.total / (personal.total + tuning.kappa)
+    // 证据不足的个人续写既不展示，也不抬高个人层权重。
+    let retained: Vec<_> = personal
+        .texts
+        .iter()
+        .filter(|(_, (_, amount))| *amount >= tuning.min_personal)
+        .collect();
+    let total: f64 = retained.iter().map(|(_, (_, amount))| amount).sum();
+    let lambda = if total > 0.0 {
+        total / (total + tuning.kappa)
     } else {
         0.0
     };
@@ -1794,11 +1830,11 @@ fn blended_predictions(
             .or_insert_with(|| (text.clone(), 0.0, 0.0))
             .1 += probability;
     }
-    for (key, (text, amount)) in &personal.texts {
+    for (key, (text, amount)) in retained {
         merged
             .entry(key.clone())
             .or_insert_with(|| (text.clone(), 0.0, 0.0))
-            .2 += amount / personal.total;
+            .2 += amount / total;
     }
     let word = engine.tail.last_word().unwrap_or("");
     let mut ranked = Vec::new();
