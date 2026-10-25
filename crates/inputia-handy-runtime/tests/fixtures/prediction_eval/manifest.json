@@ -748,5 +748,73 @@
         "private_dirs": "deleted after evaluation; only aggregates kept"
       }
     }
+  },
+  "latency_real_learning_copy": {
+    "frozen": "2026-10-26",
+    "engine_commit": "e1b5344a",
+    "snapshot": "online read-only backup of the installed profile's databases (personalization with 2948 imports, 71991 history word pairs, 3862 evidence rows; history, integration, clipboard, typed, index, history-access) into a private 0700 directory; fresh copy per run; new random privacy key; prediction table registered by the tool; deleted after the work",
+    "cases": "t1_cases.jsonl + t1_ends.jsonl (4231 contexts), limits 3 and 9, default app",
+    "baseline_1_1_34": {
+      "p95_micros_per_run": {
+        "t1-dev": {
+          "limit_3": [5525, 5605, 5791],
+          "limit_9": [8773, 8811, 8983]
+        },
+        "t1-test": {
+          "limit_3": [5563, 5832, 5900],
+          "limit_9": [8718, 8981, 8834]
+        },
+        "t1-dev:end": {
+          "limit_3": [5497, 5800, 5849],
+          "limit_9": [8516, 8799, 8961]
+        },
+        "t1-test:end": {
+          "limit_3": [5492, 5871, 5723],
+          "limit_9": [8561, 8831, 8960]
+        }
+      },
+      "p50_micros_limit_3": "about 4.6 ms",
+      "predictions_sha256": "3cb7d6b8b06b25255a2003530abc4c85961f0dc31c9f60d1a2fb65d27c8e02f0"
+    },
+    "gates": {
+      "p95_limit_3": "<= 5000 us on every set in each of 3 runs",
+      "p95_limit_9": "not above the 1.1.34 baseline",
+      "predictions": "predictions_sha256 identical to the 1.1.34 baseline (same sources and texts for every case and limit)",
+      "public_sets": "t1/t2/t5/emoji gate metrics identical to 1.1.34",
+      "tests": "inputia-handy-runtime tests and clippy pass"
+    },
+    "result": {
+      "p95_micros_per_run": {
+        "t1-dev": {
+          "limit_3": [1171, 1160, 1121],
+          "limit_9": [1621, 1661, 1651]
+        },
+        "t1-test": {
+          "limit_3": [1165, 1225, 1164],
+          "limit_9": [1638, 1630, 1636]
+        },
+        "t1-dev:end": {
+          "limit_3": [1106, 1097, 1115],
+          "limit_9": [1734, 1773, 1753]
+        },
+        "t1-test:end": {
+          "limit_3": [1135, 1151, 1153],
+          "limit_9": [1694, 1688, 1738]
+        }
+      },
+      "p50_micros_limit_3_t1_dev": [761, 769, 769],
+      "predictions_sha256": "3cb7d6b8b06b25255a2003530abc4c85961f0dc31c9f60d1a2fb65d27c8e02f0",
+      "predictions_identical": true,
+      "public_sets_identical": true,
+      "tests": "377 passed, clippy clean",
+      "all_gates": "pass",
+      "changes": [
+        "contextual rejection lookup uses the (origin, normalized) index instead of scanning all empty-schema evidence through (schema_id, code, created)",
+        "forgotten-term digest predicate evaluated after the context predicates in the evidence query, so the HMAC runs only on matching rows",
+        "privacy-pending check reuses a read-only integration.db connection keyed by file identity instead of opening it twice per query",
+        "source revision join locates rows by primary key (s.id=v.record_id) before the exact text check, instead of a full scan per record",
+        "per-query statements in source checks and forgotten lookups are cached"
+      ]
+    }
   }
 }

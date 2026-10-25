@@ -6,10 +6,14 @@
 //!
 //! 句末用例另带 `mark`（该处原文的标点）与可选 `group`（问句类型），统计问号、感叹号
 //! 是否出现；表情用例带 `accept`（正例的可接受表情，反例为空）。其余用例统计句中误出标点与表情。
+//!
+//! 输出的 `predictions_sha256` 是全部用例联想结果（来源与文字）的摘要，用于在个人学习库副本上
+//! 核对优化前后结果完全相同，而不输出任何联想文字。
 use inputia_handy_runtime::personalization::{self, Query};
 use inputia_handy_runtime::prediction;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -439,6 +443,7 @@ fn main() -> Result<(), String> {
     };
     let mut report = BTreeMap::new();
     let mut mismatches = 0u64;
+    let mut fingerprint = Sha256::new();
     for &limit in &args.limits {
         let mut tallies: BTreeMap<String, Tally> = BTreeMap::new();
         for (index, case) in cases.iter().enumerate() {
@@ -447,6 +452,11 @@ fn main() -> Result<(), String> {
             let micros = started.elapsed().as_micros() as u64;
             let predictions: Vec<String> = sourced.iter().map(|(_, text)| text.clone()).collect();
             let sources: Vec<&str> = sourced.iter().map(|(source, _)| source.as_str()).collect();
+            fingerprint.update(
+                json!([limit, index, sources, predictions])
+                    .to_string()
+                    .as_bytes(),
+            );
             // 同一前文必须稳定；准入重查依赖这一点。
             if index < DETERMINISM_SAMPLE && predict(&args, epoch, case, limit)? != sourced {
                 mismatches += 1;
@@ -476,6 +486,7 @@ fn main() -> Result<(), String> {
         serde_json::to_string_pretty(&json!({
             "cases": cases.len(),
             "determinism_mismatches": mismatches,
+            "predictions_sha256": format!("{:x}", fingerprint.finalize()),
             "sets": report,
         }))
         .map_err(|e| e.to_string())?

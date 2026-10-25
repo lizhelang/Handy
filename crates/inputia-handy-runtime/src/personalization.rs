@@ -499,7 +499,9 @@ fn bounded_anchor_events(db: &Connection, anchors: &[String]) -> Result<Vec<Stri
 }
 
 fn scoped_rejected(db: &Connection, q: &Query, key: &str) -> Result<bool> {
-    let mut stmt = db.prepare("SELECT previous,weight FROM evidence WHERE normalized=?1 AND schema_id=?2 AND code=?3 AND (source_app=?4 OR source_app='') AND origin='' AND undone=0 AND created>?5 ORDER BY created DESC LIMIT 100").map_err(err)?;
+    // 方案与码形加一元加号，不让查询按 (schema_id,code,created) 索引扫描全部空方案证据；
+    // 按 (origin,normalized) 索引只取该词的证据，结果相同。
+    let mut stmt = db.prepare_cached("SELECT previous,weight FROM evidence WHERE normalized=?1 AND +schema_id=?2 AND +code=?3 AND (source_app=?4 OR source_app='') AND origin='' AND undone=0 AND created>?5 ORDER BY created DESC LIMIT 100").map_err(err)?;
     let rows = stmt
         .query_map(
             params![
@@ -1020,7 +1022,8 @@ pub fn query(root: &Path, q: Query) -> Result<Value> {
         } else {
             ""
         };
-        let sql = format!("SELECT text,normalized,previous,code,weight,created,origin,origin_revision,source_app,schema_id FROM evidence {index_hint} WHERE undone=0 {origin_filter} AND privacy_term_digest(normalized) NOT IN(SELECT text FROM forgotten) AND ({}) ORDER BY (origin='') DESC,created DESC LIMIT {EVIDENCE_QUERY_LIMIT}", predicates.join(" OR "));
+        // 遗忘检查放在最后，隐私摘要只对命中前文条件的行计算，不必为每条证据算一次。
+        let sql = format!("SELECT text,normalized,previous,code,weight,created,origin,origin_revision,source_app,schema_id FROM evidence {index_hint} WHERE undone=0 {origin_filter} AND ({}) AND privacy_term_digest(normalized) NOT IN(SELECT text FROM forgotten) ORDER BY (origin='') DESC,created DESC LIMIT {EVIDENCE_QUERY_LIMIT}", predicates.join(" OR "));
         let rows = {
             let mut stmt = db.prepare(&sql).map_err(err)?;
             let rows = stmt
@@ -1788,11 +1791,11 @@ fn history_continuations(db: &Connection, word: &str) -> Result<Vec<(String, f64
     rows.collect::<std::result::Result<_, _>>().map_err(err)
 }
 
-type SharedSource = std::sync::Arc<std::sync::Mutex<Connection>>;
+pub(crate) type SharedSource = std::sync::Arc<std::sync::Mutex<Connection>>;
 
 /// 来源库只读连接按路径与文件身份复用：只读连接每条语句读取最新已提交的数据；
 /// 文件被删除或整体替换（如从备份恢复）时丢弃旧连接重新打开。
-fn source_db(path: &Path) -> Result<Option<SharedSource>> {
+pub(crate) fn source_db(path: &Path) -> Result<Option<SharedSource>> {
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
     static SOURCES: Mutex<BTreeMap<std::path::PathBuf, (u64, SharedSource)>> =
@@ -1942,7 +1945,7 @@ fn current_history_sources(
         if let Some(shared) = source_db(&path)? {
             let source = shared.lock().map_err(err)?;
             let ids: Vec<&String> = typed.iter().map(|s| &s.2).collect();
-            let mut stmt = source.prepare(&format!("SELECT id,CAST(revision AS TEXT),source_app FROM typed_segments WHERE id IN ({})", vec!["?"; ids.len()].join(","))).map_err(err)?;
+            let mut stmt = source.prepare_cached(&format!("SELECT id,CAST(revision AS TEXT),source_app FROM typed_segments WHERE id IN ({})", vec!["?"; ids.len()].join(","))).map_err(err)?;
             let rows = stmt
                 .query_map(params_from_iter(ids), |r| {
                     Ok((
@@ -1977,7 +1980,7 @@ fn current_history_sources(
             .iter()
             .filter_map(|s| s.2.strip_prefix("history:"))
             .collect();
-        let mut stmt = index.prepare(&format!("SELECT item_id,CAST(revision AS TEXT),source_kind,COALESCE(json_extract(snapshot,'$.source_app'),''),store_id,record_id,revision FROM integration_items WHERE item_id IN ({})", vec!["?"; ids.len().max(1)].join(","))).map_err(err)?;
+        let mut stmt = index.prepare_cached(&format!("SELECT item_id,CAST(revision AS TEXT),source_kind,COALESCE(json_extract(snapshot,'$.source_app'),''),store_id,record_id,revision FROM integration_items WHERE item_id IN ({})", vec!["?"; ids.len().max(1)].join(","))).map_err(err)?;
         let rows = stmt
             .query_map(params_from_iter(ids), |r| {
                 Ok((
@@ -2046,8 +2049,10 @@ fn live_source_revisions(
     if records.is_empty() {
         return Ok(HashMap::new());
     }
+    // 先用 s.id=v.record_id 走主键定位（整数主键按数值比较），再核对文本形式完全相同；
+    // 只写 CAST(s.id AS TEXT) 会每条全表扫描。
     let mut stmt = source
-        .prepare(&format!("SELECT v.record_id,v.revision FROM unified_source_versions v JOIN {table} s ON CAST(s.id AS TEXT)=v.record_id WHERE v.record_id IN ({})", vec!["?"; records.len()].join(",")))
+        .prepare_cached(&format!("SELECT v.record_id,v.revision FROM unified_source_versions v JOIN {table} s ON s.id=v.record_id AND CAST(s.id AS TEXT)=v.record_id WHERE v.record_id IN ({})", vec!["?"; records.len()].join(",")))
         .map_err(err)?;
     let found = stmt
         .query_map(params_from_iter(records), |r| {
@@ -2200,12 +2205,9 @@ fn ends_with_word(previous: &str, word: &str) -> bool {
 }
 
 fn forgotten_term(db: &Connection, text: &str) -> Result<bool> {
-    db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM forgotten WHERE text=privacy_term_digest(?1))",
-        [text],
-        |r| r.get(0),
-    )
-    .map_err(err)
+    db.prepare_cached("SELECT EXISTS(SELECT 1 FROM forgotten WHERE text=privacy_term_digest(?1))")
+        .and_then(|mut stmt| stmt.query_row([text], |r| r.get(0)))
+        .map_err(err)
 }
 
 /// 合并概率 P = (1-λ)·P公共 + λ·P个人，λ = n/(n+κ)。两类候选同一标尺，

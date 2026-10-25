@@ -320,12 +320,12 @@ pub(crate) fn audit_gate(db: &Connection, pending: bool) -> Result<()> {
     Ok(())
 }
 pub fn ensure_readable(root: &std::path::Path) -> Result<()> {
-    let path = root.join("integration.db");
-    if !path.exists() {
+    // 只读连接按文件身份复用，每条语句读取最新已提交的状态；联想每次查询都要过这道检查，
+    // 不必每次重新打开并解析整个集成库。
+    let Some(shared) = crate::personalization::source_db(&root.join("integration.db"))? else {
         return Ok(());
-    }
-    let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(err)?;
+    };
+    let db = shared.lock().map_err(|e| e.to_string())?;
     let installed:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='privacy_operations' AND type='table')",[],|r|r.get(0)).map_err(err)?;
     if installed {
         let audit:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM integration_meta WHERE key='privacy_audit_pending' AND value='1')",[],|r|r.get(0)).map_err(err)?;

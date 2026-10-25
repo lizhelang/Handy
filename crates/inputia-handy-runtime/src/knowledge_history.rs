@@ -97,7 +97,7 @@ fn current(root: &Path, row: &Row) -> Result<bool> {
     if store != row.store {
         return Ok(false);
     }
-    let revision: Option<i64> = db.query_row(&format!("SELECT v.revision FROM unified_source_versions v JOIN {table} s ON CAST(s.id AS TEXT)=v.record_id WHERE v.record_id=?1"), [&row.record], |r| r.get(0)).optional().map_err(|_| "历史源库结构未知，已跳过相应引用".to_string())?;
+    let revision: Option<i64> = db.query_row(&format!("SELECT v.revision FROM unified_source_versions v JOIN {table} s ON s.id=v.record_id AND CAST(s.id AS TEXT)=v.record_id WHERE v.record_id=?1"), [&row.record], |r| r.get(0)).optional().map_err(|_| "历史源库结构未知，已跳过相应引用".to_string())?;
     Ok(revision == Some(row.revision))
 }
 fn item(row: &Row, offset: u64) -> Value {
