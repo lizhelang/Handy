@@ -3,6 +3,9 @@
 //! 用例为 JSONL：`{"set","item","context","remaining","app"?}`。命中定义为某个联想
 //! 恰好是 `remaining` 的开头，不依赖评测分词与引擎词表是否一致。`--dump` 仅用于
 //! 公开测试集，个人历史评测不得传入。
+//!
+//! 句末用例另带 `mark`（该处原文的标点）与可选 `group`（问句类型），统计问号、感叹号
+//! 是否出现；表情用例带 `accept`（正例的可接受表情，反例为空）。其余用例统计句中误出标点与表情。
 use inputia_handy_runtime::personalization::{self, Query};
 use inputia_handy_runtime::prediction;
 use serde::Deserialize;
@@ -23,6 +26,94 @@ struct Case {
     remaining: String,
     #[serde(default)]
     app: String,
+    #[serde(default)]
+    mark: String,
+    #[serde(default)]
+    group: String,
+    #[serde(default)]
+    accept: Option<Vec<String>>,
+}
+
+const PUNCTUATION: [&str; 6] = ["，", "。", "？", "！", "；", "："];
+
+/// 联想标点可能是半角（跟随前文），统计时统一成全角。
+fn full_width(text: &str) -> String {
+    match text.trim() {
+        "," => "，".into(),
+        "." => "。".into(),
+        "?" => "？".into(),
+        "!" => "！".into(),
+        ";" => "；".into(),
+        ":" => "：".into(),
+        other => other.into(),
+    }
+}
+
+fn is_punctuation(text: &str) -> bool {
+    PUNCTUATION.contains(&full_width(text).as_str())
+}
+
+/// 不含汉字、字母、数字且不是标点的联想视为表情。
+fn is_emoji(text: &str) -> bool {
+    let text = text.trim();
+    !text.is_empty()
+        && !is_punctuation(text)
+        && text.chars().all(|c| !c.is_alphanumeric())
+        && text.chars().any(|c| c as u32 >= 0x2000)
+}
+
+/// 比较表情时忽略变体选择符，数据源之间是否带 U+FE0F 不一致。
+fn bare(text: &str) -> String {
+    text.trim().chars().filter(|c| *c != '\u{fe0f}').collect()
+}
+
+/// 句末某一种标点处的统计。
+#[derive(Default)]
+struct Ends {
+    positions: u64,
+    exact_first: u64,
+    exact_shown: u64,
+    question_shown: u64,
+    exclaim_shown: u64,
+    other_punct_shown: u64,
+}
+
+impl Ends {
+    fn record(&mut self, predictions: &[String], mark: &str) {
+        self.positions += 1;
+        let predictions: Vec<String> = predictions.iter().map(|p| full_width(p)).collect();
+        let shown = |target: &str| predictions.iter().any(|p| p == target);
+        if predictions.first().is_some_and(|p| p == mark) {
+            self.exact_first += 1;
+        }
+        if shown(mark) {
+            self.exact_shown += 1;
+        }
+        if shown("？") {
+            self.question_shown += 1;
+        }
+        if shown("！") {
+            self.exclaim_shown += 1;
+        }
+        if predictions
+            .iter()
+            .any(|p| is_punctuation(p) && !matches!(p.as_str(), "？" | "！"))
+        {
+            self.other_punct_shown += 1;
+        }
+    }
+
+    fn summary(&self) -> Value {
+        let n = self.positions.max(1) as f64;
+        json!({
+            "positions": self.positions,
+            "exact_first": round(self.exact_first as f64 / n),
+            "exact_shown": round(self.exact_shown as f64 / n),
+            "question_shown": round(self.question_shown as f64 / n),
+            "exclaim_shown": round(self.exclaim_shown as f64 / n),
+            "other_punct_shown": round(self.other_punct_shown as f64 / n),
+        })
+    }
 }
 
 #[derive(Default)]
@@ -35,10 +126,56 @@ struct Tally {
     all_wrong: u64,
     shown: u64,
     micros: Vec<u64>,
+    ends: BTreeMap<String, Ends>,
+    ends_by_group: BTreeMap<String, Ends>,
+    middle: u64,
+    middle_punct_shown: u64,
+    middle_punct_first: u64,
+    middle_question_shown: u64,
+    emoji_shown: u64,
+    emoji_positive: u64,
+    emoji_hit: u64,
+    emoji_negative: u64,
+    emoji_false: u64,
 }
 
 impl Tally {
-    fn record(&mut self, predictions: &[String], remaining: &str, micros: u64) {
+    fn record(&mut self, case: &Case, predictions: &[String], micros: u64) {
+        if predictions.iter().any(|p| is_emoji(p)) {
+            self.emoji_shown += 1;
+        }
+        if let Some(accept) = &case.accept {
+            let accept: Vec<String> = accept.iter().map(|e| bare(e)).collect();
+            if accept.is_empty() {
+                self.emoji_negative += 1;
+                self.emoji_false += u64::from(predictions.iter().any(|p| is_emoji(p)));
+            } else {
+                self.emoji_positive += 1;
+                self.emoji_hit += u64::from(predictions.iter().any(|p| accept.contains(&bare(p))));
+            }
+        } else if !case.mark.is_empty() {
+            self.ends
+                .entry(case.mark.clone())
+                .or_default()
+                .record(predictions, &case.mark);
+            if !case.group.is_empty() {
+                self.ends_by_group
+                    .entry(format!("{}{}", case.group, case.mark))
+                    .or_default()
+                    .record(predictions, &case.mark);
+            }
+        } else {
+            self.middle += 1;
+            self.middle_punct_shown += u64::from(predictions.iter().any(|p| is_punctuation(p)));
+            self.middle_punct_first +=
+                u64::from(predictions.first().is_some_and(|p| is_punctuation(p)));
+            self.middle_question_shown +=
+                u64::from(predictions.iter().any(|p| full_width(p) == "？"));
+        }
+        self.record_words(predictions, &case.remaining, micros);
+    }
+
+    fn record_words(&mut self, predictions: &[String], remaining: &str, micros: u64) {
         self.positions += 1;
         self.micros.push(micros);
         if predictions.is_empty() {
@@ -79,7 +216,48 @@ impl Tally {
                 json!(round(self.hits[k - 1] as f64 / n)),
             );
         }
-        json!({
+        let rate = |count: u64, total: u64| round(count as f64 / total.max(1) as f64);
+        let mut extra = serde_json::Map::new();
+        if !self.ends.is_empty() {
+            extra.insert(
+                "ends".into(),
+                self.ends
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.summary()))
+                    .collect(),
+            );
+        }
+        if !self.ends_by_group.is_empty() {
+            extra.insert(
+                "ends_by_group".into(),
+                self.ends_by_group
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.summary()))
+                    .collect(),
+            );
+        }
+        if self.middle > 0 {
+            extra.insert(
+                "middle".into(),
+                json!({
+                    "positions": self.middle,
+                    "punct_shown": rate(self.middle_punct_shown, self.middle),
+                    "punct_first": rate(self.middle_punct_first, self.middle),
+                    "question_shown": rate(self.middle_question_shown, self.middle),
+                }),
+            );
+        }
+        extra.insert(
+            "emoji".into(),
+            json!({
+                "shown_rate": rate(self.emoji_shown, self.positions),
+                "positive": self.emoji_positive,
+                "hit_rate": rate(self.emoji_hit, self.emoji_positive),
+                "negative": self.emoji_negative,
+                "false": self.emoji_false,
+            }),
+        );
+        let mut summary = json!({
             "positions": self.positions,
             "hits": hits,
             "mrr": round(self.reciprocal_rank / n),
@@ -88,7 +266,11 @@ impl Tally {
             "all_wrong_rate": round(self.all_wrong as f64 / n),
             "shown_per_position": round(self.shown as f64 / n),
             "query_micros": {"p50": pick(0.5), "p95": pick(0.95), "max": pick(1.0)},
-        })
+        });
+        if let Some(object) = summary.as_object_mut() {
+            object.extend(extra);
+        }
+        summary
     }
 }
 
@@ -146,6 +328,13 @@ fn parse_args() -> Result<Args, String> {
                         "min_personal" => &mut tuning.min_personal,
                         "anchor" => &mut tuning.anchor,
                         "history" => &mut tuning.history,
+                        "question" => &mut tuning.question,
+                        "exclaim" => &mut tuning.exclaim,
+                        "punct_tau" => &mut tuning.punct_tau,
+                        "question_floor" => &mut tuning.question_floor,
+                        "question_reach" => &mut tuning.question_reach,
+                        "question_closing" => &mut tuning.question_closing,
+                        "emoji" => &mut tuning.emoji,
                         other => return Err(format!("未知调参项 {other}")),
                     };
                     *slot = number;
@@ -262,11 +451,10 @@ fn main() -> Result<(), String> {
             if index < DETERMINISM_SAMPLE && predict(&args, epoch, case, limit)? != sourced {
                 mismatches += 1;
             }
-            tallies.entry(case.set.clone()).or_default().record(
-                &predictions,
-                &case.remaining,
-                micros,
-            );
+            tallies
+                .entry(case.set.clone())
+                .or_default()
+                .record(case, &predictions, micros);
             if let Some(out) = dump.as_mut() {
                 writeln!(
                     out,

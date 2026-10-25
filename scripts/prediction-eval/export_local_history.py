@@ -80,7 +80,15 @@ def main():
         # 本机学习库可能已由安装版登记联想表；评测由命令行显式登记，旧引擎对照不能被它带走。
         if learned.execute("SELECT COUNT(*) FROM sqlite_master WHERE name='prediction_meta'").fetchone()[0]:
             learned.execute("DELETE FROM prediction_meta")
+        # 真实回填会把测试段正文也学进来；副本只保留切分前的手动证据，回填由评测按切分后的来源重做。
+        imported = 0
+        for table in ("history_bigrams", "history_bigram_totals", "imports"):
+            if learned.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()[0]:
+                imported += learned.execute(f"DELETE FROM {table}").rowcount
+        learned.execute("DELETE FROM evidence WHERE origin<>''")
+        learned.execute("DELETE FROM evidence_anchors WHERE event_id NOT IN (SELECT event_id FROM evidence)")
     learned.close()
+    print(f"learned_copy_backfill_rows_removed={imported}")
     key = knowledge / "personalization-privacy.key"
     descriptor = os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.write(descriptor, os.urandom(32))

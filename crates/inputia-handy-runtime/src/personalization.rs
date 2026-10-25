@@ -2210,6 +2210,8 @@ fn forgotten_term(db: &Connection, text: &str) -> Result<bool> {
 
 /// 合并概率 P = (1-λ)·P公共 + λ·P个人，λ = n/(n+κ)。两类候选同一标尺，
 /// 个人证据少时不能整页占位；低于阈值的不展示，宁可空框也不给明显错误的续写。
+/// 公共表的"？""！"与词同一标尺参与排序（不随个人证据折减），展示中最多一个标点；匹配到的表情固定放在第二位，
+/// 不论展示几项前几位都相同，准入重查因此仍能找到已展示的项。
 fn blended_predictions(
     db: &Connection,
     q: &Query,
@@ -2218,10 +2220,27 @@ fn blended_predictions(
     suppressed: &HashSet<String>,
 ) -> Result<Vec<Value>> {
     let tuning = crate::prediction::tuning();
-    let public = crate::prediction::with_table(&engine.path, &engine.sha256, |table| {
-        table.continuations(&engine.tail, tuning)
-    })?
-    .unwrap_or_default();
+    let (mut public, marks, emoji) =
+        crate::prediction::with_table(&engine.path, &engine.sha256, |table| {
+            let emoji = if tuning.emoji > 0.0 {
+                table.emoji(&personal.context)?
+            } else {
+                Vec::new()
+            };
+            Ok((
+                table.continuations(&engine.tail, tuning)?,
+                table.punctuation(&engine.tail, &personal.context, tuning)?,
+                emoji,
+            ))
+        })?
+        .unwrap_or_default();
+    // 只有语气词结尾的问号可以排第一，其余标点最多排在第一个词之后。
+    let trailing: HashSet<String> = marks
+        .iter()
+        .filter(|(_, _, lead)| !lead)
+        .map(|(mark, _, _)| norm(mark))
+        .collect();
+    public.extend(marks.into_iter().map(|(mark, p, _)| (mark, p)));
     // 证据不足的个人续写既不展示，也不抬高个人层权重。
     let retained: Vec<_> = personal
         .texts
@@ -2251,7 +2270,14 @@ fn blended_predictions(
     let mut ranked: Vec<_> = merged
         .into_iter()
         .map(|(key, (text, public, own))| {
-            ((1.0 - lambda) * public + lambda * own, key, text, own > 0.0)
+            // 个人层（含历史词对）在标点处断开，对标点没有反面证据；标点不随个人证据总量折减，
+            // 用户自己选过的标点再按个人比例加分。
+            let score = if crate::prediction::is_punctuation(&key) {
+                public + lambda * own
+            } else {
+                (1.0 - lambda) * public + lambda * own
+            };
+            (score, key, text, own > 0.0)
         })
         .filter(|(score, key, _, _)| *score >= tuning.tau && !suppressed.contains(key))
         .collect();
@@ -2259,18 +2285,48 @@ fn blended_predictions(
     // 按分数从高到低逐项核对拒绝与遗忘，凑满展示数即停，不为排不上的候选查库。
     let limit = q.limit.clamp(1, 10);
     let mut shown = Vec::with_capacity(limit);
+    let mut punctuation_shown = false;
+    let mut held = None;
     for (_, key, text, own) in ranked {
         if shown.len() == limit {
             break;
         }
-        if scoped_rejected(db, q, &key)?
+        let punctuation = crate::prediction::is_punctuation(&key);
+        if (punctuation && punctuation_shown)
+            || scoped_rejected(db, q, &key)?
             || forgotten_term(db, &key)?
             || (!word.is_empty() && forgotten_term(db, &format!("{word}{key}"))?)
         {
             continue;
         }
+        punctuation_shown |= punctuation;
         let source = if own { "learned" } else { "base" };
-        shown.push(json!({"id":format!("{source}:{}",digest(&text)),"text":text}));
+        let item = json!({"id":format!("{source}:{}",digest(&text)),"text":text});
+        if shown.is_empty() && trailing.contains(&key) && !own {
+            held = Some(item);
+            continue;
+        }
+        shown.push(item);
+        if let Some(item) = held.take() {
+            shown.push(item);
+        }
+    }
+    shown.extend(held);
+    shown.truncate(limit);
+    for text in emoji {
+        let key = norm(&text);
+        if shown.iter().any(|item| item["text"] == text.as_str()) {
+            break;
+        }
+        if suppressed.contains(&key) || scoped_rejected(db, q, &key)? || forgotten_term(db, &key)? {
+            continue;
+        }
+        shown.insert(
+            shown.len().min(1),
+            json!({"id":format!("base:{}",digest(&text)),"text":text}),
+        );
+        shown.truncate(limit);
+        break;
     }
     Ok(shown)
 }

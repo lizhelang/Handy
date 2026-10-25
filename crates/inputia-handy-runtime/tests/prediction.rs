@@ -109,6 +109,63 @@ fn punctuation_english_and_excluded_apps_get_no_public_continuation() {
 }
 
 #[test]
+fn question_mark_and_emoji_follow_cues_and_keep_the_admission_prefix() {
+    let tmp = registered();
+    let root = tmp.path();
+    let punctuation = |text: &String| "？！。，；：?!.,;:".contains(text.as_str());
+    // 语气词结尾的问句：问号排第一；疑问词问句：问号出现但不挡住第一个续写。
+    // 标点默认半角（输入法默认中文下用英文标点），这段文字已用全角时跟随全角。
+    assert_eq!(texts(root, "你认识我吗")[0], "?");
+    assert_eq!(texts(root, "好的，你认识我吗")[0], "？");
+    let shown = texts(root, "你叫什么名字");
+    assert!(
+        shown.contains(&"?".to_string()) && shown[0] != "?",
+        "{shown:?}"
+    );
+    // 陈述、建议的"吧"、转述与任指不给问号；公共表从不给句号、逗号。
+    for context in [
+        "我们明天开会",
+        "我们走吧",
+        "他问我去不去",
+        "你想吃什么就点什么",
+        "什么都行",
+    ] {
+        let shown = texts(root, context);
+        assert!(!shown.iter().any(punctuation), "{context}: {shown:?}");
+    }
+    assert!(texts(root, "太好了").contains(&"!".to_string()));
+    // 表情固定在第二位；三项与准入重查的九项前缀一致，最多一个标点。
+    for context in ["哈哈哈", "好冷", "你认识我吗", "你叫什么名字", "太好了"] {
+        let three = predictions(root, ask(root, context, 3));
+        let nine = predictions(root, ask(root, context, 9));
+        assert_eq!(&nine[..three.len()], &three[..], "{context}");
+        assert!(nine.iter().filter(|(_, t)| punctuation(t)).count() <= 1);
+        assert!(nine.iter().all(|(id, _)| id.starts_with("base:")));
+    }
+    assert_eq!(texts(root, "哈哈哈")[1], "🤣");
+    assert!(!texts(root, "我不开心")
+        .iter()
+        .any(|t| t == "😄" || t == "😊"));
+    // 遗忘某个表情后改给下一个，不再出现被遗忘的。
+    privacy::forget(root, Some("🤣"));
+    let shown = texts(root, "哈哈哈");
+    assert!(!shown.contains(&"🤣".to_string()) && shown.contains(&"😂".to_string()));
+    // 敏感应用不给问号与表情。
+    let mut excluded = ask(root, "你认识我吗", 5);
+    excluded.source_app = "com.1password.1password".into();
+    assert_eq!(query(root, excluded).unwrap()["predictions"], json!([]));
+    // 用户选过问号后，同一前文的问号来自个人证据。
+    feedback(
+        root,
+        feedback_for(root, "mark", "?", "你认识我吗", "accept"),
+    )
+    .unwrap();
+    let shown = predictions(root, ask(root, "你认识我吗", 5));
+    assert_eq!(shown[0].1, "?");
+    assert!(shown[0].0.starts_with("learned:"));
+}
+
+#[test]
 fn personal_evidence_is_blended_instead_of_taking_every_slot() {
     let tmp = registered();
     let root = tmp.path();

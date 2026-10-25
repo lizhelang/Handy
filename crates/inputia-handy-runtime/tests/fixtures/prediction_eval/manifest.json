@@ -411,5 +411,342 @@
       "post_hoc": true,
       "rule": "hit_at_5 >= baseline + 0.04, hit_at_1 not below baseline, all_wrong_rate not above baseline; set after phase 1 results and kept as the regression floor for later changes"
     }
+  },
+  "punctuation_emoji": {
+    "frozen": "2026-10-26",
+    "engine_commit": "070cb4ba",
+    "note": "Phase 1 of question mark and emoji predictions (target 1.1.34). Gates fixed before any tuning; tuning uses *-dev sets only, *-test once.",
+    "sets": {
+      "t4": {
+        "file": "t4_punctuation.jsonl",
+        "sha256": "a6033e4cd8ba991411351f94b6a8edc02b776e2f07b8be9fd646aae18bb437d3",
+        "items": 240,
+        "author": "independent agent without repository or network access",
+        "forms": {
+          "question": {
+            "particle": 30,
+            "wh": 40,
+            "a_not_a": 25,
+            "alternative": 10,
+            "intonation": 15
+          },
+          "other": {
+            "hard_negative": 40,
+            "exclamation": 25,
+            "statement": 55
+          }
+        },
+        "split": "stratified by form, fixed hash, 60 dev items",
+        "cases_sha256": "b7d9d786492556d8b140cda36eb9c14588f35936df426144df27b90effa24d29",
+        "ends_sha256": "73d4b8e552c7db9079622120fa2ba7d42b21375b58d9aed3302580d31cd128fe",
+        "end_positions": {
+          "t4-dev:end": {
+            "？": 30,
+            "。": 24,
+            "！": 6,
+            "，": 11
+          },
+          "t4-test:end": {
+            "？": 90,
+            "。": 71,
+            "！": 19,
+            "，": 33
+          }
+        }
+      },
+      "emoji": {
+        "file": "emoji_cases.json",
+        "sha256": "1d32109c9025469f93750808b744e8d67287e765452534e52bc9635ee17be187",
+        "positive": 60,
+        "negative": 60,
+        "author": "independent agent without repository or network access",
+        "split": "stratified by polarity, fixed hash, 15+15 dev",
+        "context": "the word itself",
+        "hit": "an emoji in the accept set (ignoring U+FE0F) among the 3 shown predictions",
+        "cases_sha256": "fb990f9c125be55833aa9710511c29c654c36848e72d06e1efe05a6886fa5243"
+      },
+      "t1_ends": {
+        "rule": "position before a punctuation mark that follows a CJK character; answer is that mark (full width)",
+        "ends_sha256": "323d9d08ae7d1eb2dda981af3b014ea9791081fc9bcc6567cab4e7da073082c2",
+        "question_positions": {
+          "t1-dev:end": 19,
+          "t1-test:end": 60
+        }
+      },
+      "t2_ends": {
+        "ends_sha256": "54528876b329966c9f380b0c7267bcceff76321a5fb38983b7f8d93c11c5066e"
+      },
+      "t3": {
+        "rule": "same export as before plus clause ends (--ends-out); voice keeps ASR punctuation, typed keeps what the user typed; measure 1.1.33 and new engine on the same snapshot"
+      },
+      "t5": {
+        "file": "t5_punctuation.jsonl",
+        "sha256": "7fe4066efe463926952fdb6e289d6852e3b39d6a35e32cc7555776547c4b597a",
+        "items": 240,
+        "author": "independent agent without repository or network access, neutral brief written after the first test run",
+        "forms": {
+          "question": {
+            "particle": 30,
+            "wh": 40,
+            "a_not_a": 25,
+            "alternative": 10,
+            "intonation": 15
+          },
+          "other": {
+            "hard_negative": 40,
+            "exclamation": 25,
+            "statement": 55
+          }
+        },
+        "split": "all test",
+        "cases_sha256": "0fd53231189700ff9e6ae8f006f3a9c03de753ad7c929455c8d08b16fe023a67",
+        "ends_sha256": "2b65945565998123bbf187f517345a1eb34a5edb774cd8af507ce2669cb66333",
+        "end_positions": {
+          "？": 120,
+          "。": 82,
+          "！": 29,
+          "，": 36
+        }
+      }
+    },
+    "baseline_1_1_33": {
+      "table_sha256": "10bfa08830819671359f6c3e538a1047b2a0c00035718f1529858c74781c2d8b",
+      "limit": 3,
+      "words": {
+        "t1-dev": {
+          "positions": 841,
+          "hit_at_1": 0.0809,
+          "hit_at_3": 0.1308,
+          "mrr": 0.1021,
+          "query_micros_p95": 305
+        },
+        "t1-test": {
+          "positions": 2580,
+          "hit_at_1": 0.0655,
+          "hit_at_3": 0.1349,
+          "mrr": 0.0945,
+          "query_micros_p95": 310
+        },
+        "t2-dev": {
+          "positions": 5936,
+          "hit_at_1": 0.0644,
+          "hit_at_3": 0.1213,
+          "mrr": 0.0887,
+          "query_micros_p95": 338
+        },
+        "t2-test": {
+          "positions": 23450,
+          "hit_at_1": 0.069,
+          "hit_at_3": 0.122,
+          "mrr": 0.0923,
+          "query_micros_p95": 397
+        }
+      },
+      "t4_words": {
+        "t4-dev": {
+          "positions": 311,
+          "hit_at_1": 0.0579,
+          "hit_at_3": 0.1254,
+          "mrr": 0.0863,
+          "query_micros_p95": 299
+        },
+        "t4-test": {
+          "positions": 954,
+          "hit_at_1": 0.0577,
+          "hit_at_3": 0.1226,
+          "mrr": 0.0849,
+          "query_micros_p95": 294
+        }
+      },
+      "punctuation_and_emoji": "never shown (0 on every end, middle and emoji set)"
+    },
+    "gates": {
+      "question_recall": {
+        "rule": "share of question ends ('？') with '？' among the 3 shown",
+        "t4-test": 0.7,
+        "t1-test": 0.7,
+        "t3-voice": 0.5
+      },
+      "question_first_after_particle": {
+        "rule": "t4-test particle questions: '？' is the first prediction",
+        "min": 0.8
+      },
+      "question_false_at_other_ends": {
+        "rule": "ends whose mark is not '？' showing '？'",
+        "t4-test": 0.1,
+        "t1-test": 0.1,
+        "t2-test": 0.1
+      },
+      "question_false_middle": {
+        "rule": "word-boundary positions showing '？'",
+        "t1-test": 0.03,
+        "t2-test": 0.03,
+        "t4-test": 0.15
+      },
+      "punct_first_middle": {
+        "rule": "word-boundary positions whose first prediction is punctuation",
+        "t1-test": 0.01,
+        "t2-test": 0.01
+      },
+      "exclaim_false": {
+        "rule": "'！' shown at ends whose mark is not '！' and at word-boundary positions",
+        "t4-test": 0.05,
+        "t1-test": 0.05,
+        "t2-test": 0.05
+      },
+      "public_full_stop_and_comma": "never shown without personal evidence: other_punct_shown = 0 on public-only runs",
+      "emoji_positive_hit": {
+        "emoji-pos-test": 0.7
+      },
+      "emoji_negative_false": {
+        "emoji-neg-test_max_count": 2
+      },
+      "emoji_shown_middle": {
+        "rule": "word-boundary positions showing an emoji",
+        "t1-test": 0.1,
+        "t2-test": 0.1
+      },
+      "words": {
+        "rule": "hit_at_1 and hit_at_3 (limit 3) not below 1.1.33 minus 0.005",
+        "t1-test": {
+          "hit_at_1_min": 0.0605,
+          "hit_at_3_min": 0.1299
+        },
+        "t2-test": {
+          "hit_at_1_min": 0.064,
+          "hit_at_3_min": 0.117
+        },
+        "t3": "typed and voice test hit_at_1 and hit_at_3 not below 1.1.33 minus 0.005 on the same snapshot with backfill"
+      },
+      "determinism_mismatches": 0,
+      "query_micros_p95_max": 5000,
+      "prefix_stability": "first 3 predictions identical for limit 3 and limit 9 (admission re-query)",
+      "device_acceptance": "required after offline gates pass",
+      "final_question_gates_on_t5": {
+        "question_recall": 0.7,
+        "question_first_after_particle": 0.8,
+        "question_false_at_other_ends": 0.1,
+        "question_false_middle": 0.15,
+        "exclaim_false": 0.05,
+        "note": "t5 has no dev split; measured once after the rules are frozen"
+      }
+    },
+    "first_test_run_2026-10-26": {
+      "result": "23 of 24 gates passed; question_false_at_other_ends on t4-test was 0.1138 (14 of 123) against max 0.10",
+      "passed_values": {
+        "question_recall": {
+          "t4-test": 0.7667,
+          "t1-test": 0.8333
+        },
+        "question_first_after_particle": 0.9091,
+        "question_false_middle": {
+          "t1-test": 0.0194,
+          "t2-test": 0.002,
+          "t4-test": 0.0901
+        },
+        "emoji_positive_hit": 0.8222,
+        "emoji_negative_false": 1,
+        "words": {
+          "t1-test": [0.0655, 0.1329],
+          "t2-test": [0.069, 0.1217]
+        },
+        "query_micros_p95_max": 543
+      },
+      "decision": "gates unchanged. t4-test is consumed and becomes a second development set for the question-mark rules; a new set t5 written afterwards by another independent agent (neutral brief, no examples from the failures) is the final check for every question-mark and exclamation gate below, with the same thresholds; t1/t2 test sets are re-run once as a regression check for words, middle positions and emoji."
+    },
+    "final_results_2026-10-26": {
+      "engine": "rules frozen after t4-test was used as a second development set; defaults question=2.0, question_floor=0, question_closing=0.1, question_reach=8, exclaim=1.0, punct_tau=0.05",
+      "all_public_gates": "pass",
+      "question_recall": {
+        "t5-test": 0.775,
+        "t1-test": 0.8667
+      },
+      "question_first_after_particle": {
+        "t5-test": 0.9
+      },
+      "question_false_at_other_ends": {
+        "t5-test": 0.0748,
+        "t1-test": 0.0219,
+        "t2-test": 0.0035
+      },
+      "question_false_middle": {
+        "t1-test": 0.0194,
+        "t2-test": 0.0018,
+        "t5-test": 0.0698
+      },
+      "punct_first_middle": {
+        "t1-test": 0.0,
+        "t2-test": 0.0
+      },
+      "exclaim_false": {
+        "t5-test": 0.002,
+        "t1-test": 0.0044,
+        "t2-test": 0.0002
+      },
+      "public_full_stop_and_comma": 0.0,
+      "emoji_positive_hit": 0.8222,
+      "emoji_negative_false": 1,
+      "emoji_shown_middle": {
+        "t1-test": 0.0213,
+        "t2-test": 0.0122
+      },
+      "words": {
+        "t1-test": {
+          "hit_at_1": 0.0655,
+          "hit_at_3": 0.1329
+        },
+        "t2-test": {
+          "hit_at_1": 0.069,
+          "hit_at_3": 0.1217
+        }
+      },
+      "determinism_mismatches": 0,
+      "prefix_stability_mismatches": 0,
+      "query_micros_p95_max": 502,
+      "display": "marks follow the punctuation already used after CJK in the same text, half width by default (the input method's default is English punctuation in Chinese mode); metrics compare full-width forms",
+      "t3": {
+        "first_test_run": "voice question recall 0.2507 with backfill (gate 0.50) while 0.755 public-only: the public mark was diluted by (1 - lambda); personal word pairs break at punctuation and carry no evidence about it",
+        "fix": "punctuation score = public + lambda * own (not discounted by lambda); public-only runs unchanged (identical t1/t2/t5 metrics)",
+        "dev_window_0.6_0.8": {
+          "voice_question_recall": 0.7653,
+          "typed_question_recall": 0.5909,
+          "words_voice": {
+            "1.1.33": [0.1255, 0.2184],
+            "new": [0.1254, 0.2163]
+          },
+          "words_typed": {
+            "1.1.33": [0.1, 0.1808],
+            "new": [0.1, 0.1808]
+          }
+        },
+        "test_last_20pct": {
+          "snapshot": "fresh export; both engines backfilled voice and typed sources before the split on the same snapshot",
+          "voice_question_recall": 0.7278,
+          "voice_question_first": 0.4384,
+          "voice_question_ends": 349,
+          "typed_question_recall": 0.6923,
+          "typed_question_ends": 13,
+          "voice_false_question_other_ends": 0.0598,
+          "middle_question_shown": {
+            "voice": 0.0387,
+            "typed": 0.042
+          },
+          "words_voice": {
+            "1.1.33": [0.1283, 0.2199],
+            "new": [0.1283, 0.2183]
+          },
+          "words_typed": {
+            "1.1.33": [0.0992, 0.1794],
+            "new": [0.0992, 0.1794]
+          },
+          "query_micros_p95": {
+            "limit_3": [3929, 4285],
+            "limit_9_admission": [6290, 6610]
+          }
+        },
+        "export_fix": "the learned database copy now drops imports and history word pairs from the real backfill, which included test-period text",
+        "private_dirs": "deleted after evaluation; only aggregates kept"
+      }
+    }
   }
 }

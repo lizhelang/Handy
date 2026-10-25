@@ -32,4 +32,21 @@ crates/inputia-handy-runtime/target/release/examples/prediction_eval \
   --cases target/prediction-eval/t1_cases.jsonl --limits 3,5
 ```
 
+问号与表情（1.1.34）另有三组公开用例，门槛与结果同样记在 `manifest.json` 的 `punctuation_emoji` 下：
+
+| 集合  | 来源                                                                         | 用法                                                      |
+| ----- | ---------------------------------------------------------------------------- | --------------------------------------------------------- |
+| T4    | 独立 agent 撰写的 240 句问句与非问句（含难例），按句式分层切 60 句开发集     | 句末用例看问号召回与误出，词边界用例看句中误出            |
+| T5    | 首次测试判定后另一个独立 agent 按中性说明新写的 240 句，全部作测试           | 问号与感叹号门槛的终验                                    |
+| emoji | 独立 agent 撰写的 60 个表情词（带可接受表情）与 60 个不该出表情的词，各切 15 | 以该词为前文，看前 3 项是否含可接受表情、反例是否误出表情 |
+
+```bash
+python scripts/prediction-eval/build_cases.py --items .../t4_punctuation.jsonl --set-prefix t4 --dev 60 \
+  --stratify form --out target/prediction-eval/t4_cases.jsonl --ends-out target/prediction-eval/t4_ends.jsonl
+python scripts/prediction-eval/build_cases.py --emoji --items .../emoji_cases.json --set-prefix emoji --dev 30 \
+  --stratify polarity --out target/prediction-eval/emoji_cases.jsonl
+```
+
+`--ends-out` 把"汉字后紧跟标点"的位置写成句末用例（答案为该标点），T1/T2/T3 同样适用；原有词边界用例文件不变。回放工具对句末用例输出 `ends`（各标点处问号、感叹号是否出现及是否排第一），对词边界用例输出 `middle`（句中误出标点），对表情用例输出 `emoji`。联想标点可能是半角，统计时统一按全角比较。
+
 T2 用 `fetch_wikipedia.py --cache <原始缓存> --out <句子文件> --sources <清单>` 按入库清单重新取回同一批页面；维基摘录接口返回页面当前版本，条目被编辑后 `items_sha256` 会对不上，此时以首次生成的本地缓存为准，不能把重取结果当作同一测试集。T3 用 `export_local_history.py` 生成到私有临时目录，回放时不得传 `--dump`，评测后删除整个目录。
