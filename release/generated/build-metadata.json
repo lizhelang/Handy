@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "product_id": "com.inputia",
-  "version": "1.1.35",
-  "build": 123,
+  "version": "1.1.36",
+  "build": 124,
   "min_os": "13.0",
   "components": [
     {
