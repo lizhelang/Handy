@@ -178,6 +178,20 @@ def verify_layout_copy(source, copy, renames):
     return tuple(counts)
 
 
+def rewrite_relocated_references(copy, legacy, current):
+    """数据中记录的绝对路径随目录改名：知识库托管来源路径从旧位置改到新位置。
+    只改副本；旧目录保持原样作为备份。输入法设置由输入法启动时经 CAS 改写。返回改写条数。"""
+    index = copy/'Control/knowledge/index.sqlite'
+    if not index.exists():
+        return 0
+    old, new = str(legacy/'Handy/knowledge/files'), str(current/'Control/knowledge/files')
+    with sqlite3.connect(index) as db:
+        changed = db.execute("UPDATE kb_sources SET path=? WHERE id='managed' AND path=?", (new, old)).rowcount
+        if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+            raise RuntimeError('知识库索引改写后完整性检查失败')
+    return changed
+
+
 def migrate_data_layout(legacy, current, backup_root):
     """组件全部停止后执行：APFS 克隆复制旧数据域，子目录 Handy 改名 Control，逐项核对后切换；
     旧目录整体移入本次更新的备份目录，不删除任何文件。返回旧目录的备份位置。"""
@@ -193,6 +207,7 @@ def migrate_data_layout(legacy, current, backup_root):
         if (staging/'Handy').exists():
             (staging/'Handy').rename(staging/'Control')
         directories, files, size = verify_layout_copy(legacy, staging, {'Handy': 'Control'})
+        references = rewrite_relocated_references(staging, legacy, current)
         os.rename(staging, current)
         try:
             os.rename(legacy, legacy_backup)
@@ -208,7 +223,8 @@ def migrate_data_layout(legacy, current, backup_root):
         legacy.parent.rmdir()
     except OSError:
         pass
-    print(f'dataLayoutMigrated=true directories={directories} files={files} bytes={size} legacyBackup={legacy_backup}', flush=True)
+    print(f'dataLayoutMigrated=true directories={directories} files={files} bytes={size} '
+          f'pathReferencesRewritten={references} legacyBackup={legacy_backup}', flush=True)
     return legacy_backup
 
 

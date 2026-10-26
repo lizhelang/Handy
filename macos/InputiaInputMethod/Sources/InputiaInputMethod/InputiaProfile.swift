@@ -263,6 +263,18 @@ struct InputiaProfile: Equatable {
     return (try? Self.validateDatabasePath(url)) != nil
   }
 
+  /// 同一 run 改名前（HandyUnifiedCandidate）的对应路径；新路径不在候选数据域内时返回 nil。
+  func legacyRenamedPath(for path: String) -> String? {
+    guard isCandidate, let runID else { return nil }
+    let support = root.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let current = support.appendingPathComponent("InputiaUnifiedCandidate", isDirectory: true)
+      .appendingPathComponent(runID, isDirectory: true).path + "/"
+    guard path.hasPrefix(current) else { return nil }
+    let legacy = support.appendingPathComponent("HandyUnifiedCandidate", isDirectory: true)
+      .appendingPathComponent(runID, isDirectory: true).path + "/"
+    return legacy + path.dropFirst(current.count)
+  }
+
   func isolatedSettings(_ original: [String: Any], settingsPath: String) throws -> [String: Any] {
     guard isCandidate else { return original }
     try validateSettingsPath(settingsPath)

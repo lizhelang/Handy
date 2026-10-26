@@ -605,7 +605,7 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   "${CAPI_LINK_ARGS[@]}" \
   -target "$TARGET_TRIPLE" \
   -framework AppKit \
-  -o "$BUILD_DIR/inputia-inputia-memory-sync-self-check"
+  -o "$BUILD_DIR/inputia-control-memory-sync-self-check"
 
 /usr/bin/swiftc -parse-as-library \
   "$ROOT_DIR/Tools/InputiaCandidateIdentitySelfCheck.swift" \

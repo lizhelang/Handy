@@ -124,6 +124,11 @@ class CandidateUpdateTests(unittest.TestCase):
             db.execute('PRAGMA journal_mode=WAL')
             db.execute('CREATE TABLE t(x)'); db.execute("INSERT INTO t VALUES('原文')")
         (legacy/'Inputia/settings.json').write_text('{}')
+        (legacy/'Handy/knowledge/files').mkdir(parents=True)
+        with sqlite3.connect(legacy/'Handy/knowledge/index.sqlite') as db:
+            db.execute('CREATE TABLE kb_sources(id TEXT PRIMARY KEY, path TEXT)')
+            db.execute("INSERT INTO kb_sources VALUES('managed', ?)", (str(legacy/'Handy/knowledge/files'),))
+            db.execute("INSERT INTO kb_sources VALUES('other', '/elsewhere')")
         for path in [legacy, *legacy.rglob('*')]:
             path.chmod(0o700 if path.is_dir() else 0o600)
         return legacy
@@ -145,6 +150,13 @@ class CandidateUpdateTests(unittest.TestCase):
             with sqlite3.connect((current/'Control/history.db').as_uri() + '?mode=ro', uri=True) as db:
                 self.assertEqual(db.execute('SELECT x FROM t').fetchall(), [('原文',)])
             self.assertEqual((current/'pair-manifest.json').read_text(), '{"pair": 1}')
+            with sqlite3.connect((current/'Control/knowledge/index.sqlite').as_uri() + '?mode=ro', uri=True) as db:
+                self.assertEqual(dict(db.execute('SELECT id, path FROM kb_sources')),
+                                 {'managed': str(current/'Control/knowledge/files'), 'other': '/elsewhere'})
+            # 备份中的旧目录保持原样。
+            with sqlite3.connect((moved/'Handy/knowledge/index.sqlite').as_uri() + '?mode=ro', uri=True) as db:
+                self.assertEqual(db.execute("SELECT path FROM kb_sources WHERE id='managed'").fetchone()[0],
+                                 str(legacy/'Handy/knowledge/files'))
             # 安装失败时恢复：新目录移入失败备份，旧目录回到原位。
             module.undo_data_migration(legacy, current, moved, home/'backup')
             self.assertFalse(current.exists())

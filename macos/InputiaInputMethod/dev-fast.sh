@@ -78,7 +78,7 @@ section "swift and bridge self-check"
 "$ROOT_DIR/build/inputia-candidate-panel-layout-self-check"
 "$ROOT_DIR/build/inputia-settings-window-self-check"
 "$ROOT_DIR/build/inputia-bridge-privacy-self-check"
-"$ROOT_DIR/build/inputia-inputia-memory-sync-self-check"
+"$ROOT_DIR/build/inputia-control-memory-sync-self-check"
 "$ROOT_DIR/build/inputia-voice-input-launcher-self-check"
 
 section "rime probe"

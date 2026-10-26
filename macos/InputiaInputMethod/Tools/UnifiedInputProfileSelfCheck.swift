@@ -77,6 +77,10 @@ struct UnifiedInputProfileSelfCheck {
     }
     check(profile.root.path.hasSuffix("InputiaUnifiedCandidate/run-20260905_A/Inputia"), "candidate fixed root")
     check(profile.controlRoot.path.hasSuffix("InputiaUnifiedCandidate/run-20260905_A/Control"), "paired control root")
+    check(profile.legacyRenamedPath(for: profile.memory.path)
+      == base.appendingPathComponent("HandyUnifiedCandidate/run-20260905_A/Inputia/inputia_memory.db").path,
+      "renamed candidate maps to the same run before rename")
+    check(profile.legacyRenamedPath(for: daily.memory.path) == nil, "daily paths have no rename mapping")
     for path in profile.writablePaths {
       check(path.path.hasPrefix(profile.root.path + "/"), "all writes inside candidate root")
       check(!path.path.hasPrefix(daily.root.path + "/"), "no daily path leakage")

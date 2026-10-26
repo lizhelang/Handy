@@ -806,7 +806,8 @@ final class InputiaRustBridge {
   private func reloadSettings(snapshot: InputiaSettingsStore.Snapshot) -> Bool {
     let previousMode = latestOutcome.mode
     let path = settingsPath, diagnostics = diagnosticSettings
-    var opened: (session: UnsafeMutableRawPointer?, withoutMemory: Bool) = (nil, false)
+    var opened: (session: UnsafeMutableRawPointer?, withoutMemory: Bool, snapshot: InputiaSettingsStore.Snapshot) =
+      (nil, false, snapshot)
     let replaced = InputiaSettingsSessionSwap.replace(&session, open: {
       opened = Self.openSettingsSession(settingsPath: path, snapshot: snapshot, diagnostics: diagnostics)
       return opened.session
@@ -817,6 +818,8 @@ final class InputiaRustBridge {
       settingsApplication = report; settingsApplicationDidChange?(report)
       return false
     }
+    // 打开时可能把改名前的运行路径改到新位置；之后以实际打开会话的快照为准。
+    let snapshot = opened.snapshot
     #if INPUTIA_PAIRED_BUILD
     cancelManagedMemoryRequests()
     #endif
@@ -868,8 +871,9 @@ final class InputiaRustBridge {
     InputiaProfile.current.settings.path
   }
 
-  private static func openSettingsSession(settingsPath: String, snapshot: InputiaSettingsStore.Snapshot, diagnostics: Bool)
-    -> (session: UnsafeMutableRawPointer?, withoutMemory: Bool) {
+  private static func openSettingsSession(settingsPath: String, snapshot original: InputiaSettingsStore.Snapshot, diagnostics: Bool)
+    -> (session: UnsafeMutableRawPointer?, withoutMemory: Bool, snapshot: InputiaSettingsStore.Snapshot) {
+    var snapshot = original
     do {
       var expected: [String: String] = [:]
       if diagnostics {
@@ -878,20 +882,35 @@ final class InputiaRustBridge {
         expected = ["rime_user_data_dir":root.appendingPathComponent("rime").path,
           "memory_db_path":root.appendingPathComponent("inputia_memory.db").path]
       } else if InputiaProfile.current.isCandidate {
-        let isolated = try InputiaProfile.current.isolatedSettings(snapshot.values, settingsPath: settingsPath)
+        let profile = InputiaProfile.current
+        let isolated = try profile.isolatedSettings(snapshot.values, settingsPath: settingsPath)
+        // 改名迁移把数据域整体移到新目录；设置里仍是同一 run 旧位置的运行路径，经 CAS 改到新位置。
+        var relocate: [String: Any] = [:]
+        for key in ["rime_user_data_dir", "memory_db_path"] {
+          if let value = isolated[key] as? String, let stored = snapshot.values[key] as? String,
+            stored != value, profile.legacyRenamedPath(for: value) == stored { relocate[key] = value }
+        }
+        if !relocate.isEmpty, let applied = try InputiaSettingsEdit(snapshot).apply(path: settingsPath, patch: relocate),
+          applied.status == "saved" {
+          snapshot = applied.current
+        }
         for key in ["rime_user_data_dir", "memory_db_path", "integration_outbox_path", "integration_snapshot_dir",
           "integration_policy_path", "integration_log_dir", "integration_profile_run_id"] {
-          if let value = isolated[key] as? String { expected[key] = value }
+          guard let value = isolated[key] as? String else { continue }
+          // integration_* 只用于核对、运行时按当前数据域计算；同一 run 旧位置的值视为一致。
+          if key.hasPrefix("integration_"), let stored = snapshot.values[key] as? String,
+            profile.legacyRenamedPath(for: value) == stored { continue }
+          expected[key] = value
         }
       }
       try InputiaSettingsStore.validateRuntimePaths(snapshot, expected: expected,
         required: expected.isEmpty ? [] : ["rime_user_data_dir", "memory_db_path"])
-    } catch { return (nil, false) }
+    } catch { return (nil, false, snapshot) }
     if let session = InputiaSettingsStore.openSession(path: settingsPath, snapshot: snapshot,
-      sharedData: bundledRimeDataPath, withoutMemory: false) { return (session, false) }
+      sharedData: bundledRimeDataPath, withoutMemory: false) { return (session, false, snapshot) }
     let fallback = InputiaSettingsStore.openSession(path: settingsPath, snapshot: snapshot,
       sharedData: bundledRimeDataPath, withoutMemory: true)
-    return (fallback, fallback != nil)
+    return (fallback, fallback != nil, snapshot)
   }
 
   private static func inputModeToggleShortcut(in values: [String: Any]) -> String {
