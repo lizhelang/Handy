@@ -470,6 +470,12 @@ fi
   -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-confirmed-field-context-self-check"
 "$BUILD_DIR/inputia-confirmed-field-context-self-check"
 
+/usr/bin/swiftc -parse-as-library \
+  "$ROOT_DIR/Tools/InputiaSessionActivationSelfCheck.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSessionActivation.swift" \
+  -target "$TARGET_TRIPLE" -o "$BUILD_DIR/inputia-session-activation-self-check"
+"$BUILD_DIR/inputia-session-activation-self-check"
+
 /usr/bin/swiftc \
   "$ROOT_DIR/Sources/InputiaInputMethod/main.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaStartupMaintenance.swift" \
@@ -484,6 +490,7 @@ fi
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExplicitHotwords.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHostTextPolicy.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSessionActivation.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaControlMemorySync.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaInputTextRouter.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaShortcutClassifier.swift" \

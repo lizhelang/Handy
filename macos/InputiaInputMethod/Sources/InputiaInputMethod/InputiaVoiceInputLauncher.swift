@@ -13,7 +13,7 @@ enum InputiaPersonalizationDiagnostics {
   private static var nextTargetTrace: UInt64 = 0
   private static let phases: Set<String> = ["policy", "query", "schedule", "capture_guard", "capture_reply",
     "target_capture", "target_validate", "target_transport", "personal_transport", "commit", "typed_result",
-    "candidate_clear", "candidate_restore"]
+    "candidate_clear", "candidate_restore", "session_reclaim"]
   private static let reasons: Set<String> = ["ok", "no_reply", "expired", "disabled", "not_active", "mode", "page", "expanded", "recall", "prediction_pending",
     "unavailable", "missing_client", "missing_bundle", "invalid_selection", "missing_target", "target_identity", "activation", "composition", "selection_generation", "client_identity", "selection_changed", "remote_selection_mismatch", "history_only", "policy", "stale", "accepted",
     "missing_selection", "missing_origin", "origin_mismatch", "text_mismatch", "invalid_start", "selection_not_committed", "profile", "handshake", "io", "timeout", "invalid_frame", "main_thread", "decode", "other_error", "unknown_code",
@@ -21,7 +21,7 @@ enum InputiaPersonalizationDiagnostics {
     "target_dispatch_replayed", "target_entropy_unavailable", "target_expired", "target_history_only", "target_main_unavailable", "target_operation_missing", "target_owner_mismatch", "target_process_changed", "target_query_busy", "target_query_timeout", "target_registry_full", "target_retirement_pending", "target_retirement_timeout_restart_required", "target_retirement_unavailable", "target_sensitive_source", "target_source_changed", "target_source_missing", "target_unknown",
     "target_not_main_thread", "target_accessibility_unavailable", "target_secure_input", "target_unsupported_control", "target_unobservable_control", "target_focus_changed", "target_edited", "target_destroyed", "target_suspended_by_owner",
     "capture_cancelled", "capture_queue_full", "permission_epoch", "deactivation", "lifecycle", "memory_barrier",
-    "selection_unavailable", "selection_rejected", "field_identity_changed", "no_baseline", "maintenance", "marked_changed", "restored", "not_requested", "prediction_preserved",
+    "selection_unavailable", "selection_rejected", "field_identity_changed", "no_baseline", "maintenance", "marked_changed", "restored", "not_requested", "prediction_preserved", "host_key",
     "personalization_disabled_or_changed", "personalization_policy_changed", "personalization_secure_input", "personalization_source_missing", "prediction_no_longer_available"]
   struct TargetTrace {
     let id: UInt64

@@ -102,6 +102,7 @@ final class InputiaInputController: IMKInputController {
     var continuesSelection = false
   }
   private var candidateDisplayCleanupDepth = 0
+  private var sessionActivation = InputiaSessionActivation()
   private var ownedCandidatePanel: InputiaCandidatePanel? {
     guard InputiaHost.activeInputController === self, candidateDisplayCleanupDepth == 0 else { return nil }
     return InputiaHost.candidatePanel
@@ -355,6 +356,7 @@ final class InputiaInputController: IMKInputController {
         return false
       }
     }
+    reclaimActiveSessionIfNeeded()
 
     #if INPUTIA_PAIRED_BUILD
     // 先于前文与目标边界处理：移动高亮不移动光标，不能清掉本轮前文或字段证明。
@@ -781,6 +783,7 @@ final class InputiaInputController: IMKInputController {
   }
 
   override func activateServer(_ sender: Any!) {
+    sessionActivation.activate()
     InputiaHost.inputControllers.add(self)
     #if INPUTIA_PAIRED_BUILD
     predictionActivationGeneration &+= 1
@@ -804,13 +807,7 @@ final class InputiaInputController: IMKInputController {
       self.schedulePersonalization(client: client)
     }
     personalization.start()
-    MainActor.assumeIsolated {
-      InputiaTypedCapture.shared.invalidOrigin = { [weak self] id in
-        guard self?.typedCompositionOrigin?.targetID == id else { return }
-        self?.discardTypedCompositionOrigin()
-      }
-      InputiaTypedCapture.shared.activate()
-    }
+    activateSharedTypedCapture()
     synchronizePermissionEpoch()
     InputiaVoiceInputLauncher.ensureUnifiedServiceReady()
     sharedTargetReady = false
@@ -820,10 +817,7 @@ final class InputiaInputController: IMKInputController {
     #endif
     resetShiftInputModeSession(reason: "activate")
     InputiaHost.activeInputController = self
-    InputiaHost.candidatePanel?.settingsDidApply = { [weak self] snapshot in
-      guard let self, InputiaHost.activeInputController === self else { return }
-      self.bridge.candidateDisplaySettingsApplied(snapshot)
-    }
+    installCandidateSettingsHook()
     if let client = sender as? IMKTextInput {
       if shouldUseSecureDirectMode(client) {
         return
@@ -840,6 +834,7 @@ final class InputiaInputController: IMKInputController {
 
   override func deactivateServer(_ sender: Any!) {
     flushPendingReturnCommit()
+    sessionActivation.deactivate()
     #if INPUTIA_PAIRED_BUILD
     predictionActivationGeneration &+= 1
     clearConfirmedFieldContext()
@@ -865,6 +860,39 @@ final class InputiaInputController: IMKInputController {
       InputiaHost.activeInputController = nil
     }
   }
+
+  /// 宿主交错激活多个会话时（Safari 网页：激活 A、激活 B、停用 B，再把按键发给 A），
+  /// 仍在激活期的会话收到按键即收回活动标记，并恢复被其他会话停用的共享键入采集。
+  private func reclaimActiveSessionIfNeeded() {
+    guard sessionActivation.shouldReclaim(activeIsSelf: InputiaHost.activeInputController === self) else {
+      return
+    }
+    InputiaHost.activeInputController = self
+    installCandidateSettingsHook()
+    #if INPUTIA_PAIRED_BUILD
+    activateSharedTypedCapture()
+    InputiaPersonalizationDiagnostics.record("session_reclaim", "host_key", count: latestCandidates.count)
+    #endif
+  }
+
+  private func installCandidateSettingsHook() {
+    InputiaHost.candidatePanel?.settingsDidApply = { [weak self] snapshot in
+      guard let self, InputiaHost.activeInputController === self else { return }
+      self.bridge.candidateDisplaySettingsApplied(snapshot)
+    }
+  }
+
+  #if INPUTIA_PAIRED_BUILD
+  private func activateSharedTypedCapture() {
+    MainActor.assumeIsolated {
+      InputiaTypedCapture.shared.invalidOrigin = { [weak self] id in
+        guard self?.typedCompositionOrigin?.targetID == id else { return }
+        self?.discardTypedCompositionOrigin()
+      }
+      InputiaTypedCapture.shared.activate()
+    }
+  }
+  #endif
 
   private func handleFlagsChanged(_ event: NSEvent, client: IMKTextInput) -> Bool {
     reloadSettingsIfDue(client: client)
