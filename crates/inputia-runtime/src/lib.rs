@@ -244,7 +244,7 @@ mod tests {
 
         let mut runtime = InputiaRuntime::open(paths.clone(), AppPolicy::default()).unwrap();
         let summary = runtime
-            .import_existing_sources(ImportLimits::default(), "com.pais.handy")
+            .import_existing_sources(ImportLimits::default(), "com.inputia.control")
             .unwrap();
 
         assert_eq!(summary.history_imported, 2);
@@ -280,7 +280,7 @@ mod tests {
         let mut runtime = InputiaRuntime::open(paths, AppPolicy::default()).unwrap();
 
         let summary = runtime
-            .import_existing_sources(ImportLimits::default(), "com.pais.handy")
+            .import_existing_sources(ImportLimits::default(), "com.inputia.control")
             .unwrap();
 
         assert_eq!(

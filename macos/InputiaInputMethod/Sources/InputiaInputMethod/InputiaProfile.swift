@@ -212,7 +212,7 @@ struct InputiaProfile: Equatable {
       }
       return Self(isCandidate: false, runID: nil,
                   root: base.appendingPathComponent("Inputia", isDirectory: true),
-                  controlRoot: base.appendingPathComponent("com.pais.handy", isDirectory: true))
+                  controlRoot: base.appendingPathComponent("com.inputia.control", isDirectory: true))
     }
     if let environmentID, let plistID, environmentID != plistID {
       throw InputiaProfileError.conflictingRunID
@@ -224,11 +224,11 @@ struct InputiaProfile: Equatable {
           runID.unicodeScalars.allSatisfy({ allowed.contains($0) }) else {
       throw InputiaProfileError.invalidRunID
     }
-    let runRoot = base.appendingPathComponent("HandyUnifiedCandidate", isDirectory: true)
+    let runRoot = base.appendingPathComponent("InputiaUnifiedCandidate", isDirectory: true)
       .appendingPathComponent(runID, isDirectory: true)
     return Self(isCandidate: true, runID: runID,
                 root: runRoot.appendingPathComponent("Inputia", isDirectory: true),
-                controlRoot: runRoot.appendingPathComponent("Handy", isDirectory: true))
+                controlRoot: runRoot.appendingPathComponent("Control", isDirectory: true))
   }
 
   func validateCandidatePaths() throws {

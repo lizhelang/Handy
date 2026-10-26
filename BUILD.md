@@ -156,8 +156,8 @@ After installing the final bundle at `/Applications/Inputia.app`, quit Inputia, 
 stale Accessibility record, then reopen it:
 
 ```bash
-osascript -e 'tell application id "com.pais.handy" to quit' || true
-tccutil reset Accessibility com.pais.handy
+osascript -e 'tell application id "com.inputia.control" to quit' || true
+tccutil reset Accessibility com.inputia.control
 open /Applications/Inputia.app
 ```
 

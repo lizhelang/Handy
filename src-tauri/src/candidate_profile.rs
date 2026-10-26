@@ -5,7 +5,7 @@ use std::{
     sync::OnceLock,
 };
 
-const CANDIDATE_BUNDLE: &str = "com.pais.handy.UnifiedCandidate";
+const CANDIDATE_BUNDLE: &str = "com.inputia.control.UnifiedCandidate";
 static PROFILE: OnceLock<Result<Option<CandidateProfile>, String>> = OnceLock::new();
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,10 +127,10 @@ pub fn resolve(
         return Ok(None);
     }
     if marker != &MetadataValue::Boolean(true) {
-        return Err("候选安装必须包含严格布尔值 HandyDevelopmentCandidate=true".into());
+        return Err("候选安装必须包含严格布尔值 InputiaDevelopmentCandidate=true".into());
     }
     let MetadataValue::String(run_id) = plist_run else {
-        return Err("候选安装缺少有效 HandyProfileRunID".into());
+        return Err("候选安装缺少有效 InputiaProfileRunID".into());
     };
     if !(1..=64).contains(&run_id.len())
         || !run_id
@@ -146,10 +146,10 @@ pub fn resolve(
         return Err("Application Support 路径不是绝对路径".into());
     }
     let root = application_support
-        .join("HandyUnifiedCandidate")
+        .join("InputiaUnifiedCandidate")
         .join(run_id);
     Ok(Some(CandidateProfile {
-        control_root: root.join("Handy"),
+        control_root: root.join("Control"),
         inputia_root: root.join("Inputia"),
         profile_id: format!("unified-candidate:{run_id}"),
         installation: None,
@@ -296,8 +296,8 @@ fn platform_profile() -> Result<Option<CandidateProfile>, String> {
         };
         metadata_value(&value)
     };
-    let marker = metadata("HandyDevelopmentCandidate");
-    let run = metadata("HandyProfileRunID");
+    let marker = metadata("InputiaDevelopmentCandidate");
+    let run = metadata("InputiaProfileRunID");
     let bundle_id = bundle.bundleIdentifier().map(|value| value.to_string());
     // 改名前的启动配置仍可能只设置旧变量名。
     let environment = match std::env::var("INPUTIA_PROFILE_RUN_ID") {
@@ -386,10 +386,14 @@ mod tests {
     #[test]
     fn compiled_candidate_cannot_run_bare_or_inside_a_daily_bundle() {
         assert!(validate_installation_identity(CANDIDATE_BUNDLE, None).is_err());
-        assert!(validate_installation_identity(CANDIDATE_BUNDLE, Some("com.pais.handy")).is_err());
-        assert!(validate_installation_identity("com.pais.handy", Some(CANDIDATE_BUNDLE)).is_err());
+        assert!(
+            validate_installation_identity(CANDIDATE_BUNDLE, Some("com.inputia.control")).is_err()
+        );
+        assert!(
+            validate_installation_identity("com.inputia.control", Some(CANDIDATE_BUNDLE)).is_err()
+        );
         assert!(validate_installation_identity(CANDIDATE_BUNDLE, Some(CANDIDATE_BUNDLE)).is_ok());
-        assert!(validate_installation_identity("com.pais.handy", None).is_ok());
+        assert!(validate_installation_identity("com.inputia.control", None).is_ok());
     }
     fn candidate(run: &str, support: &Path) -> Result<Option<CandidateProfile>, String> {
         resolve(
@@ -426,7 +430,7 @@ mod tests {
         let base = Path::new("/synthetic/support");
         assert_eq!(
             resolve(
-                Some("com.pais.handy"),
+                Some("com.inputia.control"),
                 &MetadataValue::Missing,
                 &MetadataValue::Missing,
                 None,
@@ -442,7 +446,7 @@ mod tests {
             MetadataValue::Invalid,
         ] {
             assert!(resolve(
-                Some("com.pais.handy"),
+                Some("com.inputia.control"),
                 &marker,
                 &MetadataValue::Missing,
                 Some("trial"),
@@ -492,11 +496,11 @@ mod tests {
         let profile = candidate("A-1_trial", base).unwrap().unwrap();
         assert_eq!(
             profile.control_root,
-            base.join("HandyUnifiedCandidate/A-1_trial/Handy")
+            base.join("InputiaUnifiedCandidate/A-1_trial/Control")
         );
         assert_eq!(
             profile.inputia_root,
-            base.join("HandyUnifiedCandidate/A-1_trial/Inputia")
+            base.join("InputiaUnifiedCandidate/A-1_trial/Inputia")
         );
         assert_eq!(profile.profile_id, "unified-candidate:A-1_trial");
         assert!(resolve(
@@ -524,7 +528,7 @@ mod tests {
         profile.audit_and_prepare().unwrap();
         assert!(profile.control_root.is_dir());
         assert!(profile.inputia_root.is_dir());
-        assert!(!base.join("com.pais.handy").exists());
+        assert!(!base.join("com.inputia.control").exists());
         assert!(!base.join("Inputia").exists());
         std::fs::write(profile.control_root.join("history.db-wal"), b"synthetic").unwrap();
         profile.audit_and_prepare().unwrap();
@@ -555,7 +559,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let base = temp.path().canonicalize().unwrap();
         std::fs::create_dir(base.join("actual")).unwrap();
-        symlink(base.join("actual"), base.join("HandyUnifiedCandidate")).unwrap();
+        symlink(base.join("actual"), base.join("InputiaUnifiedCandidate")).unwrap();
         assert!(candidate("trial", &base)
             .unwrap()
             .unwrap()

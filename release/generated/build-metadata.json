@@ -7,7 +7,7 @@
   "components": [
     {
       "role": "control",
-      "bundle_id": "com.pais.handy.UnifiedCandidate",
+      "bundle_id": "com.inputia.control.UnifiedCandidate",
       "app_name": "Inputia.app"
     },
     {

@@ -30,7 +30,7 @@ def command_text(run_id, version, build, apply):
 
 将替换：/Applications/Inputia.app（兼容旧名称 Inputia Candidate.app）
         ~/Library/Input Methods/InputiaUnifiedCandidate.app
-继续使用原有数据域：~/Library/Application Support/HandyUnifiedCandidate/{run_id}
+继续使用原有数据域：~/Library/Application Support/InputiaUnifiedCandidate/{run_id}
 更新器保留原应用包和配对清单，备份位于：
   ~/Library/Application Support/HandyUnifiedBuilds/permission-update-*
 上述是程序备份，不是个人数据库、录音或模型的完整备份。
@@ -113,7 +113,7 @@ def main():
         if (release / name).exists() or (release / name).is_symlink():
             parser.error(f"目标已存在，拒绝覆盖：{release / name}")
     versions = []
-    for name, prefix in (("Inputia.app", "Handy"), ("InputiaUnifiedCandidate.app", "Inputia")):
+    for name, prefix in (("Inputia.app", "Inputia"), ("InputiaUnifiedCandidate.app", "Inputia")):
         app = release / name
         if app.is_symlink() or not app.is_dir():
             parser.error(f"构建组件缺失或是符号链接：{app}")

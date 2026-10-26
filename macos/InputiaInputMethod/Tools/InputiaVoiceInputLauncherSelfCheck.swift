@@ -85,15 +85,12 @@ struct InputiaVoiceInputLauncherSelfCheck {
     let expectedCandidates = InputiaVoiceInputLauncher.candidateAppPaths(
       environment: environment,
       homeDirectory: "/Users/example",
-      workspaceAppPath: "/Applications/Inputia.app",
-      legacyWorkspaceAppPath: "/Applications/Handy.app"
+      workspaceAppPath: "/Applications/Inputia.app"
     )
-    let candidatesAreOrdered = expectedCandidates.prefix(5) == [
+    let candidatesAreOrdered = expectedCandidates == [
       fakeApp,
       "/Applications/Inputia.app",
-      "/Applications/Handy.app",
       "/Users/example/Applications/Inputia.app",
-      "/Users/example/Applications/Handy.app",
     ]
 
     let findsEnvApp = InputiaVoiceInputLauncher.findControlApp(

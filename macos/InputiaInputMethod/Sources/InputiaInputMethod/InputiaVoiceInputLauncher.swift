@@ -1302,10 +1302,9 @@ enum InputiaVoiceInputLauncher {
   }
   #endif
   #endif
-  static let controlBundleIdentifier = "com.pais.handy"
-  // 用户可见名称变更不擅自改协议/授权身份；发布程序仍兼容原bundle ID。
-  static let inputiaBundleIdentifier = controlBundleIdentifier
-  static let voiceServiceExecutableNames = ["inputia", "Inputia", "inputia"]
+  /// 开发构建的控制中心程序标识；发布安装按收据中的组件路径定位，不经此查找。
+  static let controlBundleIdentifier = "com.inputia.control"
+  static let voiceServiceExecutableNames = ["inputia", "Inputia"]
   static let toggleTranscriptionArguments = ["--toggle-transcription"]
   static let startupArguments = ["--start-hidden"]
   static let startupToggleDelaySeconds: TimeInterval = 1.5
@@ -1335,20 +1334,14 @@ enum InputiaVoiceInputLauncher {
     environment: [String: String] = ProcessInfo.processInfo.environment,
     homeDirectory: String = NSHomeDirectory(),
     workspaceAppPath: String? = NSWorkspace.shared.urlForApplication(
-      withBundleIdentifier: inputiaBundleIdentifier
-    )?.path,
-    legacyWorkspaceAppPath: String? = NSWorkspace.shared.urlForApplication(
       withBundleIdentifier: controlBundleIdentifier
     )?.path
   ) -> [String] {
     uniquePaths([
       environment["INPUTIA_CONTROL_APP"],
       workspaceAppPath,
-      legacyWorkspaceAppPath,
       "/Applications/Inputia.app",
       "\(homeDirectory)/Applications/Inputia.app",
-      "/Applications/Handy.app",
-      "\(homeDirectory)/Applications/Handy.app",
     ].compactMap { $0 })
   }
 
@@ -1370,9 +1363,6 @@ enum InputiaVoiceInputLauncher {
     environment: [String: String] = ProcessInfo.processInfo.environment,
     homeDirectory: String = NSHomeDirectory(),
     workspaceAppPath: String? = NSWorkspace.shared.urlForApplication(
-      withBundleIdentifier: inputiaBundleIdentifier
-    )?.path,
-    legacyWorkspaceAppPath: String? = NSWorkspace.shared.urlForApplication(
       withBundleIdentifier: controlBundleIdentifier
     )?.path,
     fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
@@ -1380,8 +1370,7 @@ enum InputiaVoiceInputLauncher {
     candidateAppPaths(
       environment: environment,
       homeDirectory: homeDirectory,
-      workspaceAppPath: workspaceAppPath,
-      legacyWorkspaceAppPath: legacyWorkspaceAppPath
+      workspaceAppPath: workspaceAppPath
     ).first { appPath in
       executablePaths(forAppPath: appPath).contains(where: fileExists)
     }

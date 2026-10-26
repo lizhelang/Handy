@@ -1023,7 +1023,7 @@ mod tests {
         let history_db = tempdir.path().join("history.db");
         create_history_db(&history_db);
 
-        let context = AppContext::new("com.pais.handy");
+        let context = AppContext::new("com.inputia.control");
         let mut memory = SqliteMemory::open_in_memory(AppPolicy::default()).unwrap();
         let imported = memory
             .import_control_history(&history_db, &context, 10)
@@ -1047,7 +1047,7 @@ mod tests {
         let clipboard_db = tempdir.path().join("clipboard.db");
         create_clipboard_db(&clipboard_db);
 
-        let context = AppContext::new("com.pais.handy");
+        let context = AppContext::new("com.inputia.control");
         let mut memory = SqliteMemory::open_in_memory(AppPolicy::default()).unwrap();
         let imported = memory
             .import_control_clipboard(&clipboard_db, &context, 10)

@@ -37,8 +37,8 @@ struct InputiaControlMemorySyncSelfCheck {
 
     let importsBothSources = all.history == .imported(7)
       && all.clipboard == .imported(11)
-      && importer.historyCalls.first?.bundleId == "com.pais.handy"
-      && importer.clipboardCalls.first?.bundleId == "com.pais.handy"
+      && importer.historyCalls.first?.bundleId == "com.inputia.control"
+      && importer.clipboardCalls.first?.bundleId == "com.inputia.control"
       && importer.historyCalls.first?.limit == 42
       && importer.clipboardCalls.first?.limit == 42
 

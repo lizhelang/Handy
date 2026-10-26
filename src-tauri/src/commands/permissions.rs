@@ -110,7 +110,7 @@ pub fn open_inputia_permission_help(app: AppHandle, action: String) -> Result<()
         }
         "component" => {
             let home = app.path().home_dir().map_err(|_| "home_unavailable")?;
-            let candidate = app.config().identifier == "com.pais.handy.UnifiedCandidate";
+            let candidate = app.config().identifier == "com.inputia.control.UnifiedCandidate";
             let component = input_method_locations(&home, candidate)
                 .into_iter()
                 .find(|path| path.join("Contents/Info.plist").is_file())

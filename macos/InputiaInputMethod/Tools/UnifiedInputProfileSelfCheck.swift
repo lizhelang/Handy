@@ -44,7 +44,7 @@ struct UnifiedInputProfileSelfCheck {
     try InputiaProfile.validateCompiledIdentity(bundleIdentifier: nil, expectedCandidate: nil)
     check(true, "compiled and bundle candidate identities agree")
     check(daily.root == base.appendingPathComponent("Inputia", isDirectory: true), "daily root retained")
-    check(daily.controlRoot == base.appendingPathComponent("com.pais.handy", isDirectory: true), "daily Inputia root retained")
+    check(daily.controlRoot == base.appendingPathComponent("com.inputia.control", isDirectory: true), "daily control root retained")
     rejects(.unauthorizedCandidate) {
       _ = try InputiaProfile.resolve(bundleIdentifier: "com.inputia.inputmethod.Inputia", info: [:], environment: ["INPUTIA_PROFILE_RUN_ID": "test"], applicationSupport: base)
     }
@@ -75,8 +75,8 @@ struct UnifiedInputProfileSelfCheck {
     rejects(.conflictingRunID) {
       _ = try InputiaProfile.resolve(bundleIdentifier: candidateID, info: signedInfo, environment: ["INPUTIA_PROFILE_RUN_ID": "other"], applicationSupport: base)
     }
-    check(profile.root.path.hasSuffix("HandyUnifiedCandidate/run-20260905_A/Inputia"), "candidate fixed root")
-    check(profile.controlRoot.path.hasSuffix("HandyUnifiedCandidate/run-20260905_A/Handy"), "paired control root")
+    check(profile.root.path.hasSuffix("InputiaUnifiedCandidate/run-20260905_A/Inputia"), "candidate fixed root")
+    check(profile.controlRoot.path.hasSuffix("InputiaUnifiedCandidate/run-20260905_A/Control"), "paired control root")
     for path in profile.writablePaths {
       check(path.path.hasPrefix(profile.root.path + "/"), "all writes inside candidate root")
       check(!path.path.hasPrefix(daily.root.path + "/"), "no daily path leakage")

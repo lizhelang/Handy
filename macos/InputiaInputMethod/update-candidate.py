@@ -2,6 +2,7 @@
 """受控更新正式两组件：固定身份、维护屏障、旧名称迁移和事务回滚；不读写TCC授权。"""
 import argparse
 import fcntl
+import hashlib
 import sqlite3
 import json
 import os
@@ -18,6 +19,11 @@ import uuid
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent.parent
 REGISTRAR = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+CONTROL_BUNDLE_ID = 'com.inputia.control.UnifiedCandidate'
+# 改名前控制中心的程序标识与数据布局；只用于识别旧安装并一次性迁移。
+LEGACY_CONTROL_BUNDLE_ID = 'com.pais.handy.UnifiedCandidate'
+IME_BUNDLE_ID = 'com.inputia.inputmethod.Inputia.UnifiedCandidate'
+SETTINGS_BUNDLE_ID = 'com.inputia.settings.UnifiedCandidate'
 
 
 def run(*args, timeout=30):
@@ -83,21 +89,144 @@ def unregister_legacy_control(old_control, new_control, old_backup=None):
 
 
 def validate_profile(app, role, run_id):
-    prefix = 'Handy' if role == 'control' else 'Inputia'
-    expected_id = 'com.pais.handy.UnifiedCandidate' if role == 'control' else 'com.inputia.inputmethod.Inputia.UnifiedCandidate'
+    """核对组件身份与数据 profile 标记；返回其程序标识。改名前的控制中心使用 Handy 前缀的标记。"""
+    accepted = ({CONTROL_BUNDLE_ID: 'Inputia', LEGACY_CONTROL_BUNDLE_ID: 'Handy'} if role == 'control'
+                else {IME_BUNDLE_ID: 'Inputia'})
     with (app/'Contents/Info.plist').open('rb') as stream:
         info = plistlib.load(stream)
-    if (info.get('CFBundleIdentifier') != expected_id
+    bundle_id = info.get('CFBundleIdentifier')
+    prefix = accepted.get(bundle_id)
+    if (prefix is None
             or info.get(prefix+'DevelopmentCandidate') is not True
             or info.get(prefix+'ProfileRunID') != run_id):
         raise ValueError('组件身份或数据 profile 不匹配；拒绝迁移')
+    return bundle_id
+
+
+def candidate_profile(run_id, home=None):
+    """改名后的数据布局：InputiaUnifiedCandidate/<run_id>/{Control,Inputia}。"""
+    home = Path.home() if home is None else Path(home)
+    return home/'Library/Application Support/InputiaUnifiedCandidate'/run_id
+
+
+def legacy_candidate_profile(run_id, home=None):
+    """改名前的数据布局：HandyUnifiedCandidate/<run_id>/{Handy,Inputia}。"""
+    home = Path.home() if home is None else Path(home)
+    return home/'Library/Application Support/HandyUnifiedCandidate'/run_id
+
+
+def signing_requirement_without_identifier(requirement):
+    return re.sub(r'^identifier "[^"]+" and ', '', requirement)
+
+
+def check_signing_identity(old, new, allow_control_rename=False):
+    """签名身份必须不变；只有显式迁移时允许控制中心由旧程序标识改为新标识，证书要求仍须相同。
+    返回是否发生了程序标识变化。"""
+    before, after = identity(old), identity(new)
+    if before == after:
+        return False
+    if (allow_control_rename
+            and before.startswith(f'identifier "{LEGACY_CONTROL_BUNDLE_ID}" and ')
+            and after.startswith(f'identifier "{CONTROL_BUNDLE_ID}" and ')
+            and signing_requirement_without_identifier(before) == signing_requirement_without_identifier(after)):
+        return True
+    raise ValueError('更新签名身份改变；拒绝要求用户反复重新授权')
+
+
+def file_digest(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+# 迁移时逐字节核对的小文件：数据库、键与配置；录音、模型等大文件核对大小与权限。
+DIGEST_SUFFIXES = ('.db', '.db-wal', '.sqlite', '.sqlite-wal', '.json', '.key', '.toml', '.yaml', '.txt')
+
+
+def verify_layout_copy(source, copy, renames):
+    """核对复制后的数据与原目录逐项一致（顶层子目录按 renames 改名）；返回 (目录数, 文件数, 字节数)。"""
+    counts = [0, 0, 0]
+    for directory, names, files in os.walk(source, followlinks=False):
+        relative = Path(directory).relative_to(source)
+        parts = relative.parts
+        mapped = Path(*((renames.get(parts[0], parts[0]),) + parts[1:])) if parts else Path()
+        target_dir = copy/mapped
+        if not target_dir.is_dir() or target_dir.is_symlink():
+            raise RuntimeError(f'迁移副本缺少目录：{mapped}')
+        counts[0] += 1
+        for name in names:
+            if (Path(directory)/name).is_symlink():
+                raise RuntimeError('数据目录包含符号链接；拒绝迁移')
+        for name in files:
+            original, cloned = Path(directory)/name, target_dir/name
+            a, b = os.lstat(original), os.lstat(cloned)
+            if os.path.islink(original) or os.path.islink(cloned):
+                raise RuntimeError('数据目录包含符号链接；拒绝迁移')
+            if a.st_size != b.st_size or (a.st_mode & 0o7777) != (b.st_mode & 0o7777) or b.st_nlink != 1:
+                raise RuntimeError(f'迁移副本与原文件不一致：{mapped/name}')
+            if name.endswith(DIGEST_SUFFIXES) and file_digest(original) != file_digest(cloned):
+                raise RuntimeError(f'迁移副本内容不一致：{mapped/name}')
+            counts[1] += 1; counts[2] += a.st_size
+    for directory, _, files in os.walk(copy, followlinks=False):
+        for name in files:
+            if name.endswith(('.db', '.sqlite')):
+                with sqlite3.connect((Path(directory)/name).as_uri()+'?mode=ro', uri=True) as db:
+                    if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                        raise RuntimeError(f'迁移副本数据库完整性检查失败：{name}')
+    return tuple(counts)
+
+
+def migrate_data_layout(legacy, current, backup_root):
+    """组件全部停止后执行：APFS 克隆复制旧数据域，子目录 Handy 改名 Control，逐项核对后切换；
+    旧目录整体移入本次更新的备份目录，不删除任何文件。返回旧目录的备份位置。"""
+    if current.exists():
+        raise ValueError('新数据目录已存在；拒绝覆盖')
+    backup_root.mkdir(mode=0o700, parents=True, exist_ok=False)
+    legacy_backup = backup_root/legacy.name
+    parent = current.parent
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    staging = parent/f'.{current.name}.migrating-{uuid.uuid4().hex}'
+    try:
+        run('/bin/cp', '-Rpc', legacy, staging, timeout=3600)
+        if (staging/'Handy').exists():
+            (staging/'Handy').rename(staging/'Control')
+        directories, files, size = verify_layout_copy(legacy, staging, {'Handy': 'Control'})
+        os.rename(staging, current)
+        try:
+            os.rename(legacy, legacy_backup)
+        except OSError:
+            # 旧目录仍在原位：撤下新副本（它只是旧目录的克隆），保持迁移前状态。
+            os.rename(current, staging)
+            raise
+    except Exception:
+        if staging.exists():
+            shutil.rmtree(staging)
+        raise
+    try:
+        legacy.parent.rmdir()
+    except OSError:
+        pass
+    print(f'dataLayoutMigrated=true directories={directories} files={files} bytes={size} legacyBackup={legacy_backup}', flush=True)
+    return legacy_backup
+
+
+def undo_data_migration(legacy, current, legacy_backup, failed_root):
+    """安装失败时恢复旧布局；新目录不删除，整体移入失败备份以免丢失新组件期间写入的数据。"""
+    if current.exists():
+        os.rename(current, failed_root/f'data-after-rename-failed-{current.name}')
+    legacy.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if legacy.exists():
+        raise ValueError('旧数据目录已被占用；拒绝覆盖')
+    os.rename(legacy_backup, legacy)
 
 
 def validate_release_v2(app, role, release_id):
     expected_id = {
-        'control': 'com.pais.handy.UnifiedCandidate',
-        'ime': 'com.inputia.inputmethod.Inputia.UnifiedCandidate',
-        'settings': 'com.inputia.settings.UnifiedCandidate',
+        'control': CONTROL_BUNDLE_ID,
+        'ime': IME_BUNDLE_ID,
+        'settings': SETTINGS_BUNDLE_ID,
     }[role]
     with (app/'Contents/Info.plist').open('rb') as stream:
         info = plistlib.load(stream)
@@ -122,8 +251,8 @@ def atomic_json(path, data):
         if os.path.exists(temporary): os.unlink(temporary)
 
 
-def write_legacy_receipt(run_id, release_id, destinations, home=None):
-    """在 v2 提交点登记旧 profile；收据不改变数据路径，也不授权系统目录操作。"""
+def write_legacy_receipt(run_id, release_id, destinations, home=None, data_kind='candidate'):
+    """在提交点登记 profile 与数据布局；收据本身不移动数据，也不授权系统目录操作。"""
     home = Path.home() if home is None else Path(home)
     support = home / 'Library/Application Support/Inputia'
     support.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -146,7 +275,7 @@ def write_legacy_receipt(run_id, release_id, destinations, home=None):
         'profile_id': f'unified-candidate:{run_id}',
         'uid': os.getuid(),
         'scope': 'legacy_single_user',
-        'data': {'kind': 'legacy_candidate', 'run_id': run_id},
+        'data': {'kind': data_kind, 'run_id': run_id},
         'components': {
             'control': str(destinations[0]),
             'ime': str(destinations[1]),
@@ -182,7 +311,7 @@ def validate_existing_legacy_receipt(run_id, destinations, home=None):
             or value.get('uid') != os.getuid()
             or value.get('channel') != 'candidate'
             or not re.fullmatch(r'inputia-[A-Za-z0-9._-]{1,180}', str(value.get('release_id', '')))
-            or value.get('data') != {'kind': 'legacy_candidate', 'run_id': run_id}
+            or value.get('data') not in ({'kind': 'legacy_candidate', 'run_id': run_id}, {'kind': 'candidate', 'run_id': run_id})
             or value.get('components') != expected_components
             or not re.fullmatch(r'[0-9a-f-]{36}', str(value.get('installation_id', '')))):
         raise ValueError('已有安装收据与当前 legacy 组件或数据 profile 不匹配')
@@ -307,9 +436,18 @@ def main():
     parser.add_argument('--build-context', help='v2 public-build 对应的 metadata/build-context.json')
     parser.add_argument('--release-v2', action='store_true', help='新组件使用 releaseId 绑定的 v2 身份；目标数据域仍由 --run-id 指定')
     parser.add_argument('--apply', action='store_true', help='默认只校验；此开关才执行更新')
+    parser.add_argument('--migrate-rename', action='store_true',
+                        help='一次性迁移改名：控制中心程序标识换为新标识，数据目录迁到 InputiaUnifiedCandidate；需重新授权控制中心')
     args = parser.parse_args()
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', args.run_id): raise ValueError('invalid run ID')
-    profile = canonical(Path.home()/'Library/Application Support/HandyUnifiedCandidate'/args.run_id)
+    legacy_profile, current_profile = legacy_candidate_profile(args.run_id), candidate_profile(args.run_id)
+    if legacy_profile.exists() and current_profile.exists():
+        raise ValueError('新旧数据目录同时存在；拒绝选择其一')
+    migrate_layout = legacy_profile.exists()
+    if migrate_layout and not args.migrate_rename:
+        raise ValueError('数据仍在改名前的目录；需要 --migrate-rename 才迁移')
+    profile = canonical(legacy_profile if migrate_layout else current_profile)
+    control_dir = 'Handy' if migrate_layout else 'Control'
     pair = profile/'pair-manifest.json'
     # 同一profile不允许两个更新器交错替换包或配对清单。
     lock_fd = os.open(profile/'.candidate-update.lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -348,17 +486,22 @@ def main():
             raise ValueError('v1 两组件缺少一致的 release ID；拒绝写入不可迁移收据')
         release_id = release_ids[0]
     roles = ['control', 'ime'] + (['settings'] if args.release_v2 else [])
+    identity_changed = False
     for role, old, new in zip(roles, originals, sources):
         if new in originals or new in destinations: raise ValueError('构建源不能是安装路径')
         if role != 'settings':
-            validate_profile(old, role, args.run_id)
+            old_id = validate_profile(old, role, args.run_id)
+            if role == 'control' and (old_id == LEGACY_CONTROL_BUNDLE_ID) != migrate_layout:
+                raise ValueError('控制中心程序标识与数据布局不一致；拒绝更新')
         else:
             # 旧设置启动器可能是历史 ad-hoc 身份；只确认它是完整 bundle，
             # 新入口必须通过严格签名和 v2 release 身份检查。
             run('/usr/bin/codesign', '--verify', '--deep', '--strict', old)
-        validate_release_v2(new, role, release_id) if args.release_v2 else validate_profile(new, role, args.run_id)
-        if role != 'settings' and identity(old) != identity(new):
-            raise ValueError('更新签名身份改变；拒绝要求用户反复重新授权')
+        new_id = validate_release_v2(new, role, release_id) if args.release_v2 else validate_profile(new, role, args.run_id)
+        if role == 'control' and not args.release_v2 and new_id != CONTROL_BUNDLE_ID:
+            raise ValueError('新控制中心仍使用改名前的程序标识；拒绝安装')
+        if role != 'settings':
+            identity_changed |= check_signing_identity(old, new, allow_control_rename=role == 'control' and migrate_layout)
         if role == 'settings':
             run('/usr/bin/codesign', '--verify', '--deep', '--strict', new)
     # 验证编译期公开元数据的归属/权限/内容；不使用清单本身提供的新信任根。
@@ -381,7 +524,7 @@ def main():
         if not args.apply:
             print('updatePreflight=true permissionRecordsUnchanged=true'); return
         assert_replacement_parents(destinations)
-        db_path = profile/'Handy/integration.db'
+        db_path = profile/control_dir/'integration.db'
         with sqlite3.connect(db_path.as_uri()+'?mode=ro', uri=True) as db:
             active = db.execute("select count(*) from unified_voice_sessions where retired=0 and json_extract(view_json,'$.phase') in ('preparing','recording','processing')").fetchone()[0]
         if active:
@@ -423,7 +566,12 @@ def main():
         stop_known(originals)
         backup_names = ['control-before.app', 'ime-before.app'] + (['settings-before.app'] if args.release_v2 else [])
         backups = [backup/name for name in backup_names]
+        legacy_backup = None
         try:
+            if migrate_layout:
+                legacy_backup = migrate_data_layout(legacy_profile, current_profile, backup/'data-before-rename')
+                profile, control_dir = current_profile, 'Control'
+                pair, marker = profile/'pair-manifest.json', profile/'permission-maintenance.json'
             install_transaction(destinations, staged, backups, pair, backup/'pair-new.json', backup/'pair-before.json', originals)
             try:
                 run(verifier, metadata, backup/'pair-before.json', pair, *destinations[:2], args.run_id)
@@ -445,7 +593,8 @@ def main():
                 # v1 只替换 control/IME，但收据仍要准确登记机器上既有的
                 # settings 组件，供后续 v2 三组件迁移核对同一安装。
                 receipt_components = destinations if args.release_v2 else [*destinations, settings_installation()]
-                receipt_path = write_legacy_receipt(args.run_id, release_id, receipt_components)
+                receipt_path = write_legacy_receipt(args.run_id, release_id, receipt_components,
+                                                    data_kind='candidate' if profile == current_profile else 'legacy_candidate')
                 print(f'installationReceipt={receipt_path}', flush=True)
             except Exception:
                 atomic_json(marker, {'schema_version':1, 'active':True, 'epoch':str(uuid.uuid4())})
@@ -453,6 +602,12 @@ def main():
                 rollback_installation(destinations, originals, backups, backup, pair, backup/'pair-before.json')
                 raise
         except Exception:
+            if legacy_backup is not None:
+                # 旧组件只认改名前的布局：数据目录恢复原位后再启动它们。
+                undo_data_migration(legacy_profile, current_profile, legacy_backup, backup)
+                profile = legacy_profile
+                marker = profile/'permission-maintenance.json'
+                print('dataLayoutRestored=true', flush=True)
             atomic_json(marker, {'schema_version':1, 'active':False, 'epoch':str(uuid.uuid4())})
             try:
                 restored = run(tis, '--select-source-id', previous_source)
@@ -468,6 +623,9 @@ def main():
         if old_control != new_control:
             # 新路径已启动且动态身份核验通过，才清理旧 LaunchServices 登记。
             unregister_legacy_control(old_control, new_control, backups[0])
+        if identity_changed:
+            # 不读写 TCC；新程序标识需要用户在系统设置中重新授予控制中心的权限。
+            print(f'controlIdentityChanged=true controlBundleIdentifier={CONTROL_BUNDLE_ID} controlPermissionsNeedRegrant=true', flush=True)
         print('releaseUpdate=true tccChanged=false previousRecordingsReplayed=false')
 
 

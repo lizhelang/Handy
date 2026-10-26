@@ -120,12 +120,12 @@ from pathlib import Path
 with Path("src-tauri/InputiaReleaseInfo.plist").open("rb") as stream:
     info = plistlib.load(stream)
 if sys.argv[5] == "0":
-    info["HandyProfileRunID"] = sys.argv[4]
+    info["InputiaProfileRunID"] = sys.argv[4]
     # 仅保留当前本机 v1 信任桥；渠道不进入不可变程序。
-    info["HandyDevelopmentCandidate"] = True
+    info["InputiaDevelopmentCandidate"] = True
 else:
-    info.pop("HandyProfileRunID", None)
-    info.pop("HandyDevelopmentCandidate", None)
+    info.pop("InputiaProfileRunID", None)
+    info.pop("InputiaDevelopmentCandidate", None)
 release_plist = Path(sys.argv[3]) / "InputiaReleaseInfo.plist"
 with release_plist.open("wb") as stream:
     plistlib.dump(info, stream)
@@ -162,8 +162,8 @@ if [[ "$PAIR_IS_RELEASE_V2" == "1" ]]; then
   # Tauri 会把候选配置中的标记合并回最终 Info.plist；v2 不得携带
   # 可复用的 trial 身份，因此在最终签名后再次删除并重新封装签名。
   control_plist="$CONTROL_APP/Contents/Info.plist"
-  /usr/libexec/PlistBuddy -c "Delete :HandyProfileRunID" "$control_plist" 2>/dev/null || true
-  /usr/libexec/PlistBuddy -c "Delete :HandyDevelopmentCandidate" "$control_plist" 2>/dev/null || true
+  /usr/libexec/PlistBuddy -c "Delete :InputiaProfileRunID" "$control_plist" 2>/dev/null || true
+  /usr/libexec/PlistBuddy -c "Delete :InputiaDevelopmentCandidate" "$control_plist" 2>/dev/null || true
   codesign --force --deep --sign "$INPUTIA_CODESIGN_IDENTITY" "$CONTROL_APP" >/dev/null
 fi
 

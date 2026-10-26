@@ -2352,7 +2352,7 @@ mod tests {
         let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
         let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
         let history_db = CString::new(history_db.to_string_lossy().as_bytes()).unwrap();
-        let bundle_id = CString::new("com.pais.handy").unwrap();
+        let bundle_id = CString::new("com.inputia.control").unwrap();
         let session = unsafe {
             inputia_session_new_luna_pinyin_simp_with_memory(
                 user_data_dir.as_ptr(),
@@ -2407,7 +2407,7 @@ mod tests {
         let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
         let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
         let clipboard_db = CString::new(clipboard_db.to_string_lossy().as_bytes()).unwrap();
-        let bundle_id = CString::new("com.pais.handy").unwrap();
+        let bundle_id = CString::new("com.inputia.control").unwrap();
         let session = unsafe {
             inputia_session_new_luna_pinyin_simp_with_memory(
                 user_data_dir.as_ptr(),

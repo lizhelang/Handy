@@ -1179,7 +1179,7 @@ mod tests {
                     PathBuf::from(home)
                         .join("Library")
                         .join("Application Support")
-                        .join("com.pais.handy")
+                        .join("com.inputia.control")
                         .join("models")
                 })
             })

@@ -8,14 +8,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "/tmp/inputia-runtime-import-probe.db".to_string());
     let app_data_dir = args.next().unwrap_or_else(|| {
         format!(
-            "{}/Library/Application Support/com.pais.handy",
+            "{}/Library/Application Support/com.inputia.control",
             std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
         )
     });
 
     let paths = ControlDataPaths::new(app_data_dir).with_memory_db(memory_db);
     let mut runtime = InputiaRuntime::open(paths, AppPolicy::default())?;
-    let summary = runtime.import_existing_sources(ImportLimits::default(), "com.pais.handy")?;
+    let summary =
+        runtime.import_existing_sources(ImportLimits::default(), "com.inputia.control")?;
     let completion_count_for_zhongguo = runtime.memory().completion_candidates("中国", 20)?.len();
 
     println!("history_imported={}", summary.history_imported);

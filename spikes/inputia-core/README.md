@@ -31,8 +31,8 @@ cargo run --manifest-path spikes/inputia-core/Cargo.toml \
   --features sqlite-memory \
   --example sqlite_import_probe \
   -- /tmp/inputia-memory-import-probe.db \
-  "$HOME/Library/Application Support/com.pais.handy/history.db" \
-  "$HOME/Library/Application Support/com.pais.handy/clipboard.db"
+  "$HOME/Library/Application Support/com.inputia.control/history.db" \
+  "$HOME/Library/Application Support/com.inputia.control/clipboard.db"
 rm -f /tmp/inputia-memory-import-probe.db
 ```
 

@@ -3,7 +3,7 @@
   "components": [
     {
       "artifact": "components/control.zip",
-      "bundle_id": "com.pais.handy.UnifiedCandidate",
+      "bundle_id": "com.inputia.control.UnifiedCandidate",
       "bundle_root": "Inputia.app",
       "cdhashes": [
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -11,7 +11,7 @@
       "role": "control",
       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "signing_requirement": {
-        "bundle_id": "com.pais.handy.UnifiedCandidate",
+        "bundle_id": "com.inputia.control.UnifiedCandidate",
         "team_id": "TESTTEAM01",
         "trust_domain": "developer-id"
       },

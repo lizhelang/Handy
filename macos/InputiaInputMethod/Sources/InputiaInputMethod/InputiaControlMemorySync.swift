@@ -11,7 +11,7 @@ struct InputiaControlDataPaths: Equatable {
       ?? URL(fileURLWithPath: NSTemporaryDirectory())
     let root = InputiaProfile.current.isCandidate || baseURL == nil
       ? InputiaProfile.current.controlRoot
-      : base.appendingPathComponent("com.pais.handy", isDirectory: true)
+      : base.appendingPathComponent("com.inputia.control", isDirectory: true)
     return Self(
       root: root,
       history: root.appendingPathComponent("history.db"),
@@ -62,7 +62,7 @@ struct InputiaControlMemorySyncResult: Equatable {
 }
 
 enum InputiaControlMemorySync {
-  static let controlBundleIdentifier = "com.pais.handy"
+  static let controlBundleIdentifier = "com.inputia.control"
   static let defaultLimit = 2_000
 
   static func sync(
