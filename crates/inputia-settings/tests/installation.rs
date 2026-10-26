@@ -34,7 +34,7 @@ fn channel_change_preserves_data_and_binding() {
     let candidate = receipt.clone().resolve(&context).unwrap();
     receipt.channel = UpdateChannel::Stable;
     let stable = receipt.resolve(&context).unwrap();
-    assert_eq!(candidate.handy_root, stable.handy_root);
+    assert_eq!(candidate.control_root, stable.control_root);
     assert_eq!(candidate.binding(), stable.binding());
     assert_eq!(
         stable.pair_manifest,
@@ -80,7 +80,7 @@ fn legacy_trial_retains_exact_profile_and_both_data_roots() {
     receipt.profile_id = "unified-candidate:trial-20260905".into();
     let located = receipt.resolve(&context).unwrap();
     assert_eq!(
-        located.handy_root,
+        located.control_root,
         context
             .home
             .join("Library/Application Support/HandyUnifiedCandidate/trial-20260905/Handy")

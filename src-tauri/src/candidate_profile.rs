@@ -9,9 +9,9 @@ const CANDIDATE_BUNDLE: &str = "com.pais.handy.UnifiedCandidate";
 static PROFILE: OnceLock<Result<Option<CandidateProfile>, String>> = OnceLock::new();
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-/// 已通过安装标记解析的 Handy/Inputia 配对数据域。
+/// 已通过安装标记解析的控制中心与输入法配对数据域。
 pub struct CandidateProfile {
-    pub handy_root: PathBuf,
+    pub control_root: PathBuf,
     pub inputia_root: PathBuf,
     pub profile_id: String,
     pub installation: Option<inputia_settings::installation::LocatedInstallation>,
@@ -122,7 +122,7 @@ pub fn resolve(
     let has_metadata = marker != &MetadataValue::Missing || plist_run != &MetadataValue::Missing;
     if !candidate {
         if has_metadata || environment_run.is_some() {
-            return Err("未授权的 Handy 候选 profile 标记".into());
+            return Err("未授权的控制中心候选 profile 标记".into());
         }
         return Ok(None);
     }
@@ -149,7 +149,7 @@ pub fn resolve(
         .join("HandyUnifiedCandidate")
         .join(run_id);
     Ok(Some(CandidateProfile {
-        handy_root: root.join("Handy"),
+        control_root: root.join("Handy"),
         inputia_root: root.join("Inputia"),
         profile_id: format!("unified-candidate:{run_id}"),
         installation: None,
@@ -162,16 +162,16 @@ impl CandidateProfile {
             return Ok(installation.pair_manifest.clone());
         }
         Ok(self
-            .handy_root
+            .control_root
             .parent()
             .ok_or("候选根缺少父目录")?
             .join("pair-manifest.json"))
     }
 
-    pub fn pair_binding(&self) -> Option<inputia_handy_runtime::protocol::PairBinding> {
+    pub fn pair_binding(&self) -> Option<inputia_runtime::protocol::PairBinding> {
         self.installation.as_ref().map(|installation| {
             let binding = installation.binding();
-            inputia_handy_runtime::protocol::PairBinding {
+            inputia_runtime::protocol::PairBinding {
                 product_id: binding.product_id,
                 installation_id: binding.installation_id,
                 pair_release_id: binding.pair_release_id,
@@ -180,11 +180,11 @@ impl CandidateProfile {
     }
 
     fn audit_and_prepare(&self) -> Result<(), String> {
-        let run_root = self.handy_root.parent().ok_or("候选根缺少父目录")?;
+        let run_root = self.control_root.parent().ok_or("候选根缺少父目录")?;
         audit_ancestors(run_root)?;
         // 在创建或打开任何数据文件前，审计两端现有目录（包括 SQLite sidecar）。
         audit_tree(run_root)?;
-        for path in [&self.handy_root, &self.inputia_root] {
+        for path in [&self.control_root, &self.inputia_root] {
             create_private_directories(path)?;
         }
         audit_tree(run_root)?;
@@ -299,7 +299,12 @@ fn platform_profile() -> Result<Option<CandidateProfile>, String> {
     let marker = metadata("HandyDevelopmentCandidate");
     let run = metadata("HandyProfileRunID");
     let bundle_id = bundle.bundleIdentifier().map(|value| value.to_string());
-    let environment = match std::env::var("HANDY_PROFILE_RUN_ID") {
+    // 改名前的启动配置仍可能只设置旧变量名。
+    let environment = match std::env::var("INPUTIA_PROFILE_RUN_ID") {
+        Err(std::env::VarError::NotPresent) => std::env::var("HANDY_PROFILE_RUN_ID"),
+        other => other,
+    };
+    let environment = match environment {
         Ok(value) => Some(value),
         Err(std::env::VarError::NotPresent) => None,
         Err(_) => return Err("候选环境 profile ID 不是有效 Unicode".into()),
@@ -342,7 +347,7 @@ fn platform_profile() -> Result<Option<CandidateProfile>, String> {
             return Err("当前主应用不是安装收据中的准确路径".into());
         }
         return Ok(Some(CandidateProfile {
-            handy_root: installation.handy_root.clone(),
+            control_root: installation.control_root.clone(),
             inputia_root: installation.inputia_root.clone(),
             profile_id: installation.receipt.profile_id.clone(),
             installation: Some(installation),
@@ -359,7 +364,9 @@ fn platform_profile() -> Result<Option<CandidateProfile>, String> {
 
 #[cfg(not(target_os = "macos"))]
 fn platform_profile() -> Result<Option<CandidateProfile>, String> {
-    if std::env::var_os("HANDY_PROFILE_RUN_ID").is_some() {
+    if std::env::var_os("INPUTIA_PROFILE_RUN_ID").is_some()
+        || std::env::var_os("HANDY_PROFILE_RUN_ID").is_some()
+    {
         return Err("此平台不支持已签名 macOS 候选 profile".into());
     }
     Ok(None)
@@ -484,7 +491,7 @@ mod tests {
         }
         let profile = candidate("A-1_trial", base).unwrap().unwrap();
         assert_eq!(
-            profile.handy_root,
+            profile.control_root,
             base.join("HandyUnifiedCandidate/A-1_trial/Handy")
         );
         assert_eq!(
@@ -515,16 +522,16 @@ mod tests {
         let base = temp.path().canonicalize().unwrap();
         let profile = candidate("trial", &base).unwrap().unwrap();
         profile.audit_and_prepare().unwrap();
-        assert!(profile.handy_root.is_dir());
+        assert!(profile.control_root.is_dir());
         assert!(profile.inputia_root.is_dir());
         assert!(!base.join("com.pais.handy").exists());
         assert!(!base.join("Inputia").exists());
-        std::fs::write(profile.handy_root.join("history.db-wal"), b"synthetic").unwrap();
+        std::fs::write(profile.control_root.join("history.db-wal"), b"synthetic").unwrap();
         profile.audit_and_prepare().unwrap();
     }
     #[cfg(unix)]
     #[test]
-    fn rejects_linked_sidecars_and_inputia_subtrees_before_creating_handy() {
+    fn rejects_linked_sidecars_and_inputia_subtrees_before_creating_control() {
         use std::os::unix::fs::symlink;
         let temp = tempfile::tempdir().unwrap();
         let base = temp.path().canonicalize().unwrap();
@@ -534,11 +541,11 @@ mod tests {
         std::fs::write(&outside, b"untouched").unwrap();
         symlink(&outside, profile.inputia_root.join("memory.db-shm")).unwrap();
         assert!(profile.audit_and_prepare().is_err());
-        assert!(!profile.handy_root.exists());
+        assert!(!profile.control_root.exists());
         std::fs::remove_file(profile.inputia_root.join("memory.db-shm")).unwrap();
         std::fs::hard_link(&outside, profile.inputia_root.join("memory.db-wal")).unwrap();
         assert!(profile.audit_and_prepare().is_err());
-        assert!(!profile.handy_root.exists());
+        assert!(!profile.control_root.exists());
         assert_eq!(std::fs::read(outside).unwrap(), b"untouched");
     }
     #[cfg(unix)]
@@ -565,10 +572,10 @@ mod tests {
         let base = temp.path().canonicalize().unwrap();
         std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o755)).unwrap();
         let profile = candidate("existing", &base).unwrap().unwrap();
-        std::fs::create_dir_all(&profile.handy_root).unwrap();
-        let run_root = profile.handy_root.parent().unwrap();
+        std::fs::create_dir_all(&profile.control_root).unwrap();
+        let run_root = profile.control_root.parent().unwrap();
         std::fs::set_permissions(run_root, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let file = profile.handy_root.join("settings.json");
+        let file = profile.control_root.join("settings.json");
         std::fs::write(&file, b"synthetic").unwrap();
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
         profile.audit_and_prepare().unwrap();

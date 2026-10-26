@@ -474,7 +474,7 @@ enum InputiaVoiceInputLauncher {
         try profile.validateRuntimeConnectionPaths()
         let bytes = try profile.readPairManifest()
         let manifest = try SignedPairManifest.verify(bytes, trust: InputiaEmbeddedPairTrust.trust)
-        let identity = try manifest.identity(for: .handy)
+        let identity = try manifest.identity(for: .control)
         if serviceTerminationObserver == nil {
           serviceTerminationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: nil
@@ -529,7 +529,7 @@ enum InputiaVoiceInputLauncher {
     try profile.validateRuntimeConnectionPaths()
     let bytes = try profile.readPairManifest()
     guard bytes.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
-    return try SignedPairManifest.verify(bytes, trust: InputiaEmbeddedPairTrust.trust).identity(for: .handy)
+    return try SignedPairManifest.verify(bytes, trust: InputiaEmbeddedPairTrust.trust).identity(for: .control)
   }
 
   private static func trustedServiceIsRunning(identity: PairCodeIdentity) throws -> Bool {
@@ -590,7 +590,7 @@ enum InputiaVoiceInputLauncher {
     var requirement: SecRequirement?
     guard SecRequirementCreateWithString("identifier \"\(identity.identifier)\" and (\(hashes))" as CFString, [], &requirement) == errSecSuccess,
       let requirement else { throw InputiaVoiceServiceError.handshake }
-    // 不采用 LaunchServices 可能指向构建备份的 URL，也不回落到日常 Handy 包。
+    // 不采用 LaunchServices 可能指向构建备份的 URL，也不回落到日常 Inputia 包。
     for path in installedServiceAppPaths() {
       let url = URL(fileURLWithPath: path).standardizedFileURL
       guard url.resolvingSymlinksInPath() == url,
@@ -1302,10 +1302,10 @@ enum InputiaVoiceInputLauncher {
   }
   #endif
   #endif
-  static let handyBundleIdentifier = "com.pais.handy"
+  static let controlBundleIdentifier = "com.pais.handy"
   // 用户可见名称变更不擅自改协议/授权身份；发布程序仍兼容原bundle ID。
-  static let inputiaBundleIdentifier = handyBundleIdentifier
-  static let voiceServiceExecutableNames = ["handy", "Inputia", "Handy"]
+  static let inputiaBundleIdentifier = controlBundleIdentifier
+  static let voiceServiceExecutableNames = ["inputia", "Inputia", "inputia"]
   static let toggleTranscriptionArguments = ["--toggle-transcription"]
   static let startupArguments = ["--start-hidden"]
   static let startupToggleDelaySeconds: TimeInterval = 1.5
@@ -1338,11 +1338,11 @@ enum InputiaVoiceInputLauncher {
       withBundleIdentifier: inputiaBundleIdentifier
     )?.path,
     legacyWorkspaceAppPath: String? = NSWorkspace.shared.urlForApplication(
-      withBundleIdentifier: handyBundleIdentifier
+      withBundleIdentifier: controlBundleIdentifier
     )?.path
   ) -> [String] {
     uniquePaths([
-      environment["INPUTIA_HANDY_APP"],
+      environment["INPUTIA_CONTROL_APP"],
       workspaceAppPath,
       legacyWorkspaceAppPath,
       "/Applications/Inputia.app",
@@ -1366,14 +1366,14 @@ enum InputiaVoiceInputLauncher {
       ?? "\(appPath)/Contents/MacOS/Inputia"
   }
 
-  static func findHandyApp(
+  static func findControlApp(
     environment: [String: String] = ProcessInfo.processInfo.environment,
     homeDirectory: String = NSHomeDirectory(),
     workspaceAppPath: String? = NSWorkspace.shared.urlForApplication(
       withBundleIdentifier: inputiaBundleIdentifier
     )?.path,
     legacyWorkspaceAppPath: String? = NSWorkspace.shared.urlForApplication(
-      withBundleIdentifier: handyBundleIdentifier
+      withBundleIdentifier: controlBundleIdentifier
     )?.path,
     fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
   ) -> String? {
@@ -1398,17 +1398,17 @@ enum InputiaVoiceInputLauncher {
     )
   }
 
-  static func isHandyRunning() -> Bool {
-    !NSRunningApplication.runningApplications(withBundleIdentifier: handyBundleIdentifier).isEmpty
+  static func isControlRunning() -> Bool {
+    !NSRunningApplication.runningApplications(withBundleIdentifier: controlBundleIdentifier).isEmpty
   }
 
   @discardableResult
   static func triggerVoiceInput() -> InputiaVoiceInputLaunchResult {
-    guard let appPath = findHandyApp() else {
+    guard let appPath = findControlApp() else {
       return .missing
     }
 
-    let plan = launchPlan(appPath: appPath, isRunning: isHandyRunning())
+    let plan = launchPlan(appPath: appPath, isRunning: isControlRunning())
     if plan.delayed {
       openHiddenService(appPath: plan.appPath) { error in
         if let error {

@@ -1,7 +1,7 @@
 # 空输入联想离线评测
 
 用于比较上屏后联想引擎的改动。测试集、切分规则、基线与验收门槛固定在
-[`manifest.json`](../../crates/inputia-handy-runtime/tests/fixtures/prediction_eval/manifest.json)，调参只能使用 `*-dev` 集合。
+[`manifest.json`](../../crates/inputia-runtime/tests/fixtures/prediction_eval/manifest.json)，调参只能使用 `*-dev` 集合。
 
 ## 出题与命中
 
@@ -22,11 +22,11 @@
 
 ```bash
 python3 -m venv /tmp/prediction-eval-env && /tmp/prediction-eval-env/bin/pip install jieba==0.42.1
-cargo build --release --offline --manifest-path crates/inputia-handy-runtime/Cargo.toml --example prediction_eval
+cargo build --release --offline --manifest-path crates/inputia-runtime/Cargo.toml --example prediction_eval
 /tmp/prediction-eval-env/bin/python scripts/prediction-eval/build_cases.py \
-  --items crates/inputia-handy-runtime/tests/fixtures/prediction_eval/t1_everyday.jsonl \
+  --items crates/inputia-runtime/tests/fixtures/prediction_eval/t1_everyday.jsonl \
   --set-prefix t1 --dev 100 --out target/prediction-eval/t1_cases.jsonl
-crates/inputia-handy-runtime/target/release/examples/prediction_eval \
+crates/inputia-runtime/target/release/examples/prediction_eval \
   --root target/prediction-eval/root-public \
   --lexicon src-tauri/resources/personalization/base-lexicon.tsv \
   --cases target/prediction-eval/t1_cases.jsonl --limits 3,5

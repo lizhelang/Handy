@@ -3,7 +3,7 @@ use crate::native_pair_auth::{PairManifest, PeerRole};
 use crate::voice_dispatch::{
     AuthenticatedVoiceConnection, DispatchError, VoiceCoordinatorPort, VoiceDispatcher,
 };
-use inputia_handy_runtime::{
+use inputia_runtime::{
     output_ledger::{OutputIntent, OutputOutcome},
     protocol::{Handshake, HandshakePolicy, ProtocolError},
     service::HistoryService,
@@ -133,9 +133,7 @@ impl VoiceConnection {
         history: &HistoryService,
         app: Option<&tauri::AppHandle>,
     ) -> Result<(), ConnectionError> {
-        use inputia_handy_runtime::voice_protocol::{
-            VoicePolicyAcknowledgement, VoicePolicyBarrier,
-        };
+        use inputia_runtime::voice_protocol::{VoicePolicyAcknowledgement, VoicePolicyBarrier};
         self.context.invalidate_policy();
         let result = (|| {
             let version = history
@@ -191,7 +189,7 @@ impl VoiceConnection {
         coordinator: &impl VoiceCoordinatorPort,
         app: Option<&tauri::AppHandle>,
     ) -> Result<(), ConnectionError> {
-        use inputia_handy_runtime::voice_protocol::{
+        use inputia_runtime::voice_protocol::{
             VoiceOutputCommand, VoiceOutputReply, VoiceReply, VoiceReplyError, VoiceWireRequest,
         };
         let result = (|| {
@@ -199,7 +197,7 @@ impl VoiceConnection {
                 .map_err(|_| ConnectionError::ControlFrame)?;
             match request {
                 VoiceWireRequest::Memory(request) => {
-                    use inputia_handy_runtime::legacy_memory_wire::{
+                    use inputia_runtime::legacy_memory_wire::{
                         MemoryCommand, MemoryReply, CAPABILITY,
                     };
                     let current = history
@@ -244,7 +242,7 @@ impl VoiceConnection {
                     if stale {
                         reply.code = Some("memory_epoch_revoked".into());
                         reply.privacy_barrier = Some(
-                            inputia_handy_runtime::voice_protocol::VoicePolicyBarrier::new(
+                            inputia_runtime::voice_protocol::VoicePolicyBarrier::new(
                                 history
                                     .voice_terms_version()
                                     .map_err(|_| ConnectionError::PolicyUnavailable)?,
@@ -256,7 +254,7 @@ impl VoiceConnection {
                         .map_err(|_| ConnectionError::ControlFrame)?;
                     if let Some(barrier) = reply.privacy_barrier {
                         self.context.invalidate_policy();
-                        let ack: inputia_handy_runtime::voice_protocol::VoicePolicyAcknowledgement =
+                        let ack: inputia_runtime::voice_protocol::VoicePolicyAcknowledgement =
                             transport::read_frame(&mut self.stream)
                                 .map_err(|_| ConnectionError::PolicySync)?;
                         let current = history
@@ -288,9 +286,7 @@ impl VoiceConnection {
                     Ok(())
                 }
                 VoiceWireRequest::Personalization(request) => {
-                    use inputia_handy_runtime::personalization_wire::{
-                        PersonalizationReply, CAPABILITY,
-                    };
+                    use inputia_runtime::personalization_wire::{PersonalizationReply, CAPABILITY};
                     let current = history
                         .policy_epoch()
                         .map_err(|_| ConnectionError::PolicyUnavailable)?;
@@ -315,17 +311,34 @@ impl VoiceConnection {
                         },
                     };
                     if stale {
-                        reply.privacy_barrier=Some(inputia_handy_runtime::voice_protocol::VoicePolicyBarrier::new(history.voice_terms_version().map_err(|_|ConnectionError::PolicyUnavailable)?).map_err(|_|ConnectionError::PolicySync)?);
-                    } else if reply.enabled && matches!(request.personalization,inputia_handy_runtime::personalization_wire::PersonalizationCommand::Policy) {
-                        if history.issue_privacy_reader(self.client.instance_id.clone(),current).is_err() {
-                            reply.enabled=false;reply.result=None;reply.code=Some("privacy_epoch_revoked".into());
+                        reply.privacy_barrier = Some(
+                            inputia_runtime::voice_protocol::VoicePolicyBarrier::new(
+                                history
+                                    .voice_terms_version()
+                                    .map_err(|_| ConnectionError::PolicyUnavailable)?,
+                            )
+                            .map_err(|_| ConnectionError::PolicySync)?,
+                        );
+                    } else if reply.enabled
+                        && matches!(
+                            request.personalization,
+                            inputia_runtime::personalization_wire::PersonalizationCommand::Policy
+                        )
+                    {
+                        if history
+                            .issue_privacy_reader(self.client.instance_id.clone(), current)
+                            .is_err()
+                        {
+                            reply.enabled = false;
+                            reply.result = None;
+                            reply.code = Some("privacy_epoch_revoked".into());
                         }
                     }
                     transport::write_frame(&mut self.stream, &reply)
                         .map_err(|_| ConnectionError::ControlFrame)?;
                     if let Some(barrier) = reply.privacy_barrier {
                         self.context.invalidate_policy();
-                        let ack: inputia_handy_runtime::voice_protocol::VoicePolicyAcknowledgement =
+                        let ack: inputia_runtime::voice_protocol::VoicePolicyAcknowledgement =
                             transport::read_frame(&mut self.stream)
                                 .map_err(|_| ConnectionError::PolicySync)?;
                         let current = history
@@ -357,7 +370,7 @@ impl VoiceConnection {
                     Ok(())
                 }
                 VoiceWireRequest::TypedCapture(request) => {
-                    use inputia_handy_runtime::voice_protocol::{
+                    use inputia_runtime::voice_protocol::{
                         TypedCaptureReply, TYPED_CAPTURE_CAPABILITY,
                     };
                     let accepted = history.policy_epoch().ok().is_some_and(|epoch| {
@@ -385,7 +398,7 @@ impl VoiceConnection {
                         .map_err(|_| ConnectionError::ControlFrame)
                 }
                 VoiceWireRequest::TargetBridge(request) => {
-                    use inputia_handy_runtime::voice_protocol::{
+                    use inputia_runtime::voice_protocol::{
                         TargetBridgeCommand, TargetBridgePurpose, TargetBridgeReply,
                     };
                     let result = (|| {
@@ -402,8 +415,7 @@ impl VoiceConnection {
                             .validate_for(&self.context.voice_peer(epoch))
                             .map_err(|_| "target_unauthorized")?;
                         if !self.client.capabilities.iter().any(|capability| {
-                            capability
-                                == inputia_handy_runtime::voice_protocol::IME_TARGET_CAPABILITY
+                            capability == inputia_runtime::voice_protocol::IME_TARGET_CAPABILITY
                         }) {
                             return Err("target_capability_required");
                         }
@@ -425,7 +437,7 @@ impl VoiceConnection {
                                 .map_err(|_| "target_output_unavailable")?
                                 .ok_or("target_output_unavailable")?;
                             if output.state
-                                != inputia_handy_runtime::output_ledger::OutputState::Dispatched
+                                != inputia_runtime::output_ledger::OutputState::Dispatched
                                 || self.dispatched_outputs.get(operation) != Some(&output.intent)
                             {
                                 return Err("target_delivery_retired");
@@ -457,9 +469,7 @@ impl VoiceConnection {
                         privacy::{HistoryMode, PrivacyContext, PrivacyPolicy, SourceTrust},
                         terms::HotwordBudget,
                     };
-                    use inputia_handy_runtime::voice_protocol::{
-                        SharedTermsReply, VoiceTermsVersion,
-                    };
+                    use inputia_runtime::voice_protocol::{SharedTermsReply, VoiceTermsVersion};
                     let request_id = request.request_id.clone();
                     let result = (|| {
                         let epoch = history
@@ -478,14 +488,12 @@ impl VoiceConnection {
                             &request.client_instance,
                             &request.server_instance,
                             &lease.target,
-                            inputia_handy_runtime::voice_protocol::TargetBridgePurpose::SharedTerms,
+                            inputia_runtime::voice_protocol::TargetBridgePurpose::SharedTerms,
                         )
                         .map_err(|_| VoiceReplyError::Unauthorized)?;
                         let custom_words = crate::settings::get_settings(app).custom_words;
                         let explicit_terms =
-                            inputia_handy_runtime::voice_protocol::explicit_hotword_terms(
-                                &custom_words,
-                            );
+                            inputia_runtime::voice_protocol::explicit_hotword_terms(&custom_words);
                         let snapshot = history
                             .session_hotwords(
                                 PrivacyPolicy {
@@ -533,7 +541,7 @@ impl VoiceConnection {
                             &request.client_instance,
                             &request.server_instance,
                             &lease.target,
-                            inputia_handy_runtime::voice_protocol::TargetBridgePurpose::SharedTerms,
+                            inputia_runtime::voice_protocol::TargetBridgePurpose::SharedTerms,
                         )
                         .map_err(|_| VoiceReplyError::Unauthorized)?;
                         if crate::settings::get_settings(app).custom_words != custom_words {
@@ -561,7 +569,7 @@ impl VoiceConnection {
                         .map_err(|_| ConnectionError::ControlFrame)
                 }
                 VoiceWireRequest::Menu(request) => {
-                    use inputia_handy_runtime::voice_protocol::MenuReply;
+                    use inputia_runtime::voice_protocol::MenuReply;
                     let request_id = request.request_id.clone();
                     let result = self
                         .context
@@ -576,7 +584,7 @@ impl VoiceConnection {
                         .map_err(|_| ConnectionError::ControlFrame)
                 }
                 VoiceWireRequest::HostShortcut(request) => {
-                    use inputia_handy_runtime::voice_protocol::HostShortcutReply;
+                    use inputia_runtime::voice_protocol::HostShortcutReply;
                     let request_id = request.request_id.clone();
                     let reply = match app.ok_or(DispatchError::Unauthorized).and_then(|app| {
                         let broker = app
@@ -586,10 +594,18 @@ impl VoiceConnection {
                         request
                             .validate_for(&self.context.voice_peer(epoch))
                             .map_err(|_| DispatchError::Unauthorized)?;
-                        if let inputia_handy_runtime::voice_protocol::HostShortcutCommand::Register { lease } = &request.shortcut {
-                            crate::ime_target_broker::check(app, &request.client_instance, &request.server_instance,
-                                &lease.target, inputia_handy_runtime::voice_protocol::TargetBridgePurpose::Start)
-                                .map_err(|_| DispatchError::Unauthorized)?;
+                        if let inputia_runtime::voice_protocol::HostShortcutCommand::Register {
+                            lease,
+                        } = &request.shortcut
+                        {
+                            crate::ime_target_broker::check(
+                                app,
+                                &request.client_instance,
+                                &request.server_instance,
+                                &lease.target,
+                                inputia_runtime::voice_protocol::TargetBridgePurpose::Start,
+                            )
+                            .map_err(|_| DispatchError::Unauthorized)?;
                         }
                         Ok(broker.process_request(request))
                     }) {
@@ -615,7 +631,7 @@ impl VoiceConnection {
                             &mut self.stream,
                             &VoiceReply::Rejected {
                                 request_id: request.request_id.clone(),
-                                code: inputia_handy_runtime::voice_protocol::VoiceReplyError::CoordinatorRejected,
+                                code: inputia_runtime::voice_protocol::VoiceReplyError::CoordinatorRejected,
                             },
                         )
                         .map_err(|_| ConnectionError::ControlFrame);
@@ -639,7 +655,7 @@ impl VoiceConnection {
                                 &request.client_instance,
                                 &request.server_instance,
                                 target,
-                                inputia_handy_runtime::voice_protocol::TargetBridgePurpose::Start,
+                                inputia_runtime::voice_protocol::TargetBridgePurpose::Start,
                             )
                             .map_err(|_| DispatchError::Unauthorized)
                         });
@@ -656,7 +672,7 @@ impl VoiceConnection {
                     }
                     if matches!(
                         request.command,
-                        inputia_handy_runtime::voice_protocol::VoiceCommand::HostShortcut { .. }
+                        inputia_runtime::voice_protocol::VoiceCommand::HostShortcut { .. }
                     ) {
                         let authorized = app
                             .and_then(|app| {
@@ -723,9 +739,14 @@ impl VoiceConnection {
                                 .start
                                 .start_identity()
                                 .ok_or(DispatchError::Unauthorized)?;
-                            crate::ime_target_broker::check(app.ok_or(DispatchError::Unauthorized)?, &request.client_instance,
-                                &request.server_instance, target, inputia_handy_runtime::voice_protocol::TargetBridgePurpose::SharedTerms)
-                                .map_err(|_| DispatchError::Unauthorized)
+                            crate::ime_target_broker::check(
+                                app.ok_or(DispatchError::Unauthorized)?,
+                                &request.client_instance,
+                                &request.server_instance,
+                                target,
+                                inputia_runtime::voice_protocol::TargetBridgePurpose::SharedTerms,
+                            )
+                            .map_err(|_| DispatchError::Unauthorized)
                         })();
                         if let Err(error) = authorized {
                             return transport::write_frame(
@@ -812,9 +833,9 @@ impl VoiceConnection {
 /// 已认证后台菜单入口；请求先占用去重槽，失败/回执未知均不可自动重放。
 fn menu_action(
     app: &tauri::AppHandle,
-    request: &inputia_handy_runtime::voice_protocol::MenuRequest,
-) -> Result<inputia_handy_runtime::voice_protocol::MenuReply, DispatchError> {
-    use inputia_handy_runtime::voice_protocol::{MenuCommand, MenuModel, MenuReply};
+    request: &inputia_runtime::voice_protocol::MenuRequest,
+) -> Result<inputia_runtime::voice_protocol::MenuReply, DispatchError> {
+    use inputia_runtime::voice_protocol::{MenuCommand, MenuModel, MenuReply};
     use std::sync::{Arc, Mutex, OnceLock};
     use tauri::{Emitter, Manager};
     use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -955,8 +976,8 @@ fn menu_action(
     })
 }
 
-fn reply_error(error: DispatchError) -> inputia_handy_runtime::voice_protocol::VoiceReplyError {
-    use inputia_handy_runtime::voice_protocol::VoiceReplyError;
+fn reply_error(error: DispatchError) -> inputia_runtime::voice_protocol::VoiceReplyError {
+    use inputia_runtime::voice_protocol::VoiceReplyError;
     match error {
         DispatchError::Unauthorized => VoiceReplyError::Unauthorized,
         DispatchError::MissingSession => VoiceReplyError::MissingSession,
@@ -1042,13 +1063,13 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
             .map_err(|_| "unsafe_pair_manifest")?;
             let manifest = trust.load(&bytes).map_err(|_| "pair_manifest_rejected")?;
             let version = service.voice_terms_version()?;
-            let instance = inputia_handy_runtime::voice_protocol::VoicePolicyBarrier::new(version)
+            let instance = inputia_runtime::voice_protocol::VoicePolicyBarrier::new(version)
                 .map_err(|_| "instance_entropy")?
                 .barrier_id;
             use sha2::{Digest, Sha256};
             let profile_hash = format!("{:x}", Sha256::digest(profile.profile_id.as_bytes()));
             let socket = std::path::PathBuf::from(format!(
-                "/private/tmp/handy-unified-{uid}-{}",
+                "/private/tmp/inputia-unified-{uid}-{}",
                 &profile_hash[..12]
             ))
             .join(format!("{}.sock", &instance[..24]));
@@ -1059,7 +1080,7 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
                 .map_err(|_| "listener_nonblocking")?;
             let discovery = serde_json::json!({"protocol_major":1,"profile_id":profile.profile_id,"server_instance":instance,"socket_path":socket,"pair_binding":profile.pair_binding()});
             let temporary = profile
-                .handy_root
+                .control_root
                 .join(format!(".endpoint-{instance}.json"));
             let mut output = std::fs::OpenOptions::new()
                 .write(true)
@@ -1074,7 +1095,7 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
             output.sync_all().map_err(|_| "endpoint_sync")?;
             std::fs::rename(
                 &temporary,
-                profile.handy_root.join("integration-endpoint.json"),
+                profile.control_root.join("integration-endpoint.json"),
             )
             .map_err(|_| "endpoint_publish")?;
             log::info!(
@@ -1089,19 +1110,19 @@ pub(crate) fn start_candidate_listener(app: &tauri::AppHandle) {
                 policy_epoch: service.policy_epoch()?,
                 pair_binding: profile.pair_binding(),
                 capabilities: vec![
-                    inputia_handy_runtime::voice_protocol::VOICE_CAPABILITY.into(),
-                    inputia_handy_runtime::voice_protocol::SHARED_TERMS_CAPABILITY.into(),
-                    inputia_handy_runtime::voice_protocol::IME_TARGET_CAPABILITY.into(),
-                    inputia_handy_runtime::voice_protocol::TYPED_CAPTURE_CAPABILITY.into(),
-                    inputia_handy_runtime::personalization_wire::CAPABILITY.into(),
-                    inputia_handy_runtime::legacy_memory_wire::CAPABILITY.into(),
+                    inputia_runtime::voice_protocol::VOICE_CAPABILITY.into(),
+                    inputia_runtime::voice_protocol::SHARED_TERMS_CAPABILITY.into(),
+                    inputia_runtime::voice_protocol::IME_TARGET_CAPABILITY.into(),
+                    inputia_runtime::voice_protocol::TYPED_CAPTURE_CAPABILITY.into(),
+                    inputia_runtime::personalization_wire::CAPABILITY.into(),
+                    inputia_runtime::legacy_memory_wire::CAPABILITY.into(),
                 ],
             };
             if server.pair_binding.is_some() {
-                server.protocol_minor = inputia_handy_runtime::protocol::PROTOCOL_MINOR;
+                server.protocol_minor = inputia_runtime::protocol::PROTOCOL_MINOR;
                 server
                     .capabilities
-                    .push(inputia_handy_runtime::protocol::INSTALLATION_BINDING_CAPABILITY.into());
+                    .push(inputia_runtime::protocol::INSTALLATION_BINDING_CAPABILITY.into());
             }
             let expected_peer_path = profile
                 .installation

@@ -1,0 +1,28 @@
+[package]
+name = "inputia-runtime"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+
+[lib]
+name = "inputia_runtime"
+path = "src/lib.rs"
+
+[dependencies]
+inputia-settings = { path = "../inputia-settings" }
+inputia-core = { path = "../inputia-core", features = ["sqlite-memory", "snapshot-wire"] }
+rusqlite = { version = "0.37", features = ["bundled", "functions"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+ring = "0.17"
+getrandom = "0.2"
+hound = "3.5"
+png = "0.17"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

@@ -3,8 +3,8 @@
 //! 连接服务仍须把握手 instance 与同一 socket 的 audit 身份绑定，重连时复核，
 //! 并验证策略/遗忘清除回执；此模块不能替代该认证握手，也不创建监听端口。
 
-use inputia_handy_runtime::protocol::{Handshake, MAX_FRAME_BYTES};
-use inputia_handy_runtime::{
+use inputia_runtime::protocol::{Handshake, MAX_FRAME_BYTES};
+use inputia_runtime::{
     output_ledger::{OutputAction, OutputIntent, OutputOutcome, OutputOwner, OutputState},
     service::{HistoryService, OutputPermit},
     voice_ledger::SessionRecord,
@@ -17,7 +17,7 @@ use inputia_handy_runtime::{
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
 
-// 同一Handy进程仅一个录音actor。只锁资格事务至入队，不持锁等待actor回执。
+// 同一Inputia进程仅一个录音actor。只锁资格事务至入队，不持锁等待actor回执。
 static VOICE_ENQUEUE_ORDER: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 enum PeerProof {
@@ -49,7 +49,7 @@ impl AuthenticatedVoiceConnection {
 
     pub(crate) fn authorize_menu(
         &self,
-        request: &inputia_handy_runtime::voice_protocol::MenuRequest,
+        request: &inputia_runtime::voice_protocol::MenuRequest,
         history: &HistoryService,
     ) -> Result<(), DispatchError> {
         let version = history
@@ -616,8 +616,8 @@ impl<'a, C: VoiceCoordinatorPort> VoiceDispatcher<'a, C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inputia_handy_runtime::output_ledger::OutputState;
-    use inputia_handy_runtime::voice_protocol::*;
+    use inputia_runtime::output_ledger::OutputState;
+    use inputia_runtime::voice_protocol::*;
     use rusqlite::Connection;
     use std::sync::{mpsc, Mutex};
 
@@ -742,7 +742,7 @@ mod tests {
         history: &HistoryService,
         start: &VoiceRequest,
         text: &str,
-    ) -> inputia_handy_runtime::output_ledger::OutputRecord {
+    ) -> inputia_runtime::output_ledger::OutputRecord {
         Connection::open(root.join("history.db"))
             .unwrap()
             .execute(
@@ -949,7 +949,7 @@ mod tests {
             }
             dispatcher.dispatch(&ctx, start.clone()).unwrap();
             let text = if case == "oversized" {
-                "\"".repeat(inputia_handy_runtime::voice_protocol::MAX_DELIVERY_TEXT_BYTES)
+                "\"".repeat(inputia_runtime::voice_protocol::MAX_DELIVERY_TEXT_BYTES)
             } else {
                 "synthetic".into()
             };
@@ -1140,7 +1140,7 @@ mod tests {
                         .unwrap()
                         .unwrap()
                         .state,
-                    inputia_handy_runtime::output_ledger::OutputState::Rejected
+                    inputia_runtime::output_ledger::OutputState::Rejected
                 );
             }
         }

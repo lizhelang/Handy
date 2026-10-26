@@ -19,7 +19,7 @@ struct InputiaLocatedInstallation: Decodable, Equatable {
     let data: DataLocation
   }
   let receipt: Receipt
-  let handy_root: String
+  let control_root: String
   let inputia_root: String
   let pair_manifest: String
   var binding: InputiaPairBinding {
@@ -52,7 +52,7 @@ struct InputiaProfile: Equatable {
   let isCandidate: Bool
   let runID: String?
   let root: URL
-  let handyRoot: URL
+  let controlRoot: URL
   var installation: InputiaLocatedInstallation? = nil
 
   var profileID: String { installation?.receipt.profile_id ?? runID.map { "unified-candidate:\($0)" } ?? "handy-local" }
@@ -65,7 +65,7 @@ struct InputiaProfile: Equatable {
   }
 
   func readEndpoint() throws -> Data {
-    try Self.readBoundedFile(handyRoot.appendingPathComponent("integration-endpoint.json"), limit: 4096, privateFile: true)
+    try Self.readBoundedFile(controlRoot.appendingPathComponent("integration-endpoint.json"), limit: 4096, privateFile: true)
   }
 
   var settings: URL { root.appendingPathComponent("settings.json") }
@@ -133,7 +133,7 @@ struct InputiaProfile: Equatable {
     guard Bundle.main.bundleURL.path == expectedPath else { throw InputiaProfileError.pathOutsideProfile }
     return Self(isCandidate: true, runID: installation.receipt.data.run_id,
       root: URL(fileURLWithPath: installation.inputia_root, isDirectory: true),
-      handyRoot: URL(fileURLWithPath: installation.handy_root, isDirectory: true), installation: installation)
+      controlRoot: URL(fileURLWithPath: installation.control_root, isDirectory: true), installation: installation)
   }
   #endif
 
@@ -212,7 +212,7 @@ struct InputiaProfile: Equatable {
       }
       return Self(isCandidate: false, runID: nil,
                   root: base.appendingPathComponent("Inputia", isDirectory: true),
-                  handyRoot: base.appendingPathComponent("com.pais.handy", isDirectory: true))
+                  controlRoot: base.appendingPathComponent("com.pais.handy", isDirectory: true))
     }
     if let environmentID, let plistID, environmentID != plistID {
       throw InputiaProfileError.conflictingRunID
@@ -228,7 +228,7 @@ struct InputiaProfile: Equatable {
       .appendingPathComponent(runID, isDirectory: true)
     return Self(isCandidate: true, runID: runID,
                 root: runRoot.appendingPathComponent("Inputia", isDirectory: true),
-                handyRoot: runRoot.appendingPathComponent("Handy", isDirectory: true))
+                controlRoot: runRoot.appendingPathComponent("Handy", isDirectory: true))
   }
 
   func validateCandidatePaths() throws {
@@ -236,7 +236,7 @@ struct InputiaProfile: Equatable {
     try validateDirectPaths()
     // 只在启动/重新初始化时遍历候选目录元数据，不读取文件正文，不进入链接目标。
     try Self.auditExistingTree(root)
-    try Self.auditExistingTree(handyRoot)
+    try Self.auditExistingTree(controlRoot)
   }
 
   /// 运行期连接只复核固定目录链；端点与配对清单正文由 readBoundedFile 逐层拒绝链接并有界读取。
@@ -255,10 +255,10 @@ struct InputiaProfile: Equatable {
     try validateDirectPaths()
   }
 
-  func allowsHandyImport(_ path: String) -> Bool {
+  func allowsControlImport(_ path: String) -> Bool {
     guard isCandidate else { return true }
     let url = URL(fileURLWithPath: path).standardizedFileURL
-    let expected = ["history.db", "clipboard.db"].map { handyRoot.appendingPathComponent($0).standardizedFileURL }
+    let expected = ["history.db", "clipboard.db"].map { controlRoot.appendingPathComponent($0).standardizedFileURL }
     guard expected.contains(url) else { return false }
     return (try? Self.validateDatabasePath(url)) != nil
   }
@@ -278,8 +278,8 @@ struct InputiaProfile: Equatable {
   }
 
   private func validateDirectPaths() throws {
-    for path in writablePaths + [handyRoot, handyRoot.appendingPathComponent("history.db"),
-                                 handyRoot.appendingPathComponent("clipboard.db")] {
+    for path in writablePaths + [controlRoot, controlRoot.appendingPathComponent("history.db"),
+                                 controlRoot.appendingPathComponent("clipboard.db")] {
       if path.pathExtension == "db" {
         try Self.validateDatabasePath(path)
       } else {

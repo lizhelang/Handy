@@ -484,7 +484,7 @@ fi
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExplicitHotwords.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHostTextPolicy.swift" \
-  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaControlMemorySync.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaInputTextRouter.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaShortcutClassifier.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaExpandedCandidateGridNavigation.swift" \
@@ -597,20 +597,20 @@ cp -R "$RIME_DATA_BUILD_DIR" "$RESOURCES_DIR/RimeData"
   -o "$BUILD_DIR/inputia-input-text-router-self-check"
 
 /usr/bin/swiftc \
-  "$ROOT_DIR/Tools/InputiaHandyMemorySyncSelfCheck.swift" \
+  "$ROOT_DIR/Tools/InputiaControlMemorySyncSelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
-  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaControlMemorySync.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsStore.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "${CAPI_LINK_ARGS[@]}" \
   -target "$TARGET_TRIPLE" \
   -framework AppKit \
-  -o "$BUILD_DIR/inputia-handy-memory-sync-self-check"
+  -o "$BUILD_DIR/inputia-inputia-memory-sync-self-check"
 
 /usr/bin/swiftc -parse-as-library \
   "$ROOT_DIR/Tools/InputiaCandidateIdentitySelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
-  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaControlMemorySync.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsStore.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "${CAPI_LINK_ARGS[@]}" \
@@ -700,7 +700,7 @@ done
   "$ROOT_DIR/Tools/InputiaSettingsWindowSelfCheck.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaProfile.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsWindow.swift" \
-  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaHandyMemorySync.swift" \
+  "$ROOT_DIR/Sources/InputiaInputMethod/InputiaControlMemorySync.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaSettingsStore.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaRustBridge.swift" \
   "${CAPI_LINK_ARGS[@]}" \

@@ -42,7 +42,7 @@ import Security
     let trust = PairReleaseTrust(publicKeyX963: Data(bytes), keyID: metadata.key_id,
       productID: metadata.product_id, releaseID: metadata.release_id, protocolMajor: 1, localRole: .inputia)
     let manifest = try SignedReleasePairManifest.verify(Data(contentsOf: URL(fileURLWithPath: args[3])), trust: trust)
-    try run(args[4], identity: manifest.identity(for: .handy))
+    try run(args[4], identity: manifest.identity(for: .control))
     try run(args[5], identity: manifest.identity(for: .inputia))
     print("releasePairVerified=true releaseID=\(manifest.payload.releaseID)")
   }

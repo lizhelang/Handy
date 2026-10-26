@@ -1,8 +1,8 @@
 //! 知识库的控制中心入口；磁盘和索引操作在阻塞线程执行。
 
-use inputia_handy_runtime::decision::{DecisionLimits, DecisionQuestion, DecisionRequest};
-use inputia_handy_runtime::embedding::{cosine_similarity, EmbeddingVector};
-use inputia_handy_runtime::knowledge::KnowledgeStore;
+use inputia_runtime::decision::{DecisionLimits, DecisionQuestion, DecisionRequest};
+use inputia_runtime::embedding::{cosine_similarity, EmbeddingVector};
+use inputia_runtime::knowledge::KnowledgeStore;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use tauri::{AppHandle, Manager};
@@ -33,8 +33,7 @@ pub fn start_indexer(app: &AppHandle) {
     STOP_INDEXER.store(false, std::sync::atomic::Ordering::Relaxed);
     std::thread::spawn(move || {
         if let Some(path) = lexicon.filter(|path| path.is_file()) {
-            if let Err(error) =
-                inputia_handy_runtime::personalization::install_base_lexicon(&root, &path)
+            if let Err(error) = inputia_runtime::personalization::install_base_lexicon(&root, &path)
             {
                 log::warn!("Unable to prepare public prediction lexicon: {error}");
             }
@@ -42,16 +41,14 @@ pub fn start_indexer(app: &AppHandle) {
         // 未登记或登记失败时联想退回原有词库补全，不影响基础输入。
         if let Some(path) = ngram.filter(|path| path.is_file()) {
             if let Err(error) =
-                inputia_handy_runtime::personalization::install_prediction_table(&root, &path)
+                inputia_runtime::personalization::install_prediction_table(&root, &path)
             {
                 log::warn!("Unable to register next-word prediction table: {error}");
             }
         }
         while !STOP_INDEXER.load(std::sync::atomic::Ordering::Relaxed) {
             if let Ok(_guard) = KNOWLEDGE_WORK.lock() {
-                if let Err(error) =
-                    inputia_handy_runtime::personalization::reconcile_imports(&root, 64)
-                {
+                if let Err(error) = inputia_runtime::personalization::reconcile_imports(&root, 64) {
                     log::warn!("Unable to reconcile learned source revisions: {error}");
                 }
                 if let Err(error) = KnowledgeStore::open(&root)
@@ -110,14 +107,14 @@ pub async fn knowledge_request(
             };
         }
         if action.starts_with("personalization_") {
-            return inputia_handy_runtime::personalization::manage(&root, &action, &payload);
+            return inputia_runtime::personalization::manage(&root, &action, &payload);
         }
         let store = KnowledgeStore::open(&root)?;
         if matches!(action.as_str(), "status" | "search") {
             store.dispatch("sync", serde_json::json!({}), false)?;
         }
         if action == "export_connection" {
-            return inputia_handy_runtime::knowledge_connection::export_connection(
+            return inputia_runtime::knowledge_connection::export_connection(
                 &root,
                 &std::env::current_exe().map_err(|e| e.to_string())?,
             );
@@ -209,7 +206,7 @@ fn local_semantic_rerank(mut result: Value, payload: &Value) -> Value {
 fn local_query_intent(query: &str) -> Option<String> {
     let worker = crate::decision_worker::DecisionWorker::configured()?;
     let request = DecisionRequest {
-        protocol_version: inputia_handy_runtime::decision::PROTOCOL_VERSION,
+        protocol_version: inputia_runtime::decision::PROTOCOL_VERSION,
         request_id: format!(
             "knowledge-{}",
             std::time::SystemTime::now()
@@ -261,7 +258,7 @@ fn local_query_intent(query: &str) -> Option<String> {
         .ok()
         .and_then(Result::ok)?;
     match response.answers.get("intent") {
-        Some(inputia_handy_runtime::decision::DecisionAnswer::Choice {
+        Some(inputia_runtime::decision::DecisionAnswer::Choice {
             selected,
             abstained,
             ..

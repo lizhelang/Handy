@@ -483,7 +483,7 @@ final class InputiaInputController: IMKInputController {
     voiceInput.title = voiceStatus.isEmpty ? "语音输入（⌃⌥⇧V）" : "语音输入（⌃⌥⇧V）：\(voiceStatus)"
     #endif
 
-    let syncMemory = NSMenuItem(title: "同步语音/剪贴板记忆", action: #selector(syncHandyMemory), keyEquivalent: "")
+    let syncMemory = NSMenuItem(title: "同步语音/剪贴板记忆", action: #selector(syncControlMemory), keyEquivalent: "")
     syncMemory.target = self
 
     let recallClipboard = NSMenuItem(
@@ -627,12 +627,12 @@ final class InputiaInputController: IMKInputController {
     #endif
   }
 
-  @objc private func syncHandyMemory() {
+  @objc private func syncControlMemory() {
     #if INPUTIA_PAIRED_BUILD
     synchronizePermissionEpoch()
     guard InputiaPermissionLifecycle.shared.isReady else { return }
     #endif
-    let result = InputiaHandyMemorySync.sync(
+    let result = InputiaControlMemorySync.sync(
       importer: bridge,
       includeHistory: true,
       includeClipboard: true
@@ -4111,7 +4111,7 @@ struct InputiaInputMethodApp {
 
       #if INPUTIA_PAIRED_BUILD
       InputiaExplicitHotwords.shared.didChange = { InputiaHost.activeInputController?.refreshExplicitHotwords() }
-      InputiaExplicitHotwords.shared.start(file: InputiaProfile.current.handyRoot.appendingPathComponent("settings_store.json"))
+      InputiaExplicitHotwords.shared.start(file: InputiaProfile.current.controlRoot.appendingPathComponent("settings_store.json"))
       #endif
       let app = NSApplication.shared
       let delegate = InputiaApplicationDelegate()
@@ -4149,7 +4149,7 @@ final class InputiaInputMethodDiagnostics {
     switch command {
     case "--explicit-hotwords-self-check":
       #if INPUTIA_PAIRED_BUILD
-      let words = InputiaExplicitHotwords.read(file: InputiaProfile.current.handyRoot.appendingPathComponent("settings_store.json"))
+      let words = InputiaExplicitHotwords.read(file: InputiaProfile.current.controlRoot.appendingPathComponent("settings_store.json"))
       let matches = InputiaHotwordPrefix.candidates(words, code: "lll").count
       print("explicit_hotwords loaded_count=\(words.count) prefix_matches=\(matches) voice_snapshot_required=false")
       return true

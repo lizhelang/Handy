@@ -1,6 +1,6 @@
 # macOS 输出目标适配器：挂载合同与有限原生证据
 
-本文件对应 `src-tauri/src/unified_target.rs`。当前交付为可编译的平台适配器；尚未接入 Handy 生命周期或输出调用，不能据此通过 P0/P3/A01/A02 的跨应用验收。
+本文件对应 `src-tauri/src/unified_target.rs`。当前交付为可编译的平台适配器；尚未接入控制中心生命周期或输出调用，不能据此通过 P0/P3/A01/A02 的跨应用验收。
 
 ## 实现边界
 
@@ -8,7 +8,7 @@
 - `capture(ttl)` 在面板显示/语音开始**之前**读实际 AX focused application、focused UI element、focused window 的强引用；匹配真实 PID、内核 `proc_bsdinfo` 的进程启动秒/微秒，读取有效 selected-text range，检查角色、enabled、secure-text subrole 和 Secure Input。不读取 AXValue、selected text、标题或任何正文。
 - AX observer 加入主 CFRunLoop 的 common modes；必须成功订阅 focused element、focused window、value change、selected-text change、destroyed。任一不可用返回 `UnobservableControl`，不能把无法观察的控件当可安全自动插入。
 - focused-element callback 按 SDK 使用**事件当时**的新 AX element。不能只在回调到达时重读当前焦点，否则 A→B→A 会丢失 B。任何真实编辑/选区变化/控件销毁都会永久撤销该租约；返回原文本、原选区也不会恢复。
-- `NSWorkspaceDidActivateApplicationNotification` 使用 userInfo 中的 `NSRunningApplication` 读取**事件当时**的 PID；因此从原 App 到 Handy、再到第三方 App、最后回原 App，第三方激活不会被返回原目标抹掉。它只捕获原子状态，通过主 NSOperationQueue 投递，不执行 AX 查询或读取正文。
+- `NSWorkspaceDidActivateApplicationNotification` 使用 userInfo 中的 `NSRunningApplication` 读取**事件当时**的 PID；因此从原 App 到控制中心、再到第三方 App、最后回原 App，第三方激活不会被返回原目标抹掉。它只捕获原子状态，通过主 NSOperationQueue 投递，不执行 AX 查询或读取正文。
 - `arm_owner_overlay(id)` 只能在目标仍可验证时、展示自己面板之前调用。此后自己处于前台时 `validate` 返回 `SuspendedByOwner`；原结果仍保留，不强行激活旧 App。用户回原 App 时仍需核对同一个 AX 控件/窗口/选区/进程与观察状态。第三方激活会永久失效。AX 只报告失焦而无法归因时可能保守拒绝，应进入待插入。
 - `validate(id)` 实时再查隐私、进程实例、AX 身份、选区及观察代数。它只证明派发前的目标检查，**不证明 IMK composition 状态，不证明文字上屏，也不能把 OS 查询和后续外部应用插入变成原子事务**。
 - `forget(id)`、`prune()` 及 Drop 会释放强引用。Drop 先把 AX source 从主 RunLoop 移除，再释放 observer/refcon；Workspace observer 也注销。opaque ID 不持久恢复，进程重启后旧 ID 失效。

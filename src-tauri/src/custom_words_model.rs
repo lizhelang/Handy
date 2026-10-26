@@ -13,7 +13,7 @@ use tauri::AppHandle;
 
 pub(crate) const CUSTOM_WORDS_MODEL_ID: &str = "qwen3-0.6b-custom-words";
 const CUSTOM_WORDS_MODEL_DIR: &str = "custom-words-qwen3-0.6b";
-const QWEN_HELPER_BIN: &str = "handy-qwen-custom-words";
+const QWEN_HELPER_BIN: &str = "inputia-qwen-custom-words";
 const MAX_REPLACEMENTS: usize = 16;
 
 static QWEN_HELPER: Lazy<Mutex<Option<QwenHelperProcess>>> = Lazy::new(|| Mutex::new(None));
@@ -444,7 +444,7 @@ fn start_qwen_helper() -> Result<QwenHelperProcess, String> {
 }
 
 fn find_qwen_helper() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("HANDY_QWEN_HELPER").map(PathBuf::from) {
+    if let Some(path) = crate::utils::env_var_os("INPUTIA_QWEN_HELPER").map(PathBuf::from) {
         if path.is_file() {
             return Some(path);
         }
@@ -458,7 +458,7 @@ fn find_qwen_helper() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
     let staged_resource_path = Path::new("target")
-        .join("handy-qwen-resources")
+        .join("inputia-qwen-resources")
         .join(&helper_name);
     let bundled_resource_path = Path::new("resources")
         .join("qwen-helper")
@@ -474,7 +474,7 @@ fn find_qwen_helper() -> Option<PathBuf> {
             .unwrap_or_default(),
         exe_dir
             .parent()
-            .map(|parent| parent.join("handy-qwen-resources").join(&helper_name))
+            .map(|parent| parent.join("inputia-qwen-resources").join(&helper_name))
             .unwrap_or_default(),
         exe_dir
             .parent()
@@ -1172,7 +1172,7 @@ mod tests {
     #[test]
     #[ignore = "requires a local Qwen3-0.6B GGUF model resource"]
     fn qwen_runtime_corrects_reported_examples_when_model_present() {
-        let models_root = std::env::var_os("HANDY_QWEN_MODEL_ROOT")
+        let models_root = std::env::var_os("INPUTIA_QWEN_MODEL_ROOT")
             .map(PathBuf::from)
             .or_else(|| {
                 std::env::var_os("HOME").map(|home| {
@@ -1183,7 +1183,7 @@ mod tests {
                         .join("models")
                 })
             })
-            .expect("HOME or HANDY_QWEN_MODEL_ROOT must be set");
+            .expect("HOME or INPUTIA_QWEN_MODEL_ROOT must be set");
         let resource = CustomWordsModelResource::from_models_root_with_selection(models_root, "");
         assert_eq!(resource.status, CustomWordsModelStatus::Installed);
 

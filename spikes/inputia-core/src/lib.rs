@@ -390,7 +390,7 @@ impl SqliteMemory {
         })
     }
 
-    pub fn import_handy_history(
+    pub fn import_control_history(
         &mut self,
         history_db_path: impl AsRef<Path>,
         context: &AppContext,
@@ -423,7 +423,7 @@ impl SqliteMemory {
         Ok(imported)
     }
 
-    pub fn import_handy_clipboard(
+    pub fn import_control_clipboard(
         &mut self,
         clipboard_db_path: impl AsRef<Path>,
         fallback_context: &AppContext,
@@ -841,8 +841,14 @@ mod tests {
     #[test]
     fn shift_toggles_between_english_and_chinese() {
         let mut core = core();
-        assert_eq!(core.handle_key(Key::Shift).snapshot.mode, InputMode::Chinese);
-        assert_eq!(core.handle_key(Key::Shift).snapshot.mode, InputMode::English);
+        assert_eq!(
+            core.handle_key(Key::Shift).snapshot.mode,
+            InputMode::Chinese
+        );
+        assert_eq!(
+            core.handle_key(Key::Shift).snapshot.mode,
+            InputMode::English
+        );
     }
 
     #[test]
@@ -956,7 +962,9 @@ mod tests {
         let completions = memory.completion_candidates("中国", 5);
         assert_eq!(completions.len(), 2);
         assert_eq!(completions[0].source, CandidateSource::Memory);
-        assert!(completions.iter().any(|candidate| candidate.text == "中国市场"));
+        assert!(completions
+            .iter()
+            .any(|candidate| candidate.text == "中国市场"));
         assert!(completions
             .iter()
             .any(|candidate| candidate.text == "中国市场报告"));
@@ -991,12 +999,8 @@ mod tests {
 
         {
             let mut memory = SqliteMemory::open(&db_path, AppPolicy::default()).unwrap();
-            memory
-                .learn(MemorySource::Typed, "泥", &context)
-                .unwrap();
-            memory
-                .learn(MemorySource::Typed, "泥", &context)
-                .unwrap();
+            memory.learn(MemorySource::Typed, "泥", &context).unwrap();
+            memory.learn(MemorySource::Typed, "泥", &context).unwrap();
         }
 
         let memory = SqliteMemory::open(&db_path, AppPolicy::default()).unwrap();
@@ -1014,7 +1018,7 @@ mod tests {
 
     #[cfg(feature = "sqlite-memory")]
     #[test]
-    fn sqlite_memory_imports_handy_history_read_only() {
+    fn sqlite_memory_imports_inputia_history_read_only() {
         let tempdir = tempfile::tempdir().unwrap();
         let history_db = tempdir.path().join("history.db");
         create_history_db(&history_db);
@@ -1022,12 +1026,14 @@ mod tests {
         let context = AppContext::new("com.pais.handy");
         let mut memory = SqliteMemory::open_in_memory(AppPolicy::default()).unwrap();
         let imported = memory
-            .import_handy_history(&history_db, &context, 10)
+            .import_control_history(&history_db, &context, 10)
             .unwrap();
         let completions = memory.completion_candidates("中国", 10).unwrap();
 
         assert_eq!(imported, 2);
-        assert!(completions.iter().any(|candidate| candidate.text == "中国市场"));
+        assert!(completions
+            .iter()
+            .any(|candidate| candidate.text == "中国市场"));
         assert!(completions
             .iter()
             .any(|candidate| candidate.text == "中国市场复盘"));
@@ -1044,7 +1050,7 @@ mod tests {
         let context = AppContext::new("com.pais.handy");
         let mut memory = SqliteMemory::open_in_memory(AppPolicy::default()).unwrap();
         let imported = memory
-            .import_handy_clipboard(&clipboard_db, &context, 10)
+            .import_control_clipboard(&clipboard_db, &context, 10)
             .unwrap();
         let completions = memory.completion_candidates("中国", 10).unwrap();
 
@@ -1054,7 +1060,10 @@ mod tests {
         assert!(completions
             .iter()
             .any(|candidate| candidate.text == "中国市场报告"));
-        assert!(memory.completion_candidates("secret", 10).unwrap().is_empty());
+        assert!(memory
+            .completion_candidates("secret", 10)
+            .unwrap()
+            .is_empty());
         assert_eq!(clipboard_row_count(&clipboard_db), 3);
     }
 
@@ -1086,14 +1095,7 @@ mod tests {
             "INSERT INTO transcription_history (
                 file_name, timestamp, saved, title, transcription_text, post_processed_text
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![
-                "b.wav",
-                2,
-                false,
-                "b",
-                "原始文本",
-                Some("中国市场复盘")
-            ],
+            rusqlite::params!["b.wav", 2, false, "b", "原始文本", Some("中国市场复盘")],
         )
         .unwrap();
         conn.execute(
@@ -1174,11 +1176,9 @@ mod tests {
 
     #[cfg(feature = "sqlite-memory")]
     fn history_row_count(path: &std::path::Path) -> i64 {
-        let conn = rusqlite::Connection::open_with_flags(
-            path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .unwrap();
+        let conn =
+            rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .unwrap();
         conn.query_row("SELECT COUNT(*) FROM transcription_history", [], |row| {
             row.get(0)
         })
@@ -1187,12 +1187,12 @@ mod tests {
 
     #[cfg(feature = "sqlite-memory")]
     fn clipboard_row_count(path: &std::path::Path) -> i64 {
-        let conn = rusqlite::Connection::open_with_flags(
-            path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .unwrap();
-        conn.query_row("SELECT COUNT(*) FROM clipboard_history", [], |row| row.get(0))
-            .unwrap()
+        let conn =
+            rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .unwrap();
+        conn.query_row("SELECT COUNT(*) FROM clipboard_history", [], |row| {
+            row.get(0)
+        })
+        .unwrap()
     }
 }

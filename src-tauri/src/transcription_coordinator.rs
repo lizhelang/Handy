@@ -1,7 +1,7 @@
 use crate::actions::ACTION_MAP;
 use crate::managers::audio::AudioRecordingManager;
 use crate::settings::ShortcutActivation;
-use inputia_handy_runtime::voice_protocol::{
+use inputia_runtime::voice_protocol::{
     VoiceCommand, VoicePhase, VoiceRequest, VoiceSessionView, VoiceShortcutActivation,
 };
 use log::{debug, error, warn};
@@ -2005,7 +2005,7 @@ mod tests {
     }
 
     fn voice_start(session_id: &str, request_id: &str) -> VoiceRequest {
-        use inputia_handy_runtime::voice_protocol::{HostTargetToken, VoiceTermsVersion};
+        use inputia_runtime::voice_protocol::{HostTargetToken, VoiceTermsVersion};
         VoiceRequest {
             request_id: request_id.into(),
             session_id: session_id.into(),
@@ -2051,7 +2051,7 @@ mod tests {
         activation: VoiceShortcutActivation,
         starts_session: bool,
     ) -> VoiceRequest {
-        use inputia_handy_runtime::voice_protocol::HostShortcutEdge;
+        use inputia_runtime::voice_protocol::HostShortcutEdge;
         let VoiceCommand::Start {
             target,
             post_process,

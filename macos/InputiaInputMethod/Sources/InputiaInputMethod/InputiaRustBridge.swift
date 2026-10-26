@@ -67,16 +67,16 @@ private func inputia_session_learn(
   _ bundleId: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
-@_silgen_name("inputia_session_import_handy_history")
-private func inputia_session_import_handy_history(
+@_silgen_name("inputia_session_import_control_history")
+private func inputia_session_import_control_history(
   _ session: UnsafeMutableRawPointer?,
   _ historyDbPath: UnsafePointer<CChar>,
   _ bundleId: UnsafePointer<CChar>,
   _ limit: Int
 ) -> UnsafeMutablePointer<CChar>?
 
-@_silgen_name("inputia_session_import_handy_clipboard")
-private func inputia_session_import_handy_clipboard(
+@_silgen_name("inputia_session_import_control_clipboard")
+private func inputia_session_import_control_clipboard(
   _ session: UnsafeMutableRawPointer?,
   _ clipboardDbPath: UnsafePointer<CChar>,
   _ bundleId: UnsafePointer<CChar>,
@@ -702,25 +702,25 @@ final class InputiaRustBridge {
     return ok
   }
 
-  func importHandyHistory(path: String, bundleId: String, limit: Int) -> Int? {
-    guard InputiaProfile.current.allowsHandyImport(path), let session else {
+  func importControlHistory(path: String, bundleId: String, limit: Int) -> Int? {
+    guard InputiaProfile.current.allowsControlImport(path), let session else {
       return nil
     }
     let raw = path.withCString { pathPointer in
       bundleId.withCString { bundlePointer in
-        inputia_session_import_handy_history(session, pathPointer, bundlePointer, limit)
+        inputia_session_import_control_history(session, pathPointer, bundlePointer, limit)
       }
     }
     return importedCount(from: raw)
   }
 
-  func importHandyClipboard(path: String, bundleId: String, limit: Int) -> Int? {
-    guard InputiaProfile.current.allowsHandyImport(path), let session else {
+  func importControlClipboard(path: String, bundleId: String, limit: Int) -> Int? {
+    guard InputiaProfile.current.allowsControlImport(path), let session else {
       return nil
     }
     let raw = path.withCString { pathPointer in
       bundleId.withCString { bundlePointer in
-        inputia_session_import_handy_clipboard(session, pathPointer, bundlePointer, limit)
+        inputia_session_import_control_clipboard(session, pathPointer, bundlePointer, limit)
       }
     }
     return importedCount(from: raw)

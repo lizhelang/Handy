@@ -951,11 +951,11 @@ impl TargetRegistry {
         NativeLearningObserver { registry: self, id }
     }
 }
-impl inputia_handy_runtime::memory_commit::LearningObserver for NativeLearningObserver<'_> {
+impl inputia_runtime::memory_commit::LearningObserver for NativeLearningObserver<'_> {
     fn checkpoint(
         &mut self,
-    ) -> Result<inputia_handy_runtime::memory_commit::FieldCheckpoint, &'static str> {
-        use inputia_handy_runtime::memory_commit::{FieldCheckpoint, TextRange};
+    ) -> Result<inputia_runtime::memory_commit::FieldCheckpoint, &'static str> {
+        use inputia_runtime::memory_commit::{FieldCheckpoint, TextRange};
         query_budget().map_err(|_| "memory_target_timeout")?;
         self.registry
             .validate_typed_field(self.id)
@@ -1009,9 +1009,9 @@ impl inputia_handy_runtime::memory_commit::LearningObserver for NativeLearningOb
     }
     fn read_range(
         &mut self,
-        range: inputia_handy_runtime::memory_commit::TextRange,
+        range: inputia_runtime::memory_commit::TextRange,
     ) -> Result<Vec<u16>, &'static str> {
-        if range.length > inputia_handy_runtime::memory_commit::MAX_TEXT_BYTES as u64
+        if range.length > inputia_runtime::memory_commit::MAX_TEXT_BYTES as u64
             || range.end()? > isize::MAX as u64
         {
             return Err("memory_range_invalid");

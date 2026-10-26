@@ -2,11 +2,11 @@ use crate::integration_output::{guarded_main_thread_call, main_thread_call, Main
 use crate::managers::clipboard::ClipboardManager;
 use crate::managers::integration::IntegrationManager;
 use inputia_core::integration::events::Identifier;
-use inputia_handy_runtime::learning::{ApplyContribution, HistoryTermConfirmation};
-use inputia_handy_runtime::output_ledger::{
+use inputia_runtime::learning::{ApplyContribution, HistoryTermConfirmation};
+use inputia_runtime::output_ledger::{
     OutputAction, OutputIntent, OutputOutcome, OutputOwner, OutputState,
 };
-use inputia_handy_runtime::store::{ContentType, HistoryQuery, IndexedItem, SourceKind};
+use inputia_runtime::store::{ContentType, HistoryQuery, IndexedItem, SourceKind};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::Arc;
@@ -356,7 +356,7 @@ pub async fn update_unified_history_item(
     patch: UnifiedHistoryPatch,
 ) -> Result<u64, String> {
     let service = manager.service.clone();
-    let patch = inputia_handy_runtime::source::HistoryPatch {
+    let patch = inputia_runtime::source::HistoryPatch {
         starred: patch.starred,
         pinned: patch.pinned,
         title: patch.title,

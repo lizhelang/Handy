@@ -84,7 +84,7 @@ Inputia 保留两个常驻组件：控制中心与后台应用服务，以及 ma
 | ------------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | 控制中心     | 设置、统一历史、知识检索、模型与状态展示             | [`src/`](src/)、[`src-tauri/src/`](src-tauri/src/)                                                                                            |
 | IMK Host     | 键事件、组合输入、候选窗、目标字段身份、离线基础输入 | [`macos/InputiaInputMethod/`](macos/InputiaInputMethod/)、[`crates/inputia-rime/`](crates/inputia-rime/)                                      |
-| 内容与个性化 | 历史来源、修订、学习、撤销/遗忘、检索投影与输出账本  | [内容运行时](crates/inputia-handy-runtime/)                                                                                                   |
+| 内容与个性化 | 历史来源、修订、学习、撤销/遗忘、检索投影与输出账本  | [内容运行时](crates/inputia-runtime/)                                                                                                         |
 | 配对与通信   | 本机同用户认证、组件身份、协议与 profile 隔离        | [`native/unified-pair-auth/`](native/unified-pair-auth/)、runtime wire 模块                                                                   |
 | 构建与更新   | 成套构建、本地更新和回归参考；后续演进为独立更新核心 | [`scripts/build-inputia-release.sh`](scripts/build-inputia-release.sh)、[`update-candidate.py`](macos/InputiaInputMethod/update-candidate.py) |
 

@@ -66,7 +66,7 @@ for (const theme of ["light", "dark"] as const) {
     );
     expect(logoResponse.ok()).toBe(true);
     expect(await logoResponse.text()).toContain("18-pearl logo");
-    await expect(page.getByText(/handy/i)).toHaveCount(0);
+    await expect(page.getByText(/inputia/i)).toHaveCount(0);
     await page.screenshot({
       path: testInfo.outputPath(`inputia-${theme}.png`),
     });

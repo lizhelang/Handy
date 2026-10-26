@@ -15,7 +15,7 @@ for (const language of ["en", "zh"] as const) {
       await page.evaluate(
         async ({ language, failure }) => {
           const calls: string[] = [];
-          const legacyPath = "/test/HandyUnifiedCandidate/trial-test/Handy";
+          const legacyPath = "/test/HandyUnifiedCandidate/trial-test/Inputia";
           const { default: RefreshRuntime } = await import("/@react-refresh");
           RefreshRuntime.injectIntoGlobalHook(window);
           Object.assign(window, {
@@ -102,7 +102,7 @@ for (const language of ["en", "zh"] as const) {
         await expect(page.getByText(/settings_store\.json/)).toBeVisible();
       }
       // 包括错误提示、tooltip 和 DOM 属性，不能把兼容路径当品牌继续露出。
-      expect(await page.locator("#root").innerHTML()).not.toMatch(/handy/i);
+      expect(await page.locator("#root").innerHTML()).not.toMatch(/inputia/i);
     });
   }
 }

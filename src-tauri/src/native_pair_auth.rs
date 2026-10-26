@@ -12,7 +12,8 @@ use std::rc::Rc;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum PeerRole {
-    Handy = 1,
+    /// 控制中心；线上数值 1 与改名前相同。
+    Control = 1,
     Inputia = 2,
 }
 
@@ -36,7 +37,7 @@ pub fn candidate_build_trust(profile_id: &str) -> Result<Option<EmbeddedPairTrus
             embedded::KEY_ID,
             run_id,
             expected_profile,
-            PeerRole::Handy,
+            PeerRole::Control,
         )))
     }
     #[cfg(not(unified_paired_build))]
@@ -59,7 +60,7 @@ pub fn release_build_trust() -> Result<Option<EmbeddedReleasePairTrust>, PairAut
             product_id,
             release_id,
             protocol_major,
-            PeerRole::Handy,
+            PeerRole::Control,
         )))
     }
     #[cfg(not(unified_paired_build))]

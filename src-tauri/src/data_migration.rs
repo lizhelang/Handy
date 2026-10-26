@@ -382,7 +382,7 @@ fn verify_startup_marker(marker_path: &Path, roots: &[MigrationSourceRoot]) -> R
     Ok(())
 }
 
-pub fn handy_data_candidates(label: &str) -> Vec<MigrationPathCandidate> {
+pub fn control_data_candidates(label: &str) -> Vec<MigrationPathCandidate> {
     candidates_for_root(
         label,
         &[
@@ -1438,14 +1438,14 @@ mod tests {
     }
 
     #[test]
-    fn lists_handy_and_inputia_data_candidates() {
-        let handy = handy_data_candidates("handy");
+    fn lists_control_and_inputia_data_candidates() {
+        let control = control_data_candidates("handy");
         let inputia = inputia_data_candidates("inputia");
 
-        assert!(handy
+        assert!(control
             .iter()
             .any(|candidate| candidate.relative_path == Path::new("history.db")));
-        assert!(handy
+        assert!(control
             .iter()
             .all(|candidate| candidate.source_root_label == "handy"));
         assert!(inputia
@@ -1625,22 +1625,22 @@ mod tests {
     }
 
     #[test]
-    fn startup_backup_covers_handy_and_inputia_and_completes_once() {
+    fn startup_backup_covers_control_and_inputia_and_completes_once() {
         let temp = tempfile::tempdir().unwrap();
-        let handy_root = temp.path().join("handy");
+        let control_root = temp.path().join("handy");
         let inputia_root = temp.path().join("Inputia");
         let backup_root = temp.path().join("backups");
         let lock_root = temp.path().join("locks");
-        fs::create_dir_all(handy_root.join("recordings")).unwrap();
+        fs::create_dir_all(control_root.join("recordings")).unwrap();
         fs::create_dir_all(inputia_root.join("rime")).unwrap();
-        create_sample_database(&handy_root.join("history.db"));
+        create_sample_database(&control_root.join("history.db"));
         create_sample_database(&inputia_root.join("inputia_memory.db"));
-        fs::write(handy_root.join("recordings/one.wav"), b"audio").unwrap();
+        fs::write(control_root.join("recordings/one.wav"), b"audio").unwrap();
         fs::write(inputia_root.join("settings.json"), b"{}").unwrap();
         fs::write(inputia_root.join("rime/user.yaml"), b"state").unwrap();
 
         let mut migration = prepare_startup_backup_for_paths(
-            &handy_root,
+            &control_root,
             Some(&inputia_root),
             &backup_root,
             &lock_root,
@@ -1661,7 +1661,7 @@ mod tests {
         drop(migration);
 
         assert!(prepare_startup_backup_for_paths(
-            &handy_root,
+            &control_root,
             Some(&inputia_root),
             &backup_root,
             &lock_root,
@@ -1673,25 +1673,25 @@ mod tests {
     #[test]
     fn failed_setup_defers_restore_until_next_startup_after_connections_close() {
         let temp = tempfile::tempdir().unwrap();
-        let handy_root = temp.path().join("handy");
+        let control_root = temp.path().join("handy");
         let backup_root = temp.path().join("backups");
         let lock_root = temp.path().join("locks");
-        fs::create_dir_all(&handy_root).unwrap();
-        fs::write(handy_root.join("settings_store.json"), b"kept").unwrap();
-        create_sample_database(&handy_root.join("history.db"));
+        fs::create_dir_all(&control_root).unwrap();
+        fs::write(control_root.join("settings_store.json"), b"kept").unwrap();
+        create_sample_database(&control_root.join("history.db"));
 
         let mut migration =
-            prepare_startup_backup_for_paths(&handy_root, None, &backup_root, &lock_root)
+            prepare_startup_backup_for_paths(&control_root, None, &backup_root, &lock_root)
                 .unwrap()
                 .unwrap();
         migration.begin_mutations().unwrap();
-        let writer = Connection::open(handy_root.join("history.db")).unwrap();
+        let writer = Connection::open(control_root.join("history.db")).unwrap();
         writer
             .execute_batch("PRAGMA journal_mode=WAL; UPDATE items SET name='changed';")
             .unwrap();
         drop(migration);
         assert_eq!(
-            fs::read(handy_root.join("settings_store.json")).unwrap(),
+            fs::read(control_root.join("settings_store.json")).unwrap(),
             b"kept"
         );
         assert_eq!(
@@ -1703,14 +1703,14 @@ mod tests {
         // 模拟失败进程已退出/关闭连接，下一次启动仍在任何 manager 打开前。
         drop(writer);
         let mut resumed =
-            prepare_startup_backup_for_paths(&handy_root, None, &backup_root, &lock_root)
+            prepare_startup_backup_for_paths(&control_root, None, &backup_root, &lock_root)
                 .unwrap()
                 .unwrap();
         assert_eq!(
-            fs::read(handy_root.join("settings_store.json")).unwrap(),
+            fs::read(control_root.join("settings_store.json")).unwrap(),
             b"kept"
         );
-        assert_eq!(read_item_name(&handy_root.join("history.db")), "kept");
+        assert_eq!(read_item_name(&control_root.join("history.db")), "kept");
         resumed.begin_mutations().unwrap();
         resumed.complete().unwrap();
     }
@@ -1718,21 +1718,21 @@ mod tests {
     #[test]
     fn formal_backup_restores_records_favorites_terms_key_and_host_state_twice() {
         let temp = tempfile::tempdir().unwrap();
-        let handy = temp.path().join("Handy");
+        let control = temp.path().join("Handy");
         let inputia = temp.path().join("Inputia");
-        fs::create_dir_all(&handy).unwrap();
+        fs::create_dir_all(&control).unwrap();
         fs::create_dir_all(inputia.join("snapshots")).unwrap();
         let key = [7_u8; 32];
-        fs::write(handy.join("integration-learning.key"), key).unwrap();
+        fs::write(control.join("integration-learning.key"), key).unwrap();
         fs::write(
             inputia.join("snapshots/terms.json"),
             b"synthetic confirmed terms",
         )
         .unwrap();
         let databases = [
-            handy.join("history.db"),
-            handy.join("clipboard.db"),
-            handy.join("integration.db"),
+            control.join("history.db"),
+            control.join("clipboard.db"),
+            control.join("integration.db"),
             inputia.join("inputia_memory.db"),
             inputia.join("outbox.db"),
             inputia.join("policy.db"),
@@ -1744,14 +1744,14 @@ mod tests {
         let roots = [
             MigrationSourceRoot {
                 label: "handy".into(),
-                root: handy.clone(),
+                root: control.clone(),
             },
             MigrationSourceRoot {
                 label: "inputia".into(),
                 root: inputia.clone(),
             },
         ];
-        let candidates: Vec<_> = handy_data_candidates("handy")
+        let candidates: Vec<_> = control_data_candidates("handy")
             .into_iter()
             .chain(inputia_data_candidates("inputia"))
             .collect();
@@ -1776,7 +1776,7 @@ mod tests {
                 conn.execute_batch("DELETE FROM records; DELETE FROM terms;")
                     .unwrap();
             }
-            fs::write(handy.join("integration-learning.key"), b"changed").unwrap();
+            fs::write(control.join("integration-learning.key"), b"changed").unwrap();
             fs::write(inputia.join("snapshots/terms.json"), b"changed").unwrap();
             // 上面每个连接已经离开作用域，所有源写入者在恢复期间保持关闭。
             restore_backup(&outcome, &roots).unwrap();
@@ -1797,7 +1797,7 @@ mod tests {
                 );
             }
             assert_eq!(
-                fs::read(handy.join("integration-learning.key")).unwrap(),
+                fs::read(control.join("integration-learning.key")).unwrap(),
                 key
             );
             assert_eq!(
@@ -1810,18 +1810,18 @@ mod tests {
     #[test]
     #[ignore = "requires explicit real Handy data paths"]
     fn real_data_startup_backup_is_verified_before_cutover() {
-        let handy_root = PathBuf::from(
+        let control_root = PathBuf::from(
             std::env::var_os("HANDY_REAL_DATA_ROOT")
                 .expect("HANDY_REAL_DATA_ROOT must point at the existing app data"),
         );
         let inputia_root = std::env::var_os("HANDY_REAL_INPUTIA_ROOT").map(PathBuf::from);
-        let backup_root = handy_root
+        let backup_root = control_root
             .join("migration_backups")
             .join(STARTUP_MIGRATION_ID);
-        let lock_root = handy_root.join("migration_locks");
+        let lock_root = control_root.join("migration_locks");
 
         let migration = prepare_startup_backup_for_paths(
-            &handy_root,
+            &control_root,
             inputia_root.as_deref(),
             &backup_root,
             &lock_root,

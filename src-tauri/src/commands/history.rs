@@ -27,9 +27,9 @@ pub struct HistoryAttachmentAccess {
     pub path: String,
     pub revision: u64,
 }
-impl From<inputia_handy_runtime::attachment_store::AttachmentLease> for HistoryAttachmentLease {
-    fn from(value: inputia_handy_runtime::attachment_store::AttachmentLease) -> Self {
-        use inputia_handy_runtime::attachment_store::PinPurpose;
+impl From<inputia_runtime::attachment_store::AttachmentLease> for HistoryAttachmentLease {
+    fn from(value: inputia_runtime::attachment_store::AttachmentLease) -> Self {
+        use inputia_runtime::attachment_store::PinPurpose;
         Self {
             lease_id: value.lease_id,
             instance_id: value.instance_id,
@@ -42,9 +42,9 @@ impl From<inputia_handy_runtime::attachment_store::AttachmentLease> for HistoryA
         }
     }
 }
-impl From<HistoryAttachmentLease> for inputia_handy_runtime::attachment_store::AttachmentLease {
+impl From<HistoryAttachmentLease> for inputia_runtime::attachment_store::AttachmentLease {
     fn from(value: HistoryAttachmentLease) -> Self {
-        use inputia_handy_runtime::attachment_store::PinPurpose;
+        use inputia_runtime::attachment_store::PinPurpose;
         Self {
             lease_id: value.lease_id,
             instance_id: value.instance_id,
@@ -70,10 +70,10 @@ pub async fn acquire_history_attachment(
         .map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let (lease, path, revision) = service.acquire_source_attachment(
-            inputia_handy_runtime::source::SourceTable::History,
+            inputia_runtime::source::SourceTable::History,
             id.to_string(),
             expected_revision,
-            inputia_handy_runtime::attachment_store::PinPurpose::Active,
+            inputia_runtime::attachment_store::PinPurpose::Active,
             operation_id,
         )?;
         Ok(HistoryAttachmentAccess {
@@ -160,15 +160,15 @@ pub async fn get_audio_file_path(
     // 旧客户端无法 release，保守保留到本进程结束；新客户端使用显式 typed lease。
     let operation = format!(
         "legacy-audio-{}",
-        inputia_handy_runtime::attachment_store::new_operation_id().map_err(|e| e.to_string())?
+        inputia_runtime::attachment_store::new_operation_id().map_err(|e| e.to_string())?
     );
     tauri::async_runtime::spawn_blocking(move || {
         service
             .acquire_source_attachment(
-                inputia_handy_runtime::source::SourceTable::History,
+                inputia_runtime::source::SourceTable::History,
                 id.to_string(),
                 None,
-                inputia_handy_runtime::attachment_store::PinPurpose::Active,
+                inputia_runtime::attachment_store::PinPurpose::Active,
                 operation,
             )
             .map(|(_, path, _)| path.to_string_lossy().into_owned())
@@ -219,15 +219,15 @@ pub(crate) async fn retry_history_entry_checked(
         .map_err(|e| e.to_string())?;
     let operation = format!(
         "retry-audio-{}",
-        inputia_handy_runtime::attachment_store::new_operation_id().map_err(|e| e.to_string())?
+        inputia_runtime::attachment_store::new_operation_id().map_err(|e| e.to_string())?
     );
     let (samples, recording_revision) = tauri::async_runtime::spawn_blocking(move || {
         let result = (|| {
             let (lease, _, revision) = service.acquire_source_attachment(
-                inputia_handy_runtime::source::SourceTable::History,
+                inputia_runtime::source::SourceTable::History,
                 id.to_string(),
                 expected_revision,
-                inputia_handy_runtime::attachment_store::PinPurpose::Active,
+                inputia_runtime::attachment_store::PinPurpose::Active,
                 operation.clone(),
             )?;
             let bytes = service.read_attachment(lease.clone());

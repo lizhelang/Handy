@@ -380,7 +380,7 @@ def run_rust(subject, root):
     blocked = False
     started_at = now()
     suites = (
-        ("inputia-core", "sqlite-memory"), ("inputia-handy-runtime", None),
+        ("inputia-core", "sqlite-memory"), ("inputia-runtime", None),
         ("inputia-capi", "bundled-static-rime,managed-memory"), ("inputia-rime", "bundled-static-rime"), ("inputia-settings", None),
         ("inputia-release", None), ("inputia-updater", "native-code-verification"),
     )

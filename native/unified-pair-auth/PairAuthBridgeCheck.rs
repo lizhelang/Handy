@@ -17,10 +17,10 @@ static PUBLIC_KEY: &[u8; 65] = include_bytes!(env!("UIPA_FIXTURE_PUBLIC_KEY"));
 #[cfg(pair_host_fixture)]
 const LOCAL_ROLE: PeerRole = PeerRole::Inputia;
 #[cfg(not(pair_host_fixture))]
-const LOCAL_ROLE: PeerRole = PeerRole::Handy;
+const LOCAL_ROLE: PeerRole = PeerRole::Control;
 const PEER_ROLE: PeerRole = match LOCAL_ROLE {
-    PeerRole::Handy => PeerRole::Inputia,
-    PeerRole::Inputia => PeerRole::Handy,
+    PeerRole::Control => PeerRole::Inputia,
+    PeerRole::Inputia => PeerRole::Control,
 };
 
 fn trust(public_key: &'static [u8; 65], profile: &'static str) -> EmbeddedPairTrust {

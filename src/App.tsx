@@ -160,7 +160,7 @@ function App() {
   }, [t]);
 
   // Listen for paste failures and show a toast.
-  // The technical error detail is logged to handy.log on the Rust side
+  // The technical error detail is logged to inputia.log on the Rust side
   // (see actions.rs `error!("Failed to paste transcription: ...")`),
   // so we show a localized, user-friendly message here instead of the raw error.
   useEffect(() => {
@@ -175,7 +175,7 @@ function App() {
   }, [t]);
 
   // Listen for transcription failures and show a toast.
-  // The payload is the backend error message (also logged to handy.log).
+  // The payload is the backend error message (also logged to inputia.log).
   useEffect(() => {
     const unlisten = listen<string>("transcription-error", (event) => {
       toast.error(t("errors.transcriptionFailedTitle"), {

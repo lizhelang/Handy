@@ -47,7 +47,7 @@
       "deb": {
         "depends": ["libgtk-layer-shell0", "libopenblas0"],
         "files": {
-          "/usr/lib/Handy": "transcribe-libs"
+          "/usr/lib/Inputia": "transcribe-libs"
         }
       },
       "rpm": {
@@ -59,7 +59,7 @@
           "type": "none"
         },
         "files": {
-          "/usr/lib/Handy": "transcribe-libs"
+          "/usr/lib/Inputia": "transcribe-libs"
         }
       },
       "appimage": {

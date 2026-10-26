@@ -2554,86 +2554,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "handy"
-version = "0.9.6"
-dependencies = [
- "anyhow",
- "block2",
- "chrono",
- "clap",
- "clipboard-rs",
- "cpal",
- "earshot",
- "encoding_rs",
- "enigo",
- "env_filter",
- "ferrous-opencc",
- "flate2",
- "futures-util",
- "gtk",
- "gtk-layer-shell",
- "handy-keys",
- "hf-hub",
- "hound",
- "inputia-core",
- "inputia-handy-runtime",
- "inputia-release",
- "inputia-settings",
- "isolang",
- "libc",
- "llama-cpp-2",
- "log",
- "natural",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "objc2-service-management",
- "once_cell",
- "png 0.17.16",
- "rdev",
- "regex",
- "reqwest 0.12.28",
- "rodio",
- "rubato",
- "rusqlite",
- "rusqlite_migration",
- "rustfft",
- "serde",
- "serde_json",
- "sha2",
- "signal-hook",
- "specta",
- "specta-typescript",
- "strsim",
- "tar",
- "tauri",
- "tauri-build",
- "tauri-nspanel",
- "tauri-plugin-autostart",
- "tauri-plugin-clipboard-manager",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-log",
- "tauri-plugin-macos-permissions",
- "tauri-plugin-opener",
- "tauri-plugin-os",
- "tauri-plugin-process",
- "tauri-plugin-single-instance",
- "tauri-plugin-store",
- "tauri-specta",
- "tempfile",
- "tokio",
- "transcribe-cpp",
- "transcribe-rs",
- "uuid",
- "vad-rs",
- "whatlang",
- "windows 0.61.3",
- "winreg 0.55.0",
-]
-
-[[package]]
 name = "handy-keys"
 version = "0.3.4"
 dependencies = [
@@ -3142,28 +3062,91 @@ dependencies = [
 ]
 
 [[package]]
+name = "inputia"
+version = "0.9.6"
+dependencies = [
+ "anyhow",
+ "block2",
+ "chrono",
+ "clap",
+ "clipboard-rs",
+ "cpal",
+ "earshot",
+ "encoding_rs",
+ "enigo",
+ "env_filter",
+ "ferrous-opencc",
+ "flate2",
+ "futures-util",
+ "gtk",
+ "gtk-layer-shell",
+ "handy-keys",
+ "hf-hub",
+ "hound",
+ "inputia-core",
+ "inputia-release",
+ "inputia-runtime",
+ "inputia-settings",
+ "isolang",
+ "libc",
+ "llama-cpp-2",
+ "log",
+ "natural",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-service-management",
+ "once_cell",
+ "png 0.17.16",
+ "rdev",
+ "regex",
+ "reqwest 0.12.28",
+ "rodio",
+ "rubato",
+ "rusqlite",
+ "rusqlite_migration",
+ "rustfft",
+ "serde",
+ "serde_json",
+ "sha2",
+ "signal-hook",
+ "specta",
+ "specta-typescript",
+ "strsim",
+ "tar",
+ "tauri",
+ "tauri-build",
+ "tauri-nspanel",
+ "tauri-plugin-autostart",
+ "tauri-plugin-clipboard-manager",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-log",
+ "tauri-plugin-macos-permissions",
+ "tauri-plugin-opener",
+ "tauri-plugin-os",
+ "tauri-plugin-process",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-store",
+ "tauri-specta",
+ "tempfile",
+ "tokio",
+ "transcribe-cpp",
+ "transcribe-rs",
+ "uuid",
+ "vad-rs",
+ "whatlang",
+ "windows 0.61.3",
+ "winreg 0.55.0",
+]
+
+[[package]]
 name = "inputia-core"
 version = "0.0.1"
 dependencies = [
  "rusqlite",
  "serde",
-]
-
-[[package]]
-name = "inputia-handy-runtime"
-version = "0.0.1"
-dependencies = [
- "getrandom 0.2.17",
- "hound",
- "inputia-core",
- "inputia-settings",
- "libc",
- "png 0.17.16",
- "ring",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
 ]
 
 [[package]]
@@ -3178,6 +3161,23 @@ dependencies = [
  "serde_json",
  "time",
  "toml 0.8.2",
+]
+
+[[package]]
+name = "inputia-runtime"
+version = "0.0.1"
+dependencies = [
+ "getrandom 0.2.17",
+ "hound",
+ "inputia-core",
+ "inputia-settings",
+ "libc",
+ "png 0.17.16",
+ "ring",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

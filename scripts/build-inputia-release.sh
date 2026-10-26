@@ -133,7 +133,7 @@ Path(sys.argv[1]).write_text(json.dumps({"bundle": {"macOS": {"signingIdentity":
 PY
 "$RELEASE_PYTHON" scripts/inputia_release.py apply-plist --role control \
   --plist "$RELEASE_DIR/InputiaReleaseInfo.plist" --context "$INPUTIA_RELEASE_CONTEXT"
-export HANDY_UNIFIED_PAIR_BUILD="$INPUTIA_PAIR_BUILD_METADATA"
+export INPUTIA_UNIFIED_PAIR_BUILD="$INPUTIA_PAIR_BUILD_METADATA"
 # 每次发布构建使用独立的 Cargo target，避免并行/重入构建互相覆盖
 # proc-macro/dylib 产物。调用方仍可显式指定目录，但默认不得共享源码树
 # 的 src-tauri/target；该目录可能同时被开发构建或另一份发布任务使用。
@@ -201,7 +201,7 @@ if [[ ! -x "$RELEASE_DIR/PairAuthTool" ]]; then
 fi
 /usr/bin/python3 native/unified-pair-auth/build_trust.py \
   --metadata "$INPUTIA_PAIR_BUILD_METADATA" "${PAIR_BINDING_ARGS[@]}" \
-  --sign-pair --handy "$RELEASE_DIR/Inputia.app" \
+  --sign-pair --control "$RELEASE_DIR/Inputia.app" \
   --inputia "$RELEASE_DIR/InputiaUnifiedCandidate.app" \
   --build-tool "$RELEASE_DIR/PairAuthTool" \
   --private-key "$INPUTIA_PAIR_PRIVATE_KEY" \

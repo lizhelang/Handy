@@ -1,5 +1,5 @@
 //! 个人学习服务只接收已认证输入法事件，原字段证明与全文收录开关相互独立。
-use inputia_handy_runtime::{
+use inputia_runtime::{
     decision::{DecisionAnswer, DecisionLimits, DecisionQuestion, DecisionRequest},
     personalization as model,
     personalization_wire::{PersonalizationCommand, PersonalizationReply, PersonalizationRequest},
@@ -225,7 +225,7 @@ fn local_decision_rerank(
         .map(|candidate| (candidate.id.clone(), candidate.text.clone()))
         .collect();
     let request = DecisionRequest {
-        protocol_version: inputia_handy_runtime::decision::PROTOCOL_VERSION,
+        protocol_version: inputia_runtime::decision::PROTOCOL_VERSION,
         request_id: format!("candidate-rerank-{}", candidates.len()),
         model_id: "laya-multilingual-mlx".into(),
         state: json!({ "context": context, "input_code": input_code }),

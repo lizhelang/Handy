@@ -61,7 +61,7 @@ async function installTauriMocks(
       }));
 
       Object.assign(window, {
-        __HANDY_PLAYWRIGHT_INVOKES__: records,
+        __INPUTIA_PLAYWRIGHT_INVOKES__: records,
       });
 
       Object.assign(window, {
@@ -309,12 +309,12 @@ async function invokeCommands(page: Page) {
   return page.evaluate(() =>
     (
       window as typeof window & {
-        __HANDY_PLAYWRIGHT_INVOKES__: Array<{
+        __INPUTIA_PLAYWRIGHT_INVOKES__: Array<{
           cmd: string;
           args?: Record<string, unknown>;
         }>;
       }
-    ).__HANDY_PLAYWRIGHT_INVOKES__.map((record) => record.cmd),
+    ).__INPUTIA_PLAYWRIGHT_INVOKES__.map((record) => record.cmd),
   );
 }
 
@@ -323,12 +323,12 @@ async function invokeRecords(page: Page) {
     () =>
       (
         window as typeof window & {
-          __HANDY_PLAYWRIGHT_INVOKES__: Array<{
+          __INPUTIA_PLAYWRIGHT_INVOKES__: Array<{
             cmd: string;
             args?: Record<string, unknown>;
           }>;
         }
-      ).__HANDY_PLAYWRIGHT_INVOKES__,
+      ).__INPUTIA_PLAYWRIGHT_INVOKES__,
   );
 }
 
@@ -336,12 +336,12 @@ async function clearInvokes(page: Page) {
   await page.evaluate(() => {
     (
       window as typeof window & {
-        __HANDY_PLAYWRIGHT_INVOKES__: Array<{
+        __INPUTIA_PLAYWRIGHT_INVOKES__: Array<{
           cmd: string;
           args?: Record<string, unknown>;
         }>;
       }
-    ).__HANDY_PLAYWRIGHT_INVOKES__.length = 0;
+    ).__INPUTIA_PLAYWRIGHT_INVOKES__.length = 0;
   });
 }
 

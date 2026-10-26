@@ -312,8 +312,8 @@ pub fn prepare_startup_backup_with_preflight<F>(
 where
     F: FnOnce() -> Result<()>,
 {
-    let handy_root = crate::portable::app_data_dir(app)?;
-    let migration_root = handy_root.join("migration_backups");
+    let control_root = crate::portable::app_data_dir(app)?;
+    let migration_root = control_root.join("migration_backups");
     let legacy = migration_root.join(STARTUP_MIGRATION_ID);
     #[cfg(target_os = "macos")]
     let inputia_root = crate::candidate_profile::current()
@@ -327,25 +327,25 @@ where
     #[cfg(not(target_os = "macos"))]
     let inputia_root: Option<PathBuf> = None;
     prepare_paths(
-        &handy_root,
+        &control_root,
         inputia_root.as_deref(),
         &migration_root.join(MIGRATION_ID),
-        &handy_root.join("migration_locks"),
+        &control_root.join("migration_locks"),
         Some(&legacy),
         preflight,
     )
 }
 #[cfg(test)]
 pub(super) fn prepare_startup_backup_for_paths(
-    handy: &Path,
+    control: &Path,
     inputia: Option<&Path>,
     backup: &Path,
     lock: &Path,
 ) -> Result<Option<StartupMigration>> {
-    prepare_paths(handy, inputia, backup, lock, None, || Ok(()))
+    prepare_paths(control, inputia, backup, lock, None, || Ok(()))
 }
 fn prepare_paths<F>(
-    handy: &Path,
+    control: &Path,
     inputia: Option<&Path>,
     backup: &Path,
     lock: &Path,
@@ -359,7 +359,7 @@ where
         .map_err(|e| classified(StartupFailureKind::PendingRecovery, e))?;
     let mut roots = vec![MigrationSourceRoot {
         label: "handy".into(),
-        root: handy.into(),
+        root: control.into(),
     }];
     if let Some(root) = inputia {
         roots.push(MigrationSourceRoot {
@@ -435,7 +435,7 @@ fn new_attempt(
             .iter()
             .flat_map(|root| {
                 if root.label == "handy" {
-                    handy_data_candidates("handy")
+                    control_data_candidates("handy")
                 } else {
                     inputia_data_candidates("inputia")
                 }

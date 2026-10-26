@@ -20,8 +20,8 @@
 - `inputia_session_set_app_context`
 - `inputia_session_set_app_context_with_window`
 - `inputia_session_learn`
-- `inputia_session_import_handy_history`
-- `inputia_session_import_handy_clipboard`
+- `inputia_session_import_control_history`
+- `inputia_session_import_control_clipboard`
 - `inputia_session_voice_hotwords`
 - `inputia_session_clipboard_candidates`
 - `inputia_session_completion_candidates`

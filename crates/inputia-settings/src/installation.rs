@@ -74,7 +74,7 @@ pub struct LocatorContext {
 #[serde(deny_unknown_fields)]
 pub struct LocatedInstallation {
     pub receipt: InstallationReceipt,
-    pub handy_root: PathBuf,
+    pub control_root: PathBuf,
     pub inputia_root: PathBuf,
     pub pair_manifest: PathBuf,
 }
@@ -239,7 +239,7 @@ impl InstallationReceipt {
         };
         Ok(LocatedInstallation {
             receipt: self,
-            handy_root: data_root.join("Handy"),
+            control_root: data_root.join("Handy"),
             inputia_root: data_root.join("Inputia"),
             pair_manifest,
         })

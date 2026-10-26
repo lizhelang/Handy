@@ -4,7 +4,7 @@
 //! `INPUTIA_DECISION_WORKER` 时才启用；任何启动、协议、模型或超时错误
 //! 都返回 None，由调用方继续原有确定性路径。
 
-use inputia_handy_runtime::decision::{self, DecisionRequest, DecisionResponse};
+use inputia_runtime::decision::{self, DecisionRequest, DecisionResponse};
 use log::{debug, warn};
 use once_cell::sync::OnceCell;
 use std::io::{BufRead, BufReader, Read, Write};

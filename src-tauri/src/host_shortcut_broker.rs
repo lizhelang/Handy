@@ -2,7 +2,7 @@
 //! broker 不插入文字、不拥有录音状态；它只把快捷键边沿绑定到 host 预捕获目标。
 
 use crate::settings::ShortcutActivation;
-use inputia_handy_runtime::voice_protocol::{
+use inputia_runtime::voice_protocol::{
     HostShortcutCommand, HostShortcutLease, HostShortcutReply, HostShortcutRequest,
     HostShortcutTrigger, VoiceCommand, VoiceReplyError, VoiceRequest, VoiceShortcutActivation,
 };
@@ -81,7 +81,7 @@ impl HostShortcutBroker {
     /// 复制当前已注册的精确目标，不跨服务 IPC 持锁；再次读取用于提交前比较。
     pub(crate) fn shared_terms_lease(
         &self,
-        request: &inputia_handy_runtime::voice_protocol::SharedTermsRequest,
+        request: &inputia_runtime::voice_protocol::SharedTermsRequest,
     ) -> Result<(HostShortcutLease, Instant), VoiceReplyError> {
         let state = self.state.lock().map_err(|_| VoiceReplyError::Unknown)?;
         let record = state
@@ -657,7 +657,7 @@ mod tests {
 
     #[test]
     fn shared_terms_require_live_exact_private_target_lease() {
-        use inputia_handy_runtime::voice_protocol::{SharedTermsLease, SharedTermsRequest};
+        use inputia_runtime::voice_protocol::{SharedTermsLease, SharedTermsRequest};
         let broker = HostShortcutBroker::default();
         register_default_lease(&broker);
         let request = SharedTermsRequest {
@@ -739,7 +739,7 @@ mod tests {
         assert!(broker.note_disconnected("same-host"));
         assert!(!broker.note_disconnected("same-host"));
     }
-    use inputia_handy_runtime::voice_protocol::HostTargetToken;
+    use inputia_runtime::voice_protocol::HostTargetToken;
 
     fn lease(id: &str, epoch: u64) -> HostShortcutLease {
         HostShortcutLease {
@@ -1155,11 +1155,11 @@ mod tests {
             command: VoiceCommand::HostShortcut {
                 target: trigger.target.clone(),
                 post_process: false,
-                terms: inputia_handy_runtime::voice_protocol::VoiceTermsVersion {
+                terms: inputia_runtime::voice_protocol::VoiceTermsVersion {
                     policy_epoch: trigger.policy_epoch,
                     learning_generation: 1,
                 },
-                edge: inputia_handy_runtime::voice_protocol::HostShortcutEdge {
+                edge: inputia_runtime::voice_protocol::HostShortcutEdge {
                     trigger_id: trigger.trigger_id.clone(),
                     starts_session: trigger.starts_session,
                     lease_id: trigger.lease_id.clone(),
@@ -1197,11 +1197,11 @@ mod tests {
             command: VoiceCommand::HostShortcut {
                 target: trigger.target.clone(),
                 post_process: false,
-                terms: inputia_handy_runtime::voice_protocol::VoiceTermsVersion {
+                terms: inputia_runtime::voice_protocol::VoiceTermsVersion {
                     policy_epoch: trigger.policy_epoch,
                     learning_generation: 1,
                 },
-                edge: inputia_handy_runtime::voice_protocol::HostShortcutEdge {
+                edge: inputia_runtime::voice_protocol::HostShortcutEdge {
                     trigger_id: trigger.trigger_id.clone(),
                     starts_session: trigger.starts_session,
                     lease_id: trigger.lease_id.clone(),

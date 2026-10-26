@@ -21,8 +21,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let context = AppContext::new("com.pais.handy");
     let mut memory = SqliteMemory::open(memory_db, AppPolicy::default())?;
-    let history_imported = memory.import_handy_history(history_db, &context, 2_000)?;
-    let clipboard_imported = memory.import_handy_clipboard(clipboard_db, &context, 2_000)?;
+    let history_imported = memory.import_control_history(history_db, &context, 2_000)?;
+    let clipboard_imported = memory.import_control_clipboard(clipboard_db, &context, 2_000)?;
     let completion_count_for_zhongguo = memory.completion_candidates("中国", 20)?.len();
 
     println!("history_imported={history_imported}");

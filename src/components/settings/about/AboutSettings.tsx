@@ -60,7 +60,7 @@ export const AboutSettings: React.FC = () => {
           <Button
             variant="secondary"
             size="md"
-            onClick={() => openUrl("https://github.com/lizhelang/Handy")}
+            onClick={() => openUrl("https://github.com/lizhelang/Inputia")}
           >
             {t("settings.about.upstream.source")}
           </Button>

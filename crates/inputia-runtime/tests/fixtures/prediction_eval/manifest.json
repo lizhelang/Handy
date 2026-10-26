@@ -1,0 +1,820 @@
+{
+  "version": 1,
+  "frozen": "2026-10-22",
+  "engine_commit": "d1fac07e9a4c53ff8e122e6ee730f99720749fd8",
+  "positions": {
+    "segmenter": "jieba 0.42.1 HMM=True (evaluation only)",
+    "rule": "word boundaries with CJK on both sides; at most 40 per item; context = previous <=512 chars; remaining = following CJK run <=32 chars",
+    "hit": "a prediction is a prefix of remaining",
+    "split_salt": "prediction-eval-split-v1"
+  },
+  "sets": {
+    "t1": {
+      "file": "t1_everyday.jsonl",
+      "sha256": "8e3fc7d8eddbd8d2a0a975a333240b1f3754a316e49070dcd67ce838eb922711",
+      "items": 400,
+      "dev_items": 100,
+      "categories": 8,
+      "author": "independent agent without repository or network access",
+      "positions": {
+        "t1-dev": 841,
+        "t1-test": 2580
+      },
+      "cases_sha256": "f480799b8cf4c45e41dc6223d6a7e21929b2f3115df426e73edffcfae2b5bdb3"
+    },
+    "t2": {
+      "sources": "t2_wikipedia_sources.json",
+      "text_license": "CC BY-SA 4.0 (text cached outside git)",
+      "pages": 2600,
+      "items": 2500,
+      "dev_items": 500,
+      "items_sha256": "b10b8225e0f4ffcf0a6aab00af2b2e534f1267880ec503b3d48421824770cc95",
+      "positions": {
+        "t2-dev": 5936,
+        "t2-test": 23450
+      },
+      "cases_sha256": "02ba9f20996979b57efd08d829306c3c1447f7c7113ba098cb63f63069a15052"
+    },
+    "t3": {
+      "local_only": true,
+      "rule": "voice and typed history, latest 20% of each by time as test; learned database copy keeps only evidence before the typed split; regenerate on a fresh snapshot and measure old and new engines on the same snapshot",
+      "positions_at_freeze": {
+        "t3-typed": 213,
+        "t3-voice": 8654
+      }
+    }
+  },
+  "baseline": {
+    "t1": {
+      "t1-dev": {
+        "limit_3": {
+          "all_wrong_rate": 0.8918,
+          "empty_rate": 0.0,
+          "hits": {
+            "hit_at_1": 0.0654,
+            "hit_at_2": 0.0963,
+            "hit_at_3": 0.1082
+          },
+          "mrr": 0.0848,
+          "positions": 841,
+          "query_micros": {
+            "max": 8861,
+            "p50": 626,
+            "p95": 2383
+          },
+          "saved_chars_per_position": 0.1296,
+          "shown_per_position": 2.7134
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.8692,
+          "empty_rate": 0.0,
+          "hits": {
+            "hit_at_1": 0.0654,
+            "hit_at_2": 0.0963,
+            "hit_at_3": 0.1082,
+            "hit_at_4": 0.1189,
+            "hit_at_5": 0.1308
+          },
+          "mrr": 0.0899,
+          "positions": 841,
+          "query_micros": {
+            "max": 8555,
+            "p50": 605,
+            "p95": 2455
+          },
+          "saved_chars_per_position": 0.1629,
+          "shown_per_position": 4.2414
+        }
+      },
+      "t1-test": {
+        "limit_3": {
+          "all_wrong_rate": 0.9035,
+          "empty_rate": 0.0004,
+          "hits": {
+            "hit_at_1": 0.0574,
+            "hit_at_2": 0.0798,
+            "hit_at_3": 0.0961
+          },
+          "mrr": 0.074,
+          "positions": 2580,
+          "query_micros": {
+            "max": 8833,
+            "p50": 653,
+            "p95": 2347
+          },
+          "saved_chars_per_position": 0.1155,
+          "shown_per_position": 2.7279
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.8787,
+          "empty_rate": 0.0004,
+          "hits": {
+            "hit_at_1": 0.0574,
+            "hit_at_2": 0.0798,
+            "hit_at_3": 0.0961,
+            "hit_at_4": 0.1116,
+            "hit_at_5": 0.1209
+          },
+          "mrr": 0.0798,
+          "positions": 2580,
+          "query_micros": {
+            "max": 8746,
+            "p50": 619,
+            "p95": 2293
+          },
+          "saved_chars_per_position": 0.1535,
+          "shown_per_position": 4.288
+        }
+      }
+    },
+    "t2": {
+      "t2-dev": {
+        "limit_3": {
+          "all_wrong_rate": 0.9414,
+          "empty_rate": 0.003,
+          "hits": {
+            "hit_at_1": 0.0342,
+            "hit_at_2": 0.0473,
+            "hit_at_3": 0.0556
+          },
+          "mrr": 0.0435,
+          "positions": 5936,
+          "query_micros": {
+            "max": 8909,
+            "p50": 718,
+            "p95": 1790
+          },
+          "saved_chars_per_position": 0.0699,
+          "shown_per_position": 2.7278
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.9294,
+          "empty_rate": 0.003,
+          "hits": {
+            "hit_at_1": 0.0342,
+            "hit_at_2": 0.0473,
+            "hit_at_3": 0.0556,
+            "hit_at_4": 0.0627,
+            "hit_at_5": 0.0676
+          },
+          "mrr": 0.0463,
+          "positions": 5936,
+          "query_micros": {
+            "max": 8638,
+            "p50": 688,
+            "p95": 1695
+          },
+          "saved_chars_per_position": 0.0859,
+          "shown_per_position": 4.2928
+        }
+      },
+      "t2-test": {
+        "limit_3": {
+          "all_wrong_rate": 0.9408,
+          "empty_rate": 0.0027,
+          "hits": {
+            "hit_at_1": 0.0346,
+            "hit_at_2": 0.0479,
+            "hit_at_3": 0.0565
+          },
+          "mrr": 0.0441,
+          "positions": 23450,
+          "query_micros": {
+            "max": 21771,
+            "p50": 674,
+            "p95": 1743
+          },
+          "saved_chars_per_position": 0.0716,
+          "shown_per_position": 2.7223
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.9284,
+          "empty_rate": 0.0027,
+          "hits": {
+            "hit_at_1": 0.0346,
+            "hit_at_2": 0.0479,
+            "hit_at_3": 0.0565,
+            "hit_at_4": 0.0644,
+            "hit_at_5": 0.0689
+          },
+          "mrr": 0.047,
+          "positions": 23450,
+          "query_micros": {
+            "max": 8990,
+            "p50": 686,
+            "p95": 1722
+          },
+          "saved_chars_per_position": 0.0888,
+          "shown_per_position": 4.2861
+        }
+      }
+    },
+    "t3_current": {
+      "t3-typed": {
+        "limit_3": {
+          "all_wrong_rate": 0.8967,
+          "empty_rate": 0.0,
+          "hits": {
+            "hit_at_1": 0.0423,
+            "hit_at_2": 0.0704,
+            "hit_at_3": 0.1033
+          },
+          "mrr": 0.0673,
+          "positions": 213,
+          "query_micros": {
+            "max": 8466,
+            "p50": 552,
+            "p95": 2310
+          },
+          "saved_chars_per_position": 0.1127,
+          "shown_per_position": 2.8545
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.8779,
+          "empty_rate": 0.0,
+          "hits": {
+            "hit_at_1": 0.0423,
+            "hit_at_2": 0.0704,
+            "hit_at_3": 0.1033,
+            "hit_at_4": 0.1127,
+            "hit_at_5": 0.1221
+          },
+          "mrr": 0.0715,
+          "positions": 213,
+          "query_micros": {
+            "max": 8259,
+            "p50": 557,
+            "p95": 2293
+          },
+          "saved_chars_per_position": 0.1362,
+          "shown_per_position": 4.554
+        }
+      },
+      "t3-voice": {
+        "limit_3": {
+          "all_wrong_rate": 0.9103,
+          "empty_rate": 0.0005,
+          "hits": {
+            "hit_at_1": 0.0425,
+            "hit_at_2": 0.0694,
+            "hit_at_3": 0.0892
+          },
+          "mrr": 0.0626,
+          "positions": 8654,
+          "query_micros": {
+            "max": 9197,
+            "p50": 784,
+            "p95": 2629
+          },
+          "saved_chars_per_position": 0.1033,
+          "shown_per_position": 2.9171
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.8735,
+          "empty_rate": 0.0005,
+          "hits": {
+            "hit_at_1": 0.0425,
+            "hit_at_2": 0.0694,
+            "hit_at_3": 0.0892,
+            "hit_at_4": 0.1106,
+            "hit_at_5": 0.1261
+          },
+          "mrr": 0.071,
+          "positions": 8654,
+          "query_micros": {
+            "max": 8862,
+            "p50": 761,
+            "p95": 2593
+          },
+          "saved_chars_per_position": 0.1506,
+          "shown_per_position": 4.7276
+        }
+      }
+    },
+    "t3_public_only": {
+      "t3-typed": {
+        "limit_3": {
+          "all_wrong_rate": 0.8967,
+          "empty_rate": 0.0,
+          "hits": {
+            "hit_at_1": 0.061,
+            "hit_at_2": 0.0845,
+            "hit_at_3": 0.1033
+          },
+          "mrr": 0.079,
+          "positions": 213,
+          "query_micros": {
+            "max": 8558,
+            "p50": 497,
+            "p95": 2323
+          },
+          "saved_chars_per_position": 0.1127,
+          "shown_per_position": 2.77
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.8685,
+          "empty_rate": 0.0,
+          "hits": {
+            "hit_at_1": 0.061,
+            "hit_at_2": 0.0845,
+            "hit_at_3": 0.1033,
+            "hit_at_4": 0.1127,
+            "hit_at_5": 0.1315
+          },
+          "mrr": 0.0851,
+          "positions": 213,
+          "query_micros": {
+            "max": 8276,
+            "p50": 513,
+            "p95": 2275
+          },
+          "saved_chars_per_position": 0.1502,
+          "shown_per_position": 4.446
+        }
+      },
+      "t3-voice": {
+        "limit_3": {
+          "all_wrong_rate": 0.8906,
+          "empty_rate": 0.0008,
+          "hits": {
+            "hit_at_1": 0.0595,
+            "hit_at_2": 0.0886,
+            "hit_at_3": 0.1086
+          },
+          "mrr": 0.0807,
+          "positions": 8654,
+          "query_micros": {
+            "max": 13443,
+            "p50": 655,
+            "p95": 2566
+          },
+          "saved_chars_per_position": 0.1299,
+          "shown_per_position": 2.7024
+        },
+        "limit_5": {
+          "all_wrong_rate": 0.8563,
+          "empty_rate": 0.0008,
+          "hits": {
+            "hit_at_1": 0.0595,
+            "hit_at_2": 0.0886,
+            "hit_at_3": 0.1086,
+            "hit_at_4": 0.1299,
+            "hit_at_5": 0.1429
+          },
+          "mrr": 0.0887,
+          "positions": 8654,
+          "query_micros": {
+            "max": 8686,
+            "p50": 673,
+            "p95": 2472
+          },
+          "saved_chars_per_position": 0.1749,
+          "shown_per_position": 4.2498
+        }
+      }
+    }
+  },
+  "gates": {
+    "t1-test": {
+      "hit_at_5_min": 0.1609,
+      "hit_at_1_min": 0.0574,
+      "all_wrong_rate_max": 0.8787
+    },
+    "t2-test": {
+      "hit_at_5_min": 0.1089,
+      "hit_at_1_min": 0.0346,
+      "all_wrong_rate_max": 0.9284
+    },
+    "t3": {
+      "rule": "new engine with learned database copy: hit_at_1, hit_at_5 and mrr not below the old engine on the same snapshot minus 0.01; hit_at_1 with learned database not below the same new engine public-only"
+    },
+    "determinism_mismatches": 0,
+    "query_micros_p95_max": 5000,
+    "negative_cases": "all pass: forgotten term, scoped rejection, no mid-word English completion, excluded app, sentence-final punctuation, admission re-query contains displayed predictions",
+    "device_acceptance": "required after offline gates pass",
+    "superseded_2026-10-22": {
+      "t1-test": {
+        "hit_at_5_min": 0.2709,
+        "hit_at_1_min": 0.1074,
+        "all_wrong_rate_max": 0.8787
+      },
+      "t2-test": {
+        "hit_at_5_min": 0.2189,
+        "hit_at_1_min": 0.0846,
+        "all_wrong_rate_max": 0.9284
+      },
+      "reason": "exceeds the bigram ceiling measured on dev (perfect ranking over top-12 continuations: t1-dev 24.3%, t2-dev 20.9%)"
+    },
+    "revision": {
+      "date": "2026-10-23",
+      "approved_by": "user",
+      "post_hoc": true,
+      "rule": "hit_at_5 >= baseline + 0.04, hit_at_1 not below baseline, all_wrong_rate not above baseline; set after phase 1 results and kept as the regression floor for later changes"
+    }
+  },
+  "punctuation_emoji": {
+    "frozen": "2026-10-26",
+    "engine_commit": "070cb4ba",
+    "note": "Phase 1 of question mark and emoji predictions (target 1.1.34). Gates fixed before any tuning; tuning uses *-dev sets only, *-test once.",
+    "sets": {
+      "t4": {
+        "file": "t4_punctuation.jsonl",
+        "sha256": "a6033e4cd8ba991411351f94b6a8edc02b776e2f07b8be9fd646aae18bb437d3",
+        "items": 240,
+        "author": "independent agent without repository or network access",
+        "forms": {
+          "question": {
+            "particle": 30,
+            "wh": 40,
+            "a_not_a": 25,
+            "alternative": 10,
+            "intonation": 15
+          },
+          "other": {
+            "hard_negative": 40,
+            "exclamation": 25,
+            "statement": 55
+          }
+        },
+        "split": "stratified by form, fixed hash, 60 dev items",
+        "cases_sha256": "b7d9d786492556d8b140cda36eb9c14588f35936df426144df27b90effa24d29",
+        "ends_sha256": "73d4b8e552c7db9079622120fa2ba7d42b21375b58d9aed3302580d31cd128fe",
+        "end_positions": {
+          "t4-dev:end": {
+            "？": 30,
+            "。": 24,
+            "！": 6,
+            "，": 11
+          },
+          "t4-test:end": {
+            "？": 90,
+            "。": 71,
+            "！": 19,
+            "，": 33
+          }
+        }
+      },
+      "emoji": {
+        "file": "emoji_cases.json",
+        "sha256": "1d32109c9025469f93750808b744e8d67287e765452534e52bc9635ee17be187",
+        "positive": 60,
+        "negative": 60,
+        "author": "independent agent without repository or network access",
+        "split": "stratified by polarity, fixed hash, 15+15 dev",
+        "context": "the word itself",
+        "hit": "an emoji in the accept set (ignoring U+FE0F) among the 3 shown predictions",
+        "cases_sha256": "fb990f9c125be55833aa9710511c29c654c36848e72d06e1efe05a6886fa5243"
+      },
+      "t1_ends": {
+        "rule": "position before a punctuation mark that follows a CJK character; answer is that mark (full width)",
+        "ends_sha256": "323d9d08ae7d1eb2dda981af3b014ea9791081fc9bcc6567cab4e7da073082c2",
+        "question_positions": {
+          "t1-dev:end": 19,
+          "t1-test:end": 60
+        }
+      },
+      "t2_ends": {
+        "ends_sha256": "54528876b329966c9f380b0c7267bcceff76321a5fb38983b7f8d93c11c5066e"
+      },
+      "t3": {
+        "rule": "same export as before plus clause ends (--ends-out); voice keeps ASR punctuation, typed keeps what the user typed; measure 1.1.33 and new engine on the same snapshot"
+      },
+      "t5": {
+        "file": "t5_punctuation.jsonl",
+        "sha256": "7fe4066efe463926952fdb6e289d6852e3b39d6a35e32cc7555776547c4b597a",
+        "items": 240,
+        "author": "independent agent without repository or network access, neutral brief written after the first test run",
+        "forms": {
+          "question": {
+            "particle": 30,
+            "wh": 40,
+            "a_not_a": 25,
+            "alternative": 10,
+            "intonation": 15
+          },
+          "other": {
+            "hard_negative": 40,
+            "exclamation": 25,
+            "statement": 55
+          }
+        },
+        "split": "all test",
+        "cases_sha256": "0fd53231189700ff9e6ae8f006f3a9c03de753ad7c929455c8d08b16fe023a67",
+        "ends_sha256": "2b65945565998123bbf187f517345a1eb34a5edb774cd8af507ce2669cb66333",
+        "end_positions": {
+          "？": 120,
+          "。": 82,
+          "！": 29,
+          "，": 36
+        }
+      }
+    },
+    "baseline_1_1_33": {
+      "table_sha256": "10bfa08830819671359f6c3e538a1047b2a0c00035718f1529858c74781c2d8b",
+      "limit": 3,
+      "words": {
+        "t1-dev": {
+          "positions": 841,
+          "hit_at_1": 0.0809,
+          "hit_at_3": 0.1308,
+          "mrr": 0.1021,
+          "query_micros_p95": 305
+        },
+        "t1-test": {
+          "positions": 2580,
+          "hit_at_1": 0.0655,
+          "hit_at_3": 0.1349,
+          "mrr": 0.0945,
+          "query_micros_p95": 310
+        },
+        "t2-dev": {
+          "positions": 5936,
+          "hit_at_1": 0.0644,
+          "hit_at_3": 0.1213,
+          "mrr": 0.0887,
+          "query_micros_p95": 338
+        },
+        "t2-test": {
+          "positions": 23450,
+          "hit_at_1": 0.069,
+          "hit_at_3": 0.122,
+          "mrr": 0.0923,
+          "query_micros_p95": 397
+        }
+      },
+      "t4_words": {
+        "t4-dev": {
+          "positions": 311,
+          "hit_at_1": 0.0579,
+          "hit_at_3": 0.1254,
+          "mrr": 0.0863,
+          "query_micros_p95": 299
+        },
+        "t4-test": {
+          "positions": 954,
+          "hit_at_1": 0.0577,
+          "hit_at_3": 0.1226,
+          "mrr": 0.0849,
+          "query_micros_p95": 294
+        }
+      },
+      "punctuation_and_emoji": "never shown (0 on every end, middle and emoji set)"
+    },
+    "gates": {
+      "question_recall": {
+        "rule": "share of question ends ('？') with '？' among the 3 shown",
+        "t4-test": 0.7,
+        "t1-test": 0.7,
+        "t3-voice": 0.5
+      },
+      "question_first_after_particle": {
+        "rule": "t4-test particle questions: '？' is the first prediction",
+        "min": 0.8
+      },
+      "question_false_at_other_ends": {
+        "rule": "ends whose mark is not '？' showing '？'",
+        "t4-test": 0.1,
+        "t1-test": 0.1,
+        "t2-test": 0.1
+      },
+      "question_false_middle": {
+        "rule": "word-boundary positions showing '？'",
+        "t1-test": 0.03,
+        "t2-test": 0.03,
+        "t4-test": 0.15
+      },
+      "punct_first_middle": {
+        "rule": "word-boundary positions whose first prediction is punctuation",
+        "t1-test": 0.01,
+        "t2-test": 0.01
+      },
+      "exclaim_false": {
+        "rule": "'！' shown at ends whose mark is not '！' and at word-boundary positions",
+        "t4-test": 0.05,
+        "t1-test": 0.05,
+        "t2-test": 0.05
+      },
+      "public_full_stop_and_comma": "never shown without personal evidence: other_punct_shown = 0 on public-only runs",
+      "emoji_positive_hit": {
+        "emoji-pos-test": 0.7
+      },
+      "emoji_negative_false": {
+        "emoji-neg-test_max_count": 2
+      },
+      "emoji_shown_middle": {
+        "rule": "word-boundary positions showing an emoji",
+        "t1-test": 0.1,
+        "t2-test": 0.1
+      },
+      "words": {
+        "rule": "hit_at_1 and hit_at_3 (limit 3) not below 1.1.33 minus 0.005",
+        "t1-test": {
+          "hit_at_1_min": 0.0605,
+          "hit_at_3_min": 0.1299
+        },
+        "t2-test": {
+          "hit_at_1_min": 0.064,
+          "hit_at_3_min": 0.117
+        },
+        "t3": "typed and voice test hit_at_1 and hit_at_3 not below 1.1.33 minus 0.005 on the same snapshot with backfill"
+      },
+      "determinism_mismatches": 0,
+      "query_micros_p95_max": 5000,
+      "prefix_stability": "first 3 predictions identical for limit 3 and limit 9 (admission re-query)",
+      "device_acceptance": "required after offline gates pass",
+      "final_question_gates_on_t5": {
+        "question_recall": 0.7,
+        "question_first_after_particle": 0.8,
+        "question_false_at_other_ends": 0.1,
+        "question_false_middle": 0.15,
+        "exclaim_false": 0.05,
+        "note": "t5 has no dev split; measured once after the rules are frozen"
+      }
+    },
+    "first_test_run_2026-10-26": {
+      "result": "23 of 24 gates passed; question_false_at_other_ends on t4-test was 0.1138 (14 of 123) against max 0.10",
+      "passed_values": {
+        "question_recall": {
+          "t4-test": 0.7667,
+          "t1-test": 0.8333
+        },
+        "question_first_after_particle": 0.9091,
+        "question_false_middle": {
+          "t1-test": 0.0194,
+          "t2-test": 0.002,
+          "t4-test": 0.0901
+        },
+        "emoji_positive_hit": 0.8222,
+        "emoji_negative_false": 1,
+        "words": {
+          "t1-test": [0.0655, 0.1329],
+          "t2-test": [0.069, 0.1217]
+        },
+        "query_micros_p95_max": 543
+      },
+      "decision": "gates unchanged. t4-test is consumed and becomes a second development set for the question-mark rules; a new set t5 written afterwards by another independent agent (neutral brief, no examples from the failures) is the final check for every question-mark and exclamation gate below, with the same thresholds; t1/t2 test sets are re-run once as a regression check for words, middle positions and emoji."
+    },
+    "final_results_2026-10-26": {
+      "engine": "rules frozen after t4-test was used as a second development set; defaults question=2.0, question_floor=0, question_closing=0.1, question_reach=8, exclaim=1.0, punct_tau=0.05",
+      "all_public_gates": "pass",
+      "question_recall": {
+        "t5-test": 0.775,
+        "t1-test": 0.8667
+      },
+      "question_first_after_particle": {
+        "t5-test": 0.9
+      },
+      "question_false_at_other_ends": {
+        "t5-test": 0.0748,
+        "t1-test": 0.0219,
+        "t2-test": 0.0035
+      },
+      "question_false_middle": {
+        "t1-test": 0.0194,
+        "t2-test": 0.0018,
+        "t5-test": 0.0698
+      },
+      "punct_first_middle": {
+        "t1-test": 0.0,
+        "t2-test": 0.0
+      },
+      "exclaim_false": {
+        "t5-test": 0.002,
+        "t1-test": 0.0044,
+        "t2-test": 0.0002
+      },
+      "public_full_stop_and_comma": 0.0,
+      "emoji_positive_hit": 0.8222,
+      "emoji_negative_false": 1,
+      "emoji_shown_middle": {
+        "t1-test": 0.0213,
+        "t2-test": 0.0122
+      },
+      "words": {
+        "t1-test": {
+          "hit_at_1": 0.0655,
+          "hit_at_3": 0.1329
+        },
+        "t2-test": {
+          "hit_at_1": 0.069,
+          "hit_at_3": 0.1217
+        }
+      },
+      "determinism_mismatches": 0,
+      "prefix_stability_mismatches": 0,
+      "query_micros_p95_max": 502,
+      "display": "marks follow the punctuation already used after CJK in the same text, half width by default (the input method's default is English punctuation in Chinese mode); metrics compare full-width forms",
+      "t3": {
+        "first_test_run": "voice question recall 0.2507 with backfill (gate 0.50) while 0.755 public-only: the public mark was diluted by (1 - lambda); personal word pairs break at punctuation and carry no evidence about it",
+        "fix": "punctuation score = public + lambda * own (not discounted by lambda); public-only runs unchanged (identical t1/t2/t5 metrics)",
+        "dev_window_0.6_0.8": {
+          "voice_question_recall": 0.7653,
+          "typed_question_recall": 0.5909,
+          "words_voice": {
+            "1.1.33": [0.1255, 0.2184],
+            "new": [0.1254, 0.2163]
+          },
+          "words_typed": {
+            "1.1.33": [0.1, 0.1808],
+            "new": [0.1, 0.1808]
+          }
+        },
+        "test_last_20pct": {
+          "snapshot": "fresh export; both engines backfilled voice and typed sources before the split on the same snapshot",
+          "voice_question_recall": 0.7278,
+          "voice_question_first": 0.4384,
+          "voice_question_ends": 349,
+          "typed_question_recall": 0.6923,
+          "typed_question_ends": 13,
+          "voice_false_question_other_ends": 0.0598,
+          "middle_question_shown": {
+            "voice": 0.0387,
+            "typed": 0.042
+          },
+          "words_voice": {
+            "1.1.33": [0.1283, 0.2199],
+            "new": [0.1283, 0.2183]
+          },
+          "words_typed": {
+            "1.1.33": [0.0992, 0.1794],
+            "new": [0.0992, 0.1794]
+          },
+          "query_micros_p95": {
+            "limit_3": [3929, 4285],
+            "limit_9_admission": [6290, 6610]
+          }
+        },
+        "export_fix": "the learned database copy now drops imports and history word pairs from the real backfill, which included test-period text",
+        "private_dirs": "deleted after evaluation; only aggregates kept"
+      }
+    }
+  },
+  "latency_real_learning_copy": {
+    "frozen": "2026-10-26",
+    "engine_commit": "e1b5344a",
+    "snapshot": "online read-only backup of the installed profile's databases (personalization with 2948 imports, 71991 history word pairs, 3862 evidence rows; history, integration, clipboard, typed, index, history-access) into a private 0700 directory; fresh copy per run; new random privacy key; prediction table registered by the tool; deleted after the work",
+    "cases": "t1_cases.jsonl + t1_ends.jsonl (4231 contexts), limits 3 and 9, default app",
+    "baseline_1_1_34": {
+      "p95_micros_per_run": {
+        "t1-dev": {
+          "limit_3": [5525, 5605, 5791],
+          "limit_9": [8773, 8811, 8983]
+        },
+        "t1-test": {
+          "limit_3": [5563, 5832, 5900],
+          "limit_9": [8718, 8981, 8834]
+        },
+        "t1-dev:end": {
+          "limit_3": [5497, 5800, 5849],
+          "limit_9": [8516, 8799, 8961]
+        },
+        "t1-test:end": {
+          "limit_3": [5492, 5871, 5723],
+          "limit_9": [8561, 8831, 8960]
+        }
+      },
+      "p50_micros_limit_3": "about 4.6 ms",
+      "predictions_sha256": "3cb7d6b8b06b25255a2003530abc4c85961f0dc31c9f60d1a2fb65d27c8e02f0"
+    },
+    "gates": {
+      "p95_limit_3": "<= 5000 us on every set in each of 3 runs",
+      "p95_limit_9": "not above the 1.1.34 baseline",
+      "predictions": "predictions_sha256 identical to the 1.1.34 baseline (same sources and texts for every case and limit)",
+      "public_sets": "t1/t2/t5/emoji gate metrics identical to 1.1.34",
+      "tests": "inputia-runtime tests and clippy pass"
+    },
+    "result": {
+      "p95_micros_per_run": {
+        "t1-dev": {
+          "limit_3": [1171, 1160, 1121],
+          "limit_9": [1621, 1661, 1651]
+        },
+        "t1-test": {
+          "limit_3": [1165, 1225, 1164],
+          "limit_9": [1638, 1630, 1636]
+        },
+        "t1-dev:end": {
+          "limit_3": [1106, 1097, 1115],
+          "limit_9": [1734, 1773, 1753]
+        },
+        "t1-test:end": {
+          "limit_3": [1135, 1151, 1153],
+          "limit_9": [1694, 1688, 1738]
+        }
+      },
+      "p50_micros_limit_3_t1_dev": [761, 769, 769],
+      "predictions_sha256": "3cb7d6b8b06b25255a2003530abc4c85961f0dc31c9f60d1a2fb65d27c8e02f0",
+      "predictions_identical": true,
+      "public_sets_identical": true,
+      "tests": "377 passed, clippy clean",
+      "all_gates": "pass",
+      "changes": [
+        "contextual rejection lookup uses the (origin, normalized) index instead of scanning all empty-schema evidence through (schema_id, code, created)",
+        "forgotten-term digest predicate evaluated after the context predicates in the evidence query, so the HMAC runs only on matching rows",
+        "privacy-pending check reuses a read-only integration.db connection keyed by file identity instead of opening it twice per query",
+        "source revision join locates rows by primary key (s.id=v.record_id) before the exact text check, instead of a full scan per record",
+        "per-query statements in source checks and forgotten lookups are cached"
+      ]
+    }
+  }
+}

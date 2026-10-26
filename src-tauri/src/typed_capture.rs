@@ -1,6 +1,6 @@
 //! 输入法正文的唯一写入入口，使用已认证连接与实时非敏感字段证明。
 
-use inputia_handy_runtime::{
+use inputia_runtime::{
     typed_history,
     voice_protocol::{
         TargetBridgePurpose, TypedCaptureCommand, TypedCaptureReply, TypedCaptureRequest,

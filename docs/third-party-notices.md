@@ -2,7 +2,7 @@
 
 ## Ropy
 
-Parts of Handy's clipboard file-path normalization and interaction design were adapted from [StudentWeis/ropy](https://github.com/StudentWeis/ropy), commit `1264415bf7d8746d5333f7a0405fecd15f466084`.
+Parts of Inputia's clipboard file-path normalization and interaction design were adapted from [StudentWeis/ropy](https://github.com/StudentWeis/ropy), commit `1264415bf7d8746d5333f7a0405fecd15f466084`.
 
 The distributable application also includes this notice at `Resources/resources/third-party-notices/ropy-LICENSE.txt`.
 
