@@ -28,6 +28,7 @@ clamped = declaration("private extension Comparable")
 configure = declaration("  func configureStatus(")
 methods = "\n".join(declaration(signature) for signature in [
     "  func show(\n",
+    "  func showPredictions(",
     "  func showPredictionPending(",
     "  func showPredictionEmpty(",
     "  private func showPredictionStatus(",
@@ -48,8 +49,10 @@ private final class Content {
   func layoutSubtreeIfNeeded() { layouts += 1 }
   func displayIfNeeded() {}
   func configure(candidates: [String], expanded: Bool, fontSize: CGFloat,
-    primaryCandidateCount: Int?, activeRowIndex: Int) {
-    rows = [candidates.map { InputiaCandidateDisplayItem(number: 1, text: $0, isHighlighted: true) }]
+    primaryCandidateCount: Int?, activeRowIndex: Int, numbered: Bool = true, highlightedIndex: Int = 0) {
+    rows = [candidates.enumerated().map { offset, text in
+      InputiaCandidateDisplayItem(number: numbered ? offset + 1 : nil, text: text, isHighlighted: offset == highlightedIndex)
+    }]
   }
   __CONFIGURE__
 }
@@ -102,6 +105,11 @@ struct HandoffSelfCheck {
     check("predictionReplyUpdatesWithoutHideOrRecreation", panel.hideCount == 0 && panel.presentCount == 1
       && panel.isVisible && ObjectIdentifier(panel) == identity
       && panel.candidateView.rows[0][0].text == "后续推荐")
+    // 上屏后联想不显示编号，高亮由方向键/Tab 移动后的项，供空格选择。
+    panel.showPredictions(["问题", "意义", "过程"], highlighted: 1, near: anchor)
+    check("predictionsUnnumberedWithMovableHighlight",
+      panel.candidateView.rows[0].allSatisfy { $0.number == nil }
+      && !panel.candidateView.rows[0][0].isHighlighted && panel.candidateView.rows[0][1].isHighlighted)
     let hidden = Panel(); hidden.isVisible = false
     hidden.showPredictionPending(near: anchor)
     check("predictionPendingCanOpenMissingPanel", hidden.isVisible && hidden.presentCount == 1

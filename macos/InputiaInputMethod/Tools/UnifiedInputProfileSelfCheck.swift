@@ -44,7 +44,7 @@ struct UnifiedInputProfileSelfCheck {
     try InputiaProfile.validateCompiledIdentity(bundleIdentifier: nil, expectedCandidate: nil)
     check(true, "compiled and bundle candidate identities agree")
     check(daily.root == base.appendingPathComponent("Inputia", isDirectory: true), "daily root retained")
-    check(daily.handyRoot == base.appendingPathComponent("com.pais.handy", isDirectory: true), "daily Handy root retained")
+    check(daily.controlRoot == base.appendingPathComponent("com.inputia.control", isDirectory: true), "daily control root retained")
     rejects(.unauthorizedCandidate) {
       _ = try InputiaProfile.resolve(bundleIdentifier: "com.inputia.inputmethod.Inputia", info: [:], environment: ["INPUTIA_PROFILE_RUN_ID": "test"], applicationSupport: base)
     }
@@ -75,16 +75,20 @@ struct UnifiedInputProfileSelfCheck {
     rejects(.conflictingRunID) {
       _ = try InputiaProfile.resolve(bundleIdentifier: candidateID, info: signedInfo, environment: ["INPUTIA_PROFILE_RUN_ID": "other"], applicationSupport: base)
     }
-    check(profile.root.path.hasSuffix("HandyUnifiedCandidate/run-20260905_A/Inputia"), "candidate fixed root")
-    check(profile.handyRoot.path.hasSuffix("HandyUnifiedCandidate/run-20260905_A/Handy"), "paired Handy root")
+    check(profile.root.path.hasSuffix("InputiaUnifiedCandidate/run-20260905_A/Inputia"), "candidate fixed root")
+    check(profile.controlRoot.path.hasSuffix("InputiaUnifiedCandidate/run-20260905_A/Control"), "paired control root")
+    check(profile.legacyRenamedPath(for: profile.memory.path)
+      == base.appendingPathComponent("HandyUnifiedCandidate/run-20260905_A/Inputia/inputia_memory.db").path,
+      "renamed candidate maps to the same run before rename")
+    check(profile.legacyRenamedPath(for: daily.memory.path) == nil, "daily paths have no rename mapping")
     for path in profile.writablePaths {
       check(path.path.hasPrefix(profile.root.path + "/"), "all writes inside candidate root")
       check(!path.path.hasPrefix(daily.root.path + "/"), "no daily path leakage")
     }
-    check(!profile.allowsHandyImport(daily.handyRoot.appendingPathComponent("history.db").path), "daily import rejected")
-    check(!profile.allowsHandyImport(profile.handyRoot.appendingPathComponent("../Other/history.db").path), "unpaired import rejected")
-    check(profile.allowsHandyImport(profile.handyRoot.appendingPathComponent("history.db").path), "paired import allowed")
-    check(profile.allowsHandyImport(profile.handyRoot.appendingPathComponent("clipboard.db").path), "paired clipboard allowed")
+    check(!profile.allowsControlImport(daily.controlRoot.appendingPathComponent("history.db").path), "daily import rejected")
+    check(!profile.allowsControlImport(profile.controlRoot.appendingPathComponent("../Other/history.db").path), "unpaired import rejected")
+    check(profile.allowsControlImport(profile.controlRoot.appendingPathComponent("history.db").path), "paired import allowed")
+    check(profile.allowsControlImport(profile.controlRoot.appendingPathComponent("clipboard.db").path), "paired clipboard allowed")
     rejects(.pathOutsideProfile) { try profile.validateSettingsPath(daily.settings.path) }
     let migrated = try profile.isolatedSettings([
       "rime_user_data_dir": daily.rime.path, "memory_db_path": daily.memory.path,
@@ -101,10 +105,10 @@ struct UnifiedInputProfileSelfCheck {
     try FileManager.default.createSymbolicLink(at: profile.rime, withDestinationURL: daily.root)
     rejects(.symbolicLink) { try profile.validateCandidatePaths() }
     try FileManager.default.removeItem(at: profile.rime)
-    try FileManager.default.createDirectory(at: profile.handyRoot, withIntermediateDirectories: true)
-    let history = profile.handyRoot.appendingPathComponent("history.db")
+    try FileManager.default.createDirectory(at: profile.controlRoot, withIntermediateDirectories: true)
+    let history = profile.controlRoot.appendingPathComponent("history.db")
     try FileManager.default.createSymbolicLink(at: history, withDestinationURL: daily.memory)
-    check(!profile.allowsHandyImport(history.path), "symlinked paired history rejected")
+    check(!profile.allowsControlImport(history.path), "symlinked paired history rejected")
     try FileManager.default.removeItem(at: history)
 
     // 所有下方 daily 命名也仅指本次 Caches/UUID 下的合成目标，绝非日常数据。
@@ -126,11 +130,11 @@ struct UnifiedInputProfileSelfCheck {
     try profile.validateCandidatePaths()
     check(true, "independent copied userdb and normal nested directories accepted")
 
-    for database in [profile.memory, history, profile.handyRoot.appendingPathComponent("clipboard.db")] {
+    for database in [profile.memory, history, profile.controlRoot.appendingPathComponent("clipboard.db")] {
       try FileManager.default.linkItem(at: daily.memory, to: database)
       rejects(.hardLink) { try profile.validateCandidatePaths() }
       if database != profile.memory {
-        check(!profile.allowsHandyImport(database.path), "hardlinked paired DB import rejected")
+        check(!profile.allowsControlImport(database.path), "hardlinked paired DB import rejected")
       }
       try FileManager.default.removeItem(at: database)
       for suffix in ["-wal", "-shm", "-journal"] {
@@ -139,12 +143,12 @@ struct UnifiedInputProfileSelfCheck {
         rejects(.symbolicLink) { try profile.validateCandidatePaths() }
         rejects(.symbolicLink) { try profile.validateSettingsPath(profile.settings.path) }
         if database != profile.memory {
-          check(!profile.allowsHandyImport(database.path), "linked sidecar blocks paired DB import")
+          check(!profile.allowsControlImport(database.path), "linked sidecar blocks paired DB import")
         }
         try FileManager.default.removeItem(at: sidecar)
       }
     }
-    let hidden = profile.handyRoot.appendingPathComponent(".hidden", isDirectory: true)
+    let hidden = profile.controlRoot.appendingPathComponent(".hidden", isDirectory: true)
     try FileManager.default.createDirectory(at: hidden, withIntermediateDirectories: true)
     let hiddenLink = hidden.appendingPathComponent("broken-link")
     try FileManager.default.createSymbolicLink(at: hiddenLink, withDestinationURL: daily.root.appendingPathComponent("nonexistent"))

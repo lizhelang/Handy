@@ -466,13 +466,13 @@ final class InputiaSettingsWindowController: NSWindowController {
     let label = NSTextField(labelWithString: "历史导入")
     label.font = .systemFont(ofSize: 13, weight: .medium)
 
-    let historyButton = NSButton(title: "导入语音历史", target: self, action: #selector(importHandyHistory))
+    let historyButton = NSButton(title: "导入语音历史", target: self, action: #selector(importControlHistory))
     historyButton.bezelStyle = .rounded
 
-    let clipboardButton = NSButton(title: "导入剪贴板历史", target: self, action: #selector(importHandyClipboard))
+    let clipboardButton = NSButton(title: "导入剪贴板历史", target: self, action: #selector(importControlClipboard))
     clipboardButton.bezelStyle = .rounded
 
-    let allButton = NSButton(title: "全部导入", target: self, action: #selector(importAllHandyHistory))
+    let allButton = NSButton(title: "全部导入", target: self, action: #selector(importAllControlHistory))
     allButton.bezelStyle = .rounded
 
     let buttonRow = NSStackView(views: [historyButton, clipboardButton, allButton])
@@ -654,7 +654,7 @@ final class InputiaSettingsWindowController: NSWindowController {
     memoryCheckbox.state = settingsDocument.memoryEnabled ? .on : .off
     privacyCheckbox.state = settingsDocument.privacyLearningEnabled ? .on : .off
     sensitiveAppsTextView.string = settingsDocument.sensitiveBundleIds.joined(separator: "\n")
-    importStatusLabel.stringValue = handyDataStatusText()
+    importStatusLabel.stringValue = inputiaDataStatusText()
     statusLabel.stringValue = settingsURL.path
     displayedDocument = documentFromControls()
   }
@@ -789,19 +789,19 @@ final class InputiaSettingsWindowController: NSWindowController {
     }
   }
 
-  @objc private func importHandyHistory() {
-    importHandySources(includeHistory: true, includeClipboard: false)
+  @objc private func importControlHistory() {
+    importControlSources(includeHistory: true, includeClipboard: false)
   }
 
-  @objc private func importHandyClipboard() {
-    importHandySources(includeHistory: false, includeClipboard: true)
+  @objc private func importControlClipboard() {
+    importControlSources(includeHistory: false, includeClipboard: true)
   }
 
-  @objc private func importAllHandyHistory() {
-    importHandySources(includeHistory: true, includeClipboard: true)
+  @objc private func importAllControlHistory() {
+    importControlSources(includeHistory: true, includeClipboard: true)
   }
 
-  private func importHandySources(includeHistory: Bool, includeClipboard: Bool) {
+  private func importControlSources(includeHistory: Bool, includeClipboard: Bool) {
     guard persistControls() else { return }
     #if INPUTIA_PAIRED_BUILD
     let selection = includeHistory && includeClipboard ? "both" : (includeHistory ? "history" : "clipboard")
@@ -809,7 +809,7 @@ final class InputiaSettingsWindowController: NSWindowController {
     InputiaMemoryImport.perform(selection: selection) { [weak self] status in self?.importStatusLabel.stringValue = status }
     #else
     let bridge = InputiaRustBridge.makeDefault()
-    let result = InputiaHandyMemorySync.sync(
+    let result = InputiaControlMemorySync.sync(
       importer: bridge,
       includeHistory: includeHistory,
       includeClipboard: includeClipboard
@@ -818,11 +818,11 @@ final class InputiaSettingsWindowController: NSWindowController {
     #endif
   }
 
-  private func handyDataStatusText() -> String {
+  private func inputiaDataStatusText() -> String {
     #if INPUTIA_PAIRED_BUILD
     return "由已认证的学习服务导入；未确认的操作将使用原记录恢复"
     #else
-    return InputiaHandyMemorySync.statusText()
+    return InputiaControlMemorySync.statusText()
     #endif
   }
 

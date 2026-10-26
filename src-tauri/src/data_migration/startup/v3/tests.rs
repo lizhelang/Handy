@@ -368,6 +368,7 @@ fn small_replay_never_restores_history_and_keeps_full_completion_evidence() {
     let roots = vec![MigrationSourceRoot {
         label: "handy".into(),
         root: f.root.clone(),
+        previous: None,
     }];
     observation.recheck(&roots).unwrap();
     let path = f.root.join(CONTROL_SETTINGS_PENDING_NAME);
@@ -446,6 +447,7 @@ fn completed_full_does_not_rescan_old_payload_and_small_scope_rejects_extra_entr
         &[MigrationSourceRoot {
             label: "handy".into(),
             root: f.root.clone(),
+            previous: None,
         }],
     )
     .unwrap();
@@ -466,6 +468,34 @@ fn completed_full_does_not_rescan_old_payload_and_small_scope_rejects_extra_entr
     write_json_atomically(&t.outcome.manifest_path, &t.outcome.manifest).unwrap();
     t.journal.manifest_sha256 = file_fingerprint(&t.outcome.manifest_path).unwrap().1;
     assert!(t.validate().is_err());
+}
+#[test]
+fn completed_journal_after_whole_root_move_requires_explicit_relocation() {
+    let f = Fixture::new();
+    f.legacy_full();
+    let moved = f.home.join("moved-control");
+    fs::rename(&f.root, &moved).unwrap();
+    assert!(
+        prepare_with_state(&moved, None, &f.backup, &f.locks, None, || Ok(
+            StartupNeed::NoWork
+        ))
+        .is_err()
+    );
+    assert!(matches!(
+        prepare_moved_with_state(&moved, &f.root, &f.backup, &f.locks, || Ok(
+            StartupNeed::NoWork
+        ))
+        .unwrap(),
+        StartupPreparation::NoWork(_)
+    ));
+    // 旧位置重新出现时属于复制，重定位不成立。
+    fs::create_dir(&f.root).unwrap();
+    assert!(
+        prepare_moved_with_state(&moved, &f.root, &f.backup, &f.locks, || Ok(
+            StartupNeed::NoWork
+        ))
+        .is_err()
+    );
 }
 #[test]
 fn schema_dispatch_rejects_duplicate_unknown_and_mixed_fields() {

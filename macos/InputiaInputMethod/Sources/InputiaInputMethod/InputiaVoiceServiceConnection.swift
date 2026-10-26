@@ -611,7 +611,7 @@ final class InputiaVoiceServiceConnection {
     let transport = try InputiaFramedConnection.connect(path: endpoint)
     do {
       _ = try transport.authenticate { descriptor in
-        try PeerAuthenticator.authenticate(socketFD: descriptor, manifest: manifest, expectedRole: .handy)
+        try PeerAuthenticator.authenticate(socketFD: descriptor, manifest: manifest, expectedRole: .control)
       }
       let hello = InputiaVoiceHello(protocol_major: 1, protocol_minor: 0, instance_id: processInstance,
         profile_id: trust.profileID, policy_epoch: previousEpoch, capabilities: ["voice_sessions_v1", "shared_terms_v1", "ime_target_broker_v1", "typed_capture_v1", "personalization_v1", "memory_domain_v1"])
@@ -641,7 +641,7 @@ final class InputiaVoiceServiceConnection {
     let transport = try InputiaFramedConnection.connect(path: endpoint)
     do {
       _ = try transport.authenticate { descriptor in
-        try PeerAuthenticator.authenticate(socketFD: descriptor, manifest: manifest, expectedRole: .handy,
+        try PeerAuthenticator.authenticate(socketFD: descriptor, manifest: manifest, expectedRole: .control,
           expectedBundlePath: installation.receipt.components.control)
       }
       let hello = InputiaVoiceHello(protocol_major: 1, protocol_minor: 1, instance_id: processInstance,

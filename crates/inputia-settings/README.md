@@ -1,6 +1,6 @@
 # Inputia Settings
 
-`inputia-settings` 是 Inputia 输入法偏好的本地 JSON 配置层。它不依赖 Tauri，也不依赖 macOS Host；目标是让系统输入法 Host、未来 Handy 设置页、以及测试工具共用同一份配置契约。
+`inputia-settings` 是 Inputia 输入法偏好的本地 JSON 配置层。它不依赖 Tauri，也不依赖 macOS Host；目标是让系统输入法 Host、未来控制中心设置页、以及测试工具共用同一份配置契约。
 
 ## 更新维护门禁
 

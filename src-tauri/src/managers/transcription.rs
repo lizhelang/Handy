@@ -14,7 +14,7 @@ use inputia_core::integration::{
     privacy::{HistoryMode, PrivacyContext, PrivacyPolicy, SourceTrust},
     terms::HotwordBudget,
 };
-use inputia_handy_runtime::{
+use inputia_runtime::{
     store::TermSnapshot,
     voice_protocol::{VoiceRequest, VoiceTermsVersion},
 };
@@ -47,6 +47,9 @@ use transcribe_rs::{
 
 const STREAM_PERF_LOG_INTERVAL: Duration = Duration::from_secs(5);
 const STREAM_FINALIZE_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[path = "qwen_batch.rs"]
+mod qwen_batch;
 
 const SHARED_NATIVE_PROMPT_TTL: Duration = Duration::from_secs(2);
 const SHARED_STREAM_RECHECK: Duration = Duration::from_millis(500);
@@ -125,7 +128,7 @@ struct SharedNativePrompt {
     snapshot: TermSnapshot,
     acquired_at: Instant,
     watch: crate::native_prompt_watch::NativePromptWatch,
-    _reader: inputia_handy_runtime::native_readers::NativeReaderPin,
+    _reader: inputia_runtime::native_readers::NativeReaderPin,
 }
 
 impl SharedNativePrompt {
@@ -1504,11 +1507,11 @@ impl TranscriptionManager {
             &request.client_instance,
             &request.server_instance,
             target,
-            inputia_handy_runtime::voice_protocol::TargetBridgePurpose::Personalization,
+            inputia_runtime::voice_protocol::TargetBridgePurpose::Personalization,
         )
         .ok()?;
         let acquired_at = Instant::now();
-        let reader = inputia_handy_runtime::native_readers::NativeReaderPin::new().ok()?;
+        let reader = inputia_runtime::native_readers::NativeReaderPin::new().ok()?;
         service
             .issue_privacy_reader(reader.id().into(), request.policy_epoch)
             .ok()?;
@@ -1519,7 +1522,7 @@ impl TranscriptionManager {
             return None;
         }
         let legacy_version = if service.memory_domain_status().ok()?.state
-            == inputia_handy_runtime::legacy_memory::MemoryDomainState::Ready
+            == inputia_runtime::legacy_memory::MemoryDomainState::Ready
         {
             let query = MemoryQuery::VoiceHotwords {
                 limit: HotwordBudget::default().learned_max_words,
@@ -1576,7 +1579,7 @@ impl TranscriptionManager {
                     &request.client_instance,
                     &request.server_instance,
                     &target,
-                    inputia_handy_runtime::voice_protocol::TargetBridgePurpose::Personalization,
+                    inputia_runtime::voice_protocol::TargetBridgePurpose::Personalization,
                 )
                 .is_ok()
         })
@@ -1599,9 +1602,9 @@ impl TranscriptionManager {
         voice_context: Option<&VoiceRequest>,
     ) -> Result<String> {
         #[cfg(debug_assertions)]
-        if std::env::var("HANDY_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
+        if crate::utils::env_var("INPUTIA_FORCE_TRANSCRIPTION_FAILURE").is_some() {
             return Err(anyhow::anyhow!(
-                "Simulated transcription failure (HANDY_FORCE_TRANSCRIPTION_FAILURE)"
+                "Simulated transcription failure (INPUTIA_FORCE_TRANSCRIPTION_FAILURE)"
             ));
         }
 
@@ -1825,16 +1828,74 @@ impl TranscriptionManager {
                         } else {
                             None
                         };
-                        let result = private_session
-                            .as_mut()
-                            .unwrap_or(session)
-                            .run(&audio, &run_options)
-                            .map(|t| {
-                                // Whisper's audio-based LID (auto mode only;
-                                // `None` when a language hint was passed).
-                                model_detected_language = t.language;
-                                strip_qwen_context_echo(t.text, active_qwen_context)
-                            });
+                        let native_session = private_session.as_mut().unwrap_or(session);
+                        let result = if model_is_qwen3_asr {
+                            let mut attempts = 0;
+                            qwen_batch::transcribe(
+                                &audio,
+                                || {
+                                    !shared_submitted
+                                        || shared_prompt.as_ref().is_some_and(|shared| {
+                                            // watch 持续验证同一快照；初次获取时间不能代替它的新鲜度。
+                                            shared.watch.current()
+                                                && !shared.watch.cancel_token().is_cancelled()
+                                                && !crate::secure_input::is_enabled_now()
+                                        })
+                                },
+                                |segment| {
+                                    let result = native_session.run(segment, &run_options);
+                                    attempts += 1;
+                                    info!(
+                                        "Qwen3-ASR segment attempt={} audio_seconds={:.2} succeeded={}",
+                                        attempts,
+                                        segment.len() as f64 / 16_000.0,
+                                        result.is_ok()
+                                    );
+                                    result
+                                        .map(|transcript| qwen_batch::SegmentTranscript {
+                                            text: strip_qwen_context_echo(
+                                                transcript.text,
+                                                active_qwen_context,
+                                            ),
+                                            language: transcript.language,
+                                        })
+                                        .map_err(|error| match error {
+                                            transcribe_cpp::Error::OutputTruncated { .. }
+                                            | transcribe_cpp::Error::InputTooLong(_) => {
+                                                qwen_batch::SegmentError::Retryable(error)
+                                            }
+                                            _ => qwen_batch::SegmentError::Fatal(error),
+                                        })
+                                },
+                            )
+                            .map(|transcript| {
+                                model_detected_language = transcript.language;
+                                transcript.text
+                            })
+                            .map_err(|error| match error {
+                                qwen_batch::BatchError::Revoked => {
+                                    anyhow::anyhow!("transcription prompt was revoked")
+                                }
+                                qwen_batch::BatchError::Failed { range, source } => anyhow::anyhow!(
+                                    "transcribe-cpp transcription failed at {:.2}–{:.2}s: {}",
+                                    range.start as f64 / 16_000.0,
+                                    range.end as f64 / 16_000.0,
+                                    source
+                                ),
+                            })
+                        } else {
+                            native_session
+                                .run(&audio, &run_options)
+                                .map(|t| {
+                                    // Whisper's audio-based LID (auto mode only;
+                                    // `None` when a language hint was passed).
+                                    model_detected_language = t.language;
+                                    strip_qwen_context_echo(t.text, active_qwen_context)
+                                })
+                                .map_err(|e| {
+                                    anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
+                                })
+                        };
                         drop(private_session);
                         if shared_submitted
                             && shared_prompt
@@ -1850,9 +1911,7 @@ impl TranscriptionManager {
                                     shared.snapshot.terms.len(), shared.snapshot.policy_epoch, shared.snapshot.learning_generation);
                             }
                         }
-                        result.map_err(|e| {
-                            anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
-                        })
+                        result
                     }
                     LoadedEngine::Parakeet(parakeet_engine) => {
                         let params = ParakeetParams {
@@ -2173,7 +2232,7 @@ fn effective_language_for_model(
     }
 }
 
-/// Resolve how confidently Handy knows the language of the text produced by a
+/// Resolve how confidently Inputia knows the language of the text produced by a
 /// transcription run. The UI language is deliberately not part of this
 /// decision.
 fn resolve_output_language_evidence(
@@ -2188,7 +2247,7 @@ fn resolve_output_language_evidence(
 
     // Stored language intent is only evidence when this specific engine run
     // actually received the hint. Some multilingual engines (notably Parakeet
-    // V3) always auto-detect and ignore Handy's selection; transcribe-cpp also
+    // V3) always auto-detect and ignore Inputia's selection; transcribe-cpp also
     // drops a requested hint when the loaded model does not advertise it.
     if let Some(language) = applied_language_hint.filter(|lang| !lang.is_empty() && *lang != "auto")
     {
@@ -2493,7 +2552,7 @@ fn resolve_device_index(index: usize) -> Result<(Backend, Option<transcribe_cpp:
     Ok((Backend::Auto, Some(device)))
 }
 
-/// Map Handy's whisper accelerator setting to a transcribe-cpp [`Backend`].
+/// Map Inputia's whisper accelerator setting to a transcribe-cpp [`Backend`].
 ///
 /// `Auto` lets the library pick the best device (with CPU fallback), while
 /// `Cpu` forces strict CPU. `Gpu` only remains as the companion setting for an
@@ -3034,7 +3093,7 @@ mod tests {
     }
 
     fn shared_prompt_request() -> VoiceRequest {
-        use inputia_handy_runtime::voice_protocol::{HostTargetToken, VoiceCommand};
+        use inputia_runtime::voice_protocol::{HostTargetToken, VoiceCommand};
         VoiceRequest {
             request_id: "request".into(),
             session_id: "session".into(),
@@ -3063,7 +3122,7 @@ mod tests {
 
     #[test]
     fn shared_native_prompt_rejects_unknown_sensitive_secure_and_stale_contexts() {
-        use inputia_handy_runtime::voice_protocol::VoiceCommand;
+        use inputia_runtime::voice_protocol::VoiceCommand;
         let request = shared_prompt_request();
         let (policy, context, _) = shared_prompt_privacy(&request, false).unwrap();
         let decision = policy.decide(7, context);

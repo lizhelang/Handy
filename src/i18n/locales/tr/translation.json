@@ -88,17 +88,17 @@
     "quit": "Çıkış",
     "cancel": "İptal",
     "secureInputWarning": "⚠ Kısayollar Secure Input tarafından engelleniyor",
-    "clipboardHistory": "Pano Geçmişi"
+    "clipboardHistory": "Pano"
   },
   "sidebar": {
     "general": "Genel",
     "models": "Modeller",
     "advanced": "Gelişmiş",
     "postProcessing": "Son İşlem",
-    "history": "Geçmiş",
+    "history": "Kayıtlar",
     "debug": "Hata Ayıklama",
     "about": "Hakkında",
-    "clipboard": "Clipboard",
+    "clipboard": "Pano",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "Geçmiş",
+      "title": "Kayıtlar",
+      "search": "Kayıtlarda ve transkriptlerde ara",
       "openFolder": "Kayıtlar Klasörünü Aç",
-      "loading": "Geçmiş yükleniyor...",
-      "empty": "Henüz transkripsiyon yok. Geçmişinizi oluşturmak için kayda başlayın!",
+      "loading": "Kayıtlar yükleniyor...",
+      "empty": "Kayıt bulunamadı.",
       "copyToClipboard": "Transkripsiyonu panoya kopyala",
       "save": "Transkripsiyonu kaydet",
       "unsave": "Kaydedilenlerden kaldır",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "Pano Yöneticisi",
+      "title": "Pano",
       "searchPlaceholder": "Pano geçmişinde ara...",
       "filterAll": "Tümü",
       "filterText": "Metin",

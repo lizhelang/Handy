@@ -88,17 +88,17 @@
     "quit": "Zamknij",
     "cancel": "Anuluj",
     "secureInputWarning": "⚠ Skróty zablokowane przez Secure Input",
-    "clipboardHistory": "Historia schowka"
+    "clipboardHistory": "Schowek"
   },
   "sidebar": {
     "general": "Ogólne",
     "models": "Modele",
     "advanced": "Zaawansowane",
     "postProcessing": "Postproces",
-    "history": "Historia",
+    "history": "Nagrania",
     "debug": "Debugowanie",
     "about": "O programie",
-    "clipboard": "Clipboard",
+    "clipboard": "Schowek",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "Historia",
+      "title": "Nagrania",
+      "search": "Szukaj w nagraniach i transkrypcjach",
       "openFolder": "Otwórz folder nagrań",
-      "loading": "Wczytywanie historii...",
-      "empty": "Brak transkrypcji. Rozpocznij nagrywanie, aby zbudować historię!",
+      "loading": "Wczytywanie nagrań...",
+      "empty": "Nie znaleziono nagrań.",
       "copyToClipboard": "Kopiuj transkrypcję do schowka",
       "save": "Zapisz transkrypcję",
       "unsave": "Usuń z zapisanych",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "Menedżer schowka",
+      "title": "Schowek",
       "searchPlaceholder": "Szukaj w historii schowka...",
       "filterAll": "Wszystko",
       "filterText": "Tekst",

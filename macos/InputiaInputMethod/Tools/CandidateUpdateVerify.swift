@@ -25,7 +25,7 @@ import Security
       runID: metadata.run_id, profileID: metadata.profile_id, protocolMajor: 1, localRole: .inputia)
     _ = try SignedPairManifest.verify(Data(contentsOf: URL(fileURLWithPath: args[2])), trust: trust)
     let manifest = try SignedPairManifest.verify(Data(contentsOf: URL(fileURLWithPath: args[3])), trust: trust)
-    for (role, path) in [(PairRole.handy, args[4]), (PairRole.inputia, args[5])] {
+    for (role, path) in [(PairRole.control, args[4]), (PairRole.inputia, args[5])] {
       let identity = try manifest.identity(for: role)
       let hashes = identity.cdhashes.map { "cdhash H\"\($0)\"" }.joined(separator: " or ")
       var requirement: SecRequirement?

@@ -592,7 +592,7 @@ pub(crate) fn set_shortcut_blocking(epoch: u64, enabled: bool) {
 fn root(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     if let Some(profile) = crate::candidate_profile::current() {
         return profile
-            .handy_root
+            .control_root
             .parent()
             .map(|p| p.to_path_buf())
             .ok_or("profile_root_missing".into());

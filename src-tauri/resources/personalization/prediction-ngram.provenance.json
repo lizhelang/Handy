@@ -1,0 +1,54 @@
+{
+  "source": "Google Books Ngram Viewer dataset v3 (20200217), Chinese (Simplified)",
+  "url": "https://storage.googleapis.com/books/ngrams/books/datasetsv3.html",
+  "license": "CC BY 3.0",
+  "attribution": "Google Books Ngram Viewer, http://books.google.com/ngrams",
+  "files": "scripts/prediction-ngram.lock.json",
+  "transform": "years 1980-2019; untagged tokens only; both tokens in the Rime public lexicon vocabulary; unigram >= 40; bigram >= 20; top 12 next words and top 8 completions per word; counts of each word followed by the punctuation tokens , . ? ! ; : (bigram >= 20)",
+  "vocabulary": "src-tauri/resources/personalization/base-lexicon.tsv plus its characters",
+  "reproduce": "python3 scripts/prepare-prediction-ngram.py",
+  "derived_sha256": "3eccc6b1d6f274a93276ee65d35b6d776fc150825e76c626d1806064c4291ec2",
+  "bytes": 10203136,
+  "words": 79856,
+  "next_rows": 338382,
+  "completion_rows": 32765,
+  "punct_rows": 109768,
+  "emoji": {
+    "sources": {
+      "emoji-test.txt": {
+        "url": "https://www.unicode.org/Public/emoji/16.0/emoji-test.txt",
+        "sha256": "24f0c534e86cf142e2496953e8f0e46a3e702392911eddcd29c6cced85139697",
+        "license": "Unicode License V3"
+      },
+      "cldr-annotations-zh.json": {
+        "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/48.2.3/cldr-json/cldr-annotations-full/annotations/zh/annotations.json",
+        "sha256": "8d2dfe9bf41894bd17c9c1a1906a31bf0ccc06204bf4b77c2ab2b0d8f79a5fdf",
+        "license": "Unicode License V3"
+      },
+      "cldr-LICENSE": {
+        "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/48.2.3/LICENSE",
+        "sha256": "220ba0e1c43b99530d2d5bdb892a99dca0989414f51ab695ecd90163eaa1ec3b",
+        "license": "Unicode License V3"
+      },
+      "rime-emoji-emoji_word.txt": {
+        "url": "https://raw.githubusercontent.com/rime/rime-emoji/39d232996de79a95d7bf4b5e8533feed5326b075/opencc/emoji_word.txt",
+        "sha256": "301d3ea25833186aa89369ecc515f8f43fe6d9db2a9794df083f7316375b18f5",
+        "license": "LGPL-3.0"
+      },
+      "rime-emoji-LICENSE": {
+        "url": "https://raw.githubusercontent.com/rime/rime-emoji/39d232996de79a95d7bf4b5e8533feed5326b075/LICENSE",
+        "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+        "license": "LGPL-3.0"
+      }
+    },
+    "curated": {
+      "file": "scripts/prediction-emoji-curated.tsv",
+      "sha256": "102761137871e4f678b50165795eda5ee3d2acfaa956f9661bf83709cf552ba7",
+      "license": "same as Inputia"
+    },
+    "transform": "keywords of 1-6 CJK characters; curated words first, then rime-emoji, CLDR names and CLDR keywords limited to expressive, nature, food, weather, travel, activity, clothing and music subgroups; skin tones folded; top 3 per keyword",
+    "reproduce": "python3 scripts/prepare-prediction-emoji.py",
+    "keywords": 1176,
+    "rows": 1355
+  }
+}

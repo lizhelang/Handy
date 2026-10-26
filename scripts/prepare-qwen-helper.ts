@@ -8,8 +8,8 @@ const repoRoot = path.resolve(scriptDir, "..");
 const tauriDir = path.join(repoRoot, "src-tauri");
 const helperName =
   process.platform === "win32"
-    ? "handy-qwen-custom-words.exe"
-    : "handy-qwen-custom-words";
+    ? "inputia-qwen-custom-words.exe"
+    : "inputia-qwen-custom-words";
 // 发布构建为每次事务隔离 Cargo target；开发构建未设置时继续使用
 // src-tauri/target。Cargo 会读取同一个环境变量决定实际输出目录。
 const targetDir = process.env.CARGO_TARGET_DIR
@@ -25,7 +25,7 @@ writeFileSync(
 
 const build = spawnSync(
   "cargo",
-  ["build", "--release", "--bin", "handy-qwen-custom-words"],
+  ["build", "--release", "--bin", "inputia-qwen-custom-words"],
   {
     cwd: tauriDir,
     stdio: "inherit",

@@ -9,6 +9,8 @@ source = (root / "Sources/InputiaInputMethod/main.swift").read_text()
 
 def extract(marker, source=source):
     start = source.index(marker)
+    if source[:start].endswith("  @discardableResult\n"):
+        start -= len("  @discardableResult\n")
     brace = source.index("{", start)
     depth, end = 1, brace + 1
     while depth:
@@ -127,6 +129,10 @@ final class InputiaCandidatePanel {
             primaryCandidateCount: Int = 0, activeRowIndex: Int = 0) {
     restorationToken = nil; shows += 1; visible = true; shown = candidates
   }
+  var highlighted = 0
+  func showPredictions(_ predictions: [String], highlighted: Int, near: NSRect) {
+    restorationToken = nil; shows += 1; visible = true; shown = predictions; self.highlighted = highlighted
+  }
 }
 enum InputiaHost {
   static var activeInputController: Controller?
@@ -173,6 +179,7 @@ final class Controller {
   var predictionClient: ObjectIdentifier?, predictionSelection: NSRange?
   var candidateDisplayCleanupDepth = 0, predictionHandoffDepth = 0
   var predictionSelectionHandoff: UInt64?, predictionDisplayedAt: TimeInterval?
+  var predictionHighlight = 0, predictionAnchorRect = NSRect.zero
   var personalInputReplayDepth = 0
   var finishedDeferralTokens: [UInt64] = []
   func finishDeferredPersonalInput(_ token: UInt64) { finishedDeferralTokens.append(token) }
@@ -360,16 +367,18 @@ precondition(handoff.physicalInput(event(53)))
 precondition(handoff.predictionSelectionHandoff == nil && !InputiaHost.candidatePanel!.visible)
 precondition(handoff.finishedDeferralTokens == [8])
 checks += 1
-// 只有列表已经显示之后的新物理按键才能选它；队列重放和自动重复均不准入。
+// 只有列表已经显示之后的新物理空格才能选当前高亮项；队列重放和自动重复均不准入。
 let keys = fresh()
 keys.latestComposing = ""
 keys.personalPredictions = [Prediction(text: "甲"), Prediction(text: "乙")]
 let displayed = ProcessInfo.processInfo.systemUptime
 keys.predictionDisplayedAt = displayed
-func selectionEvent(timestamp: TimeInterval, repeated: Bool = false) -> NSEvent {
+keys.predictionHighlight = 1
+func selectionEvent(timestamp: TimeInterval, repeated: Bool = false, text: String = " ",
+  keyCode: UInt16 = 49) -> NSEvent {
   NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: timestamp,
-    windowNumber: 0, context: nil, characters: "2", charactersIgnoringModifiers: "2",
-    isARepeat: repeated, keyCode: 19)!
+    windowNumber: 0, context: nil, characters: text, charactersIgnoringModifiers: text,
+    isARepeat: repeated, keyCode: keyCode)!
 }
 precondition(keys.predictionSelectionIndex(selectionEvent(timestamp: displayed + 0.01)) == 1)
 precondition(keys.predictionSelectionIndex(selectionEvent(timestamp: displayed - 0.01)) == nil)
@@ -377,7 +386,10 @@ precondition(keys.predictionSelectionIndex(selectionEvent(timestamp: displayed +
 keys.personalInputReplayDepth = 1
 precondition(keys.predictionSelectionIndex(selectionEvent(timestamp: displayed + 0.01)) == nil)
 keys.personalInputReplayDepth = 0
-checks += 4
+// 数字键与 Tab 不再选择推荐：数字照常输入，Tab 只移动高亮。
+precondition(keys.predictionSelectionIndex(selectionEvent(timestamp: displayed + 0.01, text: "2", keyCode: 19)) == nil)
+precondition(keys.predictionSelectionIndex(selectionEvent(timestamp: displayed + 0.01, text: "\t", keyCode: 48)) == nil)
+checks += 6
 
 print("predictionPresentationHostSelfCheck=true checks=\(checks)")
 '''

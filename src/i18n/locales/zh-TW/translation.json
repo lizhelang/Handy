@@ -88,17 +88,17 @@
     "quit": "結束",
     "cancel": "取消",
     "secureInputWarning": "⚠ 快捷鍵被 Secure Input 阻擋",
-    "clipboardHistory": "剪貼歷史"
+    "clipboardHistory": "剪切"
   },
   "sidebar": {
     "general": "一般",
     "models": "模型",
     "advanced": "進階",
     "postProcessing": "後處理",
-    "history": "歷史記錄",
+    "history": "錄音",
     "debug": "偵錯",
     "about": "關於",
-    "clipboard": "剪貼歷史",
+    "clipboard": "剪切",
     "hotwords": "熱詞"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "歷史記錄",
+      "title": "錄音",
+      "search": "搜尋錄音和轉寫文字",
       "openFolder": "開啟錄音資料夾",
-      "loading": "載入歷史紀錄中...",
-      "empty": "還沒有轉錄紀錄。開始錄製以建立您的歷史紀錄！",
+      "loading": "正在載入錄音...",
+      "empty": "找不到錄音。",
       "copyToClipboard": "複製轉錄到剪貼簿",
       "save": "儲存轉錄",
       "unsave": "從已儲存中移除",
@@ -651,8 +652,8 @@
         "entries": "筆"
       },
       "recordingRetention": {
-        "title": "自動刪除錄音",
-        "description": "自動刪除舊錄音以節省空間",
+        "title": "自動刪除舊語音紀錄",
+        "description": "到期後整筆刪除語音紀錄，包括文字與錄音；已收藏的紀錄不受影響。",
         "never": "從不",
         "preserveLimit": "保留最新 {{count}} 筆",
         "days3": "3 天後",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "剪貼歷史",
+      "title": "剪切",
       "searchPlaceholder": "搜尋剪貼歷史...",
       "filterAll": "全部",
       "filterText": "文字",

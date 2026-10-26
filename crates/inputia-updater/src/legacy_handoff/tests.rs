@@ -72,7 +72,7 @@ fn handoff(root: &Path) -> LegacyMemoryHandoff {
                 channel: UpdateChannel::Candidate,
             },
             inputia_root: root.into(),
-            handy_root: root.join("Handy"),
+            control_root: root.join("Handy"),
             pair_manifest: root.join("pair"),
         },
         fixture: true,

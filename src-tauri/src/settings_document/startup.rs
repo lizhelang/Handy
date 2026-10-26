@@ -84,6 +84,7 @@ impl StartupStore {
                 observed.recheck(&[MigrationSourceRoot {
                     label: "handy".into(),
                     root: self.path.parent().ok_or(Error::UnsafePath)?.into(),
+                    previous: None,
                 }])?;
                 None
             }

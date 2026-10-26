@@ -200,36 +200,16 @@ struct InputiaHostTextPolicySelfCheck {
         InputiaHostTextPolicy.shouldPassThroughAppCommand(selectorName: "showPreferences:")
       ),
       (
-        "asciiRawFallbackNewlinePassesThroughAfterCommit",
-        InputiaHostTextPolicy.shouldPassThroughNewlineAfterRawFallbackCommit(
-          previousComposing: "abc",
-          candidates: [],
-          committedText: "abc"
-        )
+        "safariWebAppDefersReturnCommit",
+        InputiaHostTextPolicy.defersReturnCommit(
+          bundleIdentifier: "com.apple.Safari.WebApp.7DAA0D15-0997-433C-9820-ED5C74751C09")
       ),
       (
-        "candidateCommitNewlineDoesNotPassThrough",
-        !InputiaHostTextPolicy.shouldPassThroughNewlineAfterRawFallbackCommit(
-          previousComposing: "ni",
-          candidates: ["你"],
-          committedText: "你"
-        )
-      ),
-      (
-        "nonAsciiRawFallbackNewlineDoesNotPassThrough",
-        !InputiaHostTextPolicy.shouldPassThroughNewlineAfterRawFallbackCommit(
-          previousComposing: "你好",
-          candidates: [],
-          committedText: "你好"
-        )
-      ),
-      (
-        "changedCommitNewlineDoesNotPassThrough",
-        !InputiaHostTextPolicy.shouldPassThroughNewlineAfterRawFallbackCommit(
-          previousComposing: "abc",
-          candidates: [],
-          committedText: "ab"
-        )
+        "safariBrowserAndOtherHostsCommitImmediately",
+        !InputiaHostTextPolicy.defersReturnCommit(bundleIdentifier: "com.apple.Safari")
+          && !InputiaHostTextPolicy.defersReturnCommit(bundleIdentifier: "com.apple.Safari.WebApp")
+          && !InputiaHostTextPolicy.defersReturnCommit(bundleIdentifier: "com.google.Chrome")
+          && !InputiaHostTextPolicy.defersReturnCommit(bundleIdentifier: nil)
       ),
     ] + appCommandPassThroughChecks
 

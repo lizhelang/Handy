@@ -620,7 +620,7 @@ impl SqliteMemory {
         })
     }
 
-    pub fn import_handy_history(
+    pub fn import_control_history(
         &mut self,
         history_db_path: impl AsRef<Path>,
         context: &AppContext,
@@ -653,7 +653,7 @@ impl SqliteMemory {
         Ok(imported)
     }
 
-    pub fn import_handy_clipboard(
+    pub fn import_control_clipboard(
         &mut self,
         clipboard_db_path: impl AsRef<Path>,
         fallback_context: &AppContext,
@@ -2298,15 +2298,15 @@ mod tests {
 
     #[cfg(feature = "sqlite-memory")]
     #[test]
-    fn sqlite_memory_imports_handy_history_read_only() {
+    fn sqlite_memory_imports_inputia_history_read_only() {
         let tempdir = tempfile::tempdir().unwrap();
         let history_db = tempdir.path().join("history.db");
         create_history_db(&history_db);
 
-        let context = AppContext::new("com.pais.handy");
+        let context = AppContext::new("com.inputia.control");
         let mut memory = SqliteMemory::open_in_memory(AppPolicy::default()).unwrap();
         let imported = memory
-            .import_handy_history(&history_db, &context, 10)
+            .import_control_history(&history_db, &context, 10)
             .unwrap();
         let completions = memory.completion_candidates("中国", 10).unwrap();
 
@@ -2327,10 +2327,10 @@ mod tests {
         let clipboard_db = tempdir.path().join("clipboard.db");
         create_clipboard_db(&clipboard_db);
 
-        let context = AppContext::new("com.pais.handy");
+        let context = AppContext::new("com.inputia.control");
         let mut memory = SqliteMemory::open_in_memory(AppPolicy::default()).unwrap();
         let imported = memory
-            .import_handy_clipboard(&clipboard_db, &context, 10)
+            .import_control_clipboard(&clipboard_db, &context, 10)
             .unwrap();
         let completions = memory.completion_candidates("中国", 10).unwrap();
 

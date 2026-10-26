@@ -3,7 +3,7 @@ use super::*;
 struct Fixture {
     _temp: tempfile::TempDir,
     home: PathBuf,
-    handy: PathBuf,
+    control: PathBuf,
     inputia: PathBuf,
     backup: PathBuf,
     locks: PathBuf,
@@ -12,14 +12,14 @@ impl Fixture {
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
         let home = fs::canonicalize(temp.path()).unwrap();
-        let handy = home.join("Handy");
+        let control = home.join("Handy");
         let inputia = home.join("Inputia");
-        fs::create_dir(&handy).unwrap();
+        fs::create_dir(&control).unwrap();
         fs::create_dir(&inputia).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            for path in [temp.path(), &handy, &inputia] {
+            for path in [temp.path(), &control, &inputia] {
                 fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
             }
         }
@@ -28,7 +28,7 @@ impl Fixture {
         Self {
             _temp: temp,
             home,
-            handy,
+            control,
             inputia,
             backup,
             locks,
@@ -36,7 +36,7 @@ impl Fixture {
     }
     fn run<F: FnOnce() -> Result<()>>(&self, preflight: F) -> Result<Option<StartupMigration>> {
         prepare_paths(
-            &self.handy,
+            &self.control,
             Some(&self.inputia),
             &self.backup,
             &self.locks,
@@ -48,10 +48,10 @@ impl Fixture {
         self.run(|| Ok(())).unwrap().unwrap()
     }
     fn settings(&self) -> PathBuf {
-        self.handy.join("settings_store.json")
+        self.control.join("settings_store.json")
     }
     fn marker(&self) -> PathBuf {
-        self.handy
+        self.control
             .join(".inputia-control-settings-initialized.json")
     }
     fn put(&self, value: bool) {
@@ -153,7 +153,7 @@ fn source_changed_after_backup_cannot_arm() {
 fn mutating_failure_restores_database_then_recovered_repair_survives() {
     let f = Fixture::new();
     f.put(false);
-    let db = f.handy.join("history.db");
+    let db = f.control.join("history.db");
     let conn = Connection::open(&db).unwrap();
     conn.execute_batch("CREATE TABLE items(value TEXT);INSERT INTO items VALUES('old');")
         .unwrap();
@@ -298,7 +298,7 @@ fn authorized_new_pair_and_document_only_crash_are_quarantined_not_deleted() {
         assert!(!f.settings().exists());
         assert!(!f.marker().exists());
         assert_eq!(
-            fs::read(f.handy.join(format!(
+            fs::read(f.control.join(format!(
                 "migration_restore_quarantine/startup-{attempt}/settings_store.json"
             )))
             .unwrap(),
@@ -531,8 +531,8 @@ fn legacy_startup_rejects_new_pending_and_preserves_it_for_v3_recovery() {
 fn completed_uses_manifest_binding_without_reading_old_payload() {
     let f = Fixture::new();
     f.put(false);
-    fs::create_dir(f.handy.join("models")).unwrap();
-    fs::write(f.handy.join("models/model.bin"), b"synthetic model").unwrap();
+    fs::create_dir(f.control.join("models")).unwrap();
+    fs::write(f.control.join("models/model.bin"), b"synthetic model").unwrap();
     let mut guard = f.prepare();
     guard.begin_mutations().unwrap();
     guard.complete().unwrap();
@@ -610,7 +610,7 @@ fn changed_quarantine_after_rename_failure_is_preserved_for_repair() {
     inject("quarantine_after_rename");
     assert!(f.run(|| Ok(())).is_err());
     reset();
-    let target = f.handy.join(format!(
+    let target = f.control.join(format!(
         "migration_restore_quarantine/startup-{id}/settings_store.json"
     ));
     fs::write(&target, b"unknown new quarantine bytes").unwrap();
@@ -638,7 +638,7 @@ fn every_legacy_phase_preserves_unknown_pending_instead_of_restoring_a_partial_d
             drop(guard);
         }
         f.put(true);
-        let pending = f.handy.join(CONTROL_SETTINGS_PENDING_NAME);
+        let pending = f.control.join(CONTROL_SETTINGS_PENDING_NAME);
         fs::write(&pending, b"unknown pending source must be preserved").unwrap();
         let original = f.read();
         let original_pending = fs::read(&pending).unwrap();
@@ -651,7 +651,7 @@ fn every_legacy_phase_preserves_unknown_pending_instead_of_restoring_a_partial_d
         assert_eq!(f.read(), original);
         assert_eq!(fs::read(&pending).unwrap(), original_pending);
         assert_eq!(fs::read(f.backup.join(JOURNAL)).ok(), original_journal);
-        assert!(!f.handy.join("migration_restore_quarantine").exists());
+        assert!(!f.control.join("migration_restore_quarantine").exists());
     }
 }
 
@@ -664,7 +664,7 @@ fn late_unknown_pending_revokes_legacy_mutation_and_completion() {
         if when != "before_arm" {
             guard.begin_mutations().unwrap();
         }
-        let pending = f.handy.join(CONTROL_SETTINGS_PENDING_NAME);
+        let pending = f.control.join(CONTROL_SETTINGS_PENDING_NAME);
         fs::write(&pending, b"preserve").unwrap();
         let original = f.read();
         let original_journal = fs::read(f.backup.join(JOURNAL)).unwrap();

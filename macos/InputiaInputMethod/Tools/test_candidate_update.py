@@ -82,11 +82,111 @@ class CandidateUpdateTests(unittest.TestCase):
                     'HandyDevelopmentCandidate':True, 'HandyProfileRunID':'same'}
             path = app/'Contents/Info.plist'
             path.write_bytes(plistlib.dumps(info))
-            module.validate_profile(app, 'control', 'same')
+            self.assertEqual(module.validate_profile(app, 'control', 'same'), module.LEGACY_CONTROL_BUNDLE_ID)
             with self.assertRaises(ValueError): module.validate_profile(app, 'control', 'other')
             info['HandyDevelopmentCandidate'] = 'true'
             path.write_bytes(plistlib.dumps(info))
             with self.assertRaises(ValueError): module.validate_profile(app, 'control', 'same')
+            # 改名后的控制中心使用新程序标识与 Inputia 前缀标记；新旧前缀不能混用。
+            path.write_bytes(plistlib.dumps({'CFBundleIdentifier': module.CONTROL_BUNDLE_ID,
+                                             'InputiaDevelopmentCandidate': True, 'InputiaProfileRunID': 'same'}))
+            self.assertEqual(module.validate_profile(app, 'control', 'same'), module.CONTROL_BUNDLE_ID)
+            path.write_bytes(plistlib.dumps({'CFBundleIdentifier': module.CONTROL_BUNDLE_ID,
+                                             'HandyDevelopmentCandidate': True, 'HandyProfileRunID': 'same'}))
+            with self.assertRaises(ValueError): module.validate_profile(app, 'control', 'same')
+
+    def test_control_rename_is_the_only_allowed_identity_change(self):
+        cert = 'certificate leaf = H"abc"'
+        legacy = f'identifier "{module.LEGACY_CONTROL_BUNDLE_ID}" and {cert}'
+        renamed = f'identifier "{module.CONTROL_BUNDLE_ID}" and {cert}'
+        def requirements(*values):
+            return patch.object(module, 'identity', side_effect=list(values))
+        with requirements(legacy, legacy):
+            self.assertFalse(module.check_signing_identity('old', 'new'))
+        with requirements(legacy, renamed), self.assertRaises(ValueError):
+            module.check_signing_identity('old', 'new')
+        with requirements(legacy, renamed):
+            self.assertTrue(module.check_signing_identity('old', 'new', allow_control_rename=True))
+        with requirements(legacy, f'identifier "{module.CONTROL_BUNDLE_ID}" and certificate leaf = H"other"'), \
+                self.assertRaises(ValueError):
+            module.check_signing_identity('old', 'new', allow_control_rename=True)
+        with requirements(renamed, legacy), self.assertRaises(ValueError):
+            module.check_signing_identity('old', 'new', allow_control_rename=True)
+
+    def make_legacy_profile(self, home):
+        import sqlite3
+        legacy = module.legacy_candidate_profile('trial-1', home=home)
+        (legacy/'Handy/recordings').mkdir(parents=True)
+        (legacy/'Inputia').mkdir()
+        (legacy/'pair-manifest.json').write_text('{"pair": 1}')
+        (legacy/'Handy/recordings/a.wav').write_bytes(b'\0' * 4096)
+        with sqlite3.connect(legacy/'Handy/history.db') as db:
+            db.execute('PRAGMA journal_mode=WAL')
+            db.execute('CREATE TABLE t(x)'); db.execute("INSERT INTO t VALUES('原文')")
+        (legacy/'Inputia/settings.json').write_text('{}')
+        (legacy/'Handy/knowledge/files').mkdir(parents=True)
+        with sqlite3.connect(legacy/'Handy/knowledge/index.sqlite') as db:
+            db.execute('CREATE TABLE kb_sources(id TEXT PRIMARY KEY, path TEXT)')
+            db.execute("INSERT INTO kb_sources VALUES('managed', ?)", (str(legacy/'Handy/knowledge/files'),))
+            db.execute("INSERT INTO kb_sources VALUES('other', '/elsewhere')")
+        for path in [legacy, *legacy.rglob('*')]:
+            path.chmod(0o700 if path.is_dir() else 0o600)
+        return legacy
+
+    def test_data_layout_migration_clones_verifies_and_keeps_the_old_directory(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory).resolve()
+            legacy = self.make_legacy_profile(home)
+            current = module.candidate_profile('trial-1', home=home)
+            backup = home/'backup'/'data-before-rename'
+            with patch('builtins.print'):
+                moved = module.migrate_data_layout(legacy, current, backup)
+            self.assertEqual(moved, backup/'trial-1')
+            self.assertFalse(legacy.exists())
+            self.assertFalse(legacy.parent.exists())
+            self.assertEqual((current/'Control/recordings/a.wav').read_bytes(), b'\0' * 4096)
+            self.assertTrue((moved/'Handy/recordings/a.wav').exists())
+            with sqlite3.connect((current/'Control/history.db').as_uri() + '?mode=ro', uri=True) as db:
+                self.assertEqual(db.execute('SELECT x FROM t').fetchall(), [('原文',)])
+            self.assertEqual((current/'pair-manifest.json').read_text(), '{"pair": 1}')
+            with sqlite3.connect((current/'Control/knowledge/index.sqlite').as_uri() + '?mode=ro', uri=True) as db:
+                self.assertEqual(dict(db.execute('SELECT id, path FROM kb_sources')),
+                                 {'managed': str(current/'Control/knowledge/files'), 'other': '/elsewhere'})
+            # 备份中的旧目录保持原样。
+            with sqlite3.connect((moved/'Handy/knowledge/index.sqlite').as_uri() + '?mode=ro', uri=True) as db:
+                self.assertEqual(db.execute("SELECT path FROM kb_sources WHERE id='managed'").fetchone()[0],
+                                 str(legacy/'Handy/knowledge/files'))
+            # 安装失败时恢复：新目录移入失败备份，旧目录回到原位。
+            module.undo_data_migration(legacy, current, moved, home/'backup')
+            self.assertFalse(current.exists())
+            self.assertTrue((legacy/'Handy/history.db').exists())
+            self.assertTrue((home/'backup/data-after-rename-failed-trial-1/Control/history.db').exists())
+
+    def test_failed_verification_leaves_the_old_directory_untouched(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory).resolve()
+            legacy = self.make_legacy_profile(home)
+            current = module.candidate_profile('trial-1', home=home)
+            with patch.object(module, 'verify_layout_copy', side_effect=RuntimeError('mismatch')), \
+                    self.assertRaises(RuntimeError):
+                module.migrate_data_layout(legacy, current, home/'backup'/'data-before-rename')
+            self.assertTrue((legacy/'Handy/history.db').exists())
+            self.assertFalse(current.exists())
+            self.assertEqual([p.name for p in current.parent.iterdir()], [])
+
+    def test_copy_verification_detects_changed_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory).resolve()
+            legacy = self.make_legacy_profile(home)
+            copy = home/'copy'
+            module.run('/bin/cp', '-Rpc', legacy, copy)
+            (copy/'Handy').rename(copy/'Control')
+            files = sum(1 for path in legacy.rglob('*') if path.is_file())
+            self.assertEqual(module.verify_layout_copy(legacy, copy, {'Handy': 'Control'})[1], files)
+            (copy/'pair-manifest.json').write_text('{"pair": 2}')
+            with self.assertRaises(RuntimeError):
+                module.verify_layout_copy(legacy, copy, {'Handy': 'Control'})
 
     def test_release_v2_requires_release_identity_and_rejects_profile_markers(self):
         import plistlib
@@ -95,7 +195,7 @@ class CandidateUpdateTests(unittest.TestCase):
             (app/'Contents').mkdir(parents=True)
             path = app/'Contents/Info.plist'
             path.write_bytes(plistlib.dumps({
-                'CFBundleIdentifier': 'com.pais.handy.UnifiedCandidate',
+                'CFBundleIdentifier': module.CONTROL_BUNDLE_ID,
                 'InputiaReleaseID': 'inputia-1.1.1-85-abc12345',
             }))
             module.validate_release_v2(app, 'control', 'inputia-1.1.1-85-abc12345')
@@ -265,7 +365,7 @@ class CandidateUpdateTests(unittest.TestCase):
             self.assertEqual(receipt.stat().st_mode & 0o777, 0o600)
             first = json.loads(receipt.read_text())
             self.assertEqual(first['scope'], 'legacy_single_user')
-            self.assertEqual(first['data'], {'kind': 'legacy_candidate', 'run_id': 'trial-20260905'})
+            self.assertEqual(first['data'], {'kind': 'candidate', 'run_id': 'trial-20260905'})
             self.assertEqual(first['uid'], os.getuid())
             second = module.write_legacy_receipt(
                 'trial-20260905', 'inputia-1.1.1-86-test', destinations, home=home)

@@ -134,7 +134,17 @@ const calls = async (page: Page, command: string) =>
 
 test("暂停释放来源，继续播放使用新租约，结束与卸载均释放", async ({ page }) => {
   await mount(page);
+  expect(await calls(page, "acquire_history_attachment")).toHaveLength(0);
+  await expect(page.locator("audio")).not.toHaveAttribute("src");
   await page.getByRole("button", { name: "Play recording" }).click();
+  await page.locator("audio").evaluate((audio) => {
+    Object.defineProperty(audio, "duration", {
+      configurable: true,
+      value: 159.24,
+    });
+    audio.dispatchEvent(new Event("loadedmetadata"));
+  });
+  await expect(page.getByText("2:39", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Pause recording" }).click();
   await expect
     .poll(
@@ -143,6 +153,14 @@ test("暂停释放来源，继续播放使用新租约，结束与卸载均释�
     )
     .toBe(1);
   await expect(page.locator("audio")).not.toHaveAttribute("src");
+  await page.locator("audio").evaluate((audio) => {
+    Object.defineProperty(audio, "duration", {
+      configurable: true,
+      value: Number.NaN,
+    });
+    audio.dispatchEvent(new Event("durationchange"));
+  });
+  await expect(page.getByText("2:39", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Play recording" }).click();
   const acquired = await calls(page, "acquire_history_attachment");
   expect(acquired).toHaveLength(2);

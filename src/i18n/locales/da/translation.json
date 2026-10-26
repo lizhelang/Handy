@@ -88,17 +88,17 @@
     "quit": "Afslut",
     "cancel": "Annuller",
     "secureInputWarning": "⚠ Genveje blokeret af Secure Input",
-    "clipboardHistory": "Clipboard History"
+    "clipboardHistory": "Udklipsholder"
   },
   "sidebar": {
     "general": "Generelt",
     "models": "Modeller",
     "advanced": "Avanceret",
     "postProcessing": "Efterbehandling",
-    "history": "Historik",
+    "history": "Optagelser",
     "debug": "Fejlfinding",
     "about": "Om",
-    "clipboard": "Clipboard",
+    "clipboard": "Udklipsholder",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "Historik",
+      "title": "Optagelser",
+      "search": "Søg i optagelser og transskriptioner",
       "openFolder": "Åbn optagelsesmappe",
-      "loading": "Indlæser historik...",
-      "empty": "Ingen transskriptioner endnu. Start optagelse for at opbygge din historik!",
+      "loading": "Indlæser optagelser...",
+      "empty": "Ingen optagelser fundet.",
       "copyToClipboard": "Kopiér transskription til udklipsholder",
       "save": "Gem transskription",
       "unsave": "Fjern fra gemte",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "Clipboard Manager",
+      "title": "Udklipsholder",
       "searchPlaceholder": "Search clipboard history...",
       "filterAll": "All",
       "filterText": "Text",

@@ -104,7 +104,7 @@ Python 调用方可使用 `load_product()`、`read_json(path)`、`validate_manif
 收据字段为 `schema_version=1`、`product_id`、随机且稳定的 `installation_id` / `profile_id`、内核 `uid`、`scope`、`data`、`components`、当前 `release_id` 和渠道偏好 `channel`：
 
 - `scope=user` 的组件路径固定为当前用户 Applications 下控制中心/设置入口，以及 Library/Input Methods 下 IME；`legacy_single_user` 明确保留 `/Applications/Inputia.app`。
-- `data.kind=managed` 使用 `Inputia/Profiles/<profile_id>/Handy` 与 `Inputia`；`legacy_candidate` 保留 `HandyUnifiedCandidate/<run_id>/Handy` 与 `Inputia`，profile 必须仍是 `unified-candidate:<run_id>`。不移动已有数据。
+- `data.kind=managed` 使用 `Inputia/Profiles/<profile_id>/Control` 与 `Inputia`；`candidate` 使用 `InputiaUnifiedCandidate/<run_id>/Control` 与 `Inputia`；`legacy_candidate` 只用于读取改名前的收据，对应 `HandyUnifiedCandidate/<run_id>/Handy` 与 `Inputia`。两种候选布局的 profile 都必须是 `unified-candidate:<run_id>`。收据定位本身不移动数据；改名迁移由更新器的 `--migrate-rename` 一次完成，见[改名记录](../docs/verification/2026-10-26-inputia-rename.md)。
 - 配对文件定位到 `Inputia/Releases/<release_id>/pair-manifest.json`；receipt 不能指定任意替代路径。当前包路径与对端代码路径都要匹配收据。
 - v2 握手 minor 1 必须声明 `installation_binding_v1`，双方核对 product、installation、profile 与 release；v1 minor 0 仅用于双方均明确选择旧合同的桥接。
 

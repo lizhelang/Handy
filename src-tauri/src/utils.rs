@@ -72,7 +72,7 @@ fn native_windows_machine() -> Option<u16> {
 
     type IsWow64Process2 = unsafe extern "system" fn(HANDLE, *mut u16, *mut u16) -> BOOL;
 
-    // Resolve IsWow64Process2 dynamically so merely starting Handy never raises
+    // Resolve IsWow64Process2 dynamically so merely starting Inputia never raises
     // the minimum Windows version. Windows-on-ARM versions provide this API,
     // while a missing symbol or failed query safely preserves the x64 behavior.
     unsafe {
@@ -176,17 +176,34 @@ pub fn is_gnome_wayland() -> bool {
     is_wayland() && is_gnome()
 }
 
+/// Reads an `INPUTIA_*` environment variable, falling back to the pre-rename
+/// `HANDY_*` spelling so existing launch configurations keep working.
+pub fn env_var(name: &str) -> Option<String> {
+    env_var_os(name).and_then(|value| value.into_string().ok())
+}
+
+/// Same as [`env_var`] for values that may not be valid Unicode, such as paths.
+pub fn env_var_os(name: &str) -> Option<std::ffi::OsString> {
+    std::env::var_os(name).or_else(|| {
+        name.strip_prefix("INPUTIA_")
+            .and_then(|rest| std::env::var_os(format!("{LEGACY_ENV_PREFIX}{rest}")))
+    })
+}
+
+/// Environment variables were spelled `HANDY_*` before the product was renamed to Inputia.
+const LEGACY_ENV_PREFIX: &str = "HANDY_";
+
 /// Returns true when the environment variable is set to a truthy value
 /// (e.g. "1", "true", "yes", "on").
 /// "0", "false", "no", "off" and empty string are treated as falsy (case-insensitive).
 /// Returns false when the variable is not set.
 pub fn env_flag_enabled(name: &str) -> bool {
-    match std::env::var(name) {
-        Ok(v) => !matches!(
+    match env_var(name) {
+        Some(v) => !matches!(
             v.trim().to_ascii_lowercase().as_str(),
             "" | "0" | "false" | "no" | "off"
         ),
-        Err(_) => false,
+        None => false,
     }
 }
 
@@ -212,20 +229,32 @@ mod tests {
     #[test]
     fn env_flag_enabled_true_for_truthy_values() {
         for value in ["1", "true", "TRUE", "yes", "on", " 1 "] {
-            std::env::set_var("HANDY_TEST_FLAG_TRUTHY", value);
-            assert!(env_flag_enabled("HANDY_TEST_FLAG_TRUTHY"), "{value:?}");
+            std::env::set_var("INPUTIA_TEST_FLAG_TRUTHY", value);
+            assert!(env_flag_enabled("INPUTIA_TEST_FLAG_TRUTHY"), "{value:?}");
         }
-        std::env::remove_var("HANDY_TEST_FLAG_TRUTHY");
+        std::env::remove_var("INPUTIA_TEST_FLAG_TRUTHY");
     }
 
     #[test]
     fn env_flag_enabled_false_for_falsy_or_unset() {
-        assert!(!env_flag_enabled("HANDY_TEST_FLAG_UNSET"));
+        assert!(!env_flag_enabled("INPUTIA_TEST_FLAG_UNSET"));
 
         for value in ["0", "false", "FALSE", "no", "off", ""] {
-            std::env::set_var("HANDY_TEST_FLAG_FALSY", value);
-            assert!(!env_flag_enabled("HANDY_TEST_FLAG_FALSY"), "{value:?}");
+            std::env::set_var("INPUTIA_TEST_FLAG_FALSY", value);
+            assert!(!env_flag_enabled("INPUTIA_TEST_FLAG_FALSY"), "{value:?}");
         }
-        std::env::remove_var("HANDY_TEST_FLAG_FALSY");
+        std::env::remove_var("INPUTIA_TEST_FLAG_FALSY");
+    }
+
+    #[test]
+    fn env_var_reads_the_pre_rename_spelling_when_the_new_one_is_unset() {
+        let legacy = format!("{LEGACY_ENV_PREFIX}TEST_FLAG_LEGACY");
+        std::env::set_var(&legacy, "1");
+        assert!(env_flag_enabled("INPUTIA_TEST_FLAG_LEGACY"));
+        std::env::set_var("INPUTIA_TEST_FLAG_LEGACY", "0");
+        assert!(!env_flag_enabled("INPUTIA_TEST_FLAG_LEGACY"));
+        std::env::remove_var("INPUTIA_TEST_FLAG_LEGACY");
+        std::env::remove_var(&legacy);
+        assert_eq!(env_var("INPUTIA_TEST_FLAG_LEGACY"), None);
     }
 }

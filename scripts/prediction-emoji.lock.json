@@ -1,0 +1,34 @@
+{
+  "files": {
+    "emoji-test.txt": {
+      "url": "https://www.unicode.org/Public/emoji/16.0/emoji-test.txt",
+      "bytes": 640215,
+      "sha256": "24f0c534e86cf142e2496953e8f0e46a3e702392911eddcd29c6cced85139697",
+      "license": "Unicode License V3"
+    },
+    "cldr-annotations-zh.json": {
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/48.2.3/cldr-json/cldr-annotations-full/annotations/zh/annotations.json",
+      "bytes": 420265,
+      "sha256": "8d2dfe9bf41894bd17c9c1a1906a31bf0ccc06204bf4b77c2ab2b0d8f79a5fdf",
+      "license": "Unicode License V3"
+    },
+    "cldr-LICENSE": {
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr-json/48.2.3/LICENSE",
+      "bytes": 2033,
+      "sha256": "220ba0e1c43b99530d2d5bdb892a99dca0989414f51ab695ecd90163eaa1ec3b",
+      "license": "Unicode License V3"
+    },
+    "rime-emoji-emoji_word.txt": {
+      "url": "https://raw.githubusercontent.com/rime/rime-emoji/39d232996de79a95d7bf4b5e8533feed5326b075/opencc/emoji_word.txt",
+      "bytes": 124118,
+      "sha256": "301d3ea25833186aa89369ecc515f8f43fe6d9db2a9794df083f7316375b18f5",
+      "license": "LGPL-3.0"
+    },
+    "rime-emoji-LICENSE": {
+      "url": "https://raw.githubusercontent.com/rime/rime-emoji/39d232996de79a95d7bf4b5e8533feed5326b075/LICENSE",
+      "bytes": 7651,
+      "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+      "license": "LGPL-3.0"
+    }
+  }
+}

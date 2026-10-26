@@ -2,8 +2,8 @@
 schema_version = 1
 product_id = "com.inputia"
 name = "Inputia"
-version = "1.1.21"
-build = 109
+version = "1.1.39"
+build = 127
 
 [target]
 platform = "macos"
@@ -14,7 +14,7 @@ declared_os = ["13", "14", "15", "26"]
 
 [[components]]
 role = "control"
-bundle_id = "com.pais.handy.UnifiedCandidate"
+bundle_id = "com.inputia.control.UnifiedCandidate"
 app_name = "Inputia.app"
 
 [[components]]

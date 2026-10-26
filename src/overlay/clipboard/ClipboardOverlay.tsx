@@ -25,7 +25,7 @@ import {
 import { commands } from "@/bindings";
 import { InputiaMark } from "@/components/icons";
 import type { UnifiedOutputResult } from "@/bindings";
-import { useUnifiedHistoryStore } from "@/stores/unifiedHistoryStore";
+import { useClipboardHistoryStore } from "@/stores/unifiedHistoryStore";
 import {
   useUnifiedOutputStore,
   outputNeedsAcknowledgement,
@@ -178,7 +178,7 @@ const ClipboardOverlay: React.FC = () => {
     clearHistory,
     updateSettings,
   } = useSharedClipboard();
-  const history = useUnifiedHistoryStore();
+  const history = useClipboardHistoryStore();
   const output = useUnifiedOutputStore();
   const [searchQuery, setSearchQuery] = useState("");
   const search = useCallback(
@@ -206,7 +206,7 @@ const ClipboardOverlay: React.FC = () => {
   const { hasMore, loading: isLoading } = history;
   const isSearching = isLoading;
   const loadMore = useCallback(
-    () => useUnifiedHistoryStore.getState().load(true),
+    () => useClipboardHistoryStore.getState().load(true),
     [],
   );
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -227,7 +227,7 @@ const ClipboardOverlay: React.FC = () => {
 
   useEffect(() => {
     history.setFilters({
-      source: "all",
+      source: "clipboard",
       search: searchQuery,
       starredOnly: favoritesOnly,
       contentType:

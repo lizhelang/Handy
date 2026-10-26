@@ -15,7 +15,7 @@ for (const language of ["en", "zh"] as const) {
       await page.evaluate(
         async ({ language, failure }) => {
           const calls: string[] = [];
-          const legacyPath = "/test/HandyUnifiedCandidate/trial-test/Handy";
+          const legacyPath = "/test/HandyUnifiedCandidate/trial-test/Inputia";
           const { default: RefreshRuntime } = await import("/@react-refresh");
           RefreshRuntime.injectIntoGlobalHook(window);
           Object.assign(window, {

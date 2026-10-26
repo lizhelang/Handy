@@ -127,7 +127,7 @@ fn validate_outcome_paths(
                 .find(|root| root.label == entry.source_root_label)
                 .context("manifest source root is not authorized")?;
             anyhow::ensure!(
-                root.root == entry.source_root,
+                root.records(&entry.source_root),
                 "copied migration source root requires explicit relocation"
             );
             checked_database(&root.root, &entry.source_relative_path)?;
@@ -155,6 +155,57 @@ pub enum MigrationBackupStatus {
 pub struct MigrationSourceRoot {
     pub label: String,
     pub root: PathBuf,
+    /// 显式重定位：同一数据根整体移动前的位置。迁移账本里记录这个旧位置的条目视为当前根。
+    pub previous: Option<PathBuf>,
+}
+
+impl MigrationSourceRoot {
+    fn records(&self, recorded: &Path) -> bool {
+        self.root == recorded || self.previous.as_deref() == Some(recorded)
+    }
+}
+
+/// 产品改名把同一运行编号的候选数据目录整体移到了新位置，改名前写下的迁移账本仍记录旧绝对路径。
+/// 只有当前候选配置声明的改名前位置、且该位置已不存在（确属移动而非复制）时才登记为重定位。
+pub(crate) fn relocate_pre_rename_roots(roots: &mut [MigrationSourceRoot]) {
+    let Some(profile) = crate::candidate_profile::current() else {
+        return;
+    };
+    let Some((control, inputia)) = profile.pre_rename_roots() else {
+        return;
+    };
+    relocate_roots(
+        roots,
+        &[
+            ("handy", &profile.control_root, control),
+            ("inputia", &profile.inputia_root, inputia),
+        ],
+    );
+}
+
+fn relocate_roots(roots: &mut [MigrationSourceRoot], moves: &[(&str, &PathBuf, PathBuf)]) {
+    for root in roots.iter_mut() {
+        let Some((_, _, previous)) = moves
+            .iter()
+            .find(|(label, current, _)| root.label == *label && root.root == **current)
+        else {
+            continue;
+        };
+        if matches!(fs::symlink_metadata(previous), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+        {
+            root.previous = Some(previous.clone());
+        }
+    }
+}
+
+fn relocated_manifest_path(recorded: &Path, roots: &[MigrationSourceRoot]) -> PathBuf {
+    roots
+        .iter()
+        .find_map(|root| {
+            let rest = recorded.strip_prefix(root.previous.as_deref()?).ok()?;
+            Some(root.root.join(rest))
+        })
+        .unwrap_or_else(|| recorded.to_path_buf())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -346,7 +397,8 @@ fn verify_startup_marker(marker_path: &Path, roots: &[MigrationSourceRoot]) -> R
         "startup migration marker has unexpected id {}",
         marker.migration_id
     );
-    let relative = marker.manifest_path.strip_prefix(backup_root).context(
+    let manifest_path = relocated_manifest_path(&marker.manifest_path, roots);
+    let relative = manifest_path.strip_prefix(backup_root).context(
         "copied marker manifest is outside current backup domain; explicit relocation required",
     )?;
     validate_relative(relative)?;
@@ -356,25 +408,23 @@ fn verify_startup_marker(marker_path: &Path, roots: &[MigrationSourceRoot]) -> R
         "unexpected marker manifest layout"
     );
     checked_path(backup_root, relative)?;
-    let (_, actual_sha256) = file_fingerprint(&marker.manifest_path)?;
+    let (_, actual_sha256) = file_fingerprint(&manifest_path)?;
     anyhow::ensure!(
         actual_sha256 == marker.manifest_sha256,
         "startup migration manifest checksum changed"
     );
-    let manifest: MigrationBackupManifest =
-        serde_json::from_slice(&fs::read(&marker.manifest_path)?)?;
+    let manifest: MigrationBackupManifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;
     anyhow::ensure!(
         manifest.migration_id == marker.migration_id,
         "marker and manifest migration identities differ"
     );
     validate_outcome_paths(
         &MigrationBackupOutcome {
-            backup_dir: marker
-                .manifest_path
+            backup_dir: manifest_path
                 .parent()
                 .context("manifest has no domain")?
                 .to_path_buf(),
-            manifest_path: marker.manifest_path,
+            manifest_path,
             manifest,
         },
         Some(roots),
@@ -382,7 +432,7 @@ fn verify_startup_marker(marker_path: &Path, roots: &[MigrationSourceRoot]) -> R
     Ok(())
 }
 
-pub fn handy_data_candidates(label: &str) -> Vec<MigrationPathCandidate> {
+pub fn control_data_candidates(label: &str) -> Vec<MigrationPathCandidate> {
     candidates_for_root(
         label,
         &[
@@ -737,6 +787,7 @@ where
     let roots = vec![MigrationSourceRoot {
         label: "sqlite".into(),
         root: source_root.to_path_buf(),
+        previous: None,
     }];
     let candidates = vec![MigrationPathCandidate {
         source_root_label: "sqlite".into(),
@@ -1087,6 +1138,7 @@ mod tests {
         let roots = [MigrationSourceRoot {
             label: "source".into(),
             root: temp.path().into(),
+            previous: None,
         }];
         let candidates = [
             MigrationPathCandidate {
@@ -1188,6 +1240,7 @@ mod tests {
         let roots = [MigrationSourceRoot {
             label: "source".into(),
             root: temp.path().into(),
+            previous: None,
         }];
         let outcome = prepare_backup(
             &roots,
@@ -1270,6 +1323,7 @@ mod tests {
         let roots = vec![MigrationSourceRoot {
             label: "synthetic".into(),
             root,
+            previous: None,
         }];
         let outcome = prepare_backup(
             &roots,
@@ -1324,6 +1378,83 @@ mod tests {
     }
 
     #[test]
+    fn moved_root_is_accepted_only_through_explicit_absent_previous_location() {
+        let (temp, roots, outcome) = synthetic_file_backup();
+        let moved = temp.path().join("moved");
+        fs::rename(&roots[0].root, &moved).unwrap();
+        let mut current = roots.clone();
+        current[0].root = moved.clone();
+        assert!(restore_backup(&outcome, &current).is_err());
+
+        let mut relocated = current.clone();
+        relocate_roots(
+            &mut relocated,
+            &[("synthetic", &moved, roots[0].root.clone())],
+        );
+        assert_eq!(relocated[0].previous.as_ref(), Some(&roots[0].root));
+        assert!(validate_outcome_paths(&outcome, Some(&relocated)).is_ok());
+
+        // 旧位置仍存在时属于复制，不能登记重定位。
+        fs::create_dir(&roots[0].root).unwrap();
+        let mut copied = current.clone();
+        relocate_roots(&mut copied, &[("synthetic", &moved, roots[0].root.clone())]);
+        assert_eq!(copied[0].previous, None);
+        // 标签或当前位置不符时也不登记。
+        fs::remove_dir(&roots[0].root).unwrap();
+        let mut other = current.clone();
+        relocate_roots(&mut other, &[("other", &moved, roots[0].root.clone())]);
+        assert_eq!(other[0].previous, None);
+    }
+
+    #[test]
+    fn moved_complete_marker_resolves_inside_relocated_backup_domain() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_root = temp.path().join("old");
+        fs::create_dir(&old_root).unwrap();
+        fs::write(old_root.join("value.txt"), b"kept").unwrap();
+        let old_roots = vec![MigrationSourceRoot {
+            label: "synthetic".into(),
+            root: old_root.clone(),
+            previous: None,
+        }];
+        let backup_root = old_root
+            .join("migration_backups")
+            .join(STARTUP_MIGRATION_ID);
+        let outcome = prepare_backup_for_migration(
+            &old_roots,
+            &[MigrationPathCandidate {
+                source_root_label: "synthetic".into(),
+                relative_path: "value.txt".into(),
+                kind: MigrationPathKind::File,
+            }],
+            &backup_root,
+            STARTUP_MIGRATION_ID,
+        )
+        .unwrap();
+        let marker = StartupMigrationMarker {
+            migration_id: STARTUP_MIGRATION_ID.into(),
+            completed_at: "synthetic".into(),
+            manifest_path: outcome.manifest_path.clone(),
+            manifest_sha256: file_fingerprint(&outcome.manifest_path).unwrap().1,
+        };
+        write_json_atomically(&backup_root.join("complete.json"), &marker).unwrap();
+        let new_root = temp.path().join("new");
+        fs::rename(&old_root, &new_root).unwrap();
+        let marker_path = new_root
+            .join("migration_backups")
+            .join(STARTUP_MIGRATION_ID)
+            .join("complete.json");
+        let mut roots = vec![MigrationSourceRoot {
+            label: "synthetic".into(),
+            root: new_root.clone(),
+            previous: None,
+        }];
+        assert!(verify_startup_marker(&marker_path, &roots).is_err());
+        relocate_roots(&mut roots, &[("synthetic", &new_root, old_root)]);
+        verify_startup_marker(&marker_path, &roots).unwrap();
+    }
+
+    #[test]
     fn copied_complete_marker_cannot_reference_original_backup_domain() {
         let (temp, roots, outcome) = synthetic_file_backup();
         let copied_root = temp.path().join("copied-backups");
@@ -1367,6 +1498,7 @@ mod tests {
         let roots = [MigrationSourceRoot {
             label: "source".into(),
             root: source,
+            previous: None,
         }];
         for relative in [PathBuf::from("../outside"), temp.path().join("outside")] {
             assert!(prepare_backup(
@@ -1424,6 +1556,7 @@ mod tests {
         let roots = [MigrationSourceRoot {
             label: "source".into(),
             root: root.clone(),
+            previous: None,
         }];
         let candidates = [MigrationPathCandidate {
             source_root_label: "source".into(),
@@ -1438,14 +1571,14 @@ mod tests {
     }
 
     #[test]
-    fn lists_handy_and_inputia_data_candidates() {
-        let handy = handy_data_candidates("handy");
+    fn lists_control_and_inputia_data_candidates() {
+        let control = control_data_candidates("handy");
         let inputia = inputia_data_candidates("inputia");
 
-        assert!(handy
+        assert!(control
             .iter()
             .any(|candidate| candidate.relative_path == Path::new("history.db")));
-        assert!(handy
+        assert!(control
             .iter()
             .all(|candidate| candidate.source_root_label == "handy"));
         assert!(inputia
@@ -1490,6 +1623,7 @@ mod tests {
         let roots = vec![MigrationSourceRoot {
             label: "app-data".into(),
             root: app_data,
+            previous: None,
         }];
         let candidates = vec![
             MigrationPathCandidate {
@@ -1574,6 +1708,7 @@ mod tests {
         let roots = vec![MigrationSourceRoot {
             label: "sqlite".into(),
             root: temp.path().to_path_buf(),
+            previous: None,
         }];
         let outcome = prepare_backup(
             &roots,
@@ -1611,6 +1746,7 @@ mod tests {
             &[MigrationSourceRoot {
                 label: "app-data".into(),
                 root: temp.path().to_path_buf(),
+                previous: None,
             }],
             &[MigrationPathCandidate {
                 source_root_label: "app-data".into(),
@@ -1625,22 +1761,22 @@ mod tests {
     }
 
     #[test]
-    fn startup_backup_covers_handy_and_inputia_and_completes_once() {
+    fn startup_backup_covers_control_and_inputia_and_completes_once() {
         let temp = tempfile::tempdir().unwrap();
-        let handy_root = temp.path().join("handy");
+        let control_root = temp.path().join("handy");
         let inputia_root = temp.path().join("Inputia");
         let backup_root = temp.path().join("backups");
         let lock_root = temp.path().join("locks");
-        fs::create_dir_all(handy_root.join("recordings")).unwrap();
+        fs::create_dir_all(control_root.join("recordings")).unwrap();
         fs::create_dir_all(inputia_root.join("rime")).unwrap();
-        create_sample_database(&handy_root.join("history.db"));
+        create_sample_database(&control_root.join("history.db"));
         create_sample_database(&inputia_root.join("inputia_memory.db"));
-        fs::write(handy_root.join("recordings/one.wav"), b"audio").unwrap();
+        fs::write(control_root.join("recordings/one.wav"), b"audio").unwrap();
         fs::write(inputia_root.join("settings.json"), b"{}").unwrap();
         fs::write(inputia_root.join("rime/user.yaml"), b"state").unwrap();
 
         let mut migration = prepare_startup_backup_for_paths(
-            &handy_root,
+            &control_root,
             Some(&inputia_root),
             &backup_root,
             &lock_root,
@@ -1661,7 +1797,7 @@ mod tests {
         drop(migration);
 
         assert!(prepare_startup_backup_for_paths(
-            &handy_root,
+            &control_root,
             Some(&inputia_root),
             &backup_root,
             &lock_root,
@@ -1673,25 +1809,25 @@ mod tests {
     #[test]
     fn failed_setup_defers_restore_until_next_startup_after_connections_close() {
         let temp = tempfile::tempdir().unwrap();
-        let handy_root = temp.path().join("handy");
+        let control_root = temp.path().join("handy");
         let backup_root = temp.path().join("backups");
         let lock_root = temp.path().join("locks");
-        fs::create_dir_all(&handy_root).unwrap();
-        fs::write(handy_root.join("settings_store.json"), b"kept").unwrap();
-        create_sample_database(&handy_root.join("history.db"));
+        fs::create_dir_all(&control_root).unwrap();
+        fs::write(control_root.join("settings_store.json"), b"kept").unwrap();
+        create_sample_database(&control_root.join("history.db"));
 
         let mut migration =
-            prepare_startup_backup_for_paths(&handy_root, None, &backup_root, &lock_root)
+            prepare_startup_backup_for_paths(&control_root, None, &backup_root, &lock_root)
                 .unwrap()
                 .unwrap();
         migration.begin_mutations().unwrap();
-        let writer = Connection::open(handy_root.join("history.db")).unwrap();
+        let writer = Connection::open(control_root.join("history.db")).unwrap();
         writer
             .execute_batch("PRAGMA journal_mode=WAL; UPDATE items SET name='changed';")
             .unwrap();
         drop(migration);
         assert_eq!(
-            fs::read(handy_root.join("settings_store.json")).unwrap(),
+            fs::read(control_root.join("settings_store.json")).unwrap(),
             b"kept"
         );
         assert_eq!(
@@ -1703,14 +1839,14 @@ mod tests {
         // 模拟失败进程已退出/关闭连接，下一次启动仍在任何 manager 打开前。
         drop(writer);
         let mut resumed =
-            prepare_startup_backup_for_paths(&handy_root, None, &backup_root, &lock_root)
+            prepare_startup_backup_for_paths(&control_root, None, &backup_root, &lock_root)
                 .unwrap()
                 .unwrap();
         assert_eq!(
-            fs::read(handy_root.join("settings_store.json")).unwrap(),
+            fs::read(control_root.join("settings_store.json")).unwrap(),
             b"kept"
         );
-        assert_eq!(read_item_name(&handy_root.join("history.db")), "kept");
+        assert_eq!(read_item_name(&control_root.join("history.db")), "kept");
         resumed.begin_mutations().unwrap();
         resumed.complete().unwrap();
     }
@@ -1718,21 +1854,21 @@ mod tests {
     #[test]
     fn formal_backup_restores_records_favorites_terms_key_and_host_state_twice() {
         let temp = tempfile::tempdir().unwrap();
-        let handy = temp.path().join("Handy");
+        let control = temp.path().join("Handy");
         let inputia = temp.path().join("Inputia");
-        fs::create_dir_all(&handy).unwrap();
+        fs::create_dir_all(&control).unwrap();
         fs::create_dir_all(inputia.join("snapshots")).unwrap();
         let key = [7_u8; 32];
-        fs::write(handy.join("integration-learning.key"), key).unwrap();
+        fs::write(control.join("integration-learning.key"), key).unwrap();
         fs::write(
             inputia.join("snapshots/terms.json"),
             b"synthetic confirmed terms",
         )
         .unwrap();
         let databases = [
-            handy.join("history.db"),
-            handy.join("clipboard.db"),
-            handy.join("integration.db"),
+            control.join("history.db"),
+            control.join("clipboard.db"),
+            control.join("integration.db"),
             inputia.join("inputia_memory.db"),
             inputia.join("outbox.db"),
             inputia.join("policy.db"),
@@ -1744,14 +1880,16 @@ mod tests {
         let roots = [
             MigrationSourceRoot {
                 label: "handy".into(),
-                root: handy.clone(),
+                root: control.clone(),
+                previous: None,
             },
             MigrationSourceRoot {
                 label: "inputia".into(),
                 root: inputia.clone(),
+                previous: None,
             },
         ];
-        let candidates: Vec<_> = handy_data_candidates("handy")
+        let candidates: Vec<_> = control_data_candidates("handy")
             .into_iter()
             .chain(inputia_data_candidates("inputia"))
             .collect();
@@ -1776,7 +1914,7 @@ mod tests {
                 conn.execute_batch("DELETE FROM records; DELETE FROM terms;")
                     .unwrap();
             }
-            fs::write(handy.join("integration-learning.key"), b"changed").unwrap();
+            fs::write(control.join("integration-learning.key"), b"changed").unwrap();
             fs::write(inputia.join("snapshots/terms.json"), b"changed").unwrap();
             // 上面每个连接已经离开作用域，所有源写入者在恢复期间保持关闭。
             restore_backup(&outcome, &roots).unwrap();
@@ -1797,7 +1935,7 @@ mod tests {
                 );
             }
             assert_eq!(
-                fs::read(handy.join("integration-learning.key")).unwrap(),
+                fs::read(control.join("integration-learning.key")).unwrap(),
                 key
             );
             assert_eq!(
@@ -1810,18 +1948,18 @@ mod tests {
     #[test]
     #[ignore = "requires explicit real Handy data paths"]
     fn real_data_startup_backup_is_verified_before_cutover() {
-        let handy_root = PathBuf::from(
+        let control_root = PathBuf::from(
             std::env::var_os("HANDY_REAL_DATA_ROOT")
                 .expect("HANDY_REAL_DATA_ROOT must point at the existing app data"),
         );
         let inputia_root = std::env::var_os("HANDY_REAL_INPUTIA_ROOT").map(PathBuf::from);
-        let backup_root = handy_root
+        let backup_root = control_root
             .join("migration_backups")
             .join(STARTUP_MIGRATION_ID);
-        let lock_root = handy_root.join("migration_locks");
+        let lock_root = control_root.join("migration_locks");
 
         let migration = prepare_startup_backup_for_paths(
-            &handy_root,
+            &control_root,
             inputia_root.as_deref(),
             &backup_root,
             &lock_root,

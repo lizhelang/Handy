@@ -18,7 +18,7 @@ use crate::utils::{
 };
 use crate::TranscriptionCoordinator;
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
-use inputia_handy_runtime::decision::{
+use inputia_runtime::decision::{
     DecisionLimits, DecisionQuestion, DecisionRequest, DecisionResponse,
 };
 use log::{debug, error, warn};
@@ -34,7 +34,7 @@ const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 async fn prepare_owned_voice_result(
     app: &AppHandle,
-    start: inputia_handy_runtime::voice_protocol::VoiceRequest,
+    start: inputia_runtime::voice_protocol::VoiceRequest,
     history_id: i64,
     text: String,
     permission_epoch: u64,
@@ -595,7 +595,7 @@ async fn local_decision_allows_custom_words(text: String, custom_words: Vec<Stri
         return true;
     }
     let request = DecisionRequest {
-        protocol_version: inputia_handy_runtime::decision::PROTOCOL_VERSION,
+        protocol_version: inputia_runtime::decision::PROTOCOL_VERSION,
         request_id: format!("route-{}", uuid_like_id()),
         model_id: "laya-multilingual-mlx".into(),
         state: serde_json::json!({ "text": text, "custom_words": custom_words }),
@@ -629,7 +629,7 @@ async fn local_decision_allows_custom_words(text: String, custom_words: Vec<Stri
     response
         .and_then(|value| {
             value.answers.get("route").and_then(|answer| match answer {
-                inputia_handy_runtime::decision::DecisionAnswer::Choice {
+                inputia_runtime::decision::DecisionAnswer::Choice {
                     selected,
                     abstained,
                     ..
@@ -780,7 +780,7 @@ impl ShortcutAction for TranscribeAction {
                     // arming animation on hardware that normally starts too fast
                     // to make it visible.
                     #[cfg(debug_assertions)]
-                    if let Ok(delay_ms) = std::env::var("HANDY_DEBUG_MIC_READY_DELAY_MS")
+                    if let Ok(delay_ms) = crate::utils::env_var("INPUTIA_DEBUG_MIC_READY_DELAY_MS")
                         .unwrap_or_default()
                         .parse::<u64>()
                     {
@@ -961,7 +961,7 @@ impl ShortcutAction for TranscribeAction {
                         Ok(result) => result,
                         Err(error) => {
                             error!("Recording import task failed: {error}");
-                            Err(inputia_handy_runtime::attachment_store::PauseReason::IoFailure)
+                            Err(inputia_runtime::attachment_store::PauseReason::IoFailure)
                         }
                     };
                     let wav_saved = attachment.is_ok();
@@ -1191,7 +1191,7 @@ impl ShortcutAction for TranscribeAction {
 
                             error!("Transcription failed: {}", err);
                             // Surface the failure to the UI (toast). The full
-                            // message is also in handy.log via the line above.
+                            // message is also in inputia.log via the line above.
                             let _ = ah.emit("transcription-error", err.to_string());
                             // Save entry with empty text so user can retry
                             if wav_saved {

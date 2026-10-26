@@ -88,17 +88,17 @@
     "quit": "Выход",
     "cancel": "Отмена",
     "secureInputWarning": "⚠ Сочетания клавиш заблокированы Secure Input",
-    "clipboardHistory": "История буфера обмена"
+    "clipboardHistory": "Буфер обмена"
   },
   "sidebar": {
     "general": "Общие",
     "models": "Модели",
     "advanced": "Продвинутые",
     "postProcessing": "Постобработка",
-    "history": "История",
+    "history": "Записи",
     "debug": "Отладка",
     "about": "О программе",
-    "clipboard": "Clipboard",
+    "clipboard": "Буфер обмена",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "История",
+      "title": "Записи",
+      "search": "Поиск по записям и расшифровкам",
       "openFolder": "Открыть папку с записями",
-      "loading": "Загрузка истории...",
-      "empty": "Транскрипций пока нет. Начните запись, чтобы создать свою историю!",
+      "loading": "Загрузка записей...",
+      "empty": "Записи не найдены.",
       "copyToClipboard": "Скопировать транскрипцию в буфер обмена",
       "save": "Сохранить транскрипцию",
       "unsave": "Удалить из сохраненных",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "Менеджер буфера обмена",
+      "title": "Буфер обмена",
       "searchPlaceholder": "Поиск в истории буфера обмена...",
       "filterAll": "Все",
       "filterText": "Текст",

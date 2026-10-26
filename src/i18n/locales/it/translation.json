@@ -88,17 +88,17 @@
     "quit": "Esci",
     "cancel": "Annulla",
     "secureInputWarning": "⚠ Scorciatoie bloccate da Secure Input",
-    "clipboardHistory": "Cronologia appunti"
+    "clipboardHistory": "Appunti"
   },
   "sidebar": {
     "general": "Generale",
     "models": "Modelli",
     "advanced": "Avanzate",
     "postProcessing": "Post-Elaborazione",
-    "history": "Cronologia",
+    "history": "Registrazioni",
     "debug": "Debug",
     "about": "Informazioni",
-    "clipboard": "Clipboard",
+    "clipboard": "Appunti",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "Cronologia",
+      "title": "Registrazioni",
+      "search": "Cerca nelle registrazioni e nelle trascrizioni",
       "openFolder": "Apri la cartella delle registrazioni",
-      "loading": "Caricamento cronologia...",
-      "empty": "Non ci sono ancora trascrizioni. Comincia a registrare per costruire la tua cronologia!",
+      "loading": "Caricamento delle registrazioni...",
+      "empty": "Nessuna registrazione trovata.",
       "copyToClipboard": "Copia la trascrizione negli appunti",
       "save": "Salva la trascrizione",
       "unsave": "Rimuovi dai salvataggi",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "Gestore degli appunti",
+      "title": "Appunti",
       "searchPlaceholder": "Cerca nella cronologia degli appunti...",
       "filterAll": "Tutto",
       "filterText": "Testo",

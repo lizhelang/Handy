@@ -51,7 +51,7 @@ jobs:
         crate:
           [
             inputia-core,
-            inputia-handy-runtime,
+            inputia-runtime,
             inputia-settings,
             inputia-release,
             inputia-updater,

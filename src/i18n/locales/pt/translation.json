@@ -88,17 +88,17 @@
     "quit": "Sair",
     "cancel": "Cancelar",
     "secureInputWarning": "⚠ Atalhos bloqueados pelo Secure Input",
-    "clipboardHistory": "Histórico da área de transferência"
+    "clipboardHistory": "Área de transferência"
   },
   "sidebar": {
     "general": "Geral",
     "models": "Modelos",
     "advanced": "Avançado",
     "postProcessing": "Pós-Processamento",
-    "history": "Histórico",
+    "history": "Gravações",
     "debug": "Depuração",
     "about": "Sobre",
-    "clipboard": "Clipboard",
+    "clipboard": "Área de transferência",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "Histórico",
+      "title": "Gravações",
+      "search": "Pesquisar gravações e transcrições",
       "openFolder": "Abrir Pasta de Gravações",
-      "loading": "Carregando histórico...",
-      "empty": "Nenhuma transcrição ainda. Comece a gravar para construir seu histórico!",
+      "loading": "Carregando gravações...",
+      "empty": "Nenhuma gravação encontrada.",
       "copyToClipboard": "Copiar transcrição para área de transferência",
       "save": "Salvar transcrição",
       "unsave": "Remover dos salvos",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "Gerenciador de Área de Transferência",
+      "title": "Área de transferência",
       "searchPlaceholder": "Pesquisar histórico da área de transferência...",
       "filterAll": "Todos",
       "filterText": "Texto",

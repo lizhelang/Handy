@@ -4,9 +4,9 @@
 
 **本项目工作语言为中文，当前产品统一称为 Inputia。** 对话、文档、提交描述和 PR 说明使用中文；代码标识保持英文，已有英文注释风格可延续。不得用历史产品名称称呼当前产品。
 
-本目录维护当前产品源码；产品主分支为 `codex/unified-input-system`。本机主工作树位于 `/Users/lzl/FILE/github/Handy-unified-input-system`，当前隔离修复工作树位于 `/Users/lzl/.codex/worktrees/inputia-candidate-visibility/Handy`。先读 [README.md](README.md)，并核对实际 Git 状态和安装制品来源。`/Users/lzl/FILE/github/Handy` 是历史基线，不能用其旧版本配置覆盖当前产品。
+本目录维护当前产品源码；产品主分支为 `codex/unified-input-system`。本机主工作树位于 `/Users/lzl/FILE/github/Inputia-unified-input-system`，隔离修复工作树会随任务更换（2026-10-26 起为 `/Users/lzl/FILE/github/Inputia-rename`，分支 `codex/inputia-rename`，基于 1.1.35 的 `codex/prediction-ngram`，1.1.36 起的改名版本都从这里构建），以 `git worktree list` 和已安装制品记录的来源提交为准，不要沿用文档里的旧路径。先读 [README.md](README.md)，并核对实际 Git 状态和安装制品来源。`/Users/lzl/FILE/github/Inputia`（旧路径 `/Users/lzl/FILE/github/Handy` 保留为指向它的链接）是历史基线，不能用其旧版本配置覆盖当前产品。
 
-真实远程 URL、版权和第三方许可证、历史证据、兼容 bundle ID、协议字段及已有数据路径保留原值；产品显示名称清理不授权破坏这些身份或用户数据。需要迁移时单独设计并验证，不能宣称仓库已无所有历史名称。
+2026-10-26 起仓库为 `lizhelang/Inputia`，控制中心程序标识为 `com.inputia.control`（候选安装 `com.inputia.control.UnifiedCandidate`），候选数据位于 `~/Library/Application Support/InputiaUnifiedCandidate/<运行编号>/{Control,Inputia}`，本机构建与备份目录为 `~/Library/Application Support/InputiaUnifiedBuilds`，见[改名记录](docs/verification/2026-10-26-inputia-rename.md)。上游仓库地址、版权和第三方许可证、历史证据，以及已写入用户数据或签名格式的协议标识（迁移账本标签 `handy`、配对角色值 `"handy"`、哈希与签名域字符串）保留原值；改动这些身份或数据路径须单独设计迁移并验证，不能宣称仓库已无所有历史名称。
 
 以下保留本仓库有效的开发、国际化和协作规范。
 
@@ -24,7 +24,11 @@
 
 空输入联想仅由无修饰空格完成选词上屏触发，在原候选窗内连续交接，最多展示 5 秒；Esc、新输入或输入会话变化结束该轮。后台续租不得延长展示时间或重新弹出已关闭推荐，展示计时也不得延长内容授权租约。普通拼音候选不受联想计时限制。
 
-等待联想时使用空白原框，不绘制省略号。后续推荐已显示时，空格/1 选择第一项，2–9 按序选择，Tab 保持兼容；按键边界与实际选择必须使用同一分类，复用原准入与一次插入流程。不要拦截 Return、修饰快捷键或把尚未显示的旧内容当作可选项。
+等待联想时使用空白原框，不绘制省略号。后续推荐最多 3 项、不显示编号（2026-10-23 用户要求）：无修饰空格选择当前高亮项；左右方向键与 Tab（Shift+Tab 反向）在推荐间循环移动高亮，不移动光标、不结束本轮，且先于前文与字段边界处理；数字键不选择推荐，直接结束本轮并照常输入；只有一项时方向键与 Tab 照常交给宿主。按键边界与实际选择必须使用同一分类，复用原准入与一次插入流程。不要拦截 Return、修饰快捷键或把尚未显示的旧内容当作可选项。普通拼音候选的数字选择不变。
+
+用户在控制中心选择来源并确认回填后，语音与键入历史才按联想词表切成"上一个词→下一个词"计入个人层；不得自动读取或回填历史。历史词对只服务上屏后联想，不参与拼音候选重排，上屏后联想也不读取导入整句。展示含历史贡献的推荐前，须按次数分批核对至少一条现存来源（来源类型开放、应用未被排除、记录存在且修订一致，语音与剪贴板另核对源库身份与源记录修订）；途中发现的失效来源立即撤销其全部学习并推进学习世代使本轮作废。来源失效、重新回填、遗忘与清空都须同步删除对应词对与汇总。撤销只删除学习库中的派生数据，不删除、不修改任何历史原文、录音或剪贴记录。
+
+上屏后联想的问号、感叹号只来自公共二元表中"词后紧跟标点"的统计与当前分句的线索（2026-10-26 用户要求加问号与表情）：以疑问语气词结尾（排除"在吃饭呢"式陈述和建议的"吧"）时问号可排第一；疑问词、正反问、选择问线索的问号最多排在第一个续写之后；转述与宾语从句、任指、条件、"都/也"照应、交给对方决定等用法不算问句；感叹号只在感叹线索下出现。公共表从不给句号、逗号；每轮最多展示一个标点；标点概率不随个人证据总量折减。标点跟随同一段文字里汉字后已用的全角或半角，没有时按输入法默认给半角。表情只在前文以表情词完整结尾时给一个，固定放在第二位，使三项展示与九项准入重查前缀一致；否定词之后不给，单字表情词须跟在程度词后，遗忘与拒绝照常生效。改动这些规则须先在 `manifest.json` 记录的开发集上调参，测试集只用于一次判定。
 
 普通物理输入和宿主复制粘贴等命令不能被异步增强选词暂存或等待。新的打字或命令到来时取消尚未完成的增强选择，按当前原始 IMK 事件继续处理；原选择键松开不取消选择，迟到的准入回调不得插入。不得靠放宽字段或权限证明补投已失效输入。
 
@@ -230,8 +234,8 @@ Access debug features: `Cmd+Shift+D` (macOS) or `Ctrl+Shift+D` (Windows/Linux)
 
 - **macOS**: Metal acceleration, accessibility permissions required for keyboard shortcuts
 - **Windows**: Vulkan acceleration, code signing
-- **Linux**: OpenBLAS + Vulkan, limited Wayland support, overlay uses GTK layer shell (disable with `HANDY_NO_GTK_LAYER_SHELL=1`)
-- **Nix/NixOS**: the Nix package sets `HANDY_DISABLE_UPDATER=1` to force-disable the self-updater at runtime without touching the persisted setting (self-update can't work against an immutable `/nix/store`)
+- **Linux**: OpenBLAS + Vulkan, limited Wayland support, overlay uses GTK layer shell (disable with `INPUTIA_NO_GTK_LAYER_SHELL=1`)
+- **Nix/NixOS**: the Nix package sets `INPUTIA_DISABLE_UPDATER=1` to force-disable the self-updater at runtime without touching the persisted setting (self-update can't work against an immutable `/nix/store`)
 
 ## Troubleshooting
 

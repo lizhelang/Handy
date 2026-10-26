@@ -1,5 +1,5 @@
 //! 已认证输入法连接的旧学习域适配；路径、来源和读者登记均由后台确定。
-use inputia_handy_runtime::{
+use inputia_runtime::{
     legacy_memory::{MemoryImportRequest, MemoryImportSelection},
     legacy_memory_wire::{
         ImportSelection, MemoryCommand, MemoryReply, MemoryRequest, MemoryResult,
@@ -109,13 +109,10 @@ pub fn respond(
             });
         }
         if let MemoryCommand::RetireWordSpan { span_id } = &request.memory_domain {
-            if let Some(inputia_handy_runtime::legacy_memory::MemoryOperationStatus::Learn(
-                receipt,
-            )) = history.memory_operation(format!("span-revoke-{span_id}"))?
+            if let Some(inputia_runtime::legacy_memory::MemoryOperationStatus::Learn(receipt)) =
+                history.memory_operation(format!("span-revoke-{span_id}"))?
             {
-                if receipt.state
-                    == inputia_handy_runtime::legacy_memory::MemoryMutationState::Revoked
-                {
+                if receipt.state == inputia_runtime::legacy_memory::MemoryMutationState::Revoked {
                     return Ok(MemoryResult::WordSpanRetired {});
                 }
             }
@@ -219,7 +216,7 @@ pub fn respond(
             MemoryCommand::PrepareWordSpan { target } => {
                 history.privacy_readable()?;
                 if history.memory_domain_status()?.state
-                    != inputia_handy_runtime::legacy_memory::MemoryDomainState::Ready
+                    != inputia_runtime::legacy_memory::MemoryDomainState::Ready
                 {
                     return Err("memory_handoff_required".into());
                 }
@@ -285,7 +282,7 @@ pub fn respond(
                     target,
                     request.policy_epoch,
                     span_id.clone(),
-                    inputia_handy_runtime::memory_word_span::WordSpanCheckpoint {
+                    inputia_runtime::memory_word_span::WordSpanCheckpoint {
                         operation_id: operation_id.clone(),
                         through_sequence: *through_sequence,
                         finish: *finish,
@@ -305,8 +302,8 @@ pub fn respond(
                 let receipt = history.memory_apply_word_span(proof.clone())?;
                 if proof.sealed() && receipt.operation_id == proof.operation_id()
                     && receipt.applied_at_epoch == proof.identity().policy_epoch
-                    && matches!(receipt.state, inputia_handy_runtime::legacy_memory::MemoryMutationState::Applied
-                        | inputia_handy_runtime::legacy_memory::MemoryMutationState::AlreadyContributed) {
+                    && matches!(receipt.state, inputia_runtime::legacy_memory::MemoryMutationState::Applied
+                        | inputia_runtime::legacy_memory::MemoryMutationState::AlreadyContributed) {
                     // 回执已耐久；主线程ACK失败只保留恢复token，不把真实提交伪装成未发生。
                     let _ = crate::ime_target_broker::acknowledge_memory_word_span(app, proof);
                 }
@@ -319,7 +316,7 @@ pub fn respond(
             } => {
                 history.privacy_readable()?;
                 if history.memory_domain_status()?.state
-                    != inputia_handy_runtime::legacy_memory::MemoryDomainState::Ready
+                    != inputia_runtime::legacy_memory::MemoryDomainState::Ready
                 {
                     return Err("memory_handoff_required".into());
                 }
@@ -361,9 +358,8 @@ pub fn respond(
                 plan_id,
             } => {
                 // ACK丢失先查耐久结果。成功后的重试不再读取当前字段补造旧证据。
-                if let Some(inputia_handy_runtime::legacy_memory::MemoryOperationStatus::Learn(
-                    receipt,
-                )) = history.memory_operation(operation_id.clone())?
+                if let Some(inputia_runtime::legacy_memory::MemoryOperationStatus::Learn(receipt)) =
+                    history.memory_operation(operation_id.clone())?
                 {
                     return Ok(MemoryResult::Learn { receipt });
                 }

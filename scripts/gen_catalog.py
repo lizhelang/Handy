@@ -3,7 +3,7 @@
 # dependencies = ["huggingface_hub", "fsspec"]
 # ///
 """
-Handy model catalog generator.
+Inputia model catalog generator.
 
 Merges three sources into one catalog.json:
   1. HF card `transcribe_cpp` block  -> capabilities + benchmarks (canonical)
@@ -57,11 +57,11 @@ CURATION = {
     "Qwen3-ASR-0.6B":                  {"rank": 9, "desc": "Excellent multilingual model"},
     # description-only (unranked, not recommended) — carried over from the legacy .bin entry
     "Breeze-ASR-25":                   {"desc": "Optimized for Taiwanese Mandarin. Code-switching support."},
-    # These models stay hidden until their Handy integration passes the same
+    # These models stay hidden until their Inputia integration passes the same
     # runtime and data-safety gates as the supported catalog families.
     "Fun-ASR-MLT-Nano-2512":           {"hidden": True},
     "Fun-ASR-Nano-2512":               {"hidden": True},
-    # Sortformer emits speaker segments only; Handy's catalog is for models
+    # Sortformer emits speaker segments only; Inputia's catalog is for models
     # that produce transcription text.
     "diar_streaming_sortformer_4spk-v2.1": {"hidden": True},
 }

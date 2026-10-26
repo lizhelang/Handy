@@ -30,9 +30,9 @@ def command_text(run_id, version, build, apply):
 
 将替换：/Applications/Inputia.app（兼容旧名称 Inputia Candidate.app）
         ~/Library/Input Methods/InputiaUnifiedCandidate.app
-继续使用原有数据域：~/Library/Application Support/HandyUnifiedCandidate/{run_id}
+继续使用原有数据域：~/Library/Application Support/InputiaUnifiedCandidate/{run_id}
 更新器保留原应用包和配对清单，备份位于：
-  ~/Library/Application Support/HandyUnifiedBuilds/permission-update-*
+  ~/Library/Application Support/InputiaUnifiedBuilds/permission-update-*
 上述是程序备份，不是个人数据库、录音或模型的完整备份。
 更新时会暂时切到 ABC、停止并重启两个组件，随后校验并恢复原输入源。
 签名身份、配对或维护检查失败会阻止更新；失败信息及备份路径会保留在终端。
@@ -113,7 +113,7 @@ def main():
         if (release / name).exists() or (release / name).is_symlink():
             parser.error(f"目标已存在，拒绝覆盖：{release / name}")
     versions = []
-    for name, prefix in (("Inputia.app", "Handy"), ("InputiaUnifiedCandidate.app", "Inputia")):
+    for name, prefix in (("Inputia.app", "Inputia"), ("InputiaUnifiedCandidate.app", "Inputia")):
         app = release / name
         if app.is_symlink() or not app.is_dir():
             parser.error(f"构建组件缺失或是符号链接：{app}")
@@ -160,7 +160,7 @@ def main():
             "直接回车、输入其他内容或关闭确认窗口均取消；确认前不调用更新器。\n"
             "“仅检查.command”不会替换程序，但会创建/打开 profile 更新锁及临时校验程序。\n"
             f"本包只更新已有的两组件安装，保留 {args.run_id} 数据域；不是新账号安装器。\n"
-            "程序及配对清单备份位于 ~/Library/Application Support/HandyUnifiedBuilds/permission-update-*。\n"
+            "程序及配对清单备份位于 ~/Library/Application Support/InputiaUnifiedBuilds/permission-update-*。\n"
             "这不是数据库、录音或模型的完整备份。失败时保留终端信息和备份路径。\n"
             "Inputia 设置.app 可从包内单独打开；本入口复用两组件更新器，不额外安装此辅助入口。\n"
             "无需原源码仓库，需要 /usr/bin/python3 3.9+ 与 Swift 编译器（Xcode Command Line Tools）。\n"

@@ -704,9 +704,9 @@ pub fn run(cli_args: CliArgs) {
     // Avoid ggml-metal residency-set teardown assertions when a native engine
     // outlives the Tauri shutdown sequence (#1902). This must happen before
     // transcribe-cpp initializes its Metal device. Advanced users can restore
-    // upstream residency behavior with HANDY_METAL_RESIDENCY=1.
+    // upstream residency behavior with INPUTIA_METAL_RESIDENCY=1.
     #[cfg(target_os = "macos")]
-    if std::env::var("HANDY_METAL_RESIDENCY").as_deref() == Ok("1") {
+    if utils::env_var("INPUTIA_METAL_RESIDENCY").as_deref() == Some("1") {
         // ggml treats GGML_METAL_NO_RESIDENCY as presence-based, so remove an
         // inherited value as well when explicitly opting back in.
         std::env::remove_var("GGML_METAL_NO_RESIDENCY");
@@ -968,8 +968,8 @@ pub fn run(cli_args: CliArgs) {
             eprintln!("profile diagnostic requires an explicitly marked candidate bundle");
             std::process::exit(78);
         };
-        if portable::data_dir() != Some(&profile.handy_root)
-            || portable::store_path("settings.json") != profile.handy_root.join("settings.json")
+        if portable::data_dir() != Some(&profile.control_root)
+            || portable::store_path("settings.json") != profile.control_root.join("settings.json")
         {
             eprintln!("candidate storage routing mismatch");
             std::process::exit(78);
@@ -982,7 +982,7 @@ pub fn run(cli_args: CliArgs) {
             eprintln!("candidate diagnostic requires embedded public pairing trust");
             std::process::exit(78);
         }
-        println!("unified_candidate_profile_self_check=pass profile_id={} handy_root={} inputia_root={} daily_data_opened=false tauri_started=false", profile.profile_id, profile.handy_root.display(), profile.inputia_root.display());
+        println!("unified_candidate_profile_self_check=pass profile_id={} control_root={} inputia_root={} daily_data_opened=false tauri_started=false", profile.profile_id, profile.control_root.display(), profile.inputia_root.display());
         return;
     }
 
@@ -1019,11 +1019,11 @@ pub fn run(cli_args: CliArgs) {
                     Target::new(if let Some(data_dir) = portable::data_dir() {
                         TargetKind::Folder {
                             path: data_dir.join("logs"),
-                            file_name: Some("handy".into()),
+                            file_name: Some("inputia".into()),
                         }
                     } else {
                         TargetKind::LogDir {
-                            file_name: Some("handy".into()),
+                            file_name: Some("inputia".into()),
                         }
                     })
                     .filter(|metadata| {
@@ -1048,7 +1048,7 @@ pub fn run(cli_args: CliArgs) {
         builder = builder.plugin(tauri_nspanel::init());
     }
 
-    // Single-instance forwards CLI args to an already-running Handy and exits.
+    // Single-instance forwards CLI args to an already-running Inputia and exits.
     // That would make the headless path
     // (--transcribe-file/--list-devices/--list-models) a silent no-op whenever the
     // app is already open, so skip it in headless mode and run a standalone

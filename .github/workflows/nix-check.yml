@@ -125,6 +125,6 @@ jobs:
       # On PRs: only runs when nix packaging files change (~25 min with cold cache).
       # On push to main and workflow_dispatch: always runs so every commit on
       # main has a verified nix build. cachix-action auto-pushes artifacts.
-      - name: Build handy
+      - name: Build inputia
         if: steps.bun-check.outputs.outdated != 'true' && steps.eval.outputs.failed != 'true' && (steps.nix-files.outputs.changed == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push')
-        run: nix build .#handy -L --show-trace
+        run: nix build .#inputia -L --show-trace

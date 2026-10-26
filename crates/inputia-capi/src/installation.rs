@@ -87,7 +87,7 @@ mod tests {
             "unified-candidate:trial-20260905"
         );
         assert_eq!(
-            value["installation"]["handy_root"],
+            value["installation"]["control_root"],
             home.join("Library/Application Support/HandyUnifiedCandidate/trial-20260905/Handy")
                 .to_str()
                 .unwrap()

@@ -88,17 +88,17 @@
     "quit": "Quitter",
     "cancel": "Annuler",
     "secureInputWarning": "⚠ Raccourcis bloqués par Secure Input",
-    "clipboardHistory": "Historique du presse-papiers"
+    "clipboardHistory": "Presse-papiers"
   },
   "sidebar": {
     "general": "Général",
     "models": "Modèles",
     "advanced": "Avancé",
     "postProcessing": "Post-traitement",
-    "history": "Historique",
+    "history": "Enregistrements",
     "debug": "Débogage",
     "about": "À propos",
-    "clipboard": "Clipboard",
+    "clipboard": "Presse-papiers",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "Historique",
+      "title": "Enregistrements",
+      "search": "Rechercher dans les enregistrements et les transcriptions",
       "openFolder": "Ouvrir le dossier des enregistrements",
-      "loading": "Chargement de l'historique...",
-      "empty": "Pas encore de transcriptions. Commencez à enregistrer pour créer votre historique !",
+      "loading": "Chargement des enregistrements...",
+      "empty": "Aucun enregistrement trouvé.",
       "copyToClipboard": "Copier la transcription dans le presse-papiers",
       "save": "Enregistrer la transcription",
       "unsave": "Retirer des favoris",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "Gestionnaire du presse-papiers",
+      "title": "Presse-papiers",
       "searchPlaceholder": "Rechercher dans l'historique du presse-papiers...",
       "filterAll": "Tout",
       "filterText": "Texte",

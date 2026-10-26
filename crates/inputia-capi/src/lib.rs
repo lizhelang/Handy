@@ -652,7 +652,7 @@ pub unsafe extern "C" fn inputia_session_learn(
 /// 非空 session 必须独占、存活且来自本库；两个非空字符串须满足 C 字符串合同。
 /// 导入与其他 session 操作/释放必须串行，返回 JSON 由调用方回收。
 #[no_mangle]
-pub unsafe extern "C" fn inputia_session_import_handy_history(
+pub unsafe extern "C" fn inputia_session_import_control_history(
     session: *mut InputiaSession,
     history_db_path: *const c_char,
     bundle_id: *const c_char,
@@ -679,9 +679,9 @@ pub unsafe extern "C" fn inputia_session_import_handy_history(
         return import_json(ImportEnvelope::error("memory lock is poisoned"));
     };
 
-    match memory.import_handy_history(history_db_path, &AppContext::new(bundle_id), limit) {
+    match memory.import_control_history(history_db_path, &AppContext::new(bundle_id), limit) {
         Ok(imported) => import_json(ImportEnvelope::ok(imported)),
-        Err(_) => import_json(ImportEnvelope::error("failed to import Handy history")),
+        Err(_) => import_json(ImportEnvelope::error("failed to import Inputia history")),
     }
 }
 
@@ -691,7 +691,7 @@ pub unsafe extern "C" fn inputia_session_import_handy_history(
 /// 非空 session 必须独占、存活且来自本库；两个非空字符串须满足 C 字符串合同。
 /// 导入与其他 session 操作/释放必须串行，返回 JSON 由调用方回收。
 #[no_mangle]
-pub unsafe extern "C" fn inputia_session_import_handy_clipboard(
+pub unsafe extern "C" fn inputia_session_import_control_clipboard(
     session: *mut InputiaSession,
     clipboard_db_path: *const c_char,
     bundle_id: *const c_char,
@@ -718,9 +718,9 @@ pub unsafe extern "C" fn inputia_session_import_handy_clipboard(
         return import_json(ImportEnvelope::error("memory lock is poisoned"));
     };
 
-    match memory.import_handy_clipboard(clipboard_db_path, &AppContext::new(bundle_id), limit) {
+    match memory.import_control_clipboard(clipboard_db_path, &AppContext::new(bundle_id), limit) {
         Ok(imported) => import_json(ImportEnvelope::ok(imported)),
-        Err(_) => import_json(ImportEnvelope::error("failed to import Handy clipboard")),
+        Err(_) => import_json(ImportEnvelope::error("failed to import Inputia clipboard")),
     }
 }
 
@@ -1521,13 +1521,13 @@ mod tests {
                     std::ptr::null(),
                     std::ptr::null(),
                 ),
-                super::inputia_session_import_handy_history(
+                super::inputia_session_import_control_history(
                     null_mut(),
                     std::ptr::null(),
                     std::ptr::null(),
                     10,
                 ),
-                super::inputia_session_import_handy_clipboard(
+                super::inputia_session_import_control_clipboard(
                     null_mut(),
                     std::ptr::null(),
                     std::ptr::null(),
@@ -2342,17 +2342,17 @@ mod tests {
 
     #[test]
     #[cfg(not(feature = "managed-memory"))]
-    fn capi_imports_handy_history_into_voice_hotwords_and_ranking() {
+    fn capi_imports_inputia_history_into_voice_hotwords_and_ranking() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
         let user_data_dir = temp.path().join("rime-user");
         let memory_db = temp.path().join("inputia-memory.db");
         let history_db = temp.path().join("history.db");
-        create_handy_history_db(&history_db);
+        create_control_history_db(&history_db);
         let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
         let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
         let history_db = CString::new(history_db.to_string_lossy().as_bytes()).unwrap();
-        let bundle_id = CString::new("com.pais.handy").unwrap();
+        let bundle_id = CString::new("com.inputia.control").unwrap();
         let session = unsafe {
             inputia_session_new_luna_pinyin_simp_with_memory(
                 user_data_dir.as_ptr(),
@@ -2366,7 +2366,7 @@ mod tests {
         }
 
         let imported = handle_json(unsafe {
-            inputia_session_import_handy_history(
+            inputia_session_import_control_history(
                 session,
                 history_db.as_ptr(),
                 bundle_id.as_ptr(),
@@ -2397,17 +2397,17 @@ mod tests {
 
     #[test]
     #[cfg(not(feature = "managed-memory"))]
-    fn capi_imports_handy_clipboard_and_skips_sensitive_source_apps() {
+    fn capi_imports_inputia_clipboard_and_skips_sensitive_source_apps() {
         let _guard = RIME_CAPI_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
         let user_data_dir = temp.path().join("rime-user");
         let memory_db = temp.path().join("inputia-memory.db");
         let clipboard_db = temp.path().join("clipboard.db");
-        create_handy_clipboard_db(&clipboard_db);
+        create_control_clipboard_db(&clipboard_db);
         let user_data_dir = CString::new(user_data_dir.to_string_lossy().as_bytes()).unwrap();
         let memory_db = CString::new(memory_db.to_string_lossy().as_bytes()).unwrap();
         let clipboard_db = CString::new(clipboard_db.to_string_lossy().as_bytes()).unwrap();
-        let bundle_id = CString::new("com.pais.handy").unwrap();
+        let bundle_id = CString::new("com.inputia.control").unwrap();
         let session = unsafe {
             inputia_session_new_luna_pinyin_simp_with_memory(
                 user_data_dir.as_ptr(),
@@ -2421,7 +2421,7 @@ mod tests {
         }
 
         let imported = handle_json(unsafe {
-            inputia_session_import_handy_clipboard(
+            inputia_session_import_control_clipboard(
                 session,
                 clipboard_db.as_ptr(),
                 bundle_id.as_ptr(),
@@ -3377,7 +3377,7 @@ mod tests {
     }
 
     #[cfg(not(feature = "managed-memory"))]
-    fn create_handy_history_db(path: &std::path::Path) {
+    fn create_control_history_db(path: &std::path::Path) {
         let conn = Connection::open(path).unwrap();
         conn.execute_batch(
             "CREATE TABLE transcription_history (
@@ -3431,7 +3431,7 @@ mod tests {
     }
 
     #[cfg(not(feature = "managed-memory"))]
-    fn create_handy_clipboard_db(path: &std::path::Path) {
+    fn create_control_clipboard_db(path: &std::path::Path) {
         let conn = Connection::open(path).unwrap();
         conn.execute_batch(
             "CREATE TABLE clipboard_history (

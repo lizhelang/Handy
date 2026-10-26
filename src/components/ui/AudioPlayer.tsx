@@ -62,7 +62,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const { t } = useTranslation();
   const [playbackError, setPlaybackError] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [duration, setDuration] = useState(0);
+  const [duration, setDuration] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [loadedSrc, setLoadedSrc] = useState<string | null>(initialSrc ?? null);
@@ -171,8 +171,17 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
+    const updateDuration = () => {
+      // 暂停释放租约会清空 src；保留已经读取的时长供暂停态显示。
+      if (!audio.hasAttribute("src")) return;
+      setDuration(
+        Number.isFinite(audio.duration) && audio.duration >= 0
+          ? audio.duration
+          : null,
+      );
+    };
     const metadata = () => {
-      setDuration(audio.duration || 0);
+      updateDuration();
       const position = Math.min(resumeTimeRef.current, audio.duration || 0);
       if (position > 0) audio.currentTime = position;
       setCurrentTime(position);
@@ -197,12 +206,15 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       stopPlayback();
     };
     audio.addEventListener("loadedmetadata", metadata);
+    audio.addEventListener("durationchange", updateDuration);
     audio.addEventListener("ended", ended);
     audio.addEventListener("play", play);
     audio.addEventListener("pause", pause);
     audio.addEventListener("error", error);
+    if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) metadata();
     return () => {
       audio.removeEventListener("loadedmetadata", metadata);
+      audio.removeEventListener("durationchange", updateDuration);
       audio.removeEventListener("ended", ended);
       audio.removeEventListener("play", play);
       audio.removeEventListener("pause", pause);
@@ -307,8 +319,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     setIsDragging(true);
   };
 
-  const formatTime = (time: number): string => {
-    if (!isFinite(time)) return "0:00";
+  const formatTime = (time: number | null): string => {
+    if (time === null || !isFinite(time)) return "—:—";
 
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
@@ -317,7 +329,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
   // Fix playhead positioning with better edge case handling
   const getProgressPercent = (): number => {
-    if (duration <= 0) return 0;
+    if (duration === null || duration <= 0) return 0;
 
     // Handle the end case - if we're within 0.1 seconds of the end, show 100%
     if (duration - currentTime < 0.1) return 100;
@@ -330,7 +342,12 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
   return (
     <div className={`flex items-center gap-3 ${className}`}>
-      <audio ref={audioRef} preload="none" />
+      {/* 已取得的预览来源先读取时长；租约来源仍由用户开始播放时获取。 */}
+      <audio
+        ref={audioRef}
+        src={onLoadRequest ? undefined : initialSrc}
+        preload={initialSrc && !onLoadRequest ? "metadata" : "none"}
+      />
 
       <button
         onClick={togglePlay}
@@ -363,7 +380,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         <input
           type="range"
           min="0"
-          max={duration || 0}
+          max={duration ?? 0}
+          disabled={duration === null}
           step="0.01"
           value={currentTime}
           onChange={handleSeek}

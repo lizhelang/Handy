@@ -1,0 +1,835 @@
+{
+  "positive": [
+    {
+      "id": "emoji-pos-01",
+      "word": "哈哈哈",
+      "accept": [
+        "😂",
+        "🤣",
+        "😆",
+        "😄"
+      ]
+    },
+    {
+      "id": "emoji-pos-02",
+      "word": "开心",
+      "accept": [
+        "😄",
+        "😊",
+        "😁",
+        "🥳"
+      ]
+    },
+    {
+      "id": "emoji-pos-03",
+      "word": "难过",
+      "accept": [
+        "😢",
+        "😭",
+        "😞",
+        "🥺"
+      ]
+    },
+    {
+      "id": "emoji-pos-04",
+      "word": "生气",
+      "accept": [
+        "😠",
+        "😡",
+        "🤬",
+        "💢"
+      ]
+    },
+    {
+      "id": "emoji-pos-05",
+      "word": "谢谢",
+      "accept": [
+        "🙏",
+        "😊",
+        "🤝",
+        "❤️"
+      ]
+    },
+    {
+      "id": "emoji-pos-06",
+      "word": "晚安",
+      "accept": [
+        "🌙",
+        "😴",
+        "💤",
+        "🌃"
+      ]
+    },
+    {
+      "id": "emoji-pos-07",
+      "word": "早安",
+      "accept": [
+        "☀️",
+        "🌞",
+        "🌅",
+        "😊"
+      ]
+    },
+    {
+      "id": "emoji-pos-08",
+      "word": "点赞",
+      "accept": [
+        "👍",
+        "👏",
+        "💯"
+      ]
+    },
+    {
+      "id": "emoji-pos-09",
+      "word": "加油",
+      "accept": [
+        "💪",
+        "✊",
+        "🔥",
+        "📣"
+      ]
+    },
+    {
+      "id": "emoji-pos-10",
+      "word": "生日快乐",
+      "accept": [
+        "🎂",
+        "🎉",
+        "🎁",
+        "🥳",
+        "🎈"
+      ]
+    },
+    {
+      "id": "emoji-pos-11",
+      "word": "新年快乐",
+      "accept": [
+        "🎆",
+        "🧧",
+        "🎉",
+        "🏮"
+      ]
+    },
+    {
+      "id": "emoji-pos-12",
+      "word": "恭喜恭喜",
+      "accept": [
+        "🎉",
+        "👏",
+        "🎊",
+        "🥳"
+      ]
+    },
+    {
+      "id": "emoji-pos-13",
+      "word": "下雨了",
+      "accept": [
+        "🌧️",
+        "☔",
+        "☂️",
+        "💧"
+      ]
+    },
+    {
+      "id": "emoji-pos-14",
+      "word": "好热",
+      "accept": [
+        "🥵",
+        "☀️",
+        "🔥",
+        "🌡️"
+      ]
+    },
+    {
+      "id": "emoji-pos-15",
+      "word": "好冷",
+      "accept": [
+        "🥶",
+        "❄️",
+        "🧣",
+        "☃️"
+      ]
+    },
+    {
+      "id": "emoji-pos-16",
+      "word": "下雪了",
+      "accept": [
+        "❄️",
+        "☃️",
+        "🌨️",
+        "⛄"
+      ]
+    },
+    {
+      "id": "emoji-pos-17",
+      "word": "火锅",
+      "accept": [
+        "🍲",
+        "🌶️",
+        "🔥",
+        "😋"
+      ]
+    },
+    {
+      "id": "emoji-pos-18",
+      "word": "咖啡",
+      "accept": [
+        "☕",
+        "😋"
+      ]
+    },
+    {
+      "id": "emoji-pos-19",
+      "word": "奶茶",
+      "accept": [
+        "🧋",
+        "🥤",
+        "😋"
+      ]
+    },
+    {
+      "id": "emoji-pos-20",
+      "word": "蛋糕",
+      "accept": [
+        "🍰",
+        "🎂",
+        "🧁",
+        "😋"
+      ]
+    },
+    {
+      "id": "emoji-pos-21",
+      "word": "吃饭了",
+      "accept": [
+        "🍚",
+        "🍽️",
+        "😋",
+        "🥢"
+      ]
+    },
+    {
+      "id": "emoji-pos-22",
+      "word": "小猫",
+      "accept": [
+        "🐱",
+        "🐈",
+        "😺",
+        "🐾"
+      ]
+    },
+    {
+      "id": "emoji-pos-23",
+      "word": "狗狗",
+      "accept": [
+        "🐶",
+        "🐕",
+        "🐾"
+      ]
+    },
+    {
+      "id": "emoji-pos-24",
+      "word": "爱你",
+      "accept": [
+        "❤️",
+        "😘",
+        "🥰",
+        "💕"
+      ]
+    },
+    {
+      "id": "emoji-pos-25",
+      "word": "想你",
+      "accept": [
+        "🥺",
+        "💕",
+        "😘",
+        "❤️"
+      ]
+    },
+    {
+      "id": "emoji-pos-26",
+      "word": "抱抱",
+      "accept": [
+        "🤗",
+        "🫂",
+        "💕"
+      ]
+    },
+    {
+      "id": "emoji-pos-27",
+      "word": "好困",
+      "accept": [
+        "😪",
+        "😴",
+        "🥱",
+        "💤"
+      ]
+    },
+    {
+      "id": "emoji-pos-28",
+      "word": "累死了",
+      "accept": [
+        "😩",
+        "😫",
+        "🥱",
+        "😓"
+      ]
+    },
+    {
+      "id": "emoji-pos-29",
+      "word": "无语",
+      "accept": [
+        "😑",
+        "🙄",
+        "😶",
+        "😓"
+      ]
+    },
+    {
+      "id": "emoji-pos-30",
+      "word": "尴尬",
+      "accept": [
+        "😅",
+        "😬",
+        "🙈"
+      ]
+    },
+    {
+      "id": "emoji-pos-31",
+      "word": "害羞",
+      "accept": [
+        "😳",
+        "🙈",
+        "☺️",
+        "😊"
+      ]
+    },
+    {
+      "id": "emoji-pos-32",
+      "word": "好棒",
+      "accept": [
+        "👍",
+        "👏",
+        "🌟",
+        "💯"
+      ]
+    },
+    {
+      "id": "emoji-pos-33",
+      "word": "太牛了",
+      "accept": [
+        "🐮",
+        "👍",
+        "🔥",
+        "💯"
+      ]
+    },
+    {
+      "id": "emoji-pos-34",
+      "word": "中秋快乐",
+      "accept": [
+        "🥮",
+        "🌕",
+        "🐇",
+        "🏮"
+      ]
+    },
+    {
+      "id": "emoji-pos-35",
+      "word": "圣诞快乐",
+      "accept": [
+        "🎄",
+        "🎅",
+        "🎁",
+        "⛄"
+      ]
+    },
+    {
+      "id": "emoji-pos-36",
+      "word": "好饿",
+      "accept": [
+        "🤤",
+        "😩",
+        "🍽️",
+        "🍚"
+      ]
+    },
+    {
+      "id": "emoji-pos-37",
+      "word": "干杯",
+      "accept": [
+        "🍻",
+        "🥂",
+        "🍺",
+        "🎉"
+      ]
+    },
+    {
+      "id": "emoji-pos-38",
+      "word": "去旅行",
+      "accept": [
+        "✈️",
+        "🧳",
+        "🌍",
+        "🏖️"
+      ]
+    },
+    {
+      "id": "emoji-pos-39",
+      "word": "出发啦",
+      "accept": [
+        "🚀",
+        "🚗",
+        "✈️",
+        "🏃"
+      ]
+    },
+    {
+      "id": "emoji-pos-40",
+      "word": "下班了",
+      "accept": [
+        "🎉",
+        "🏃",
+        "😆",
+        "🥳"
+      ]
+    },
+    {
+      "id": "emoji-pos-41",
+      "word": "周末愉快",
+      "accept": [
+        "🎉",
+        "😎",
+        "🌈",
+        "🥳"
+      ]
+    },
+    {
+      "id": "emoji-pos-42",
+      "word": "好可爱",
+      "accept": [
+        "🥰",
+        "😍",
+        "🤩",
+        "💕"
+      ]
+    },
+    {
+      "id": "emoji-pos-43",
+      "word": "心疼",
+      "accept": [
+        "😢",
+        "🥺",
+        "💔",
+        "🫂"
+      ]
+    },
+    {
+      "id": "emoji-pos-44",
+      "word": "失恋了",
+      "accept": [
+        "💔",
+        "😭",
+        "😢"
+      ]
+    },
+    {
+      "id": "emoji-pos-45",
+      "word": "好吃",
+      "accept": [
+        "😋",
+        "🤤",
+        "👍"
+      ]
+    },
+    {
+      "id": "emoji-pos-46",
+      "word": "彩虹",
+      "accept": [
+        "🌈",
+        "✨",
+        "😍"
+      ]
+    },
+    {
+      "id": "emoji-pos-47",
+      "word": "送你花",
+      "accept": [
+        "💐",
+        "🌸",
+        "🌹",
+        "🌷"
+      ]
+    },
+    {
+      "id": "emoji-pos-48",
+      "word": "收到",
+      "accept": [
+        "👌",
+        "👍",
+        "✅",
+        "🫡"
+      ]
+    },
+    {
+      "id": "emoji-pos-49",
+      "word": "一言为定",
+      "accept": [
+        "🤝",
+        "👌",
+        "✊",
+        "🤙"
+      ]
+    },
+    {
+      "id": "emoji-pos-50",
+      "word": "哭了",
+      "accept": [
+        "😭",
+        "😢",
+        "🥲"
+      ]
+    },
+    {
+      "id": "emoji-pos-51",
+      "word": "震惊",
+      "accept": [
+        "😱",
+        "😲",
+        "😮",
+        "🤯"
+      ]
+    },
+    {
+      "id": "emoji-pos-52",
+      "word": "害怕",
+      "accept": [
+        "😨",
+        "😰",
+        "😱",
+        "🙀"
+      ]
+    },
+    {
+      "id": "emoji-pos-53",
+      "word": "学习打卡",
+      "accept": [
+        "📚",
+        "✏️",
+        "✅",
+        "💪"
+      ]
+    },
+    {
+      "id": "emoji-pos-54",
+      "word": "考试顺利",
+      "accept": [
+        "🍀",
+        "📝",
+        "💪",
+        "✨"
+      ]
+    },
+    {
+      "id": "emoji-pos-55",
+      "word": "去运动",
+      "accept": [
+        "🏃",
+        "💪",
+        "⚽",
+        "🏀",
+        "🏋️"
+      ]
+    },
+    {
+      "id": "emoji-pos-56",
+      "word": "好运",
+      "accept": [
+        "🍀",
+        "🤞",
+        "✨",
+        "🧧"
+      ]
+    },
+    {
+      "id": "emoji-pos-57",
+      "word": "发财",
+      "accept": [
+        "💰",
+        "🧧",
+        "🤑",
+        "💸"
+      ]
+    },
+    {
+      "id": "emoji-pos-58",
+      "word": "熊猫",
+      "accept": [
+        "🐼",
+        "🎋"
+      ]
+    },
+    {
+      "id": "emoji-pos-59",
+      "word": "海边",
+      "accept": [
+        "🏖️",
+        "🌊",
+        "🐚",
+        "☀️"
+      ]
+    },
+    {
+      "id": "emoji-pos-60",
+      "word": "期待",
+      "accept": [
+        "🤩",
+        "😍",
+        "✨",
+        "👀"
+      ]
+    }
+  ],
+  "negative": [
+    {
+      "id": "emoji-neg-01",
+      "word": "然后"
+    },
+    {
+      "id": "emoji-neg-02",
+      "word": "这个"
+    },
+    {
+      "id": "emoji-neg-03",
+      "word": "因为"
+    },
+    {
+      "id": "emoji-neg-04",
+      "word": "问题"
+    },
+    {
+      "id": "emoji-neg-05",
+      "word": "已经"
+    },
+    {
+      "id": "emoji-neg-06",
+      "word": "所以"
+    },
+    {
+      "id": "emoji-neg-07",
+      "word": "但是"
+    },
+    {
+      "id": "emoji-neg-08",
+      "word": "如果"
+    },
+    {
+      "id": "emoji-neg-09",
+      "word": "虽然"
+    },
+    {
+      "id": "emoji-neg-10",
+      "word": "那个"
+    },
+    {
+      "id": "emoji-neg-11",
+      "word": "我们"
+    },
+    {
+      "id": "emoji-neg-12",
+      "word": "他们"
+    },
+    {
+      "id": "emoji-neg-13",
+      "word": "自己"
+    },
+    {
+      "id": "emoji-neg-14",
+      "word": "什么"
+    },
+    {
+      "id": "emoji-neg-15",
+      "word": "时候"
+    },
+    {
+      "id": "emoji-neg-16",
+      "word": "现在"
+    },
+    {
+      "id": "emoji-neg-17",
+      "word": "刚才"
+    },
+    {
+      "id": "emoji-neg-18",
+      "word": "以后"
+    },
+    {
+      "id": "emoji-neg-19",
+      "word": "之前"
+    },
+    {
+      "id": "emoji-neg-20",
+      "word": "可以"
+    },
+    {
+      "id": "emoji-neg-21",
+      "word": "应该"
+    },
+    {
+      "id": "emoji-neg-22",
+      "word": "需要"
+    },
+    {
+      "id": "emoji-neg-23",
+      "word": "进行"
+    },
+    {
+      "id": "emoji-neg-24",
+      "word": "关于"
+    },
+    {
+      "id": "emoji-neg-25",
+      "word": "或者"
+    },
+    {
+      "id": "emoji-neg-26",
+      "word": "而且"
+    },
+    {
+      "id": "emoji-neg-27",
+      "word": "就是"
+    },
+    {
+      "id": "emoji-neg-28",
+      "word": "只是"
+    },
+    {
+      "id": "emoji-neg-29",
+      "word": "不过"
+    },
+    {
+      "id": "emoji-neg-30",
+      "word": "其实"
+    },
+    {
+      "id": "emoji-neg-31",
+      "word": "比如"
+    },
+    {
+      "id": "emoji-neg-32",
+      "word": "一下"
+    },
+    {
+      "id": "emoji-neg-33",
+      "word": "一些"
+    },
+    {
+      "id": "emoji-neg-34",
+      "word": "这样"
+    },
+    {
+      "id": "emoji-neg-35",
+      "word": "这里"
+    },
+    {
+      "id": "emoji-neg-36",
+      "word": "东西"
+    },
+    {
+      "id": "emoji-neg-37",
+      "word": "事情"
+    },
+    {
+      "id": "emoji-neg-38",
+      "word": "情况"
+    },
+    {
+      "id": "emoji-neg-39",
+      "word": "方面"
+    },
+    {
+      "id": "emoji-neg-40",
+      "word": "部分"
+    },
+    {
+      "id": "emoji-neg-41",
+      "word": "文件"
+    },
+    {
+      "id": "emoji-neg-42",
+      "word": "时间"
+    },
+    {
+      "id": "emoji-neg-43",
+      "word": "意思"
+    },
+    {
+      "id": "emoji-neg-44",
+      "word": "办法"
+    },
+    {
+      "id": "emoji-neg-45",
+      "word": "认为"
+    },
+    {
+      "id": "emoji-neg-46",
+      "word": "知道"
+    },
+    {
+      "id": "emoji-neg-47",
+      "word": "开始"
+    },
+    {
+      "id": "emoji-neg-48",
+      "word": "继续"
+    },
+    {
+      "id": "emoji-neg-49",
+      "word": "通过"
+    },
+    {
+      "id": "emoji-neg-50",
+      "word": "根据"
+    },
+    {
+      "id": "emoji-neg-51",
+      "word": "对于"
+    },
+    {
+      "id": "emoji-neg-52",
+      "word": "目前"
+    },
+    {
+      "id": "emoji-neg-53",
+      "word": "一直"
+    },
+    {
+      "id": "emoji-neg-54",
+      "word": "因此"
+    },
+    {
+      "id": "emoji-neg-55",
+      "word": "另外"
+    },
+    {
+      "id": "emoji-neg-56",
+      "word": "包括"
+    },
+    {
+      "id": "emoji-neg-57",
+      "word": "可能"
+    },
+    {
+      "id": "emoji-neg-58",
+      "word": "必须"
+    },
+    {
+      "id": "emoji-neg-59",
+      "word": "内容"
+    },
+    {
+      "id": "emoji-neg-60",
+      "word": "的话"
+    }
+  ]
+}

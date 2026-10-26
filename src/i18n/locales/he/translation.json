@@ -88,17 +88,17 @@
     "quit": "יציאה",
     "cancel": "ביטול",
     "secureInputWarning": "⚠ קיצורי המקשים חסומים על ידי Secure Input",
-    "clipboardHistory": "היסטוריית הלוח"
+    "clipboardHistory": "לוח"
   },
   "sidebar": {
     "general": "כללי",
     "models": "מודלים",
     "advanced": "מתקדם",
     "postProcessing": "עיבוד משלים",
-    "history": "היסטוריה",
+    "history": "הקלטות",
     "debug": "ניפוי שגיאות",
     "about": "אודות",
-    "clipboard": "Clipboard",
+    "clipboard": "לוח",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "היסטוריה",
+      "title": "הקלטות",
+      "search": "חיפוש בהקלטות ובתמלולים",
       "openFolder": "פתח את תיקיית ההקלטות",
-      "loading": "טוען היסטוריה...",
-      "empty": "עדיין אין תמלולים. התחל להקליט כדי לבנות את ההיסטוריה שלך!",
+      "loading": "טוען הקלטות...",
+      "empty": "לא נמצאו הקלטות.",
       "copyToClipboard": "העתק תמלול ללוח",
       "save": "שמור תמלול",
       "unsave": "הסר משמורים",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "מנהל הלוח",
+      "title": "לוח",
       "searchPlaceholder": "חיפוש בהיסטוריית הלוח...",
       "filterAll": "הכל",
       "filterText": "טקסט",

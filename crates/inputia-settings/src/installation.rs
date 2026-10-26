@@ -18,7 +18,14 @@ pub enum InstallationScope {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DataLocation {
     Managed,
-    LegacyCandidate { run_id: String },
+    /// 改名后的候选布局：`InputiaUnifiedCandidate/<run_id>/{Control,Inputia}`。
+    Candidate {
+        run_id: String,
+    },
+    /// 改名前的候选布局：`HandyUnifiedCandidate/<run_id>/{Handy,Inputia}`，只用于读取旧收据。
+    LegacyCandidate {
+        run_id: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,7 +81,7 @@ pub struct LocatorContext {
 #[serde(deny_unknown_fields)]
 pub struct LocatedInstallation {
     pub receipt: InstallationReceipt,
-    pub handy_root: PathBuf,
+    pub control_root: PathBuf,
     pub inputia_root: PathBuf,
     pub pair_manifest: PathBuf,
 }
@@ -213,7 +220,7 @@ impl InstallationReceipt {
                 }
                 support.join("Inputia/Profiles").join(&self.profile_id)
             }
-            DataLocation::LegacyCandidate { run_id } => {
+            DataLocation::Candidate { run_id } | DataLocation::LegacyCandidate { run_id } => {
                 if !(1..=64).contains(&run_id.len())
                     || !run_id
                         .bytes()
@@ -222,7 +229,12 @@ impl InstallationReceipt {
                 {
                     return Err(InstallationError::InvalidReceipt);
                 }
-                support.join("HandyUnifiedCandidate").join(run_id)
+                match &self.data {
+                    DataLocation::Candidate { .. } => {
+                        support.join("InputiaUnifiedCandidate").join(run_id)
+                    }
+                    _ => support.join("HandyUnifiedCandidate").join(run_id),
+                }
             }
         };
         let pair_manifest = match &self.data {
@@ -232,14 +244,17 @@ impl InstallationReceipt {
                 .join("pair-manifest.json"),
             // 旧 updater 将配对清单与 legacy profile 放在同一数据根；迁移前
             // 必须从这个真实位置读取，不能凭新装目录规则猜一个不存在的路径。
-            DataLocation::LegacyCandidate { run_id } => support
-                .join("HandyUnifiedCandidate")
-                .join(run_id)
-                .join("pair-manifest.json"),
+            DataLocation::Candidate { .. } | DataLocation::LegacyCandidate { .. } => {
+                data_root.join("pair-manifest.json")
+            }
+        };
+        let control_root = match &self.data {
+            DataLocation::LegacyCandidate { .. } => data_root.join("Handy"),
+            DataLocation::Managed | DataLocation::Candidate { .. } => data_root.join("Control"),
         };
         Ok(LocatedInstallation {
             receipt: self,
-            handy_root: data_root.join("Handy"),
+            control_root,
             inputia_root: data_root.join("Inputia"),
             pair_manifest,
         })

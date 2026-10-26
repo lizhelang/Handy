@@ -88,17 +88,17 @@
     "quit": "Avsluta",
     "cancel": "Avbryt",
     "secureInputWarning": "⚠ Kortkommandon blockeras av Secure Input",
-    "clipboardHistory": "Urklippshistorik"
+    "clipboardHistory": "Urklipp"
   },
   "sidebar": {
     "general": "Allmänt",
     "models": "Modeller",
     "advanced": "Avancerat",
     "postProcessing": "Efterbearbetning",
-    "history": "Historik",
+    "history": "Inspelningar",
     "debug": "Felsökning",
     "about": "Om",
-    "clipboard": "Clipboard",
+    "clipboard": "Urklipp",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "Historik",
+      "title": "Inspelningar",
+      "search": "Sök i inspelningar och transkriptioner",
       "openFolder": "Öppna mapp för inspelningar",
-      "loading": "Laddar historik...",
-      "empty": "Inga transkriptioner ännu. Börja spela in för att bygga upp din historik!",
+      "loading": "Laddar inspelningar...",
+      "empty": "Inga inspelningar hittades.",
       "copyToClipboard": "Kopiera transkription till urklipp",
       "save": "Spara transkription",
       "unsave": "Ta bort från sparade",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "Urklippshanterare",
+      "title": "Urklipp",
       "searchPlaceholder": "Sök i urklippshistorik...",
       "filterAll": "Alla",
       "filterText": "Text",

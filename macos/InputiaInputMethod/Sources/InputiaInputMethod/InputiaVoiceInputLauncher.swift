@@ -12,14 +12,16 @@ enum InputiaPersonalizationDiagnostics {
   private static var previous: [String: String] = [:]
   private static var nextTargetTrace: UInt64 = 0
   private static let phases: Set<String> = ["policy", "query", "schedule", "capture_guard", "capture_reply",
-    "target_capture", "target_validate", "target_transport", "personal_transport", "commit", "typed_result"]
+    "target_capture", "target_validate", "target_transport", "personal_transport", "commit", "typed_result",
+    "candidate_clear", "candidate_restore"]
   private static let reasons: Set<String> = ["ok", "no_reply", "expired", "disabled", "not_active", "mode", "page", "expanded", "recall", "prediction_pending",
     "unavailable", "missing_client", "missing_bundle", "invalid_selection", "missing_target", "target_identity", "activation", "composition", "selection_generation", "client_identity", "selection_changed", "remote_selection_mismatch", "history_only", "policy", "stale", "accepted",
     "missing_selection", "missing_origin", "origin_mismatch", "text_mismatch", "invalid_start", "selection_not_committed", "profile", "handshake", "io", "timeout", "invalid_frame", "main_thread", "decode", "other_error", "unknown_code",
     "accessibility_permission_required", "field_unobservable", "secure_input_enabled", "focused_application_mismatch", "secure_text_field", "field_focus_changed",
     "target_dispatch_replayed", "target_entropy_unavailable", "target_expired", "target_history_only", "target_main_unavailable", "target_operation_missing", "target_owner_mismatch", "target_process_changed", "target_query_busy", "target_query_timeout", "target_registry_full", "target_retirement_pending", "target_retirement_timeout_restart_required", "target_retirement_unavailable", "target_sensitive_source", "target_source_changed", "target_source_missing", "target_unknown",
     "target_not_main_thread", "target_accessibility_unavailable", "target_secure_input", "target_unsupported_control", "target_unobservable_control", "target_focus_changed", "target_edited", "target_destroyed", "target_suspended_by_owner",
-    "capture_cancelled", "capture_queue_full",
+    "capture_cancelled", "capture_queue_full", "permission_epoch", "deactivation", "lifecycle", "memory_barrier",
+    "selection_unavailable", "selection_rejected", "field_identity_changed", "no_baseline", "maintenance", "marked_changed", "restored", "not_requested", "prediction_preserved",
     "personalization_disabled_or_changed", "personalization_policy_changed", "personalization_secure_input", "personalization_source_missing", "prediction_no_longer_available"]
   struct TargetTrace {
     let id: UInt64
@@ -205,6 +207,7 @@ struct InputiaAuthenticatedConnectionScope {
 
 /// 不同后台队列共享失败冷却和在途限制；已认证连接的复用不经过该门。
 final class InputiaConnectionRetryGate {
+  struct Unavailable: Error {}
   struct Attempt: Equatable {
     fileprivate let identifier: UInt64
     fileprivate let recoveryGeneration: UInt64
@@ -375,23 +378,24 @@ enum InputiaVoiceInputLauncher {
   private static let targetCaptures = InputiaTargetCaptureQueue()
   private static var permissionConnection: InputiaVoiceServiceConnection?
   private static var targetConnection: InputiaVoiceServiceConnection?
-  static func probeServicePermission() -> Bool {
+  static func probeServicePermission() -> InputiaPermissionProbe {
     ensureUnifiedServiceReady()
     let started = ProcessInfo.processInfo.systemUptime
     do {
       if permissionConnection == nil { permissionConnection = try openAuthenticatedConnection() }
-      guard let connection = permissionConnection else { return false }
+      guard let connection = permissionConnection else { return .unavailable(.transport) }
       let reply = try connection.targetBridge(.init(kind: "status"))
       if !reply.ready {
-        InputiaPermissionLifecycle.shared.observeService(server: reply.server_instance, epoch: reply.permission_epoch,
-          deadline: ProcessInfo.processInfo.systemUptime, ready: false)
-        return false
+        return .denied(server: reply.server_instance, epoch: reply.permission_epoch)
       }
-      guard ProcessInfo.processInfo.systemUptime - started < 0.75, ProcessInfo.processInfo.systemUptime < reply.deadline else { return false }
-      InputiaPermissionLifecycle.shared.observeService(server: reply.server_instance, epoch: reply.permission_epoch,
-        deadline: reply.deadline, ready: reply.ready)
-      return reply.ready && ProcessInfo.processInfo.systemUptime < reply.deadline
-    } catch { permissionConnection?.close(); permissionConnection = nil; return false }
+      guard ProcessInfo.processInfo.systemUptime - started < 0.75, ProcessInfo.processInfo.systemUptime < reply.deadline else { return .unavailable(.staleReply) }
+      return .allowed(.init(server: reply.server_instance, epoch: reply.permission_epoch, deadline: reply.deadline))
+    } catch is InputiaConnectionRetryGate.Unavailable {
+      return .unavailable(.connectionGate)
+    } catch {
+      permissionConnection?.close(); permissionConnection = nil
+      return .unavailable(.transport)
+    }
   }
   static var didReleaseTarget: ((String) -> Void)?
   static func releaseTarget(_ id: String) {
@@ -470,13 +474,17 @@ enum InputiaVoiceInputLauncher {
         try profile.validateRuntimeConnectionPaths()
         let bytes = try profile.readPairManifest()
         let manifest = try SignedPairManifest.verify(bytes, trust: InputiaEmbeddedPairTrust.trust)
-        let identity = try manifest.identity(for: .handy)
+        let identity = try manifest.identity(for: .control)
         if serviceTerminationObserver == nil {
           serviceTerminationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: nil
           ) { notification in
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
               app.bundleIdentifier == identity.identifier else { return }
+            // 与 trustedServiceIsRunning 同一安装路径判定：同标识的构建备份退出不是本服务退出，
+            // 不能借此暂停自动准备或断开当前业务连接。
+            if let installation = InputiaProfile.current.installation,
+              app.bundleURL?.path != installation.receipt.components.control { return }
             readinessQueue.async { readiness.suspend() }
             retireBusinessConnections()
           }
@@ -521,7 +529,7 @@ enum InputiaVoiceInputLauncher {
     try profile.validateRuntimeConnectionPaths()
     let bytes = try profile.readPairManifest()
     guard bytes.count <= 16_384 else { throw InputiaVoiceServiceError.handshake }
-    return try SignedPairManifest.verify(bytes, trust: InputiaEmbeddedPairTrust.trust).identity(for: .handy)
+    return try SignedPairManifest.verify(bytes, trust: InputiaEmbeddedPairTrust.trust).identity(for: .control)
   }
 
   private static func trustedServiceIsRunning(identity: PairCodeIdentity) throws -> Bool {
@@ -582,7 +590,7 @@ enum InputiaVoiceInputLauncher {
     var requirement: SecRequirement?
     guard SecRequirementCreateWithString("identifier \"\(identity.identifier)\" and (\(hashes))" as CFString, [], &requirement) == errSecSuccess,
       let requirement else { throw InputiaVoiceServiceError.handshake }
-    // 不采用 LaunchServices 可能指向构建备份的 URL，也不回落到日常 Handy 包。
+    // 不采用 LaunchServices 可能指向构建备份的 URL，也不回落到日常 Inputia 包。
     for path in installedServiceAppPaths() {
       let url = URL(fileURLWithPath: path).standardizedFileURL
       guard url.resolvingSymlinksInPath() == url,
@@ -640,22 +648,27 @@ enum InputiaVoiceInputLauncher {
   }
 
   /// All IPC ownership is released on its owning queues. Never wait for a socket on main.
-  static func invalidatePermissionWork(completion: @escaping () -> Void = {}) {
+  static func invalidatePermissionWork(expectedEpoch: UInt64? = nil, completion: @escaping () -> Void = {}) {
+    let current = { expectedEpoch.map(InputiaPermissionLifecycle.shared.isCurrentEpoch) ?? true }
+    guard current() else { completion(); return }
     InputiaSharedTermsMemory.shared.clear()
     let retired = DispatchGroup()
     retired.enter()
     personalizationQueue.async {
+      defer { retired.leave() }
+      guard current() else { return }
       personalizationConnection?.connection.closeTypedCaptureConnection(); personalizationConnection = nil
-      retired.leave()
     }
     retired.enter()
     typedCaptureQueue.async {
+      defer { retired.leave() }
+      guard current() else { return }
       typedCaptureConnection?.connection.closeTypedCaptureConnection(); typedCaptureConnection = nil
-      retired.leave()
     }
     retired.enter()
     shortcutQueue.async {
       defer { retired.leave() }
+      guard current() else { return }
       shortcutTimer?.cancel(); shortcutTimer = nil
       shortcutConnection?.close(); shortcutConnection = nil
       shortcutLease = nil; shortcutRejectedTargetID = nil; shortcutLeaseEpoch &+= 1
@@ -665,11 +678,13 @@ enum InputiaVoiceInputLauncher {
     retired.enter()
     sharedTermsQueue.async {
       defer { retired.leave() }
+      guard current() else { return }
       sharedTermsConnection?.close(); sharedTermsConnection = nil
     }
     retired.enter()
     voiceQueue.async {
       defer { retired.leave() }
+      guard current() else { return }
       unifiedConnection?.close(); unifiedConnection = nil; unifiedSession = nil
       shortcutSession = nil; shortcutTarget = nil; shortcutServer = nil; shortcutTerms = nil
       shortcutDeliver = nil; shortcutStatus = nil
@@ -681,10 +696,16 @@ enum InputiaVoiceInputLauncher {
     readinessQueue.async { readinessLaunches.notify(queue: readinessQueue) { retired.leave() } }
     retired.enter()
     InputiaPermissionLifecycle.shared.retireProbe {
-      permissionConnection?.close(); permissionConnection = nil; retired.leave()
+      defer { retired.leave() }
+      guard current() else { return }
+      permissionConnection?.close(); permissionConnection = nil
     }
     retired.enter()
-    targetQueue.async { targetConnection?.close(); targetConnection = nil; retired.leave() }
+    targetQueue.async {
+      defer { retired.leave() }
+      guard current() else { return }
+      targetConnection?.close(); targetConnection = nil
+    }
     retired.notify(queue: .main, execute: completion)
   }
 
@@ -877,7 +898,7 @@ enum InputiaVoiceInputLauncher {
   private static func openAuthenticatedConnection(profile: InputiaProfile,
     inputs: AuthenticatedInputs?) throws -> InputiaVoiceServiceConnection {
     guard let retryAttempt = connectionRetryGate.begin(now: ProcessInfo.processInfo.systemUptime) else {
-      throw InputiaVoiceServiceError.policy
+      throw InputiaConnectionRetryGate.Unavailable()
     }
     var authenticated = false
     defer {
@@ -1281,10 +1302,9 @@ enum InputiaVoiceInputLauncher {
   }
   #endif
   #endif
-  static let handyBundleIdentifier = "com.pais.handy"
-  // 用户可见名称变更不擅自改协议/授权身份；发布程序仍兼容原bundle ID。
-  static let inputiaBundleIdentifier = handyBundleIdentifier
-  static let voiceServiceExecutableNames = ["handy", "Inputia", "Handy"]
+  /// 开发构建的控制中心程序标识；发布安装按收据中的组件路径定位，不经此查找。
+  static let controlBundleIdentifier = "com.inputia.control"
+  static let voiceServiceExecutableNames = ["inputia", "Inputia"]
   static let toggleTranscriptionArguments = ["--toggle-transcription"]
   static let startupArguments = ["--start-hidden"]
   static let startupToggleDelaySeconds: TimeInterval = 1.5
@@ -1314,20 +1334,14 @@ enum InputiaVoiceInputLauncher {
     environment: [String: String] = ProcessInfo.processInfo.environment,
     homeDirectory: String = NSHomeDirectory(),
     workspaceAppPath: String? = NSWorkspace.shared.urlForApplication(
-      withBundleIdentifier: inputiaBundleIdentifier
-    )?.path,
-    legacyWorkspaceAppPath: String? = NSWorkspace.shared.urlForApplication(
-      withBundleIdentifier: handyBundleIdentifier
+      withBundleIdentifier: controlBundleIdentifier
     )?.path
   ) -> [String] {
     uniquePaths([
-      environment["INPUTIA_HANDY_APP"],
+      environment["INPUTIA_CONTROL_APP"],
       workspaceAppPath,
-      legacyWorkspaceAppPath,
       "/Applications/Inputia.app",
       "\(homeDirectory)/Applications/Inputia.app",
-      "/Applications/Handy.app",
-      "\(homeDirectory)/Applications/Handy.app",
     ].compactMap { $0 })
   }
 
@@ -1345,22 +1359,18 @@ enum InputiaVoiceInputLauncher {
       ?? "\(appPath)/Contents/MacOS/Inputia"
   }
 
-  static func findHandyApp(
+  static func findControlApp(
     environment: [String: String] = ProcessInfo.processInfo.environment,
     homeDirectory: String = NSHomeDirectory(),
     workspaceAppPath: String? = NSWorkspace.shared.urlForApplication(
-      withBundleIdentifier: inputiaBundleIdentifier
-    )?.path,
-    legacyWorkspaceAppPath: String? = NSWorkspace.shared.urlForApplication(
-      withBundleIdentifier: handyBundleIdentifier
+      withBundleIdentifier: controlBundleIdentifier
     )?.path,
     fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
   ) -> String? {
     candidateAppPaths(
       environment: environment,
       homeDirectory: homeDirectory,
-      workspaceAppPath: workspaceAppPath,
-      legacyWorkspaceAppPath: legacyWorkspaceAppPath
+      workspaceAppPath: workspaceAppPath
     ).first { appPath in
       executablePaths(forAppPath: appPath).contains(where: fileExists)
     }
@@ -1377,17 +1387,17 @@ enum InputiaVoiceInputLauncher {
     )
   }
 
-  static func isHandyRunning() -> Bool {
-    !NSRunningApplication.runningApplications(withBundleIdentifier: handyBundleIdentifier).isEmpty
+  static func isControlRunning() -> Bool {
+    !NSRunningApplication.runningApplications(withBundleIdentifier: controlBundleIdentifier).isEmpty
   }
 
   @discardableResult
   static func triggerVoiceInput() -> InputiaVoiceInputLaunchResult {
-    guard let appPath = findHandyApp() else {
+    guard let appPath = findControlApp() else {
       return .missing
     }
 
-    let plan = launchPlan(appPath: appPath, isRunning: isHandyRunning())
+    let plan = launchPlan(appPath: appPath, isRunning: isControlRunning())
     if plan.delayed {
       openHiddenService(appPath: plan.appPath) { error in
         if let error {

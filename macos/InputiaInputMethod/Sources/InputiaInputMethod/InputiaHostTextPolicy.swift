@@ -158,19 +158,13 @@ enum InputiaHostTextPolicy {
     appCommandSelectors.contains(selectorName)
   }
 
-  static func shouldPassThroughNewlineAfterRawFallbackCommit(
-    previousComposing: String,
-    candidates: [String],
-    committedText: String?
-  ) -> Bool {
-    guard !previousComposing.isEmpty, candidates.isEmpty else {
-      return false
-    }
-    guard committedText == previousComposing else {
-      return false
-    }
-    return previousComposing.unicodeScalars.allSatisfy { scalar in
-      scalar.isASCII && scalar.value >= 0x20 && scalar.value != 0x7f
-    }
+  /// WebKit 324380：Safari“添加到程序坞”的网页应用会在组合结束之后才把确认回车的
+  /// keydown 交给网页，网页看到 isComposing=false 便当作发送。只有这类宿主延后上屏。
+  static func defersReturnCommit(bundleIdentifier: String?) -> Bool {
+    bundleIdentifier?.hasPrefix("com.apple.Safari.WebApp.") == true
   }
+
+  /// 吞下回车后由输入法自行上屏的等待时间：只决定上屏时机，不决定回车是否被吞；
+  /// 期间的新事件会立即补完上屏。
+  static let deferredReturnCommitDelay: TimeInterval = 0.05
 }

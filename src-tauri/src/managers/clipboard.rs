@@ -6,7 +6,7 @@ use clipboard_rs::common::RustImage;
 use clipboard_rs::{Clipboard, ClipboardContext};
 #[cfg(not(target_os = "macos"))]
 use clipboard_rs::{ClipboardHandler, ClipboardWatcher, ClipboardWatcherContext};
-use inputia_handy_runtime::{
+use inputia_runtime::{
     attachment_store::{AttachmentKind, PinPurpose},
     service::HistoryService,
     source::SourceTable,
@@ -1307,10 +1307,10 @@ impl ClipboardManager {
     fn import_image_bytes(
         &self,
         bytes: &[u8],
-    ) -> Result<inputia_handy_runtime::service::PendingAttachmentImport> {
+    ) -> Result<inputia_runtime::service::PendingAttachmentImport> {
         let operation = format!(
             "image-{}",
-            inputia_handy_runtime::attachment_store::new_operation_id()?
+            inputia_runtime::attachment_store::new_operation_id()?
         );
         self.attachment_service()?
             .import_attachment_owned(AttachmentKind::Image, operation, bytes.to_vec())
@@ -1337,7 +1337,7 @@ impl ClipboardManager {
         let service = self.attachment_service()?;
         let operation = format!(
             "image-read-{}",
-            inputia_handy_runtime::attachment_store::new_operation_id()?
+            inputia_runtime::attachment_store::new_operation_id()?
         );
         let result = (|| {
             let (lease, _, _) = service

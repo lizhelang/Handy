@@ -1,5 +1,51 @@
 import Foundation
 import Darwin
+import OSLog
+
+enum InputiaPermissionProbe {
+  struct Service {
+    let server: String
+    let epoch: UInt64
+    let deadline: TimeInterval
+  }
+  enum Unavailable: String {
+    case connectionGate = "connection_gate"
+    case transport, staleReply = "stale_reply"
+  }
+  case allowed(Service)
+  case denied(server: String, epoch: UInt64)
+  case unavailable(Unavailable)
+}
+
+struct InputiaPermissionTransition {
+  let epoch: UInt64
+  let status: InputiaPermissionState.Status
+  var requiresRetirement: Bool { status != .ready }
+}
+
+private enum InputiaPermissionDiagnostics {
+  private static let log = Logger(subsystem: "com.inputia.permission", category: "probe")
+  private static let lock = NSLock()
+  private static var previousProbe: String?
+  static func probe(_ result: InputiaPermissionProbe, elapsed: TimeInterval) {
+    let reason: String
+    switch result {
+    case .allowed: reason = "allowed"
+    case .denied: reason = "denied"
+    case .unavailable(let unavailable): reason = unavailable.rawValue
+    }
+    lock.lock()
+    let changed = previousProbe != reason
+    previousProbe = reason
+    lock.unlock()
+    guard changed else { return }
+    let milliseconds = Int(min(3_600_000, max(0, elapsed * 1000)))
+    log.notice("result=\(reason, privacy: .public) elapsed_ms=\(milliseconds, privacy: .public)")
+  }
+  static func transition(_ value: InputiaPermissionTransition) {
+    log.notice("state=\(value.status.rawValue, privacy: .public) epoch=\(value.epoch, privacy: .public) retirement=\(value.requiresRetirement, privacy: .public)")
+  }
+}
 
 /// Pure transition model. Every permission boundary invalidates previously captured work.
 struct InputiaPermissionState: Equatable {
@@ -40,15 +86,17 @@ final class InputiaPermissionLifecycle {
   private var markerEpoch: String?
   private var maintenance = false
   private var root: URL?
-  private var changed: ((@escaping () -> Void) -> Void)?
+  private var changed: ((InputiaPermissionTransition, @escaping () -> Void) -> Void)?
   // Written only on lifecycle queue, after main and all component queues acknowledge.
   private var acknowledgedEpoch: UInt64?
-  private var query: () -> Bool
+  private var retirementEpoch: UInt64?
+  private var query: () -> InputiaPermissionProbe
   private let pollInterval: TimeInterval
   private let timeout: TimeInterval
   private let instance = UUID().uuidString
 
-  init(timeout: TimeInterval = 0.75, pollInterval: TimeInterval = 1, query: @escaping () -> Bool = { false }) {
+  init(timeout: TimeInterval = 0.75, pollInterval: TimeInterval = 1,
+    query: @escaping () -> InputiaPermissionProbe = { .unavailable(.transport) }) {
     self.pollInterval = pollInterval
     self.timeout = timeout
     self.query = query
@@ -56,24 +104,12 @@ final class InputiaPermissionLifecycle {
   private var serviceIdentity: String?
   private var serviceDeadline: TimeInterval = .infinity
   func retireProbe(_ completion: @escaping () -> Void) { queryQueue.async(execute: completion) }
-  func configureProbe(_ probe: @escaping () -> Bool) { queue.async { self.query = probe } }
+  func configureProbe(_ probe: @escaping () -> InputiaPermissionProbe) { queue.async { self.query = probe } }
+  func isCurrentEpoch(_ epoch: UInt64) -> Bool { snapshot.epoch == epoch }
   var allowsServiceConnection: Bool { snapshot.status != .maintenance }
   func matchesService(server: String, epoch: UInt64) -> Bool {
     lock.lock(); defer { lock.unlock() }
     return serviceIdentity == "\(server):\(epoch)" && model.status == .ready && ProcessInfo.processInfo.systemUptime < serviceDeadline
-  }
-  func observeService(server: String, epoch: UInt64, deadline: TimeInterval, ready: Bool) {
-    lock.lock()
-    guard !shutdown, model.status != .maintenance else { lock.unlock(); return }
-    let identity = "\(server):\(epoch)"
-    let previous = model
-    if (model.status == .ready && ProcessInfo.processInfo.systemUptime >= serviceDeadline) || serviceIdentity != identity || !ready { model.update(.unknown, markerEpoch: model.markerEpoch) }
-    serviceIdentity = identity
-    serviceDeadline = deadline
-    let changed = model != previous
-    let currentEpoch = model.epoch
-    lock.unlock()
-    if changed { notifyChanged(epoch: currentEpoch) }
   }
   var snapshot: InputiaPermissionState {
     lock.lock()
@@ -82,19 +118,20 @@ final class InputiaPermissionLifecycle {
     if model.status == .ready
       && (ProcessInfo.processInfo.systemUptime - checkedAt >= hardTimeout || ProcessInfo.processInfo.systemUptime >= serviceDeadline) {
       model.update(.unknown, markerEpoch: model.markerEpoch)
+      retirementEpoch = model.epoch
       expired = true
     }
     let result = model
     lock.unlock()
-    if expired { notifyChanged(epoch: result.epoch) }
+    if expired { notifyChanged(.init(epoch: result.epoch, status: result.status)) }
     return result
   }
   var epoch: UInt64 { snapshot.epoch }
   var isReady: Bool { snapshot.status == .ready }
   func permits(_ epoch: UInt64) -> Bool { snapshot.permits(epoch) }
 
-  func start(root: URL?, changed: @escaping (@escaping () -> Void) -> Void = { complete in complete() }) {
-    queue.async {
+  func start(root: URL?, changed: @escaping (InputiaPermissionTransition, @escaping () -> Void) -> Void = { _, complete in complete() }) {
+    queue.async { [self] in
       guard self.timer == nil else { return }
       self.lock.lock()
       self.root = root
@@ -120,9 +157,10 @@ final class InputiaPermissionLifecycle {
     lock.lock()
     shutdown = true
     model.invalidate()
+    retirementEpoch = model.epoch
     let epoch = model.epoch
     lock.unlock()
-    notifyChanged(epoch: epoch)
+    notifyChanged(.init(epoch: epoch, status: .unknown))
     queue.async {
       self.stopped = true
       self.timer?.cancel(); self.timer = nil
@@ -183,9 +221,13 @@ final class InputiaPermissionLifecycle {
       publish(.maintenance, marker: markerEpoch)
       writeHealth(); return
     }
-    guard !queryInFlight else { writeHealth(); return }
-    queryInFlight = true
     let requestEpoch = snapshot.epoch
+    lock.lock()
+    let retiring = retirementEpoch != nil
+    lock.unlock()
+    // 清理前启动的证明不能在 ACK 到达后用于恢复；必须由下一次查询重新证明。
+    guard !queryInFlight, !retiring else { writeHealth(); return }
+    queryInFlight = true
     let token = UUID()
     queryToken = token
     let started = ProcessInfo.processInfo.systemUptime
@@ -199,7 +241,8 @@ final class InputiaPermissionLifecycle {
       self.writeHealth()
     }
     queryQueue.async {
-      let allowed = self.query()
+      let result = self.query()
+      InputiaPermissionDiagnostics.probe(result, elapsed: ProcessInfo.processInfo.systemUptime - started)
       self.queue.async {
         self.queryInFlight = false
         defer { self.writeHealth() }
@@ -207,56 +250,85 @@ final class InputiaPermissionLifecycle {
           self.snapshot.epoch == requestEpoch,
           ProcessInfo.processInfo.systemUptime - started < self.timeout else { return }
         self.queryToken = nil
-        self.acceptProbe(allowed, requestEpoch: requestEpoch, started: started)
+        self.acceptProbe(result, requestEpoch: requestEpoch, started: started)
         self.writeHealth()
       }
     }
   }
   // 与硬截止失效共用同一把锁，避免“先检查旧epoch、随后过期、再接受旧结果”的竞争。
-  private func acceptProbe(_ allowed: Bool, requestEpoch: UInt64, started: TimeInterval) {
+  private func acceptProbe(_ result: InputiaPermissionProbe, requestEpoch: UInt64, started: TimeInterval) {
     lock.lock()
     let previous = model
     let now = ProcessInfo.processInfo.systemUptime
     if model.status == .ready && (now - checkedAt >= hardTimeout || now >= serviceDeadline) {
       model.update(.unknown, markerEpoch: model.markerEpoch)
+      retirementEpoch = model.epoch
     }
-    if !shutdown && model.epoch == requestEpoch && now - started < timeout && now < serviceDeadline {
-      model.update(allowed ? .ready : .accessibilityRequired, markerEpoch: markerEpoch)
-      checkedAt = now
+    if !shutdown && model.epoch == requestEpoch && retirementEpoch == nil && now - started < timeout {
+      switch result {
+      case .allowed(let service) where now < service.deadline:
+        let identity = "\(service.server):\(service.epoch)"
+        let replacesReadyService = model.status == .ready && serviceIdentity != identity
+        serviceIdentity = identity
+        serviceDeadline = service.deadline
+        if replacesReadyService {
+          model.update(.unknown, markerEpoch: markerEpoch)
+          retirementEpoch = model.epoch
+        } else {
+          model.update(.ready, markerEpoch: markerEpoch)
+          checkedAt = now
+        }
+      case .denied(let server, let epoch):
+        serviceIdentity = "\(server):\(epoch)"
+        serviceDeadline = now
+        model.update(.accessibilityRequired, markerEpoch: markerEpoch)
+        if model != previous { retirementEpoch = model.epoch }
+      case .allowed, .unavailable:
+        // 没有新鲜证明不等于明确拒权，也不能续期已有证明。
+        break
+      }
     }
     let didChange = model != previous
-    let epoch = model.epoch
+    let transition = InputiaPermissionTransition(epoch: model.epoch, status: model.status)
     lock.unlock()
-    if didChange { notifyChanged(epoch: epoch) }
+    if didChange { notifyChanged(transition) }
   }
   private func publish(_ status: InputiaPermissionState.Status, marker: String? = nil) {
     lock.lock()
     let previous = model
     model.update(status, markerEpoch: marker)
-    checkedAt = ProcessInfo.processInfo.systemUptime
     let didChange = model != previous
-    let epoch = model.epoch
+    if didChange && status != .ready { retirementEpoch = model.epoch }
+    let transition = InputiaPermissionTransition(epoch: model.epoch, status: model.status)
     lock.unlock()
-    if didChange { notifyChanged(epoch: epoch) }
+    if didChange { notifyChanged(transition) }
   }
-  private func notifyChanged(epoch: UInt64) {
+  private func notifyChanged(_ transition: InputiaPermissionTransition) {
+    InputiaPermissionDiagnostics.transition(transition)
     DispatchQueue.main.async {
+      guard self.isCurrentEpoch(transition.epoch), self.snapshot.status == transition.status else { return }
       let completed = {
         self.queue.async {
           // Stale cleanup cannot acknowledge a newer permission boundary.
-          guard self.snapshot.epoch == epoch else { return }
-          self.acknowledgedEpoch = epoch
+          self.lock.lock()
+          guard self.model.epoch == transition.epoch else { self.lock.unlock(); return }
+          self.acknowledgedEpoch = transition.epoch
+          if self.retirementEpoch == transition.epoch { self.retirementEpoch = nil }
+          self.lock.unlock()
           self.writeHealth()
         }
       }
-      if let changed = self.changed { changed(completed) } else { completed() }
+      if let changed = self.changed { changed(transition, completed) } else { completed() }
     }
   }
   private func writeHealth() {
     guard let root else { return }
     let state = snapshot
     // Gate closure is immediate; maintenance is an ACK, not merely a request.
-    let retired = acknowledgedEpoch == state.epoch && !queryInFlight
+    lock.lock()
+    let acknowledged = acknowledgedEpoch == state.epoch && retirementEpoch == nil
+    lock.unlock()
+    let retired = acknowledged && !queryInFlight
     let healthState = state.status == .maintenance && !retired ? "retiring" : state.status.rawValue
     let health: [String: Any] = ["schema_version": 1, "component": "ime",
       "pid": ProcessInfo.processInfo.processIdentifier, "instance_id": instance,

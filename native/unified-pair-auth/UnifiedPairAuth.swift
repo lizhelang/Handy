@@ -9,7 +9,8 @@ public enum PairAuthError: Error, CustomStringConvertible {
   }
 }
 
-public enum PairRole: String, Codable, CaseIterable { case handy, inputia }
+/// 线上协议值保持 "handy"（改名前写入配对清单与签名的角色名），代码中称控制中心。
+public enum PairRole: String, Codable, CaseIterable { case control = "handy", inputia }
 
 public struct PairCodeIdentity: Codable, Equatable {
   public let role: PairRole

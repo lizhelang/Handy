@@ -88,17 +88,17 @@
     "quit": "Изход",
     "cancel": "Отказ",
     "secureInputWarning": "⚠ Бързите клавиши са блокирани от Secure Input",
-    "clipboardHistory": "История на клипборда"
+    "clipboardHistory": "Клипборд"
   },
   "sidebar": {
     "general": "Общи",
     "models": "Модели",
     "advanced": "Разширени",
     "postProcessing": "Постобработка",
-    "history": "История",
+    "history": "Записи",
     "debug": "Отстраняване",
     "about": "За приложението",
-    "clipboard": "Clipboard",
+    "clipboard": "Клипборд",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "История",
+      "title": "Записи",
+      "search": "Търсене в записи и транскрипции",
       "openFolder": "Отваряне на папката с записи",
-      "loading": "Зареждане на историята...",
-      "empty": "Все още няма транскрипции. Започнете запис, за да изградите история!",
+      "loading": "Зареждане на записите...",
+      "empty": "Няма намерени записи.",
       "copyToClipboard": "Копиране на транскрипцията в клипборда",
       "save": "Запазване на транскрипцията",
       "unsave": "Премахване от запазените",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "Мениджър на клипборда",
+      "title": "Клипборд",
       "searchPlaceholder": "Търсене в историята на клипборда...",
       "filterAll": "Всички",
       "filterText": "Текст",

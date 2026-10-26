@@ -1,6 +1,6 @@
 //! Authenticated IME target capabilities. AX ownership stays on the app main run loop.
 use crate::unified_target::{self, PendingReason, ProcessInstance, TargetRegistry};
-use inputia_handy_runtime::voice_protocol::{
+use inputia_runtime::voice_protocol::{
     HostTargetToken, TargetBridgeCommand, TargetBridgePurpose, TargetBridgeReply,
     TargetBridgeRequest, TargetBridgeSelection,
 };
@@ -58,8 +58,8 @@ impl Grant {
 struct Broker {
     native: TargetRegistry,
     grants: BTreeMap<String, Grant>,
-    memory_commits: inputia_handy_runtime::memory_commit::CommitRegistry,
-    memory_spans: inputia_handy_runtime::memory_word_span::WordSpanRegistry,
+    memory_commits: inputia_runtime::memory_commit::CommitRegistry,
+    memory_spans: inputia_runtime::memory_word_span::WordSpanRegistry,
 }
 #[path = "ime_memory_broker.rs"]
 mod memory_spans;
@@ -373,10 +373,10 @@ pub fn prepare_memory_commit(
     server: &str,
     target: &HostTargetToken,
     policy_epoch: u64,
-    request: inputia_handy_runtime::memory_commit::FixedPlansRequest,
+    request: inputia_runtime::memory_commit::FixedPlansRequest,
     started: Instant,
-) -> Result<inputia_handy_runtime::memory_commit::PreparedFixedCommit, String> {
-    use inputia_handy_runtime::memory_commit::CommitIdentity;
+) -> Result<inputia_runtime::memory_commit::PreparedFixedCommit, String> {
+    use inputia_runtime::memory_commit::CommitIdentity;
     let permission_epoch = crate::input_permission::capture_epoch()?;
     let identity = CommitIdentity {
         client_instance: owner.into(),
@@ -444,8 +444,8 @@ pub fn confirm_memory_commit(
     commit_id: String,
     plan_id: String,
     operation_id: String,
-) -> Result<inputia_handy_runtime::memory_commit::ConfirmedCommit, String> {
-    use inputia_handy_runtime::memory_commit::CommitIdentity;
+) -> Result<inputia_runtime::memory_commit::ConfirmedCommit, String> {
+    use inputia_runtime::memory_commit::CommitIdentity;
     let permission_epoch = crate::input_permission::capture_epoch()?;
     let identity = CommitIdentity {
         client_instance: owner.into(),

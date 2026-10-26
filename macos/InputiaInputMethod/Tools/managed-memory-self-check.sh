@@ -8,7 +8,7 @@ swiftc "$ROOT_DIR/Sources/InputiaInputMethod/InputiaManagedMemory.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaWordSpan.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaPersonalization.swift" \
   "$ROOT_DIR/Tools/InputiaManagedMemorySelfCheck.swift" -o "$CHECK_DIR/check"
-"$CHECK_DIR/check" "$REPO_DIR/crates/inputia-handy-runtime/tests/fixtures/memory-query-digest-v1.json"
+"$CHECK_DIR/check" "$REPO_DIR/crates/inputia-runtime/tests/fixtures/memory-query-digest-v1.json"
 swiftc "$ROOT_DIR/Sources/InputiaInputMethod/InputiaManagedMemory.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaWordSpan.swift" \
   "$ROOT_DIR/Sources/InputiaInputMethod/InputiaMemoryImport.swift" \

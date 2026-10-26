@@ -8,7 +8,7 @@ static RIME_SCHEMA_SMOKE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[cfg(feature = "bundled-static-rime")]
 #[test]
 fn explicit_hotword_promotes_late_native_candidate_and_selects_its_original_address() {
-    use inputia_handy_runtime::personalization::{
+    use inputia_runtime::personalization::{
         prioritize_explicit_candidates, Candidate as PersonalCandidate,
     };
     let _guard = RIME_SCHEMA_SMOKE_LOCK.lock().unwrap();

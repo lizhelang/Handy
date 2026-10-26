@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local, Utc};
-use inputia_handy_runtime::{
+use inputia_runtime::{
     attachment_store::{AttachmentKind, PauseReason},
     service::{HistoryService, PendingAttachmentImport},
     source::SourceTable,
@@ -77,9 +77,9 @@ pub(crate) struct VerifiedVoiceSource {
 
 impl VerifiedVoiceSource {
     pub(crate) fn from_owned_request(
-        request: &inputia_handy_runtime::voice_protocol::VoiceRequest,
+        request: &inputia_runtime::voice_protocol::VoiceRequest,
     ) -> Option<Self> {
-        use inputia_handy_runtime::voice_protocol::VoiceCommand;
+        use inputia_runtime::voice_protocol::VoiceCommand;
         let target = match &request.command {
             VoiceCommand::Start { target, .. } => target,
             VoiceCommand::HostShortcut { target, edge, .. } if edge.starts_session => target,
@@ -555,8 +555,7 @@ impl HistoryManager {
             AttachmentKind::Recording,
             format!(
                 "recording-{}",
-                inputia_handy_runtime::attachment_store::new_operation_id()
-                    .map_err(|e| e.reason())?
+                inputia_runtime::attachment_store::new_operation_id().map_err(|e| e.reason())?
             ),
             output.into_inner(),
         )
@@ -837,8 +836,8 @@ mod tests {
     use super::*;
     use rusqlite::{params, Connection};
 
-    fn owned_request() -> inputia_handy_runtime::voice_protocol::VoiceRequest {
-        use inputia_handy_runtime::voice_protocol::*;
+    fn owned_request() -> inputia_runtime::voice_protocol::VoiceRequest {
+        use inputia_runtime::voice_protocol::*;
         VoiceRequest {
             request_id: "request".into(),
             session_id: "session".into(),
@@ -867,7 +866,7 @@ mod tests {
 
     #[test]
     fn voice_source_requires_known_field_and_app_from_owned_start() {
-        use inputia_handy_runtime::voice_protocol::VoiceCommand;
+        use inputia_runtime::voice_protocol::VoiceCommand;
         let mut request = owned_request();
         assert!(VerifiedVoiceSource::from_owned_request(&request).is_some());
         if let VoiceCommand::Start { target, .. } = &mut request.command {
@@ -885,7 +884,7 @@ mod tests {
 
     #[test]
     fn voice_source_and_history_are_one_outbox_event_and_rollback_together() {
-        use inputia_handy_runtime::{
+        use inputia_runtime::{
             source::{SourceOutbox, SourceTable},
             store::SourceTrust,
         };
@@ -917,7 +916,7 @@ mod tests {
         assert_eq!(payload.source_app.as_deref(), Some("synthetic.editor"));
         // 验证实际写入器产生的事件可进入规范确认链，不手工给索引伪造 Verified。
         let directory = tempfile::tempdir().unwrap();
-        let mut index = inputia_handy_runtime::store::IntegrationStore::open(
+        let mut index = inputia_runtime::store::IntegrationStore::open(
             directory.path().join("integration.db"),
             "source-confirmation",
         )
@@ -926,16 +925,16 @@ mod tests {
         index.register_source("history", outbox.store_id()).unwrap();
         index.enable_learning(&key).unwrap();
         index.apply_change(&events[0]).unwrap();
-        let request = inputia_handy_runtime::learning::HistoryTermConfirmation {
+        let request = inputia_runtime::learning::HistoryTermConfirmation {
             operation_id: inputia_core::integration::events::Identifier::parse("confirm-new-voice")
                 .unwrap(),
-            item_id: inputia_handy_runtime::store::item_id(outbox.store_id(), &events[0].record_id),
+            item_id: inputia_runtime::store::item_id(outbox.store_id(), &events[0].record_id),
             expected_revision: events[0].revision,
             term: "Inputia".into(),
         };
         assert_eq!(
             index.confirm_history_term(&key, &request, || true).unwrap(),
-            inputia_handy_runtime::learning::ApplyContribution::Applied
+            inputia_runtime::learning::ApplyContribution::Applied
         );
         assert_eq!(index.list_terms(10, 0).unwrap()[0].contributions, 1);
         insert_entry_with_voice_source(&conn, entry, None).unwrap();
@@ -981,7 +980,7 @@ mod tests {
                 post_process_requested
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
-                format!("handy-{}.wav", timestamp),
+                format!("inputia-{}.wav", timestamp),
                 timestamp,
                 false,
                 format!("Recording {}", timestamp),

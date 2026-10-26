@@ -8,21 +8,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "/tmp/inputia-memory-import-probe.db".to_string());
     let history_db = args.next().unwrap_or_else(|| {
         format!(
-            "{}/Library/Application Support/com.pais.handy/history.db",
+            "{}/Library/Application Support/com.inputia.control/history.db",
             std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
         )
     });
     let clipboard_db = args.next().unwrap_or_else(|| {
         format!(
-            "{}/Library/Application Support/com.pais.handy/clipboard.db",
+            "{}/Library/Application Support/com.inputia.control/clipboard.db",
             std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
         )
     });
 
-    let context = AppContext::new("com.pais.handy");
+    let context = AppContext::new("com.inputia.control");
     let mut memory = SqliteMemory::open(memory_db, AppPolicy::default())?;
-    let history_imported = memory.import_handy_history(history_db, &context, 2_000)?;
-    let clipboard_imported = memory.import_handy_clipboard(clipboard_db, &context, 2_000)?;
+    let history_imported = memory.import_control_history(history_db, &context, 2_000)?;
+    let clipboard_imported = memory.import_control_clipboard(clipboard_db, &context, 2_000)?;
     let completion_count_for_zhongguo = memory.completion_candidates("中国", 20)?.len();
 
     println!("history_imported={history_imported}");

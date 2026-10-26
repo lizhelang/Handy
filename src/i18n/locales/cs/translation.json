@@ -88,17 +88,17 @@
     "quit": "Ukončit",
     "cancel": "Zrušit",
     "secureInputWarning": "⚠ Zkratky blokuje Secure Input",
-    "clipboardHistory": "Historie schránky"
+    "clipboardHistory": "Schránka"
   },
   "sidebar": {
     "general": "Obecné",
     "models": "Modely",
     "advanced": "Pokročilé",
     "postProcessing": "Následné zpracování",
-    "history": "Historie",
+    "history": "Nahrávky",
     "debug": "Ladění",
     "about": "O aplikaci",
-    "clipboard": "Clipboard",
+    "clipboard": "Schránka",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "Historie",
+      "title": "Nahrávky",
+      "search": "Hledat v nahrávkách a přepisech",
       "openFolder": "Otevřít složku nahrávek",
-      "loading": "Načítám historii...",
-      "empty": "Zatím žádné přepisy. Začněte nahrávat a vytvořte si historii!",
+      "loading": "Načítání nahrávek...",
+      "empty": "Nebyly nalezeny žádné nahrávky.",
       "copyToClipboard": "Kopírovat přepis do schránky",
       "save": "Uložit přepis",
       "unsave": "Odebrat z uložených",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "Správce schránky",
+      "title": "Schránka",
       "searchPlaceholder": "Hledat v historii schránky...",
       "filterAll": "Vše",
       "filterText": "Text",

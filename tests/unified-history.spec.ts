@@ -13,6 +13,12 @@ interface HistoryHarness {
   output: string;
   rejectMutation: boolean;
   rejectListener: boolean;
+  recordingFailure: {
+    operation: "retranscribe" | "openRecordings";
+    message?: string;
+  } | null;
+  deferRetranscribe: boolean;
+  audioUrl?: string;
   pending: Map<string, (value: unknown) => void>;
   deferQueries: boolean;
   emit: () => void;
@@ -27,7 +33,7 @@ declare global {
 }
 
 // Browser mocks verify UI behavior only; they do not prove native insertion.
-async function mountHistory(page: Page) {
+async function mountHistory(page: Page, recordingsOnly = false) {
   await page.route("**/__unified-history-test", (route) =>
     route.fulfill({
       contentType: "text/html",
@@ -35,7 +41,7 @@ async function mountHistory(page: Page) {
     }),
   );
   await page.goto("/__unified-history-test");
-  await page.evaluate(async () => {
+  await page.evaluate(async (recordingsOnly) => {
     const callbacks = new Map<number, (value: unknown) => void>();
     const listeners = new Map<number, number>();
     let next = 0;
@@ -55,6 +61,7 @@ async function mountHistory(page: Page) {
       source_app: null,
     };
     const harness = {
+      audioUrl: undefined as string | undefined,
       calls: [] as { command: string; args?: Record<string, unknown> }[],
       actions: [] as {
         action: string;
@@ -76,6 +83,8 @@ async function mountHistory(page: Page) {
       output: "confirmed",
       rejectMutation: false,
       rejectListener: false,
+      recordingFailure: null as HistoryHarness["recordingFailure"],
+      deferRetranscribe: false,
       pending: new Map<string, (value: unknown) => void>(),
       deferQueries: false,
       emit: () => {
@@ -173,9 +182,11 @@ async function mountHistory(page: Page) {
     const render = () =>
       root.render(
         React.createElement(UnifiedHistory, {
+          recordingsOnly,
           resolveAsset: async (item: typeof fixture) =>
             item.asset_ref
-              ? `data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=`
+              ? (harness.audioUrl ??
+                `data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=`)
               : null,
           onCheckOutputReceipt: async (operationId: string) => {
             harness.calls.push({
@@ -222,6 +233,38 @@ async function mountHistory(page: Page) {
                 : entry,
             );
           },
+          onRetranscribe: async (item: typeof fixture) => {
+            harness.calls.push({
+              command: "retranscribe",
+              args: { itemId: item.item_id, revision: item.revision },
+            });
+            if (harness.deferRetranscribe)
+              await new Promise<void>((resolve) =>
+                harness.pending.set("retranscribe", () => resolve()),
+              );
+            if (harness.recordingFailure?.operation === "retranscribe") {
+              if (harness.recordingFailure.message)
+                throw new Error(harness.recordingFailure.message);
+              throw { code: "unknown" };
+            }
+            harness.items = harness.items.map((entry) =>
+              entry.item_id === item.item_id
+                ? {
+                    ...entry,
+                    text: "Recovered transcription",
+                    revision: entry.revision + 1,
+                  }
+                : entry,
+            );
+          },
+          onOpenRecordings: async () => {
+            harness.calls.push({ command: "openRecordings" });
+            if (harness.recordingFailure?.operation === "openRecordings") {
+              if (harness.recordingFailure.message)
+                throw new Error(harness.recordingFailure.message);
+              throw { code: "unknown" };
+            }
+          },
         }),
       );
     Object.assign(harness, {
@@ -233,7 +276,7 @@ async function mountHistory(page: Page) {
       },
     });
     render();
-  });
+  }, recordingsOnly);
   await expect(page.getByText("Voice fixture", { exact: true })).toBeVisible();
 }
 
@@ -264,6 +307,147 @@ test("single click previews; explicit copy preserves the file item and does not 
       ]),
     ),
   ).toEqual([["copy", "files"]]);
+});
+
+test("重转录失败持续显示后端原因，并允许再次重试成功", async ({ page }) => {
+  await page.clock.install();
+  await mountHistory(page);
+  await page.evaluate(() => {
+    const harness = window.__HISTORY_TEST__;
+    harness.items[0] = { ...harness.items[0], asset_ref: "recording-1" };
+    harness.recordingFailure = {
+      operation: "retranscribe",
+      message: "output truncated before end-of-stream: run: status 18",
+    };
+    harness.emit();
+  });
+  await page.getByText("Voice fixture", { exact: true }).click();
+  const retry = page.getByRole("button", {
+    name: "Re-transcribe",
+    exact: true,
+  });
+  await retry.click();
+  const failure = page
+    .getByRole("complementary", { name: "Preview" })
+    .getByRole("alert");
+  await expect(failure).toContainText(
+    "Failed to re-transcribe. Please try again.",
+  );
+  await expect(failure).toContainText(
+    "output truncated before end-of-stream: run: status 18",
+  );
+  await expect(page.getByText(/Could not save/)).toHaveCount(0);
+  await expect(retry).toBeEnabled();
+  await page.clock.fastForward(5000);
+  await expect(failure).toBeVisible();
+  expect(await page.evaluate(() => window.__HISTORY_TEST__.items[0].text)).toBe(
+    "Voice fixture",
+  );
+
+  await page.evaluate(() => {
+    window.__HISTORY_TEST__.recordingFailure = null;
+  });
+  await retry.click();
+  await expect(
+    page.getByText("Saved and synchronized.", { exact: true }),
+  ).toBeVisible();
+  await expect(failure).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.__HISTORY_TEST__.calls.filter(
+        (call) => call.command === "retranscribe",
+      ),
+    ),
+  ).toEqual([
+    { command: "retranscribe", args: { itemId: "voice-1", revision: 1 } },
+    { command: "retranscribe", args: { itemId: "voice-1", revision: 1 } },
+  ]);
+  expect(await page.evaluate(() => window.__HISTORY_TEST__.items[0].text)).toBe(
+    "Recovered transcription",
+  );
+});
+
+for (const outcome of ["failure", "success"] as const) {
+  test(`切换历史条目后，迟到的重转录${outcome === "failure" ? "失败" : "成功"}不会误归属到新条目`, async ({
+    page,
+  }) => {
+    await mountHistory(page);
+    await page.evaluate((result) => {
+      const harness = window.__HISTORY_TEST__;
+      harness.items[0] = { ...harness.items[0], asset_ref: "recording-1" };
+      harness.deferRetranscribe = true;
+      if (result === "failure")
+        harness.recordingFailure = {
+          operation: "retranscribe",
+          message: "late failure for voice-1",
+        };
+      harness.emit();
+    }, outcome);
+    await page.getByText("Voice fixture", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "Re-transcribe", exact: true })
+      .click();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__HISTORY_TEST__.pending.has("retranscribe"),
+        ),
+      )
+      .toBe(true);
+    await page.getByText("report.pdf", { exact: true }).click();
+    const selectedFile = page
+      .getByRole("listitem")
+      .filter({ hasText: "report.pdf" });
+    await expect(selectedFile).toHaveAttribute("aria-expanded", "true");
+    await page.evaluate(() =>
+      window.__HISTORY_TEST__.pending.get("retranscribe")!(null),
+    );
+    await expect(
+      page.getByRole("button", { name: "Open Recordings Folder" }),
+    ).toBeEnabled();
+    await expect(selectedFile).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(
+      page.getByText("Saved and synchronized.", { exact: true }),
+    ).toHaveCount(0);
+    expect(
+      await page.evaluate(() => window.__HISTORY_TEST__.items[0].text),
+    ).toBe(outcome === "failure" ? "Voice fixture" : "Recovered transcription");
+  });
+}
+
+test("未知录音操作错误按实际操作显示本地化提示", async ({ page }) => {
+  await mountHistory(page);
+  await page.evaluate(() => {
+    const harness = window.__HISTORY_TEST__;
+    harness.items[0] = { ...harness.items[0], asset_ref: "recording-1" };
+    harness.recordingFailure = { operation: "retranscribe" };
+    harness.emit();
+  });
+  await page.getByText("Voice fixture", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Re-transcribe", exact: true })
+    .click();
+  const preview = page.getByRole("complementary", { name: "Preview" });
+  await expect(preview.getByRole("alert")).toHaveText(
+    "Failed to re-transcribe. Please try again.",
+  );
+
+  await page.evaluate(() => {
+    window.__HISTORY_TEST__.recordingFailure = {
+      operation: "openRecordings",
+    };
+  });
+  const open = page.getByRole("button", { name: "Open Recordings Folder" });
+  await open.click();
+  await expect(page.getByRole("alert")).toContainText("Open Recordings Folder");
+  await expect(page.getByRole("alert")).toContainText(
+    "The action failed. Your content is kept in history.",
+  );
+  await expect(preview.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText(/Could not save/)).toHaveCount(0);
+  await expect(page.getByText("[object Object]")).toHaveCount(0);
+  await expect(open).toBeEnabled();
 });
 
 test("switching voice previews keeps a single recording player", async ({
@@ -313,6 +497,86 @@ test("switching voice previews keeps a single recording player", async ({
       .toBe(1);
     await expect(page.locator("audio[controls]")).toHaveCount(0);
   }
+});
+
+test("无转写正文的录音展开后读取真实时长，读取元数据不会自动播放", async ({
+  page,
+}) => {
+  await mountHistory(page);
+  await page.evaluate(() => {
+    // 合成 159.24 秒 PCM16 WAV，不读取或保存用户录音。
+    const sampleRate = 16000;
+    const samples = Math.round(159.24 * sampleRate);
+    const bytes = new ArrayBuffer(44 + samples * 2);
+    const header = new DataView(bytes);
+    const text = (offset: number, value: string) =>
+      [...value].forEach((char, index) =>
+        header.setUint8(offset + index, char.charCodeAt(0)),
+      );
+    text(0, "RIFF");
+    header.setUint32(4, bytes.byteLength - 8, true);
+    text(8, "WAVE");
+    text(12, "fmt ");
+    header.setUint32(16, 16, true);
+    header.setUint16(20, 1, true);
+    header.setUint16(22, 1, true);
+    header.setUint32(24, sampleRate, true);
+    header.setUint32(28, sampleRate * 2, true);
+    header.setUint16(32, 2, true);
+    header.setUint16(34, 16, true);
+    text(36, "data");
+    header.setUint32(40, samples * 2, true);
+    const harness = window.__HISTORY_TEST__;
+    harness.audioUrl = URL.createObjectURL(
+      new Blob([bytes], { type: "audio/wav" }),
+    );
+    harness.items = [
+      {
+        ...harness.items[0],
+        text: "",
+        title: "Untranscribed recording",
+        asset_ref: "asset://untranscribed.wav",
+      },
+    ];
+  });
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await page.getByText("Untranscribed recording", { exact: true }).click();
+  const player = page.locator("[data-history-recording]");
+  await expect(player.getByText("2:39", { exact: true })).toBeVisible();
+  await expect(player.getByText("0:00", { exact: true })).toHaveCount(1);
+  await expect(player.getByRole("slider")).toHaveAttribute("max", "159.24");
+  expect(
+    await page.locator("audio").evaluate((audio: HTMLAudioElement) => ({
+      paused: audio.paused,
+      currentTime: audio.currentTime,
+      duration: audio.duration,
+    })),
+  ).toEqual({ paused: true, currentTime: 0, duration: 159.24 });
+});
+
+test("录音元数据读取失败显示错误和未知时长，不伪报为零秒", async ({ page }) => {
+  await mountHistory(page);
+  await page.route("**/__missing-recording.wav", (route) => route.abort());
+  await page.evaluate(() => {
+    const harness = window.__HISTORY_TEST__;
+    harness.audioUrl = "/__missing-recording.wav";
+    harness.items = [
+      {
+        ...harness.items[0],
+        asset_ref: "asset://missing.wav",
+      },
+    ];
+  });
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await page.getByText("Voice fixture", { exact: true }).click();
+  const player = page.locator("[data-history-recording]");
+  await expect(player.getByRole("alert")).toBeVisible();
+  await expect(player.getByText("—:—", { exact: true })).toBeVisible();
+  await expect(player.getByText("0:00", { exact: true })).toHaveCount(1);
+  await expect(player.getByRole("slider")).toBeDisabled();
+  await expect(
+    player.getByRole("button", { name: "Play recording" }),
+  ).toBeEnabled();
 });
 
 test("composition and search letters are not intercepted; Enter inserts and Escape closes preview", async ({
@@ -586,6 +850,14 @@ test("live changes preserve edit revision and failed mutations do not report suc
   ).toBeVisible();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText(/Could not save/)).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Preview" }).getByRole("alert"),
+  ).toContainText("conflict");
+  await expect(
+    page.getByText("Failed to re-transcribe. Please try again.", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
   expect(
     await page.evaluate(() => window.__HISTORY_TEST__.actions[0].item.revision),
   ).toBe(1);
@@ -677,4 +949,145 @@ test("late listener registration is disposed and failed registration can be retr
   expect(result.afterDispose).toBe(result.baseline);
   expect(result.failed).toBe(true);
   expect(result.recovered).toBe(true);
+});
+
+test("录音页在搜索、分页、收藏和实时刷新中始终只请求语音", async ({ page }) => {
+  await mountHistory(page, true);
+  await page.evaluate(async () => {
+    const { default: i18n } = await import("/src/i18n/index.ts");
+    await i18n.changeLanguage("zh");
+  });
+  await expect(
+    page.getByRole("heading", { name: "录音", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("searchbox")).toHaveAttribute(
+    "placeholder",
+    "搜索录音和转写文字",
+  );
+  await expect(page.getByRole("combobox")).toHaveCount(0);
+  await expect(page.getByText("report.pdf", { exact: true })).toHaveCount(0);
+  await page.evaluate(() => {
+    const harness = window.__HISTORY_TEST__;
+    const base = harness.items[0];
+    harness.items = Array.from({ length: 45 }, (_, index) => [
+      {
+        ...base,
+        item_id: `voice-${index}`,
+        record_id: String(index),
+        text: `Shared voice ${index}`,
+        starred: index % 2 === 0,
+      },
+      {
+        ...base,
+        item_id: `clipboard-${index}`,
+        record_id: String(index),
+        source_kind: "clipboard",
+        text: `Shared clipboard ${index}`,
+        starred: true,
+      },
+    ]).flat();
+    harness.emit();
+  });
+  const rows = page.getByRole("list").first().locator(":scope > li");
+  await expect(rows).toHaveCount(40);
+  await expect(page.getByText(/Shared clipboard/)).toHaveCount(0);
+  await page.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect(rows).toHaveCount(45);
+  await page.getByRole("searchbox").fill("Shared");
+  await expect(rows).toHaveCount(40);
+  await page.getByRole("button", { name: "收藏", exact: true }).click();
+  await expect(rows).toHaveCount(23);
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(rows).toHaveCount(23);
+  await page.evaluate(() => {
+    const harness = window.__HISTORY_TEST__;
+    harness.items.push(
+      { ...harness.items[0], item_id: "voice-live", text: "Shared voice live" },
+      {
+        ...harness.items[1],
+        item_id: "clipboard-live",
+        text: "Shared clipboard live",
+      },
+    );
+    harness.emit();
+  });
+  await expect(rows).toHaveCount(24);
+  await expect(
+    page.getByText("Shared voice live", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/Shared clipboard/)).toHaveCount(0);
+  await page.evaluate(async () => {
+    const { useRecordingHistoryStore } = await import(
+      "/src/stores/unifiedHistoryStore.ts"
+    );
+    useRecordingHistoryStore.getState().setFilters({ source: "clipboard" });
+  });
+  await expect(rows).toHaveCount(24);
+  await page.getByRole("searchbox").fill("Shared clipboard");
+  await expect(rows).toHaveCount(0);
+  await expect(page.getByText("没有找到录音。", { exact: true })).toBeVisible();
+  const evidence = await page.evaluate(async () => {
+    const { useRecordingHistoryStore } = await import(
+      "/src/stores/unifiedHistoryStore.ts"
+    );
+    return {
+      source: useRecordingHistoryStore.getState().source,
+      queries: window.__HISTORY_TEST__.calls
+        .filter((call) => call.command === "get_unified_history")
+        .map(
+          (call) =>
+            call.args?.query as {
+              source_kind: string;
+              offset: number;
+              search: string | null;
+              starred_only: boolean;
+            },
+        ),
+      commands: window.__HISTORY_TEST__.calls.map((call) => call.command),
+    };
+  });
+  expect(evidence.source).toBe("voice");
+  expect(evidence.queries.every((query) => query.source_kind === "voice")).toBe(
+    true,
+  );
+  expect(evidence.queries.some((query) => query.offset === 40)).toBe(true);
+  expect(evidence.queries.some((query) => query.search === "Shared")).toBe(
+    true,
+  );
+  expect(evidence.queries.some((query) => query.starred_only)).toBe(true);
+  expect(
+    evidence.commands.some((command) =>
+      /delete|clear|update_unified/.test(command),
+    ),
+  ).toBe(false);
+});
+
+test("来源限定store无法被筛选覆盖，通用store仍支持混合历史", async ({
+  page,
+}) => {
+  await mountHistory(page);
+  const evidence = await page.evaluate(async () => {
+    const { createUnifiedHistoryStore } = await import(
+      "/src/stores/unifiedHistoryStore.ts"
+    );
+    const voice = createUnifiedHistoryStore("voice");
+    const clipboard = createUnifiedHistoryStore("clipboard");
+    const generic = createUnifiedHistoryStore();
+    voice.getState().setFilters({ source: "all" });
+    clipboard.getState().setFilters({ source: "voice" });
+    await Promise.all([
+      voice.getState().load(),
+      clipboard.getState().load(),
+      generic.getState().load(),
+    ]);
+    return [voice, clipboard, generic].map((store) => ({
+      source: store.getState().source,
+      kinds: store.getState().items.map((item) => item.source_kind),
+    }));
+  });
+  expect(evidence).toEqual([
+    { source: "voice", kinds: ["voice"] },
+    { source: "clipboard", kinds: ["clipboard"] },
+    { source: "all", kinds: ["voice", "clipboard"] },
+  ]);
 });

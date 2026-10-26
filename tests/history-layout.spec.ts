@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-// 挂载真实 App 与历史页；仅替代原生数据接口，不替代原生输入验收。
+// 挂载真实 App 与录音页；仅替代原生数据接口，不替代原生输入验收。
 async function mountAppHistory(page: Page, fontSize: number) {
   await page.route("**/__history-layout-test", (route) =>
     route.fulfill({
@@ -34,19 +34,20 @@ async function mountAppHistory(page: Page, fontSize: number) {
       __TAURI_INTERNALS__: {
         transformCallback: () => ++callbackId,
         unregisterCallback: () => null,
-        invoke: async (cmd: string) => {
+        invoke: async (cmd: string, args?: Record<string, unknown>) => {
           if (cmd === "get_app_settings" || cmd === "get_default_settings")
             return settings;
           if (cmd === "plugin:app|version") return "1.0.0";
           if (cmd === "plugin:event|listen") return ++callbackId;
-          if (cmd === "get_unified_history")
+          if (cmd === "get_unified_history") {
+            const query = args?.query as { source_kind?: string };
             return [
               {
                 item_id: "long-item",
                 store_id: "fixture",
                 record_id: "1",
                 revision: 1,
-                source_kind: "clipboard",
+                source_kind: "voice",
                 content_type: "text",
                 text: "文件路径" + "verylongunbrokenpath".repeat(25),
                 title: null,
@@ -56,7 +57,26 @@ async function mountAppHistory(page: Page, fontSize: number) {
                 asset_ref: null,
                 source_app: "com.example." + "longname".repeat(30),
               },
-            ];
+              {
+                item_id: "clipboard-sentinel",
+                store_id: "fixture",
+                record_id: "2",
+                revision: 1,
+                source_kind: "clipboard",
+                content_type: "text",
+                text: "剪贴数据不能显示在录音页",
+                title: null,
+                starred: false,
+                pinned: false,
+                created_at_ms: 1000001,
+                asset_ref: null,
+                source_app: null,
+              },
+            ].filter(
+              (item) =>
+                !query.source_kind || item.source_kind === query.source_kind,
+            );
+          }
           if (
             cmd === "get_available_models" ||
             cmd === "get_available_microphones" ||
@@ -99,8 +119,9 @@ async function mountAppHistory(page: Page, fontSize: number) {
       React.createElement(App),
     );
   }, fontSize);
-  await page.getByText("历史记录", { exact: true }).click();
+  await page.getByText("录音", { exact: true }).click();
   await expect(page.getByRole("searchbox")).toBeVisible();
+  await expect(page.getByText("剪贴数据不能显示在录音页")).toHaveCount(0);
 }
 
 for (const size of [
@@ -115,13 +136,11 @@ for (const size of [
   }, testInfo) => {
     await page.setViewportSize(size);
     await mountAppHistory(page, size.font);
-    const history = page.getByRole("region", { name: "历史记录", exact: true });
+    const history = page.getByRole("region", { name: "录音", exact: true });
     await expect(history).toBeVisible();
     const measure = async () =>
       page.evaluate(() => {
-        const section = document.querySelector(
-          'section[aria-label="历史记录"]',
-        )!;
+        const section = document.querySelector('section[aria-label="录音"]')!;
         const sidebar = document.querySelector("[data-inputia-mark]")!
           .parentElement!.parentElement!;
         const bounds = section.getBoundingClientRect();
@@ -146,7 +165,7 @@ for (const size of [
     for (const control of [
       history.locator("header button").first(),
       page.getByRole("searchbox"),
-      page.getByRole("combobox").first(),
+      history.getByRole("button", { name: "收藏", exact: true }),
     ]) {
       const box = await control.boundingBox();
       expect(box!.x).toBeGreaterThanOrEqual(bounds.left);

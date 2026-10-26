@@ -1,7 +1,7 @@
 //! 统一历史服务的应用适配：先备份源 schema，再启动后台唯一写入者。
 
 use anyhow::Result;
-use inputia_handy_runtime::{
+use inputia_runtime::{
     service::HistoryService,
     source::{SourceOutbox, SourceTable},
 };
@@ -24,7 +24,7 @@ pub struct IntegrationManager {
 /// 不等待 IPC/数据库；在唯一服务初始化前没有可撤销的输出许可。
 pub(crate) fn begin_source_write(
     app: &AppHandle,
-) -> Option<inputia_handy_runtime::service::SourceWriteGuard> {
+) -> Option<inputia_runtime::service::SourceWriteGuard> {
     app.try_state::<Arc<IntegrationManager>>()
         .map(|manager| manager.service.begin_source_write())
 }
@@ -44,14 +44,12 @@ impl IntegrationManager {
             .unwrap_or_else(|| "handy-local".into());
         let memory_context = crate::candidate_profile::current()
             .map(|profile| {
-                inputia_handy_runtime::legacy_memory::LegacyMemoryContext::handoff_required(
+                inputia_runtime::legacy_memory::LegacyMemoryContext::handoff_required(
                     profile.inputia_root.join("inputia_memory.db"),
                     profile.profile_id.clone(),
                 )
             })
-            .unwrap_or_else(
-                inputia_handy_runtime::legacy_memory::LegacyMemoryContext::unconfigured,
-            );
+            .unwrap_or_else(inputia_runtime::legacy_memory::LegacyMemoryContext::unconfigured);
         let service = HistoryService::start_with_memory(
             root,
             profile_id,
@@ -78,7 +76,7 @@ fn prepare_source(path: &Path, source: SourceTable) -> Result<()> {
         exists
             && conn.query_row(
                 "SELECT schema_version>=?1 FROM unified_source_meta",
-                [inputia_handy_runtime::source::SOURCE_SCHEMA_VERSION],
+                [inputia_runtime::source::SOURCE_SCHEMA_VERSION],
                 |row| row.get::<_, bool>(0),
             )?
     };

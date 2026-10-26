@@ -88,14 +88,14 @@
     "quit": "Quit",
     "cancel": "Cancel",
     "secureInputWarning": "⚠ Shortcuts blocked by Secure Input",
-    "clipboardHistory": "Clipboard history"
+    "clipboardHistory": "Clipboard"
   },
   "sidebar": {
     "general": "General",
     "models": "Models",
     "advanced": "Advanced",
     "postProcessing": "Post Process",
-    "history": "History",
+    "history": "Recordings",
     "debug": "Debug",
     "about": "About",
     "clipboard": "Clipboard",
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "History",
+      "title": "Recordings",
+      "search": "Search recordings and transcripts",
       "openFolder": "Open Recordings Folder",
-      "loading": "Loading history...",
-      "empty": "No transcriptions yet. Start recording to build your history!",
+      "loading": "Loading recordings...",
+      "empty": "No recordings found.",
       "copyToClipboard": "Copy transcription to clipboard",
       "save": "Save transcription",
       "unsave": "Remove from saved",
@@ -658,8 +659,8 @@
         "entries": "entries"
       },
       "recordingRetention": {
-        "title": "Auto-Delete Recordings",
-        "description": "Automatically delete old recordings to save space",
+        "title": "Auto-Delete Voice Records",
+        "description": "Deletes entire old voice records, including the transcript and the recording. Starred records are kept.",
         "never": "Never",
         "preserveLimit": "Keep latest {{count}}",
         "days3": "After 3 days",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "Clipboard history",
+      "title": "Clipboard",
       "searchPlaceholder": "Search clipboard history...",
       "filterAll": "All",
       "filterText": "Text",

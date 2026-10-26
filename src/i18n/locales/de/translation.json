@@ -88,17 +88,17 @@
     "quit": "Beenden",
     "cancel": "Abbrechen",
     "secureInputWarning": "⚠ Tastenkürzel durch Secure Input blockiert",
-    "clipboardHistory": "Zwischenablageverlauf"
+    "clipboardHistory": "Zwischenablage"
   },
   "sidebar": {
     "general": "Allgemein",
     "models": "Modelle",
     "advanced": "Erweitert",
     "postProcessing": "Nachbearbeitung",
-    "history": "Verlauf",
+    "history": "Aufnahmen",
     "debug": "Debug",
     "about": "Info",
-    "clipboard": "Clipboard",
+    "clipboard": "Zwischenablage",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "Verlauf",
+      "title": "Aufnahmen",
+      "search": "Aufnahmen und Transkripte durchsuchen",
       "openFolder": "Aufnahmeordner öffnen",
-      "loading": "Verlauf wird geladen...",
-      "empty": "Noch keine Transkriptionen. Starte eine Aufnahme, um deinen Verlauf aufzubauen!",
+      "loading": "Aufnahmen werden geladen...",
+      "empty": "Keine Aufnahmen gefunden.",
       "copyToClipboard": "Transkription in Zwischenablage kopieren",
       "save": "Transkription speichern",
       "unsave": "Aus Gespeicherten entfernen",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "Zwischenablage-Manager",
+      "title": "Zwischenablage",
       "searchPlaceholder": "Zwischenablageverlauf durchsuchen...",
       "filterAll": "Alle",
       "filterText": "Text",

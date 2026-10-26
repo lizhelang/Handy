@@ -88,17 +88,17 @@
     "quit": "Вийти",
     "cancel": "Скасувати",
     "secureInputWarning": "⚠ Комбінації клавіш заблоковано Secure Input",
-    "clipboardHistory": "Історія буфера обміну"
+    "clipboardHistory": "Буфер обміну"
   },
   "sidebar": {
     "general": "Загальні",
     "models": "Моделі",
     "advanced": "Розширені",
     "postProcessing": "Постобробка",
-    "history": "Історія",
+    "history": "Записи",
     "debug": "Дебаг",
     "about": "Інфо",
-    "clipboard": "Clipboard",
+    "clipboard": "Буфер обміну",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "Історія",
+      "title": "Записи",
+      "search": "Пошук у записах і розшифровках",
       "openFolder": "Відкрити папку записів",
-      "loading": "Завантаження історії...",
-      "empty": "Транскрипцій поки немає. Почніть запис, щоб створити історію!",
+      "loading": "Завантаження записів...",
+      "empty": "Записів не знайдено.",
       "copyToClipboard": "Копіювати транскрипцію в буфер обміну",
       "save": "Зберегти транскрипцію",
       "unsave": "Видалити зі збережених",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "Менеджер буфера обміну",
+      "title": "Буфер обміну",
       "searchPlaceholder": "Пошук в історії буфера обміну...",
       "filterAll": "Усе",
       "filterText": "Текст",

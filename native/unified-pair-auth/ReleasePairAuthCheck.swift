@@ -8,12 +8,12 @@ struct ReleasePairAuthCheck {
     let key = try PairBuildKey()
     let payload = ReleasePairManifestPayload(productID: "com.inputia", releaseID: "inputia-contract-fixture",
       keyID: "fixture-v2", protocolMajor: 1, peers: [
-        PairCodeIdentity(role: .handy, identifier: "com.inputia.Handy", cdhashes: [String(repeating: "a", count: 40)]),
+        PairCodeIdentity(role: .control, identifier: "com.inputia.Handy", cdhashes: [String(repeating: "a", count: 40)]),
         PairCodeIdentity(role: .inputia, identifier: "com.inputia.IME", cdhashes: [String(repeating: "b", count: 40)])])
     func trust(_ publicKey: Data? = nil, product: String = "com.inputia", release: String = "inputia-contract-fixture",
                keyID: String = "fixture-v2", major: Int = 1) -> PairReleaseTrust {
       PairReleaseTrust(publicKeyX963: publicKey ?? key.publicKeyX963, keyID: keyID,
-        productID: product, releaseID: release, protocolMajor: major, localRole: .handy)
+        productID: product, releaseID: release, protocolMajor: major, localRole: .control)
     }
     var checks = 0
     func require(_ condition: Bool, _ name: String) throws {
@@ -97,12 +97,12 @@ struct ReleasePairAuthCheck {
       legacyKey.append(byte); offset = end
     }
     let legacyTrust = PairTrust(publicKeyX963: legacyKey, keyID: "fixture-v1-frozen", runID: "trial-20260905",
-      profileID: "unified-candidate:trial-20260905", protocolMajor: 1, localRole: .handy)
+      profileID: "unified-candidate:trial-20260905", protocolMajor: 1, localRole: .control)
     let frozen = try SignedPairManifest.verify(legacyBytes, trust: legacyTrust)
     try require(frozen.payload.keyID == legacyTrust.keyID && frozen.payload.schemaVersion == 1, "frozen v1 bytes preserved")
     try reject("v2 never falls back to v1") {
       _ = try SignedPairManifest.verify(legacyBytes, trust: PairReleaseTrust(publicKeyX963: legacyKey,
-        keyID: legacyTrust.keyID, productID: "com.inputia", releaseID: "inputia-contract-fixture", protocolMajor: 1, localRole: .handy))
+        keyID: legacyTrust.keyID, productID: "com.inputia", releaseID: "inputia-contract-fixture", protocolMajor: 1, localRole: .control))
     }
     try reject("v1 does not accept v2") { _ = try SignedPairManifest.verify(signed, trust: legacyTrust) }
     print("release_pair_contract=pass checks=\(checks) frozen_v1=true certificate_accessed=false")

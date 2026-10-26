@@ -306,7 +306,7 @@ fn read_versioned(path: &Path) -> Result<Option<Versioned>> {
 
 /// 无额外资源的内核入口用于独立夹具；App 使用 prepare_app_with_guard 持有 Files 锁。
 pub(crate) fn prepare_with_state(
-    handy: &Path,
+    control: &Path,
     inputia: Option<&Path>,
     backup: &Path,
     lock: &Path,
@@ -314,7 +314,7 @@ pub(crate) fn prepare_with_state(
     inspect: impl FnOnce() -> Result<StartupNeed>,
 ) -> Result<StartupPreparation> {
     prepare_with_guard(
-        handy,
+        control,
         inputia,
         backup,
         lock,
@@ -327,7 +327,7 @@ pub(crate) fn prepare_with_state(
 
 /// 先取得迁移锁，再取得设置 Files 锁。guard 在恢复前创建，交付前始终存活。
 pub(crate) fn prepare_with_guard<G>(
-    handy: &Path,
+    control: &Path,
     inputia: Option<&Path>,
     backup: &Path,
     lock: &Path,
@@ -338,27 +338,60 @@ pub(crate) fn prepare_with_guard<G>(
     let lock = StartupLock::acquire(lock)
         .map_err(|e| classified(StartupFailureKind::PendingRecovery, e))?;
     let guard = acquire().map_err(|e| classified(StartupFailureKind::PendingRecovery, e))?;
-    let prepared = prepare_locked(handy, inputia, backup, legacy, lock, || inspect(&guard))?;
+    let prepared = prepare_locked(
+        control,
+        inputia,
+        backup,
+        legacy,
+        lock,
+        relocate_pre_rename_roots,
+        || inspect(&guard),
+    )?;
     Ok((prepared, guard))
 }
+/// 夹具入口：显式声明控制中心根由 `previous` 整体移动而来。
+#[cfg(test)]
+pub(crate) fn prepare_moved_with_state(
+    control: &Path,
+    previous: &Path,
+    backup: &Path,
+    lock: &Path,
+    inspect: impl FnOnce() -> Result<StartupNeed>,
+) -> Result<StartupPreparation> {
+    let lock = StartupLock::acquire(lock)?;
+    let current = control.to_path_buf();
+    prepare_locked(
+        control,
+        None,
+        backup,
+        None,
+        lock,
+        |roots| relocate_roots(roots, &[("handy", &current, previous.to_path_buf())]),
+        inspect,
+    )
+}
 fn prepare_locked(
-    handy: &Path,
+    control: &Path,
     inputia: Option<&Path>,
     backup: &Path,
     legacy: Option<&Path>,
     lock: StartupLock,
+    relocate: impl FnOnce(&mut [MigrationSourceRoot]),
     inspect: impl FnOnce() -> Result<StartupNeed>,
 ) -> Result<StartupPreparation> {
     let mut roots = vec![MigrationSourceRoot {
         label: "handy".into(),
-        root: handy.into(),
+        root: control.into(),
+        previous: None,
     }];
     if let Some(root) = inputia {
         roots.push(MigrationSourceRoot {
             label: "inputia".into(),
             root: root.into(),
+            previous: None,
         });
     }
+    relocate(&mut roots);
     let journal_path = checked_path(backup, Path::new(JOURNAL))?;
     let existing = read_versioned(&journal_path)
         .map_err(|e| classified(StartupFailureKind::RepairRequired, e))?;
@@ -462,8 +495,8 @@ pub(crate) fn prepare_app_with_guard<G>(
     acquire: impl FnOnce(&Path, Option<&Path>) -> Result<G>,
     inspect: impl FnOnce(&G) -> Result<StartupNeed>,
 ) -> Result<(StartupPreparation, G)> {
-    let handy = crate::portable::app_data_dir(app)?;
-    let migration = handy.join("migration_backups");
+    let control = crate::portable::app_data_dir(app)?;
+    let migration = control.join("migration_backups");
     #[cfg(target_os = "macos")]
     let inputia = crate::candidate_profile::current()
         .map(|p| p.inputia_root.clone())
@@ -476,12 +509,12 @@ pub(crate) fn prepare_app_with_guard<G>(
     #[cfg(not(target_os = "macos"))]
     let inputia: Option<PathBuf> = None;
     prepare_with_guard(
-        &handy,
+        &control,
         inputia.as_deref(),
         &migration.join(MIGRATION_ID),
-        &handy.join("migration_locks"),
+        &control.join("migration_locks"),
         Some(&migration.join(STARTUP_MIGRATION_ID)),
-        || acquire(&handy, inputia.as_deref()),
+        || acquire(&control, inputia.as_deref()),
         inspect,
     )
 }
@@ -552,7 +585,7 @@ fn candidates(
             .iter()
             .flat_map(|r| {
                 if r.label == "handy" {
-                    handy_data_candidates(&r.label)
+                    control_data_candidates(&r.label)
                 } else {
                     inputia_data_candidates(&r.label)
                 }
@@ -736,7 +769,7 @@ fn validate(
         j.schema_version == 3
             && j.migration_id == GENERATION
             && uuid::Uuid::parse_str(&j.attempt_id).is_ok()
-            && j.roots_sha256 == roots_digest(roots)?
+            && roots_digest_matches(roots, &j.roots_sha256)?
             && hash_valid(&j.manifest_sha256),
         "startup v3 identity mismatch"
     );

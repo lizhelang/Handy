@@ -34,7 +34,7 @@ fn channel_change_preserves_data_and_binding() {
     let candidate = receipt.clone().resolve(&context).unwrap();
     receipt.channel = UpdateChannel::Stable;
     let stable = receipt.resolve(&context).unwrap();
-    assert_eq!(candidate.handy_root, stable.handy_root);
+    assert_eq!(candidate.control_root, stable.control_root);
     assert_eq!(candidate.binding(), stable.binding());
     assert_eq!(
         stable.pair_manifest,
@@ -80,7 +80,7 @@ fn legacy_trial_retains_exact_profile_and_both_data_roots() {
     receipt.profile_id = "unified-candidate:trial-20260905".into();
     let located = receipt.resolve(&context).unwrap();
     assert_eq!(
-        located.handy_root,
+        located.control_root,
         context
             .home
             .join("Library/Application Support/HandyUnifiedCandidate/trial-20260905/Handy")
@@ -101,6 +101,33 @@ fn legacy_trial_retains_exact_profile_and_both_data_roots() {
         located.receipt.profile_id,
         "unified-candidate:trial-20260905"
     );
+}
+
+#[test]
+fn renamed_candidate_layout_uses_control_and_inputia_roots_and_reads_json_kind() {
+    let (context, mut receipt) = fixture();
+    receipt.scope = InstallationScope::LegacySingleUser;
+    receipt.components.control = "/Applications/Inputia.app".into();
+    receipt.components.settings = "/Applications/Inputia 设置.app".into();
+    receipt.data = DataLocation::Candidate {
+        run_id: "trial-20260905".into(),
+    };
+    receipt.profile_id = "unified-candidate:trial-20260905".into();
+    let json = serde_json::to_value(&receipt.data).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({"kind": "candidate", "run_id": "trial-20260905"})
+    );
+    let located = receipt.clone().resolve(&context).unwrap();
+    let root = context
+        .home
+        .join("Library/Application Support/InputiaUnifiedCandidate/trial-20260905");
+    assert_eq!(located.control_root, root.join("Control"));
+    assert_eq!(located.inputia_root, root.join("Inputia"));
+    assert_eq!(located.pair_manifest, root.join("pair-manifest.json"));
+    // 新布局与旧布局一样要求 profile 与 run ID 对应，不能借收据改动 profile。
+    receipt.profile_id = "unified-candidate:other".into();
+    assert!(receipt.resolve(&context).is_err());
 }
 
 #[test]

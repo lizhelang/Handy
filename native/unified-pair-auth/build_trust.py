@@ -156,7 +156,7 @@ def main():
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--emit", choices=["rust", "swift"])
     parser.add_argument("--sign-pair", action="store_true")
-    parser.add_argument("--handy", type=Path)
+    parser.add_argument("--control", type=Path)
     parser.add_argument("--inputia", type=Path)
     parser.add_argument("--build-tool", type=Path)
     parser.add_argument("--private-key", type=Path)
@@ -168,7 +168,7 @@ def main():
         if context["source_commit"] != commit:
             parser.error("source commit changed since release preparation")
     if args.sign_pair:
-        if args.emit or args.public_key or not all([args.handy, args.inputia, args.build_tool, args.private_key, args.manifest]):
+        if args.emit or args.public_key or not all([args.control, args.inputia, args.build_tool, args.private_key, args.manifest]):
             parser.error("sign-pair requires both signed apps, build tool, private key and new manifest path")
         metadata, key = load(args.metadata, args.run_id, args.release_context)
         # 先核对临时签名器公钥，避免错误私钥生成无法由嵌入信任验证的制品。
@@ -176,7 +176,7 @@ def main():
         if signer_key != key.hex():
             parser.error("signer public key does not match embedded build trust")
         peers = [strict_json(subprocess.check_output([str(args.build_tool), "identity", role, str(path)]))
-                 for role, path in [("handy", args.handy), ("inputia", args.inputia)]]
+                 for role, path in [("handy", args.control), ("inputia", args.inputia)]]
         if args.release_context:
             payload = {"schemaVersion": 2, "productID": metadata["product_id"], "releaseID": metadata["release_id"],
                        "keyID": metadata["key_id"], "protocolMajor": 1, "peers": peers}

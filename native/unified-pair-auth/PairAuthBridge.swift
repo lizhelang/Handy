@@ -54,7 +54,7 @@ public func bridgeReleaseManifestLoad(
 }
 
 private func bridgeRole(_ value: UInt32) -> PairRole? {
-  switch value { case 1: return .handy; case 2: return .inputia; default: return nil }
+  switch value { case 1: return .control; case 2: return .inputia; default: return nil }
 }
 
 private func bridgeData(_ pointer: UnsafePointer<UInt8>?, _ count: Int, maximum: Int) -> Data? {
@@ -124,7 +124,7 @@ private func authenticateBridge(_ handle: UnsafeMutableRawPointer?, _ descriptor
       auditToken.copyBytes(to: bytes)
     }
     output.pointee.uid = uid
-    output.pointee.role = verifiedRole == .handy ? 1 : 2
+    output.pointee.role = verifiedRole == .control ? 1 : 2
     return 0
   } catch { return 3 }
 }

@@ -88,17 +88,17 @@
     "quit": "終了",
     "cancel": "キャンセル",
     "secureInputWarning": "⚠ Secure Input でショートカットがブロック中",
-    "clipboardHistory": "クリップボード履歴"
+    "clipboardHistory": "クリップボード"
   },
   "sidebar": {
     "general": "一般",
     "models": "モデル",
     "advanced": "詳細設定",
     "postProcessing": "後処理",
-    "history": "履歴",
+    "history": "録音",
     "debug": "デバッグ",
     "about": "概要",
-    "clipboard": "Clipboard",
+    "clipboard": "クリップボード",
     "hotwords": "Hotwords"
   },
   "onboarding": {
@@ -592,10 +592,11 @@
       }
     },
     "history": {
-      "title": "履歴",
+      "title": "録音",
+      "search": "録音と文字起こしを検索",
       "openFolder": "録音フォルダを開く",
-      "loading": "履歴を読み込み中…",
-      "empty": "まだ文字起こしがありません。録音を開始して履歴を作成しましょう!",
+      "loading": "録音を読み込み中…",
+      "empty": "録音が見つかりません。",
       "copyToClipboard": "文字起こしをクリップボードにコピー",
       "save": "文字起こしを保存",
       "unsave": "保存から削除",
@@ -781,7 +782,7 @@
       }
     },
     "clipboard": {
-      "title": "クリップボードマネージャー",
+      "title": "クリップボード",
       "searchPlaceholder": "クリップボード履歴を検索...",
       "filterAll": "すべて",
       "filterText": "テキスト",

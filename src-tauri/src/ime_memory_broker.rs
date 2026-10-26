@@ -1,6 +1,6 @@
 //! 主线程 WordSpan 许可与后台精确撤销；原字段正文不进入恢复队列。
 use super::*;
-use inputia_handy_runtime::{
+use inputia_runtime::{
     memory_commit::CommitIdentity,
     memory_word_span::{
         PreparedWordSpan, RevokedWordSpan, SpanEdit, SpanProgress, VerifiedWordSpan,

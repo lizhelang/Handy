@@ -105,7 +105,7 @@ private func fixtureClient(_ args: [String]) throws -> Int32 {
   try withAddress(args[0]) { guard connect(fd, $0, $1) == 0 else { try fail("connect") } }
   let manifest = try SignedPairManifest.verify(read(args[1]), trust: fixtureTrust(read(args[2]), role: .inputia))
   var accepted: UInt8 = 0
-  do { _ = try PeerAuthenticator.authenticate(socketFD: fd, manifest: manifest, expectedRole: .handy); accepted = 1 }
+  do { _ = try PeerAuthenticator.authenticate(socketFD: fd, manifest: manifest, expectedRole: .control); accepted = 1 }
   catch { accepted = 0 }
   _ = Darwin.write(fd, &accepted, 1)
   try ready(fd)
@@ -120,7 +120,7 @@ private func fixtureServer(_ args: [String]) throws -> Int32 {
   _ = Darwin.write(STDOUT_FILENO, &marker, 1)
   try ready(server); let fd = accept(server, nil, nil)
   guard fd >= 0 else { try fail("fixture server accept") }; defer { close(fd) }
-  let manifest = try SignedPairManifest.verify(read(args[1]), trust: fixtureTrust(read(args[2]), role: .handy))
+  let manifest = try SignedPairManifest.verify(read(args[1]), trust: fixtureTrust(read(args[2]), role: .control))
   var accepted: UInt8 = 0
   do { _ = try PeerAuthenticator.authenticate(socketFD: fd, manifest: manifest, expectedRole: .inputia); accepted = 1 }
   catch { accepted = 0 }
@@ -138,11 +138,11 @@ private func selfCheck(host: String, rogue: String) throws {
   let key = try PairBuildKey()
   let manifestPayload = try PairManifestPayload(keyID: "synthetic-build-key", runID: "trial-20260905",
     profileID: "unified-candidate:trial-20260905", protocolMajor: 1,
-    peers: [identity(ownPath, role: .handy), identity(host, role: .inputia)])
+    peers: [identity(ownPath, role: .control), identity(host, role: .inputia)])
   let signed = try key.sign(manifestPayload)
   let pubPath = root + "/public.x963"; let manifestPath = root + "/pair.json"
   try writeNew(key.publicKeyX963, pubPath); try writeNew(signed, manifestPath)
-  let trust = fixtureTrust(key.publicKeyX963, role: .handy)
+  let trust = fixtureTrust(key.publicKeyX963, role: .control)
   let manifest = try SignedPairManifest.verify(signed, trust: trust)
   var checks = 0
   func reject(_ name: String, _ work: () throws -> Void) throws {
@@ -155,19 +155,19 @@ private func selfCheck(host: String, rogue: String) throws {
   let imported = try PairBuildKey(privateRepresentationForBuildOnly: key.privateRepresentationForBuildOnly())
   try require(imported.publicKeyX963 == key.publicKeyX963, "ephemeral private key roundtrip")
   try reject("wrong public key") {
-    _ = try SignedPairManifest.verify(signed, trust: fixtureTrust(PairBuildKey().publicKeyX963, role: .handy))
+    _ = try SignedPairManifest.verify(signed, trust: fixtureTrust(PairBuildKey().publicKeyX963, role: .control))
   }
   try reject("wrong profile") {
     _ = try SignedPairManifest.verify(signed, trust: PairTrust(publicKeyX963: key.publicKeyX963,
-      keyID: trust.keyID, runID: trust.runID, profileID: "other", protocolMajor: 1, localRole: .handy))
+      keyID: trust.keyID, runID: trust.runID, profileID: "other", protocolMajor: 1, localRole: .control))
   }
   try reject("wrong run") {
     _ = try SignedPairManifest.verify(signed, trust: PairTrust(publicKeyX963: key.publicKeyX963,
-      keyID: trust.keyID, runID: "other", profileID: trust.profileID, protocolMajor: 1, localRole: .handy))
+      keyID: trust.keyID, runID: "other", profileID: trust.profileID, protocolMajor: 1, localRole: .control))
   }
   try reject("wrong major") {
     _ = try SignedPairManifest.verify(signed, trust: PairTrust(publicKeyX963: key.publicKeyX963,
-      keyID: trust.keyID, runID: trust.runID, profileID: trust.profileID, protocolMajor: 2, localRole: .handy))
+      keyID: trust.keyID, runID: trust.runID, profileID: trust.profileID, protocolMajor: 2, localRole: .control))
   }
   try reject("oversize") { _ = try SignedPairManifest.verify(Data(repeating: 32, count: 16_385), trust: trust) }
   try reject("duplicate envelope field") {
@@ -197,7 +197,7 @@ private func selfCheck(host: String, rogue: String) throws {
     let payload = PairManifestPayload(keyID: trust.keyID, runID: runID,
       profileID: "unified-candidate:\(runID)", protocolMajor: 1, peers: manifestPayload.peers)
     let matchingTrust = PairTrust(publicKeyX963: key.publicKeyX963, keyID: trust.keyID,
-      runID: runID, profileID: payload.profileID, protocolMajor: 1, localRole: .handy)
+      runID: runID, profileID: payload.profileID, protocolMajor: 1, localRole: .control)
     try require(try SignedPairManifest.verify(key.sign(payload), trust: matchingTrust).payload == payload,
       "valid candidate run boundary")
   }
@@ -206,7 +206,7 @@ private func selfCheck(host: String, rogue: String) throws {
     let payload = PairManifestPayload(keyID: trust.keyID, runID: runID,
       profileID: "unified-candidate:\(runID)", protocolMajor: 1, peers: manifestPayload.peers)
     let matchingTrust = PairTrust(publicKeyX963: key.publicKeyX963, keyID: trust.keyID,
-      runID: runID, profileID: payload.profileID, protocolMajor: 1, localRole: .handy)
+      runID: runID, profileID: payload.profileID, protocolMajor: 1, localRole: .control)
     try reject("invalid signed run") {
       _ = try SignedPairManifest.verify(signRaw(encode(payload)), trust: matchingTrust)
     }
@@ -216,7 +216,7 @@ private func selfCheck(host: String, rogue: String) throws {
     let payload = PairManifestPayload(keyID: trust.keyID, runID: trust.runID,
       profileID: profileID, protocolMajor: 1, peers: manifestPayload.peers)
     let matchingTrust = PairTrust(publicKeyX963: key.publicKeyX963, keyID: trust.keyID,
-      runID: trust.runID, profileID: profileID, protocolMajor: 1, localRole: .handy)
+      runID: trust.runID, profileID: profileID, protocolMajor: 1, localRole: .control)
     try reject("invalid signed derived profile") {
       _ = try SignedPairManifest.verify(signRaw(encode(payload)), trust: matchingTrust)
     }
@@ -258,7 +258,7 @@ private func selfCheck(host: String, rogue: String) throws {
     try ready(server); let peer = accept(server, nil, nil)
     guard peer >= 0 else { try fail("accept") }; defer { close(peer) }
     let policy = try SignedPairManifest.verify(signed,
-      trust: fixtureTrust(key.publicKeyX963, role: .handy, hardened: hardened))
+      trust: fixtureTrust(key.publicKeyX963, role: .control, hardened: hardened))
     var verdict: UInt8 = 0
     do { _ = try PeerAuthenticator.authenticate(socketFD: peer, manifest: policy, expectedRole: .inputia); verdict = 1 }
     catch { verdict = 0 }
@@ -335,20 +335,20 @@ struct PairAuthTool {
       }
       if args.count == 6, ["bridge-fixture-manifest", "bridge-release-fixture-manifest"].contains(args[0]) {
         let key = try PairBuildKey(privateRepresentationForBuildOnly: read(args[1], limit: 97, privateKey: true))
-        let handy = try identity(args[2], role: .handy)
+        let control = try identity(args[2], role: .control)
         let host = try identity(args[3], role: .inputia)
         let weak = try identity(args[4], role: .inputia)
         guard host.identifier == weak.identifier else { try fail("fixture role identifiers") }
         if args[0] == "bridge-release-fixture-manifest" {
           let payload = ReleasePairManifestPayload(productID: "com.inputia", releaseID: "inputia-bridge-fixture",
             keyID: "bridge-fixture-key", protocolMajor: 1,
-            peers: [handy, PairCodeIdentity(role: .inputia, identifier: host.identifier,
+            peers: [control, PairCodeIdentity(role: .inputia, identifier: host.identifier,
               cdhashes: host.cdhashes + weak.cdhashes)])
           try writeNew(key.sign(payload), args[5]); print("bridge_release_fixture_manifest_signed=true"); return
         }
         let payload = PairManifestPayload(keyID: "bridge-fixture-key", runID: "trial-20260905",
           profileID: "unified-candidate:trial-20260905", protocolMajor: 1,
-          peers: [handy, PairCodeIdentity(role: .inputia, identifier: host.identifier,
+          peers: [control, PairCodeIdentity(role: .inputia, identifier: host.identifier,
             cdhashes: host.cdhashes + weak.cdhashes)])
         try writeNew(key.sign(payload), args[5]); print("bridge_fixture_manifest_signed=true"); return
       }

@@ -312,8 +312,8 @@ pub fn prepare_startup_backup_with_preflight<F>(
 where
     F: FnOnce() -> Result<()>,
 {
-    let handy_root = crate::portable::app_data_dir(app)?;
-    let migration_root = handy_root.join("migration_backups");
+    let control_root = crate::portable::app_data_dir(app)?;
+    let migration_root = control_root.join("migration_backups");
     let legacy = migration_root.join(STARTUP_MIGRATION_ID);
     #[cfg(target_os = "macos")]
     let inputia_root = crate::candidate_profile::current()
@@ -327,25 +327,25 @@ where
     #[cfg(not(target_os = "macos"))]
     let inputia_root: Option<PathBuf> = None;
     prepare_paths(
-        &handy_root,
+        &control_root,
         inputia_root.as_deref(),
         &migration_root.join(MIGRATION_ID),
-        &handy_root.join("migration_locks"),
+        &control_root.join("migration_locks"),
         Some(&legacy),
         preflight,
     )
 }
 #[cfg(test)]
 pub(super) fn prepare_startup_backup_for_paths(
-    handy: &Path,
+    control: &Path,
     inputia: Option<&Path>,
     backup: &Path,
     lock: &Path,
 ) -> Result<Option<StartupMigration>> {
-    prepare_paths(handy, inputia, backup, lock, None, || Ok(()))
+    prepare_paths(control, inputia, backup, lock, None, || Ok(()))
 }
 fn prepare_paths<F>(
-    handy: &Path,
+    control: &Path,
     inputia: Option<&Path>,
     backup: &Path,
     lock: &Path,
@@ -359,14 +359,17 @@ where
         .map_err(|e| classified(StartupFailureKind::PendingRecovery, e))?;
     let mut roots = vec![MigrationSourceRoot {
         label: "handy".into(),
-        root: handy.into(),
+        root: control.into(),
+        previous: None,
     }];
     if let Some(root) = inputia {
         roots.push(MigrationSourceRoot {
             label: "inputia".into(),
             root: root.into(),
+            previous: None,
         });
     }
+    relocate_pre_rename_roots(&mut roots);
     // 当前 schema 2 不认识请求日志，任何 phase 都不能吸收或略过未知文件。
     ensure_legacy_pending_absent(&roots)
         .map_err(|e| classified(StartupFailureKind::RepairRequired, e))?;
@@ -435,7 +438,7 @@ fn new_attempt(
             .iter()
             .flat_map(|root| {
                 if root.label == "handy" {
-                    handy_data_candidates("handy")
+                    control_data_candidates("handy")
                 } else {
                     inputia_data_candidates("inputia")
                 }
@@ -507,6 +510,24 @@ fn has_backup(root: &Path) -> Result<bool> {
         }
     }
     Ok(false)
+}
+/// 账本记录的根摘要可以对应当前根，也可以对应显式重定位前的旧根。
+fn roots_digest_matches(roots: &[MigrationSourceRoot], recorded: &str) -> Result<bool> {
+    if recorded == roots_digest(roots)? {
+        return Ok(true);
+    }
+    if roots.iter().all(|root| root.previous.is_none()) {
+        return Ok(false);
+    }
+    let previous = roots
+        .iter()
+        .map(|root| MigrationSourceRoot {
+            label: root.label.clone(),
+            root: root.previous.clone().unwrap_or_else(|| root.root.clone()),
+            previous: None,
+        })
+        .collect::<Vec<_>>();
+    Ok(recorded == roots_digest(&previous)?)
 }
 fn roots_digest(roots: &[MigrationSourceRoot]) -> Result<String> {
     Ok(sha(&serde_json::to_vec(
@@ -638,7 +659,7 @@ fn validate_journal(
         j.schema_version == 2
             && j.migration_id == MIGRATION_ID
             && uuid::Uuid::parse_str(&j.attempt_id).is_ok()
-            && j.roots_sha256 == roots_digest(roots)?
+            && roots_digest_matches(roots, &j.roots_sha256)?
             && hash_valid(&j.manifest_sha256),
         "startup journal identity mismatch"
     );

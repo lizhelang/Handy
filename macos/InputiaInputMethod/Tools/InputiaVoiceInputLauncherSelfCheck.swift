@@ -72,7 +72,7 @@ struct InputiaVoiceInputLauncherSelfCheck {
       "/Applications/Inputia Candidate.app", "/Users/example/Applications/Inputia Candidate.app",
     ])
     let fakeApp = "/tmp/InputiaVoiceInputLauncherSelfCheck/Inputia.app"
-    let fakeExecutable = "\(fakeApp)/Contents/MacOS/handy"
+    let fakeExecutable = "\(fakeApp)/Contents/MacOS/inputia"
     try? FileManager.default.removeItem(atPath: "/tmp/InputiaVoiceInputLauncherSelfCheck")
     try? FileManager.default.createDirectory(
       atPath: "\(fakeApp)/Contents/MacOS",
@@ -81,29 +81,26 @@ struct InputiaVoiceInputLauncherSelfCheck {
     FileManager.default.createFile(atPath: fakeExecutable, contents: Data())
     defer { try? FileManager.default.removeItem(atPath: "/tmp/InputiaVoiceInputLauncherSelfCheck") }
 
-    let environment = ["INPUTIA_HANDY_APP": fakeApp]
+    let environment = ["INPUTIA_CONTROL_APP": fakeApp]
     let expectedCandidates = InputiaVoiceInputLauncher.candidateAppPaths(
       environment: environment,
       homeDirectory: "/Users/example",
-      workspaceAppPath: "/Applications/Inputia.app",
-      legacyWorkspaceAppPath: "/Applications/Handy.app"
+      workspaceAppPath: "/Applications/Inputia.app"
     )
-    let candidatesAreOrdered = expectedCandidates.prefix(5) == [
+    let candidatesAreOrdered = expectedCandidates == [
       fakeApp,
       "/Applications/Inputia.app",
-      "/Applications/Handy.app",
       "/Users/example/Applications/Inputia.app",
-      "/Users/example/Applications/Handy.app",
     ]
 
-    let findsEnvApp = InputiaVoiceInputLauncher.findHandyApp(
+    let findsEnvApp = InputiaVoiceInputLauncher.findControlApp(
       environment: environment,
       homeDirectory: "/Users/example",
       workspaceAppPath: nil,
       fileExists: { $0 == fakeExecutable }
     ) == fakeApp
 
-    let missingWhenExecutableAbsent = InputiaVoiceInputLauncher.findHandyApp(
+    let missingWhenExecutableAbsent = InputiaVoiceInputLauncher.findControlApp(
       environment: environment,
       homeDirectory: "/Users/example",
       workspaceAppPath: nil,
