@@ -157,6 +157,23 @@ pub fn resolve(
 }
 
 impl CandidateProfile {
+    /// 改名前同一运行编号的控制中心与输入法数据位置，只用于识别改名前写下的迁移账本。
+    pub fn pre_rename_roots(&self) -> Option<(PathBuf, PathBuf)> {
+        let run_root = self.control_root.parent()?;
+        let candidates = run_root.parent()?;
+        if self.control_root.file_name()? != "Control"
+            || self.inputia_root != run_root.join("Inputia")
+            || candidates.file_name()? != "InputiaUnifiedCandidate"
+        {
+            return None;
+        }
+        let legacy = candidates
+            .parent()?
+            .join("HandyUnifiedCandidate")
+            .join(run_root.file_name()?);
+        Some((legacy.join("Handy"), legacy.join("Inputia")))
+    }
+
     pub fn pair_manifest_path(&self) -> Result<PathBuf, String> {
         if let Some(installation) = &self.installation {
             return Ok(installation.pair_manifest.clone());
@@ -503,6 +520,16 @@ mod tests {
             base.join("InputiaUnifiedCandidate/A-1_trial/Inputia")
         );
         assert_eq!(profile.profile_id, "unified-candidate:A-1_trial");
+        assert_eq!(
+            profile.pre_rename_roots(),
+            Some((
+                base.join("HandyUnifiedCandidate/A-1_trial/Handy"),
+                base.join("HandyUnifiedCandidate/A-1_trial/Inputia")
+            ))
+        );
+        let mut other = profile.clone();
+        other.control_root = base.join("InputiaUnifiedCandidate/A-1_trial/Handy");
+        assert_eq!(other.pre_rename_roots(), None);
         assert!(resolve(
             Some(CANDIDATE_BUNDLE),
             &MetadataValue::Boolean(true),

@@ -127,7 +127,7 @@ fn validate_outcome_paths(
                 .find(|root| root.label == entry.source_root_label)
                 .context("manifest source root is not authorized")?;
             anyhow::ensure!(
-                root.root == entry.source_root,
+                root.records(&entry.source_root),
                 "copied migration source root requires explicit relocation"
             );
             checked_database(&root.root, &entry.source_relative_path)?;
@@ -155,6 +155,57 @@ pub enum MigrationBackupStatus {
 pub struct MigrationSourceRoot {
     pub label: String,
     pub root: PathBuf,
+    /// 显式重定位：同一数据根整体移动前的位置。迁移账本里记录这个旧位置的条目视为当前根。
+    pub previous: Option<PathBuf>,
+}
+
+impl MigrationSourceRoot {
+    fn records(&self, recorded: &Path) -> bool {
+        self.root == recorded || self.previous.as_deref() == Some(recorded)
+    }
+}
+
+/// 产品改名把同一运行编号的候选数据目录整体移到了新位置，改名前写下的迁移账本仍记录旧绝对路径。
+/// 只有当前候选配置声明的改名前位置、且该位置已不存在（确属移动而非复制）时才登记为重定位。
+pub(crate) fn relocate_pre_rename_roots(roots: &mut [MigrationSourceRoot]) {
+    let Some(profile) = crate::candidate_profile::current() else {
+        return;
+    };
+    let Some((control, inputia)) = profile.pre_rename_roots() else {
+        return;
+    };
+    relocate_roots(
+        roots,
+        &[
+            ("handy", &profile.control_root, control),
+            ("inputia", &profile.inputia_root, inputia),
+        ],
+    );
+}
+
+fn relocate_roots(roots: &mut [MigrationSourceRoot], moves: &[(&str, &PathBuf, PathBuf)]) {
+    for root in roots.iter_mut() {
+        let Some((_, _, previous)) = moves
+            .iter()
+            .find(|(label, current, _)| root.label == *label && root.root == **current)
+        else {
+            continue;
+        };
+        if matches!(fs::symlink_metadata(previous), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+        {
+            root.previous = Some(previous.clone());
+        }
+    }
+}
+
+fn relocated_manifest_path(recorded: &Path, roots: &[MigrationSourceRoot]) -> PathBuf {
+    roots
+        .iter()
+        .find_map(|root| {
+            let rest = recorded.strip_prefix(root.previous.as_deref()?).ok()?;
+            Some(root.root.join(rest))
+        })
+        .unwrap_or_else(|| recorded.to_path_buf())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -346,7 +397,8 @@ fn verify_startup_marker(marker_path: &Path, roots: &[MigrationSourceRoot]) -> R
         "startup migration marker has unexpected id {}",
         marker.migration_id
     );
-    let relative = marker.manifest_path.strip_prefix(backup_root).context(
+    let manifest_path = relocated_manifest_path(&marker.manifest_path, roots);
+    let relative = manifest_path.strip_prefix(backup_root).context(
         "copied marker manifest is outside current backup domain; explicit relocation required",
     )?;
     validate_relative(relative)?;
@@ -356,25 +408,23 @@ fn verify_startup_marker(marker_path: &Path, roots: &[MigrationSourceRoot]) -> R
         "unexpected marker manifest layout"
     );
     checked_path(backup_root, relative)?;
-    let (_, actual_sha256) = file_fingerprint(&marker.manifest_path)?;
+    let (_, actual_sha256) = file_fingerprint(&manifest_path)?;
     anyhow::ensure!(
         actual_sha256 == marker.manifest_sha256,
         "startup migration manifest checksum changed"
     );
-    let manifest: MigrationBackupManifest =
-        serde_json::from_slice(&fs::read(&marker.manifest_path)?)?;
+    let manifest: MigrationBackupManifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;
     anyhow::ensure!(
         manifest.migration_id == marker.migration_id,
         "marker and manifest migration identities differ"
     );
     validate_outcome_paths(
         &MigrationBackupOutcome {
-            backup_dir: marker
-                .manifest_path
+            backup_dir: manifest_path
                 .parent()
                 .context("manifest has no domain")?
                 .to_path_buf(),
-            manifest_path: marker.manifest_path,
+            manifest_path,
             manifest,
         },
         Some(roots),
@@ -737,6 +787,7 @@ where
     let roots = vec![MigrationSourceRoot {
         label: "sqlite".into(),
         root: source_root.to_path_buf(),
+        previous: None,
     }];
     let candidates = vec![MigrationPathCandidate {
         source_root_label: "sqlite".into(),
@@ -1087,6 +1138,7 @@ mod tests {
         let roots = [MigrationSourceRoot {
             label: "source".into(),
             root: temp.path().into(),
+            previous: None,
         }];
         let candidates = [
             MigrationPathCandidate {
@@ -1188,6 +1240,7 @@ mod tests {
         let roots = [MigrationSourceRoot {
             label: "source".into(),
             root: temp.path().into(),
+            previous: None,
         }];
         let outcome = prepare_backup(
             &roots,
@@ -1270,6 +1323,7 @@ mod tests {
         let roots = vec![MigrationSourceRoot {
             label: "synthetic".into(),
             root,
+            previous: None,
         }];
         let outcome = prepare_backup(
             &roots,
@@ -1324,6 +1378,83 @@ mod tests {
     }
 
     #[test]
+    fn moved_root_is_accepted_only_through_explicit_absent_previous_location() {
+        let (temp, roots, outcome) = synthetic_file_backup();
+        let moved = temp.path().join("moved");
+        fs::rename(&roots[0].root, &moved).unwrap();
+        let mut current = roots.clone();
+        current[0].root = moved.clone();
+        assert!(restore_backup(&outcome, &current).is_err());
+
+        let mut relocated = current.clone();
+        relocate_roots(
+            &mut relocated,
+            &[("synthetic", &moved, roots[0].root.clone())],
+        );
+        assert_eq!(relocated[0].previous.as_ref(), Some(&roots[0].root));
+        assert!(validate_outcome_paths(&outcome, Some(&relocated)).is_ok());
+
+        // 旧位置仍存在时属于复制，不能登记重定位。
+        fs::create_dir(&roots[0].root).unwrap();
+        let mut copied = current.clone();
+        relocate_roots(&mut copied, &[("synthetic", &moved, roots[0].root.clone())]);
+        assert_eq!(copied[0].previous, None);
+        // 标签或当前位置不符时也不登记。
+        fs::remove_dir(&roots[0].root).unwrap();
+        let mut other = current.clone();
+        relocate_roots(&mut other, &[("other", &moved, roots[0].root.clone())]);
+        assert_eq!(other[0].previous, None);
+    }
+
+    #[test]
+    fn moved_complete_marker_resolves_inside_relocated_backup_domain() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_root = temp.path().join("old");
+        fs::create_dir(&old_root).unwrap();
+        fs::write(old_root.join("value.txt"), b"kept").unwrap();
+        let old_roots = vec![MigrationSourceRoot {
+            label: "synthetic".into(),
+            root: old_root.clone(),
+            previous: None,
+        }];
+        let backup_root = old_root
+            .join("migration_backups")
+            .join(STARTUP_MIGRATION_ID);
+        let outcome = prepare_backup_for_migration(
+            &old_roots,
+            &[MigrationPathCandidate {
+                source_root_label: "synthetic".into(),
+                relative_path: "value.txt".into(),
+                kind: MigrationPathKind::File,
+            }],
+            &backup_root,
+            STARTUP_MIGRATION_ID,
+        )
+        .unwrap();
+        let marker = StartupMigrationMarker {
+            migration_id: STARTUP_MIGRATION_ID.into(),
+            completed_at: "synthetic".into(),
+            manifest_path: outcome.manifest_path.clone(),
+            manifest_sha256: file_fingerprint(&outcome.manifest_path).unwrap().1,
+        };
+        write_json_atomically(&backup_root.join("complete.json"), &marker).unwrap();
+        let new_root = temp.path().join("new");
+        fs::rename(&old_root, &new_root).unwrap();
+        let marker_path = new_root
+            .join("migration_backups")
+            .join(STARTUP_MIGRATION_ID)
+            .join("complete.json");
+        let mut roots = vec![MigrationSourceRoot {
+            label: "synthetic".into(),
+            root: new_root.clone(),
+            previous: None,
+        }];
+        assert!(verify_startup_marker(&marker_path, &roots).is_err());
+        relocate_roots(&mut roots, &[("synthetic", &new_root, old_root)]);
+        verify_startup_marker(&marker_path, &roots).unwrap();
+    }
+
+    #[test]
     fn copied_complete_marker_cannot_reference_original_backup_domain() {
         let (temp, roots, outcome) = synthetic_file_backup();
         let copied_root = temp.path().join("copied-backups");
@@ -1367,6 +1498,7 @@ mod tests {
         let roots = [MigrationSourceRoot {
             label: "source".into(),
             root: source,
+            previous: None,
         }];
         for relative in [PathBuf::from("../outside"), temp.path().join("outside")] {
             assert!(prepare_backup(
@@ -1424,6 +1556,7 @@ mod tests {
         let roots = [MigrationSourceRoot {
             label: "source".into(),
             root: root.clone(),
+            previous: None,
         }];
         let candidates = [MigrationPathCandidate {
             source_root_label: "source".into(),
@@ -1490,6 +1623,7 @@ mod tests {
         let roots = vec![MigrationSourceRoot {
             label: "app-data".into(),
             root: app_data,
+            previous: None,
         }];
         let candidates = vec![
             MigrationPathCandidate {
@@ -1574,6 +1708,7 @@ mod tests {
         let roots = vec![MigrationSourceRoot {
             label: "sqlite".into(),
             root: temp.path().to_path_buf(),
+            previous: None,
         }];
         let outcome = prepare_backup(
             &roots,
@@ -1611,6 +1746,7 @@ mod tests {
             &[MigrationSourceRoot {
                 label: "app-data".into(),
                 root: temp.path().to_path_buf(),
+                previous: None,
             }],
             &[MigrationPathCandidate {
                 source_root_label: "app-data".into(),
@@ -1745,10 +1881,12 @@ mod tests {
             MigrationSourceRoot {
                 label: "handy".into(),
                 root: control.clone(),
+                previous: None,
             },
             MigrationSourceRoot {
                 label: "inputia".into(),
                 root: inputia.clone(),
+                previous: None,
             },
         ];
         let candidates: Vec<_> = control_data_candidates("handy")

@@ -360,13 +360,16 @@ where
     let mut roots = vec![MigrationSourceRoot {
         label: "handy".into(),
         root: control.into(),
+        previous: None,
     }];
     if let Some(root) = inputia {
         roots.push(MigrationSourceRoot {
             label: "inputia".into(),
             root: root.into(),
+            previous: None,
         });
     }
+    relocate_pre_rename_roots(&mut roots);
     // 当前 schema 2 不认识请求日志，任何 phase 都不能吸收或略过未知文件。
     ensure_legacy_pending_absent(&roots)
         .map_err(|e| classified(StartupFailureKind::RepairRequired, e))?;
@@ -508,6 +511,24 @@ fn has_backup(root: &Path) -> Result<bool> {
     }
     Ok(false)
 }
+/// 账本记录的根摘要可以对应当前根，也可以对应显式重定位前的旧根。
+fn roots_digest_matches(roots: &[MigrationSourceRoot], recorded: &str) -> Result<bool> {
+    if recorded == roots_digest(roots)? {
+        return Ok(true);
+    }
+    if roots.iter().all(|root| root.previous.is_none()) {
+        return Ok(false);
+    }
+    let previous = roots
+        .iter()
+        .map(|root| MigrationSourceRoot {
+            label: root.label.clone(),
+            root: root.previous.clone().unwrap_or_else(|| root.root.clone()),
+            previous: None,
+        })
+        .collect::<Vec<_>>();
+    Ok(recorded == roots_digest(&previous)?)
+}
 fn roots_digest(roots: &[MigrationSourceRoot]) -> Result<String> {
     Ok(sha(&serde_json::to_vec(
         &roots
@@ -638,7 +659,7 @@ fn validate_journal(
         j.schema_version == 2
             && j.migration_id == MIGRATION_ID
             && uuid::Uuid::parse_str(&j.attempt_id).is_ok()
-            && j.roots_sha256 == roots_digest(roots)?
+            && roots_digest_matches(roots, &j.roots_sha256)?
             && hash_valid(&j.manifest_sha256),
         "startup journal identity mismatch"
     );

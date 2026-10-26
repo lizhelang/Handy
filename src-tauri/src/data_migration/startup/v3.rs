@@ -338,8 +338,37 @@ pub(crate) fn prepare_with_guard<G>(
     let lock = StartupLock::acquire(lock)
         .map_err(|e| classified(StartupFailureKind::PendingRecovery, e))?;
     let guard = acquire().map_err(|e| classified(StartupFailureKind::PendingRecovery, e))?;
-    let prepared = prepare_locked(control, inputia, backup, legacy, lock, || inspect(&guard))?;
+    let prepared = prepare_locked(
+        control,
+        inputia,
+        backup,
+        legacy,
+        lock,
+        relocate_pre_rename_roots,
+        || inspect(&guard),
+    )?;
     Ok((prepared, guard))
+}
+/// 夹具入口：显式声明控制中心根由 `previous` 整体移动而来。
+#[cfg(test)]
+pub(crate) fn prepare_moved_with_state(
+    control: &Path,
+    previous: &Path,
+    backup: &Path,
+    lock: &Path,
+    inspect: impl FnOnce() -> Result<StartupNeed>,
+) -> Result<StartupPreparation> {
+    let lock = StartupLock::acquire(lock)?;
+    let current = control.to_path_buf();
+    prepare_locked(
+        control,
+        None,
+        backup,
+        None,
+        lock,
+        |roots| relocate_roots(roots, &[("handy", &current, previous.to_path_buf())]),
+        inspect,
+    )
 }
 fn prepare_locked(
     control: &Path,
@@ -347,18 +376,22 @@ fn prepare_locked(
     backup: &Path,
     legacy: Option<&Path>,
     lock: StartupLock,
+    relocate: impl FnOnce(&mut [MigrationSourceRoot]),
     inspect: impl FnOnce() -> Result<StartupNeed>,
 ) -> Result<StartupPreparation> {
     let mut roots = vec![MigrationSourceRoot {
         label: "handy".into(),
         root: control.into(),
+        previous: None,
     }];
     if let Some(root) = inputia {
         roots.push(MigrationSourceRoot {
             label: "inputia".into(),
             root: root.into(),
+            previous: None,
         });
     }
+    relocate(&mut roots);
     let journal_path = checked_path(backup, Path::new(JOURNAL))?;
     let existing = read_versioned(&journal_path)
         .map_err(|e| classified(StartupFailureKind::RepairRequired, e))?;
@@ -736,7 +769,7 @@ fn validate(
         j.schema_version == 3
             && j.migration_id == GENERATION
             && uuid::Uuid::parse_str(&j.attempt_id).is_ok()
-            && j.roots_sha256 == roots_digest(roots)?
+            && roots_digest_matches(roots, &j.roots_sha256)?
             && hash_valid(&j.manifest_sha256),
         "startup v3 identity mismatch"
     );
