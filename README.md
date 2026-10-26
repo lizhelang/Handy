@@ -218,4 +218,4 @@ bun run check:translations
 
 原作者署名、版权及使用条件见 [LICENSE](LICENSE)。另见[第三方组件声明目录](src-tauri/resources/third-party-notices/)、[个性化资源声明](src-tauri/resources/personalization/NOTICE.md)和[输入法字体许可证](macos/InputiaInputMethod/Resources/Fonts/Jigmo-LICENSE.txt)。分发时保留适用许可证和署名。
 
-产品名称整理不等同于内部身份迁移。仓库地址、签名和 bundle 身份、配对协议、已有数据路径及历史记录仍使用真实兼容值；改变这些值需要相应的成套迁移与验证，不能用全局替换冒充完成。本页移除了旧产品营销、下载和 CLI 说明，未改动许可证或历史验收报告，也不宣称仓库内已不存在历史名称。
+2026-10-26 起完成成套改名：仓库为 [lizhelang/Inputia](https://github.com/lizhelang/Inputia)，主程序与运行组件改称 `inputia`，控制中心程序标识为 `com.inputia.control`（本机候选安装为 `com.inputia.control.UnifiedCandidate`），候选数据目录整体迁到 `InputiaUnifiedCandidate/<运行编号>/{Control,Inputia}`；过程与验证见[改名记录](docs/verification/2026-10-26-inputia-rename.md)。上游仓库与许可证、历史验收报告、第三方键盘库 handy-keys，以及已写入用户数据或签名格式的协议标识（迁移账本标签、配对角色值、哈希与签名域字符串）仍保留原值，仓库内并非不存在历史名称。

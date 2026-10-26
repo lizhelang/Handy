@@ -545,7 +545,7 @@ def main():
             active = db.execute("select count(*) from unified_voice_sessions where retired=0 and json_extract(view_json,'$.phase') in ('preparing','recording','processing')").fetchone()[0]
         if active:
             raise RuntimeError('语音会话正在进行，未更新程序或改变维护状态')
-        backup_base = Path.home()/'Library/Application Support/HandyUnifiedBuilds'
+        backup_base = Path.home()/'Library/Application Support/InputiaUnifiedBuilds'
         backup_base.mkdir(mode=0o700, parents=True, exist_ok=True)
         backup = Path(tempfile.mkdtemp(prefix='permission-update-', dir=backup_base))
         staged_names = ['control-staged.app', 'ime-staged.app'] + (['settings-staged.app'] if args.release_v2 else [])

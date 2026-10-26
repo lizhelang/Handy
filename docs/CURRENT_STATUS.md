@@ -40,7 +40,7 @@ Inputia 的“历史记录”页面已经支持：
 
 旧 Handy 应用、旧数据目录、旧偏好设置和旧 WebKit 数据已经从原位置移入迁移备份目录，Inputia 当前不依赖它们运行。备份位于：
 
-`~/Library/Application Support/HandyUnifiedBuilds/handy-migration-20260924-retry`
+`~/Library/Application Support/InputiaUnifiedBuilds/handy-migration-20260924-retry`（2026-10-26 前位于 `HandyUnifiedBuilds`）
 
 ### 知识库与外部 AI
 
@@ -65,9 +65,9 @@ Inputia 已支持统一检索来源：本地 Markdown、TXT、CSV、JSON、YAML�
 
 ## 数据和恢复原则
 
-- Inputia 候选数据域：`~/Library/Application Support/HandyUnifiedCandidate/trial-20260905`
+- Inputia 候选数据域：`~/Library/Application Support/InputiaUnifiedCandidate/trial-20260905`（控制中心 `Control`、输入法 `Inputia`）。2026-10-26 改名前位于 `HandyUnifiedCandidate/trial-20260905/{Handy,Inputia}`，迁移前的完整副本保留在 `InputiaUnifiedBuilds/permission-update-y2ewtier/data-before-rename`。
 - 迁移前后的完整数据备份必须保留，不能用旧快照覆盖当前目标库来冒充回滚成功。
-- 源码工作区 `/Users/lzl/FILE/github/Handy-unified-input-system` 与用户数据分离，不因卸载应用删除。
+- 源码工作区 `/Users/lzl/FILE/github/Inputia-unified-input-system` 与用户数据分离，不因卸载应用删除。
 - 当前只从系统常用位置移除了旧 Handy，迁移备份仍可恢复。
 
 ## 本机正式版升级

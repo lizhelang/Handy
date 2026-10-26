@@ -71,7 +71,7 @@ for input_path in "${input_paths[@]}"; do
 done
 
 cd "$REPO_ROOT"
-BUILD_BASE="$HOME/Library/Application Support/HandyUnifiedBuilds"
+BUILD_BASE="$HOME/Library/Application Support/InputiaUnifiedBuilds"
 mkdir -p "$BUILD_BASE"
 RELEASE_DIR="$(/usr/bin/mktemp -d "$BUILD_BASE/release-XXXXXXXX")"
 chmod 700 "$RELEASE_DIR"
