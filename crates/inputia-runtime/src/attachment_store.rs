@@ -809,9 +809,22 @@ impl AttachmentStore {
         let file = options.open(&path).map_err(io_error)?;
         let meta = file.metadata().map_err(io_error)?;
         let (current_device, current_inode) = secure_file(&meta)?;
-        let _ = digest;
-        if current_device != device || current_inode != inode || meta.len() != size {
+        if meta.len() != size {
             return Err(AttachmentError::Paused(PauseReason::IdentityChanged));
+        }
+        if current_device != device || current_inode != inode {
+            // 数据目录整体复制或克隆后，同一内容会换到新的设备号/inode。
+            // 只有大小与内容摘要都与登记一致时才重新绑定；任何内容差异仍按身份变化暂停。
+            let (bytes, read_device, read_inode) = self.read(kind, &name, size)?;
+            if (read_device, read_inode) != (current_device, current_inode)
+                || hash(&bytes) != digest
+            {
+                return Err(AttachmentError::Paused(PauseReason::IdentityChanged));
+            }
+            conn.execute(
+                "UPDATE attachment_files SET device=?2,inode=?3 WHERE id=?1 AND device=?4 AND inode=?5",
+                params![id, current_device, current_inode, device, inode],
+            )?;
         }
         self.path(kind, &name)
     }
@@ -1937,6 +1950,53 @@ mod tests {
         fs::write(&path, b"foreign replacement").unwrap();
         assert!(f.gc().is_err());
         assert_eq!(fs::read(&path).unwrap(), b"foreign replacement");
+    }
+    #[test]
+    fn copied_file_with_identical_content_rebinds_but_changed_content_pauses() {
+        let mut f = Fixture::new();
+        let asset = f.import("copied");
+        let reference = f.reference(&asset, "1");
+        f.store
+            .reconcile(&mut f.conn, std::slice::from_ref(&reference))
+            .unwrap();
+        let path = f.root.path().join("recordings").join(&asset.file_name);
+        let inode = |conn: &Connection| -> u64 {
+            conn.query_row(
+                "SELECT inode FROM attachment_files WHERE id=?1",
+                [&asset.attachment_id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let original = fs::read(&path).unwrap();
+        let before = inode(&f.conn);
+        // 模拟整目录克隆：内容不变，inode 改变。
+        let copy = f.root.path().join("copy.wav");
+        fs::copy(&path, &copy).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::rename(&copy, &path).unwrap();
+        f.store
+            .reconcile(&mut f.conn, std::slice::from_ref(&reference))
+            .unwrap();
+        let rebound = inode(&f.conn);
+        assert_ne!(rebound, before);
+        assert_eq!(
+            rebound,
+            std::os::unix::fs::MetadataExt::ino(&fs::metadata(&path).unwrap())
+        );
+        // 大小相同但内容不同的替换仍然暂停，登记不被改写。
+        let mut altered = original.clone();
+        let last = altered.len() - 1;
+        altered[last] ^= 1;
+        let replacement = f.root.path().join("replacement.wav");
+        fs::write(&replacement, &altered).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::rename(&replacement, &path).unwrap();
+        assert!(f
+            .store
+            .reconcile(&mut f.conn, std::slice::from_ref(&reference))
+            .is_err());
+        assert_eq!(inode(&f.conn), rebound);
     }
     #[test]
     fn retained_revision_and_transaction_pins_survive_process_restart() {
